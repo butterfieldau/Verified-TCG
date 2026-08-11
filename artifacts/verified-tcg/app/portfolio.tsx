@@ -347,16 +347,22 @@ export default function PortfolioScreen() {
           ))}
         </ScrollView>
 
-        <View style={[styles.allocCard, { backgroundColor: C.card }]}>
-          <AllocationBar data={allocData} />
-          <AllocationLegend data={allocData} />
-        </View>
+        {allocData.length === 0 ? (
+          <Text style={styles.emptyText}>No cards in your collection yet — add some to see allocation.</Text>
+        ) : (
+          <View style={[styles.allocCard, { backgroundColor: C.card }]}>
+            <AllocationBar data={allocData} />
+            <AllocationLegend data={allocData} />
+          </View>
+        )}
       </View>
 
       {/* Largest holdings */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Largest Holdings</Text>
-        {largestHoldings.map((h, i) => (
+        {largestHoldings.length === 0 ? (
+          <Text style={styles.emptyText}>No cards in your collection yet — add some to see your largest holdings.</Text>
+        ) : largestHoldings.map((h, i) => (
           <View key={i} style={[styles.holdingRow, { backgroundColor: C.card }]}>
             <View style={styles.holdingInfo}>
               <Text style={styles.holdingName}>{h.name}</Text>
