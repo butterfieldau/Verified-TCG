@@ -3,9 +3,11 @@ import React, {
   useContext,
   useState,
   useCallback,
+  useEffect,
   useMemo,
   type ReactNode,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
   WatchlistItem,
@@ -69,11 +71,14 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
   sortOrder: 'desc',
 };
 
+const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(MOCK_USER);
   const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
   const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
+  const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
@@ -81,6 +86,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+
+  // Load persisted watchlist from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem(WATCHLIST_STORAGE_KEY)
+      .then(stored => {
+        if (stored !== null) {
+          try {
+            const parsed = JSON.parse(stored) as WatchlistItem[];
+            if (Array.isArray(parsed)) {
+              setWatchlist(parsed);
+            }
+          } catch {
+            // Corrupted data — fall back to mock defaults
+          }
+        }
+      })
+      .finally(() => setWatchlistLoaded(true));
+  }, []);
+
+  // Persist watchlist to AsyncStorage on every change (after initial load)
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist)).catch(() => {});
+  }, [watchlist, watchlistLoaded]);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
     await Promise.resolve(); // simulate async
