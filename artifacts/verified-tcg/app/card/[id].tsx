@@ -583,7 +583,9 @@ export default function CardDetailScreen() {
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
-  const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
+  const [card, setCard] = useState(
+    () => getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!,
+  );
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
   const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
   const hasPassport = getCardPassport(card.id) !== null;
@@ -592,35 +594,47 @@ export default function CardDetailScreen() {
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   // ── Swipe navigation between collection cards ──────────────────────────────
+  // Swiping updates card state in-place — no navigation, so back always works.
   const collectionCards = collection.map(item => item.card);
   const currentIndex = collectionCards.findIndex(c => c.id === card.id);
-  const prevCard = currentIndex > 0 ? collectionCards[currentIndex - 1] : null;
-  const nextCard = currentIndex < collectionCards.length - 1 ? collectionCards[currentIndex + 1] : null;
+  const prevCardId = currentIndex > 0 ? collectionCards[currentIndex - 1].id : null;
+  const nextCardId = currentIndex < collectionCards.length - 1 ? collectionCards[currentIndex + 1].id : null;
   const inCollection = currentIndex !== -1;
 
   const translateX = useSharedValue(0);
 
-  function navigateTo(cardId: string) {
-    router.replace(`/card/${cardId}` as any);
+  function switchCard(newCardId: string, fromRight: boolean) {
+    const newCard = getCardById(newCardId);
+    if (!newCard) return;
+    setCard(newCard);
+    setPriceTab('Raw');
+    setLocalInCollection(false);
+    setLocalInWatchlist(false);
+    setShowAddedBanner(false);
+    setShowWishlistAddedBanner(false);
+    setShowWishlistPanel(false);
+    // Snap to opposite edge then animate to centre — seamless slide-in
+    translateX.value = fromRight ? W : -W;
+    translateX.value = withSpring(0, { damping: 20 });
   }
 
   const panGesture = Gesture.Pan()
     .activeOffsetX([-15, 15])
     .failOffsetY([-20, 20])
     .onUpdate((e) => {
-      if ((e.translationX > 0 && prevCard) || (e.translationX < 0 && nextCard)) {
+      if ((e.translationX > 0 && prevCardId) || (e.translationX < 0 && nextCardId)) {
         translateX.value = e.translationX * 0.6; // slight resistance
       }
     })
     .onEnd((e) => {
       const THRESHOLD = 80;
-      if (e.translationX > THRESHOLD && prevCard) {
+      if (e.translationX > THRESHOLD && prevCardId) {
         translateX.value = withSpring(W, { damping: 20 }, () => {
-          runOnJS(navigateTo)(prevCard.id);
+          runOnJS(switchCard)(prevCardId, false);
         });
-      } else if (e.translationX < -THRESHOLD && nextCard) {
+      } else if (e.translationX < -THRESHOLD && nextCardId) {
         translateX.value = withSpring(-W, { damping: 20 }, () => {
-          runOnJS(navigateTo)(nextCard.id);
+          runOnJS(switchCard)(nextCardId, true);
         });
       } else {
         translateX.value = withSpring(0, { damping: 20 });
@@ -718,12 +732,12 @@ export default function CardDetailScreen() {
           )}
 
           {/* Swipe edge hints — only when prev/next exists */}
-          {prevCard && (
+          {prevCardId && (
             <View style={[styles.swipeHint, styles.swipeHintLeft]}>
               <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
             </View>
           )}
-          {nextCard && (
+          {nextCardId && (
             <View style={[styles.swipeHint, styles.swipeHintRight]}>
               <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
             </View>
