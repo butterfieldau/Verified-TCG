@@ -19,7 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
+  Easing,
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -573,7 +574,8 @@ const dotStyles = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, source } = useLocalSearchParams<{ id: string; source?: string }>();
+  const fromCollection = source === 'collection';
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -603,9 +605,16 @@ export default function CardDetailScreen() {
 
   const translateX = useSharedValue(0);
 
+  const SLIDE_OUT = { duration: 180, easing: Easing.out(Easing.ease) } as const;
+  const SLIDE_IN  = { duration: 220, easing: Easing.out(Easing.cubic) } as const;
+  const SNAP_BACK = { duration: 250, easing: Easing.out(Easing.ease) } as const;
+
   function switchCard(newCardId: string, fromRight: boolean) {
     const newCard = getCardById(newCardId);
     if (!newCard) return;
+    // Snap translateX to the incoming edge immediately (no animation),
+    // then spring the new card into centre — only the card image moves.
+    translateX.value = fromRight ? W : -W;
     setCard(newCard);
     setPriceTab('Raw');
     setLocalInCollection(false);
@@ -613,31 +622,29 @@ export default function CardDetailScreen() {
     setShowAddedBanner(false);
     setShowWishlistAddedBanner(false);
     setShowWishlistPanel(false);
-    // Snap to opposite edge then animate to centre — seamless slide-in
-    translateX.value = fromRight ? W : -W;
-    translateX.value = withSpring(0, { damping: 20 });
+    translateX.value = withTiming(0, SLIDE_IN);
   }
 
   const panGesture = Gesture.Pan()
-    .activeOffsetX([-15, 15])
-    .failOffsetY([-20, 20])
+    .activeOffsetX([-12, 12])
+    .failOffsetY([-15, 15])
     .onUpdate((e) => {
       if ((e.translationX > 0 && prevCardId) || (e.translationX < 0 && nextCardId)) {
-        translateX.value = e.translationX * 0.6; // slight resistance
+        translateX.value = e.translationX; // 1:1 drag, no resistance
       }
     })
     .onEnd((e) => {
-      const THRESHOLD = 80;
+      const THRESHOLD = 60;
       if (e.translationX > THRESHOLD && prevCardId) {
-        translateX.value = withSpring(W, { damping: 20 }, () => {
+        translateX.value = withTiming(W, SLIDE_OUT, () => {
           runOnJS(switchCard)(prevCardId, false);
         });
       } else if (e.translationX < -THRESHOLD && nextCardId) {
-        translateX.value = withSpring(-W, { damping: 20 }, () => {
+        translateX.value = withTiming(-W, SLIDE_OUT, () => {
           runOnJS(switchCard)(nextCardId, true);
         });
       } else {
-        translateX.value = withSpring(0, { damping: 20 });
+        translateX.value = withTiming(0, SNAP_BACK);
       }
     });
 
@@ -688,7 +695,7 @@ export default function CardDetailScreen() {
   const gain7d = card.price.change7d;
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: C.background }, slideStyle]}>
+    <View style={{ flex: 1, backgroundColor: C.background }}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
@@ -712,9 +719,9 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card artwork — swipe left/right here to move between collection cards */}
-        <GestureDetector gesture={panGesture}>
-          <View style={styles.cardStage}>
+        {/* Card artwork — swipe left/right to browse collection cards */}
+        <GestureDetector gesture={fromCollection ? panGesture : Gesture.Pan()}>
+          <Animated.View style={[styles.cardStage, fromCollection ? slideStyle : undefined]}>
             {card.imageUrl ? (
               <ZoomableCardImage
                 imageUrl={card.imageUrl}
@@ -731,22 +738,22 @@ export default function CardDetailScreen() {
               />
             )}
 
-            {/* Swipe edge hints — only when prev/next exists */}
-            {prevCardId && (
+            {/* Swipe edge hints — only visible when opened from Collection */}
+            {fromCollection && prevCardId && (
               <View style={[styles.swipeHint, styles.swipeHintLeft]}>
                 <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
               </View>
             )}
-            {nextCardId && (
+            {fromCollection && nextCardId && (
               <View style={[styles.swipeHint, styles.swipeHintRight]}>
                 <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
               </View>
             )}
-          </View>
+          </Animated.View>
         </GestureDetector>
 
-        {/* Page indicator — only when card is in collection */}
-        {inCollection && (
+        {/* Page indicator — only when opened from Collection */}
+        {fromCollection && inCollection && (
           <PageIndicator total={collectionCards.length} current={currentIndex} />
         )}
 
@@ -979,7 +986,7 @@ export default function CardDetailScreen() {
           onAdd={handleWishlistAdd}
         />
       )}
-    </Animated.View>
+    </View>
   );
 }
 
