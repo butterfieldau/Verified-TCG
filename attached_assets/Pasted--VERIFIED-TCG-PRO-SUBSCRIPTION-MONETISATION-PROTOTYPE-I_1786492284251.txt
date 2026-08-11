@@ -1,0 +1,1195 @@
+# VERIFIED TCG — PRO SUBSCRIPTION & MONETISATION PROTOTYPE
+
+I now want you to design and build the complete **Verified TCG Free vs Pro experience** inside the existing app.
+
+This stage is primarily:
+
+**UI/UX + clickable prototype + subscription architecture preparation**
+
+Do NOT implement real Apple App Store subscriptions, Google Play Billing or payment processing yet.
+
+Do NOT build a complicated production entitlement backend yet.
+
+Use mock subscription state such as:
+
+`free`
+
+and
+
+`pro`
+
+so I can easily switch between them during testing.
+
+The goal is to see exactly how monetisation will feel throughout the app before we connect production subscriptions later.
+
+---
+
+# 1. SUBSCRIPTION MODEL
+
+Verified TCG has two main account levels:
+
+## FREE
+
+Price:
+
+**$0**
+
+Free users should still have a genuinely useful experience across the app.
+
+Do NOT make the Free version feel broken or useless.
+
+Free should include:
+
+* Unlimited collection size
+* Portfolio tracking
+* Card search
+* Basic market pricing
+* Basic graded pricing where available
+* Basic price history
+* Wishlist
+* For Trade
+* For Sale
+* Marketplace browsing
+* Public collector profile
+* Trade QR
+* Basic Trade Match
+* Basic Event Mode participation
+* Set completion tracking
+* Community access
+* Notifications
+* Watchlist
+* Buy / sell / trade functionality
+* **30 card scans per month**
+
+The Free tier is important because free collectors make the marketplace, Trade Match and Event Mode network more valuable.
+
+---
+
+# 2. VERIFIED TCG PRO
+
+Price:
+
+## **$8.99 AUD / month**
+
+Annual option:
+
+## **$79.99 AUD / year**
+
+Show annual pricing as the recommended option.
+
+Display:
+
+**Save 25%**
+
+or calculate/display the exact saving cleanly.
+
+Create the pricing architecture so these values can easily be changed later.
+
+Do not hard-code pricing across multiple screens.
+
+---
+
+# 3. PRO POSITIONING
+
+Primary headline:
+
+# VERIFIED TCG PRO
+
+Suggested supporting line:
+
+**Collect smarter. Trade faster.**
+
+The product should NOT feel like:
+
+“Pay us to use the app.”
+
+Instead:
+
+Free gives collectors the core Verified TCG experience.
+
+Pro unlocks the **power-user intelligence layer**.
+
+---
+
+# 4. MAIN PRO BENEFITS
+
+Focus the subscription around these major benefits.
+
+## UNLIMITED SCANNING
+
+Free:
+
+**30 card scans per month**
+
+Pro:
+
+**Unlimited**
+
+Show scan usage clearly in relevant areas.
+
+Example:
+
+**24 / 30 scans used this month**
+
+Do NOT constantly display this everywhere.
+
+Only show it where useful.
+
+---
+
+# 5. PRICING+
+
+Build a premium feature called:
+
+# Pricing+
+
+Free users receive useful basic pricing.
+
+Pro unlocks deeper information.
+
+Create a beautiful Pricing+ experience.
+
+Example card:
+
+**Pikachu & Zekrom GX**
+
+Current Market Estimate:
+
+**$1,240 AUD**
+
+Then Pro information could include:
+
+### RAW
+
+Market Estimate
+
+7 Day Average
+
+30 Day Average
+
+90 Day Average
+
+Recent Sales
+
+Sales Volume
+
+High
+
+Low
+
+### GRADED
+
+PSA 8
+
+PSA 9
+
+PSA 10
+
+TAG 10
+
+CGC 10
+
+BGS 9.5
+
+BGS 10
+
+Make grading companies dynamic.
+
+Do not hard-code PSA as the only meaningful grader.
+
+---
+
+# 6. ADVANCED PRICE HISTORY
+
+Free users can see approximately:
+
+**30 days**
+
+Pro users can access:
+
+1M
+
+3M
+
+6M
+
+1Y
+
+3Y
+
+5Y
+
+ALL
+
+Use prototype charts and realistic mock data.
+
+When a Free user attempts a Pro range such as 1Y, show a tasteful upgrade prompt.
+
+Do NOT completely replace the chart with a giant paywall.
+
+Allow them to see enough value to understand why upgrading is useful.
+
+---
+
+# 7. RECENT SALES
+
+Create a Pro section for:
+
+**Recent Sales**
+
+Prototype rows such as:
+
+PSA 10
+
+Sold $1,280
+
+Marketplace / Source
+
+2 days ago
+
+TAG 10
+
+Sold $1,175
+
+4 days ago
+
+Raw Near Mint
+
+Sold $760
+
+6 days ago
+
+Eventually multiple pricing providers will be used.
+
+For now use realistic mock data.
+
+---
+
+# 8. EVENT MODE+
+
+Event Mode must remain partially available to Free users because the usefulness of Trade Match depends on having many collectors participating.
+
+## FREE EVENT MODE
+
+Free users can:
+
+* enter an event
+* check in
+* appear in matching
+* browse event vendors
+* use Trade QR
+* view basic event activity
+* receive a limited number of Trade Matches
+
+Example:
+
+**3 Trade Matches available**
+
+Then show:
+
+**14 additional matches with Pro**
+
+---
+
+## PRO EVENT MODE+
+
+Pro unlocks:
+
+* Unlimited Trade Matches
+* Wishlist Nearby
+* People Want Your Cards
+* Advanced event search
+* I'm Looking For
+* I Have This
+* Wanted Board
+* Smart Trade suggestions
+* Complete My Set at Event
+* Event price alerts
+* Advanced event filters
+* Full nearby card availability
+
+Example teaser:
+
+🔥 **17 collectors here have cards you want**
+
+🤝 **12 Trade Matches**
+
+👀 **23 collectors want your cards**
+
+💰 **8 wishlist cards are available**
+
+This should be one of the strongest Pro upgrade moments.
+
+---
+
+# 9. TRADE MATCH+
+
+Free users should still experience Trade Match.
+
+Example Free:
+
+**You have a Trade Match**
+
+They have something you want.
+
+You have something they want.
+
+Free users can access a limited number.
+
+---
+
+## PRO TRADE MATCH+
+
+Unlock:
+
+* Unlimited Trade Matches
+* Match percentages
+* Suggested trades
+* Multi-card matching
+* Cash balancing
+* Advanced matching filters
+* Priority wishlist matches
+* Event matching
+* Instant Trade Match alerts
+
+Example:
+
+# 98% MATCH
+
+YOU OFFER
+
+Charizard TAG 10
+
+$1,150
+
+*
+
+$50 cash
+
+THEY OFFER
+
+Pikachu & Zekrom GX
+
+PSA 10
+
+$1,200
+
+Estimated Balance:
+
+**$0**
+
+Button:
+
+**Build Trade**
+
+---
+
+# 10. COLLECTION INSIGHTS
+
+Create a Pro feature:
+
+# Collection Insights
+
+Free can see:
+
+Current collection value
+
+Basic movement
+
+Total cards
+
+Pro should unlock deeper analytics.
+
+Example:
+
+Portfolio Value
+
+$24,850
+
+Total Invested
+
+$18,420
+
+Estimated Gain
+
++$6,430
+
++34.9%
+
+Then show:
+
+* Best performer
+* Biggest decline
+* Most valuable card
+* Fastest-growing card
+* Average purchase price
+* Raw vs graded
+* TCG allocation
+* Set allocation
+* Grading-company allocation
+* Realised gains
+* Unrealised gains
+* Historical portfolio chart
+
+Keep the design collector-friendly.
+
+Do not make it look like a professional stock trading terminal.
+
+---
+
+# 11. SMART ALERTS
+
+Free:
+
+Allow approximately:
+
+**5 active price alerts**
+
+Pro:
+
+**Unlimited Smart Alerts**
+
+Allow alerts such as:
+
+Card falls below target price
+
+Card rises above target price
+
+New marketplace listing
+
+New Trade Match
+
+Card available at an event
+
+Wishlist card appears
+
+Example:
+
+# Price Alert
+
+Pikachu & Zekrom GX PSA 10
+
+Target:
+
+$1,100
+
+New listing:
+
+**$1,050**
+
+8% below recent market
+
+---
+
+# 12. CUSTOM APP ICONS
+
+Create a Pro-only customisation screen.
+
+Possible prototype app icons:
+
+Original Verified Red
+
+Verified Black
+
+Verified White
+
+Verified Gold
+
+Stealth
+
+Event Edition
+
+Founding Member
+
+Some can be marked:
+
+**PRO**
+
+or
+
+**LIMITED**
+
+Do NOT actually implement operating-system icon switching unless it is simple and safe.
+
+The main purpose right now is to design the feature.
+
+---
+
+# 13. PROFILE CUSTOMISATION
+
+Pro users can access:
+
+* Profile backgrounds
+* Collector themes
+* Pro badge
+* Special event badges
+* Custom profile styling
+* Limited profile frames
+
+Keep it tasteful.
+
+Do not make profiles look like gaming forums.
+
+---
+
+# 14. VERIFIED TCG PRO BADGE
+
+Create a premium but subtle:
+
+**PRO**
+
+profile badge.
+
+Do not confuse this with:
+
+Verified Account
+
+Verified Seller
+
+Verified Ownership
+
+The Pro badge simply indicates subscription membership.
+
+---
+
+# 15. VERIFIED DROPS / GIVEAWAYS
+
+Create a new area:
+
+# VERIFIED DROPS
+
+This can include:
+
+* card giveaways
+* booster boxes
+* grading vouchers
+* TCG store vouchers
+* event tickets
+* partner prizes
+* limited merchandise
+
+Show example cards:
+
+### August Drop
+
+PSA 10 Pikachu
+
+Ends in:
+
+4d 12h
+
+### TAG Grading Pack
+
+5 grading vouchers
+
+### TCXPO Sydney
+
+2 × VIP passes
+
+Free users can still participate in giveaways that are open to everyone.
+
+Pro members may receive:
+
+* Pro-exclusive giveaways
+* bonus eligible entries where legally appropriate
+* early access
+* partner promotions
+* exclusive drops
+
+DO NOT design anything that looks like gambling.
+
+Do not require users to purchase entries.
+
+This is a membership/promotional benefit concept.
+
+---
+
+# 16. COMMUNITY PRO BENEFITS
+
+Create prototype Pro community benefits.
+
+Possible items:
+
+* Pro badge
+* Pro-only collector channel
+* early feature access
+* partner offers
+* exclusive drops
+* event perks
+* priority support
+
+Keep general Verified TCG community access FREE.
+
+Do NOT create a dead Free community simply to paywall it.
+
+---
+
+# 17. PARTNER PERKS
+
+Create a section:
+
+# PRO PERKS
+
+Example mock partners:
+
+Grading companies
+
+Card stores
+
+Event organisers
+
+Card protection brands
+
+Display companies
+
+Accessories companies
+
+Example cards:
+
+**10% off grading submission**
+
+**Free express shipping over $X**
+
+**Early TCXPO ticket access**
+
+**Card display discount**
+
+Use generic placeholder partner brands unless real partnerships are provided later.
+
+---
+
+# 18. FOUNDING MEMBER
+
+Create a launch concept:
+
+# VERIFIED TCG FOUNDING MEMBER
+
+The first specified number of qualifying Pro subscribers may receive a permanent Founding Member badge.
+
+For prototype use:
+
+**First 5,000 Pro Members**
+
+Benefits shown could include:
+
+* Founding Member badge
+* Founding Member app icon
+* profile theme
+* member number
+* launch recognition
+
+Example:
+
+**Founding Member #00381**
+
+This status should look collectible and desirable.
+
+Do NOT make claims about permanent paid benefits.
+
+The badge/status concept can remain while active Pro features still require an active subscription.
+
+---
+
+# 19. SUBSCRIPTION PAGE
+
+Create a full:
+
+**Verified TCG Pro**
+
+subscription screen.
+
+Top:
+
+# Collect smarter.
+
+# Trade faster.
+
+Then pricing toggle:
+
+MONTHLY
+
+ANNUAL
+
+Annual should be visually recommended.
+
+Monthly:
+
+**$8.99 AUD**
+
+Annual:
+
+**$79.99 AUD**
+
+Then highlight approximately six major reasons to upgrade:
+
+## Unlimited Scanning
+
+Scan your entire collection.
+
+## Pricing+
+
+Deep raw and graded pricing intelligence.
+
+## Event Mode+
+
+Unlock every match and opportunity around you.
+
+## Trade Match+
+
+Smart trade suggestions and unlimited matching.
+
+## Smart Alerts
+
+Know when cards you're hunting appear.
+
+## Pro Identity
+
+Exclusive icons, profiles, perks and drops.
+
+CTA:
+
+# START 7-DAY FREE TRIAL
+
+Secondary text:
+
+**Keep using Verified TCG Free anytime.**
+
+Do not implement the actual trial yet.
+
+This is prototype UI.
+
+---
+
+# 20. FEATURE COMPARISON
+
+Create a clean Free vs Pro comparison.
+
+Do NOT copy Collectr's design.
+
+Use Verified TCG's own premium design language.
+
+Suggested structure:
+
+| FEATURE             | FREE      | PRO               |
+| ------------------- | --------- | ----------------- |
+| Collection          | Unlimited | Unlimited         |
+| Portfolio           | Basic     | Advanced          |
+| Search              | Full      | Full              |
+| Marketplace         | Full      | Full              |
+| Wishlist            | Full      | Full              |
+| For Sale / Trade    | Full      | Full              |
+| Card Scanning       | 30/month  | Unlimited         |
+| Price History       | 30 days   | Full              |
+| Pricing+            | Limited   | Full              |
+| Graded Data         | Basic     | Advanced          |
+| Recent Sales        | Limited   | Full              |
+| Trade Match         | Limited   | Unlimited + Smart |
+| Event Mode          | Basic     | Event Mode+       |
+| Smart Alerts        | 5         | Unlimited         |
+| Collection Insights | Basic     | Advanced          |
+| Export              | Locked    | Included          |
+| Custom App Icons    | Locked    | Included          |
+| Profile Themes      | Locked    | Included          |
+| Pro Badge           | Locked    | Included          |
+| Pro Giveaways       | Locked    | Included          |
+| Partner Perks       | Locked    | Included          |
+
+Make this mobile-friendly.
+
+Do not literally render a desktop spreadsheet table on phones.
+
+---
+
+# 21. CONTEXTUAL UPGRADE MOMENTS
+
+Do NOT constantly show:
+
+UPGRADE TO PRO
+
+throughout the interface.
+
+Only show subscription prompts where the user naturally encounters a limit or premium feature.
+
+Examples:
+
+## Scanner
+
+**29 / 30 scans used**
+
+At 30:
+
+**You've used your 30 free scans this month.**
+
+CTA:
+
+**Unlock Unlimited Scanning**
+
+---
+
+## Pricing
+
+User taps:
+
+**1Y**
+
+Show:
+
+**Unlock full price history with Verified TCG Pro**
+
+Allow them to preview part of the feature.
+
+---
+
+## Event Mode
+
+Show:
+
+**3 matches available**
+
+and:
+
+**+14 more Trade Matches with Pro**
+
+CTA:
+
+**See All Matches**
+
+---
+
+## Trade Match
+
+Show a normal match.
+
+Blur/lock advanced information such as:
+
+Smart trade suggestion
+
+Advanced value comparison
+
+Other possible combinations
+
+CTA:
+
+**Unlock Trade Match+**
+
+---
+
+## Alerts
+
+Free user reaches 5 alerts:
+
+**You've reached your free alert limit.**
+
+CTA:
+
+**Unlock Unlimited Alerts**
+
+---
+
+# 22. PRO PREVIEW COMPONENT
+
+Create a reusable component such as:
+
+`ProFeaturePreview`
+
+It should support:
+
+* feature title
+* short explanation
+* preview content
+* locked section
+* upgrade CTA
+
+Do not recreate upgrade UI separately on every screen.
+
+---
+
+# 23. ENTITLEMENT ARCHITECTURE
+
+Prepare clean frontend entitlement logic.
+
+Example:
+
+`subscriptionTier`
+
+values:
+
+`free`
+
+`pro`
+
+And feature flags such as:
+
+`canUseUnlimitedScanner`
+
+`canViewAdvancedPricing`
+
+`canUseEventModePlus`
+
+`canUseTradeMatchPlus`
+
+`canUseUnlimitedAlerts`
+
+`canExportCollection`
+
+`canUseCustomIcons`
+
+Do not scatter:
+
+`if user.pro`
+
+everywhere.
+
+Create a central entitlement/service layer so production subscription logic can replace the mock state later.
+
+---
+
+# 24. DEVELOPMENT / DEMO SWITCH
+
+For development only, add an easy way to switch the test user between:
+
+**FREE**
+
+and
+
+**PRO**
+
+so I can inspect both experiences.
+
+This control must be clearly development-only and easy to remove before production.
+
+---
+
+# 25. SCAN LIMIT ARCHITECTURE
+
+Free limit:
+
+**30 scans per month**
+
+Create prototype data for:
+
+scansUsed
+
+scanLimit
+
+remainingScans
+
+billing/reset date
+
+Example:
+
+24 / 30
+
+Next reset:
+
+1 September
+
+Do not build production server enforcement yet.
+
+But structure it so server-side entitlement enforcement can be added later.
+
+---
+
+# 26. DESIGN DIRECTION
+
+This monetisation UI must match the existing Verified TCG design system.
+
+Use:
+
+* black
+* near-black
+* white
+* Verified red
+* restrained premium highlights
+
+Do NOT copy Collectr's gold design.
+
+Verified TCG should have its own identity.
+
+Subscription pages should feel premium and desirable, but still connected to the rest of the app.
+
+Do not turn Pro into an unrelated gold-themed product.
+
+---
+
+# 27. MOST IMPORTANT PRODUCT RULE
+
+Do not paywall the network.
+
+Free collectors must still be able to:
+
+Collect
+
+Search
+
+Wishlist
+
+Trade
+
+Sell
+
+Participate in events
+
+Use marketplace
+
+Interact with other collectors
+
+This creates the network.
+
+Pro should primarily monetise:
+
+**INTELLIGENCE**
+
+**POWER TOOLS**
+
+**UNLIMITED USAGE**
+
+**ADVANCED MATCHING**
+
+**DEEPER PRICING**
+
+**CUSTOMISATION**
+
+**PERKS**
+
+---
+
+# 28. PROTOTYPE USER JOURNEY
+
+I want to be able to test this flow:
+
+Start as FREE
+
+↓
+
+Use the app normally
+
+↓
+
+Scan cards
+
+↓
+
+Reach 29/30 scans
+
+↓
+
+See remaining scan indicator
+
+↓
+
+Reach limit
+
+↓
+
+View Pro upgrade
+
+↓
+
+Close upgrade and continue using Free
+
+↓
+
+Open Card Detail
+
+↓
+
+Try advanced Pricing+
+
+↓
+
+See Pro preview
+
+↓
+
+Open Event Mode
+
+↓
+
+See 3 Free Trade Matches
+
+↓
+
+See "+14 with Pro"
+
+↓
+
+Open subscription page
+
+↓
+
+Switch development account to PRO
+
+↓
+
+Return to app
+
+↓
+
+All Pro features visibly unlock
+
+↓
+
+Unlimited scans
+
+↓
+
+Full Pricing+
+
+↓
+
+Full Event Mode+
+
+↓
+
+Trade Match+
+
+↓
+
+Custom icons
+
+↓
+
+Verified Drops
+
+The experience must feel natural and not aggressive.
+
+---
+
+# 29. DO NOT BUILD YET
+
+Do NOT implement:
+
+Apple StoreKit purchases
+
+Google Play Billing
+
+RevenueCat
+
+Stripe subscriptions
+
+Production receipt validation
+
+Production subscription webhooks
+
+Production entitlement database
+
+Real giveaway systems
+
+Real partner integrations
+
+Production server scan enforcement
+
+Production billing management
+
+These will be handled during the real backend/Codex phase.
+
+For now:
+
+**DESIGN IT**
+
+**MAKE IT CLICKABLE**
+
+**MAKE FREE VS PRO EASY TO TEST**
+
+**PREPARE CLEAN ARCHITECTURE FOR REAL SUBSCRIPTIONS LATER**
