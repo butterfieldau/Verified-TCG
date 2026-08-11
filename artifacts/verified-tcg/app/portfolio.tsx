@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Platform,
   Pressable,
@@ -11,60 +11,64 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
+import { getItemCurrentValue } from '@/services/collection';
 import colors from '@/constants/colors';
+import type { CollectionItem, TCGId } from '@/types';
 
 const C = colors.dark;
 
-// ── Allocation mock data ─────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const TCG_ALLOCATION = [
-  { label: 'Pokémon', pct: 68, color: '#FFCC00', value: 16898 },
-  { label: 'One Piece', pct: 18, color: '#EF4444', value: 4473 },
-  { label: 'MTG', pct: 14, color: '#3B82F6', value: 3479 },
-];
+const TCG_META: Record<TCGId, { label: string; color: string }> = {
+  pokemon:     { label: 'Pokémon',     color: '#FFCC00' },
+  onepiece:    { label: 'One Piece',   color: '#EF4444' },
+  magic:       { label: 'MTG',         color: '#3B82F6' },
+  yugioh:      { label: 'Yu-Gi-Oh',   color: '#9333EA' },
+  lorcana:     { label: 'Lorcana',    color: '#EC4899' },
+  dragonball:  { label: 'Dragon Ball', color: '#F97316' },
+};
 
-const CONDITION_ALLOCATION = [
-  { label: 'Graded', pct: 72, color: C.primary, value: 17892 },
-  { label: 'Raw', pct: 28, color: C.mutedForeground, value: 6958 },
-];
+const GRADE_CO_META: Record<string, { color: string }> = {
+  PSA: { color: '#FF1E2D' },
+  BGS: { color: '#D4AF37' },
+  CGC: { color: '#4A90D9' },
+};
 
-const GRADE_CO_ALLOCATION = [
-  { label: 'PSA', pct: 54, color: '#FF1E2D', value: 13419 },
-  { label: 'BGS', pct: 28, color: '#D4AF37', value: 6958 },
-  { label: 'CGC', pct: 18, color: '#4A90D9', value: 4473 },
-];
+type AllocRow = { label: string; pct: number; color: string; value: number };
 
-const VALUE_TIER_ALLOCATION = [
-  { label: '$1k+', pct: 45, color: '#22C55E', value: 11183 },
-  { label: '$500–$1k', pct: 30, color: '#3B82F6', value: 7455 },
-  { label: '$100–$500', pct: 18, color: '#F59E0B', value: 4473 },
-  { label: 'Under $100', pct: 7, color: C.mutedForeground, value: 1739 },
-];
-
-const TOP_PERFORMERS = [
-  { name: 'Umbreon ex PSA 10', gain: 42.3, value: 1480, change: '+$437' },
-  { name: 'Monkey D. Luffy CGC 10', gain: 28.1, value: 95, change: '+$21' },
-  { name: 'Charizard ex PSA 10', gain: 22.6, value: 580, change: '+$107' },
-];
+function buildAllocation(
+  items: CollectionItem[],
+  totalValue: number,
+  groupFn: (item: CollectionItem) => { key: string; label: string; color: string } | null,
+): AllocRow[] {
+  const map = new Map<string, { label: string; color: string; value: number }>();
+  for (const item of items) {
+    const g = groupFn(item);
+    if (!g) continue;
+    const v = getItemCurrentValue(item) * item.quantity;
+    const existing = map.get(g.key);
+    if (existing) {
+      existing.value += v;
+    } else {
+      map.set(g.key, { label: g.label, color: g.color, value: v });
+    }
+  }
+  const rows: AllocRow[] = [...map.values()]
+    .map(r => ({
+      label: r.label,
+      color: r.color,
+      value: r.value,
+      pct: totalValue > 0 ? Math.round((r.value / totalValue) * 100) : 0,
+    }))
+    .filter(r => r.pct > 0)
+    .sort((a, b) => b.value - a.value);
+  return rows;
+}
 
 type AllocTab = 'tcg' | 'condition' | 'grade_co' | 'value_tier';
 
-const ALLOC_TABS: { label: string; value: AllocTab }[] = [
-  { label: 'TCG', value: 'tcg' },
-  { label: 'Raw vs Graded', value: 'condition' },
-  { label: 'Grading Co.', value: 'grade_co' },
-  { label: 'Value Tier', value: 'value_tier' },
-];
-
-function getAllocData(tab: AllocTab) {
-  if (tab === 'tcg') return TCG_ALLOCATION;
-  if (tab === 'condition') return CONDITION_ALLOCATION;
-  if (tab === 'grade_co') return GRADE_CO_ALLOCATION;
-  return VALUE_TIER_ALLOCATION;
-}
-
 // ── Bar allocation chart ─────────────────────────────────────────────────────
-function AllocationBar({ data }: { data: typeof TCG_ALLOCATION }) {
+function AllocationBar({ data }: { data: AllocRow[] }) {
   return (
     <View style={styles.allocBar}>
       {data.map((d, i) => (
@@ -87,7 +91,7 @@ function AllocationBar({ data }: { data: typeof TCG_ALLOCATION }) {
   );
 }
 
-function AllocationLegend({ data }: { data: typeof TCG_ALLOCATION }) {
+function AllocationLegend({ data }: { data: AllocRow[] }) {
   return (
     <View style={styles.legend}>
       {data.map(d => (
@@ -102,14 +106,108 @@ function AllocationLegend({ data }: { data: typeof TCG_ALLOCATION }) {
   );
 }
 
+const ALLOC_TABS: { label: string; value: AllocTab }[] = [
+  { label: 'TCG', value: 'tcg' },
+  { label: 'Raw vs Graded', value: 'condition' },
+  { label: 'Grading Co.', value: 'grade_co' },
+  { label: 'Value Tier', value: 'value_tier' },
+];
+
 export default function PortfolioScreen() {
   const insets = useSafeAreaInsets();
-  const { portfolio } = useApp();
+  const { portfolio, collection } = useApp();
   const [allocTab, setAllocTab] = useState<AllocTab>('tcg');
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const isPositive = portfolio.totalGain >= 0;
+  const totalValue = portfolio.totalValue;
+
+  // ── Derived allocation data ────────────────────────────────────────────────
+
+  const tcgAllocation = useMemo(() => buildAllocation(collection, totalValue, item => {
+    const meta = TCG_META[item.card.tcg];
+    return meta ? { key: item.card.tcg, label: meta.label, color: meta.color } : null;
+  }), [collection, totalValue]);
+
+  const conditionAllocation = useMemo(() => buildAllocation(collection, totalValue, item => {
+    const isGraded = !!item.grading;
+    return isGraded
+      ? { key: 'graded', label: 'Graded', color: C.primary }
+      : { key: 'raw', label: 'Raw', color: C.mutedForeground };
+  }), [collection, totalValue]);
+
+  const gradeCoAllocation = useMemo(() => buildAllocation(collection, totalValue, item => {
+    if (!item.grading) return null;
+    const co = item.grading.company;
+    const meta = GRADE_CO_META[co] ?? { color: C.mutedForeground };
+    return { key: co, label: co, color: meta.color };
+  }), [collection, totalValue]);
+
+  const valueTierAllocation = useMemo((): AllocRow[] => {
+    const tiers = [
+      { key: '$1k+',      label: '$1k+',       color: '#22C55E', min: 1000, max: Infinity },
+      { key: '$500–$1k',  label: '$500–$1k',   color: '#3B82F6', min: 500,  max: 1000 },
+      { key: '$100–$500', label: '$100–$500',  color: '#F59E0B', min: 100,  max: 500 },
+      { key: '<$100',     label: 'Under $100', color: C.mutedForeground, min: 0, max: 100 },
+    ];
+    const buckets = new Map(tiers.map(t => [t.key, { ...t, value: 0 }]));
+    for (const item of collection) {
+      const price = getItemCurrentValue(item);
+      const v = price * item.quantity;
+      const tier = tiers.find(t => price >= t.min && price < t.max);
+      if (tier) {
+        const b = buckets.get(tier.key)!;
+        b.value += v;
+      }
+    }
+    return [...buckets.values()]
+      .map(b => ({ label: b.label, color: b.color, value: b.value, pct: totalValue > 0 ? Math.round((b.value / totalValue) * 100) : 0 }))
+      .filter(r => r.pct > 0);
+  }, [collection, totalValue]);
+
+  function getAllocData(tab: AllocTab): AllocRow[] {
+    if (tab === 'tcg') return tcgAllocation;
+    if (tab === 'condition') return conditionAllocation;
+    if (tab === 'grade_co') return gradeCoAllocation;
+    return valueTierAllocation;
+  }
+
   const allocData = getAllocData(allocTab);
+
+  // ── Top performers ─────────────────────────────────────────────────────────
+  const topPerformers = useMemo(() => {
+    return collection
+      .map(item => {
+        const currentValue = getItemCurrentValue(item) * item.quantity;
+        const costBasis = item.acquiredPrice * item.quantity;
+        const gainAbs = currentValue - costBasis;
+        const gainPct = costBasis > 0 ? (gainAbs / costBasis) * 100 : 0;
+        const grade = item.grading ? `${item.grading.company} ${item.grading.grade}` : null;
+        const label = grade ? `${item.card.name} ${grade}` : item.card.name;
+        return { name: label, gain: gainPct, value: currentValue, change: gainAbs };
+      })
+      .filter(p => p.gain > 0)
+      .sort((a, b) => b.gain - a.gain)
+      .slice(0, 3);
+  }, [collection]);
+
+  // ── Largest holdings ───────────────────────────────────────────────────────
+  const largestHoldings = useMemo(() => {
+    return collection
+      .map(item => {
+        const value = getItemCurrentValue(item) * item.quantity;
+        const grade = item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Raw';
+        return { name: item.card.name, grade, value, pct: totalValue > 0 ? (value / totalValue) * 100 : 0 };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 4);
+  }, [collection, totalValue]);
+
+  // ── Graded count ───────────────────────────────────────────────────────────
+  const gradedCount = useMemo(
+    () => collection.filter(item => !!item.grading).reduce((sum, item) => sum + item.quantity, 0),
+    [collection],
+  );
 
   return (
     <ScrollView
@@ -170,7 +268,7 @@ export default function PortfolioScreen() {
         </View>
         <View style={[styles.statCard, { backgroundColor: C.card }]}>
           <Text style={styles.statLabel}>GRADED</Text>
-          <Text style={styles.statVal}>4</Text>
+          <Text style={styles.statVal}>{gradedCount}</Text>
           <Text style={styles.statSub}>PSA / BGS / CGC</Text>
         </View>
       </View>
@@ -178,18 +276,20 @@ export default function PortfolioScreen() {
       {/* Best performers */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Top Performers</Text>
-        {TOP_PERFORMERS.map((p, i) => (
+        {topPerformers.length === 0 ? (
+          <Text style={styles.emptyText}>No gains yet — add cards to see your top performers.</Text>
+        ) : topPerformers.map((p, i) => (
           <View key={i} style={[styles.performerRow, { backgroundColor: C.card }]}>
             <View style={styles.performerRank}>
               <Text style={styles.performerRankText}>{i + 1}</Text>
             </View>
             <View style={styles.performerInfo}>
               <Text style={styles.performerName} numberOfLines={1}>{p.name}</Text>
-              <Text style={styles.performerValue}>${p.value.toLocaleString('en-AU')}</Text>
+              <Text style={styles.performerValue}>${p.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
             </View>
             <View style={styles.performerRight}>
-              <Text style={[styles.performerGain, { color: C.positive }]}>+{p.gain}%</Text>
-              <Text style={[styles.performerAbs, { color: C.positive }]}>{p.change}</Text>
+              <Text style={[styles.performerGain, { color: C.positive }]}>+{p.gain.toFixed(1)}%</Text>
+              <Text style={[styles.performerAbs, { color: C.positive }]}>+${p.change.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
             </View>
           </View>
         ))}
@@ -226,20 +326,15 @@ export default function PortfolioScreen() {
       {/* Largest holdings */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Largest Holdings</Text>
-        {[
-          { name: 'Umbreon ex', grade: 'PSA 10', pct: 5.95, value: 1480 },
-          { name: 'Charizard ex', grade: 'PSA 10', pct: 2.33, value: 580 },
-          { name: 'Rayquaza VMAX', grade: 'BGS 9.5', pct: 2.90, value: 720 },
-          { name: 'Luffy Manga', grade: 'CGC 10', pct: 0.38, value: 95 },
-        ].map((h, i) => (
+        {largestHoldings.map((h, i) => (
           <View key={i} style={[styles.holdingRow, { backgroundColor: C.card }]}>
             <View style={styles.holdingInfo}>
               <Text style={styles.holdingName}>{h.name}</Text>
               <Text style={styles.holdingGrade}>{h.grade}</Text>
             </View>
             <View style={styles.holdingRight}>
-              <Text style={styles.holdingValue}>${h.value.toLocaleString('en-AU')}</Text>
-              <Text style={styles.holdingPct}>{h.pct}% of portfolio</Text>
+              <Text style={styles.holdingValue}>${h.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
+              <Text style={styles.holdingPct}>{h.pct.toFixed(1)}% of portfolio</Text>
             </View>
           </View>
         ))}
@@ -354,6 +449,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   allocTabText: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
+  emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 8 },
   allocCard: { borderRadius: 16, padding: 18 },
   allocBar: {
     flexDirection: 'row',

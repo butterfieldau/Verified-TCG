@@ -3,6 +3,7 @@ import React, {
   useContext,
   useState,
   useCallback,
+  useMemo,
   type ReactNode,
 } from 'react';
 import type {
@@ -15,7 +16,7 @@ import type {
   User,
   PortfolioSummary,
 } from '@/types';
-import { MOCK_COLLECTION, MOCK_PORTFOLIO } from '@/services/collection';
+import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 
 interface AppState {
@@ -102,11 +103,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
+  const portfolio = useMemo<PortfolioSummary>(() => {
+    const totalValue = collection.reduce(
+      (sum, item) => sum + getItemCurrentValue(item) * item.quantity,
+      0,
+    );
+    const totalCost = collection.reduce(
+      (sum, item) => sum + item.acquiredPrice * item.quantity,
+      0,
+    );
+    const totalGain = totalValue - totalCost;
+    const totalGainPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
+    const cardCount = collection.reduce((sum, item) => sum + item.quantity, 0);
+    const uniqueCardCount = new Set(collection.map(item => item.cardId)).size;
+
+    return {
+      totalValue,
+      totalCost,
+      totalGain,
+      totalGainPercent,
+      currency: 'AUD',
+      cardCount,
+      uniqueCardCount,
+      // Keep static chart history — no real time-series data available in mock
+      chartData: MOCK_PORTFOLIO.chartData,
+    };
+  }, [collection]);
+
   return (
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, portfolio: MOCK_PORTFOLIO, collectionFilters,
+        collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         signIn, signOut,
         addToCollection, removeFromCollection,

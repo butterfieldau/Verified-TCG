@@ -14,7 +14,6 @@ import { Logo } from '@/components/Logo';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { useApp } from '@/context/AppContext';
 import { getMarketMovers, getTrendingCards } from '@/services/market';
-import { getCollection } from '@/services/collection';
 import colors from '@/constants/colors';
 import type { PortfolioRange } from '@/types';
 
@@ -37,9 +36,8 @@ function getGreeting() {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user, portfolio, portfolioRange, setPortfolioRange } = useApp();
+  const { user, portfolio, portfolioRange, setPortfolioRange, collection } = useApp();
   const movers = getMarketMovers();
-  const collection = getCollection();
   const trending = getTrendingCards();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
