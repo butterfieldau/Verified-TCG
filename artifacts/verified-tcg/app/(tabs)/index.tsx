@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Platform,
   Pressable,
@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -18,6 +19,10 @@ import { getMarketMovers, getTrendingCards } from '@/services/market';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import colors from '@/constants/colors';
 import type { PortfolioRange } from '@/types';
+
+// Storage keys
+const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
+const TRADE_MATCHES_DISMISSED_KEY = '@verified_tcg/trade_matches_dismissed_count';
 
 const C = colors.dark;
 const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
@@ -46,8 +51,47 @@ export default function HomeScreen() {
     await refreshPrices();
   }, [refreshPrices]);
 
-  const [eventBannerDismissed, setEventBannerDismissed] = useState(false);
-  const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState(false);
+  // `null` = not yet read from storage; `false` = visible; `true` = dismissed
+  const [eventBannerDismissed, setEventBannerDismissed] = useState<boolean | null>(null);
+  const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState<boolean | null>(null);
+
+  // Load persisted dismissed states on mount — keep banners hidden until resolved
+  useEffect(() => {
+    async function loadDismissed() {
+      try {
+        const [dismissedEventId, dismissedMatchCount] = await Promise.all([
+          AsyncStorage.getItem(EVENT_BANNER_DISMISSED_KEY),
+          AsyncStorage.getItem(TRADE_MATCHES_DISMISSED_KEY),
+        ]);
+
+        // Event banner: dismissed only if the stored event ID matches the current event
+        setEventBannerDismissed(dismissedEventId === MOCK_EVENT.id);
+
+        // Trade matches: dismissed only if match count hasn't grown since last dismissal
+        if (dismissedMatchCount !== null) {
+          const storedCount = parseInt(dismissedMatchCount, 10);
+          setTradeMatchesDismissed(!isNaN(storedCount) && MOCK_TRADE_MATCHES.length <= storedCount);
+        } else {
+          setTradeMatchesDismissed(false);
+        }
+      } catch {
+        // Storage read failed — show banners by default
+        setEventBannerDismissed(false);
+        setTradeMatchesDismissed(false);
+      }
+    }
+    loadDismissed();
+  }, []);
+
+  const dismissEventBanner = useCallback(() => {
+    setEventBannerDismissed(true);
+    AsyncStorage.setItem(EVENT_BANNER_DISMISSED_KEY, MOCK_EVENT.id).catch(() => {});
+  }, []);
+
+  const dismissTradeMatches = useCallback(() => {
+    setTradeMatchesDismissed(true);
+    AsyncStorage.setItem(TRADE_MATCHES_DISMISSED_KEY, String(MOCK_TRADE_MATCHES.length)).catch(() => {});
+  }, []);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -123,7 +167,7 @@ export default function HomeScreen() {
       </Pressable>
 
       {/* ── Live Event Banner ── */}
-      {MOCK_EVENT.isActive && !eventBannerDismissed && (
+      {MOCK_EVENT.isActive && eventBannerDismissed === false && (
         <Pressable
           onPress={() => router.push('/event-mode' as any)}
           style={styles.eventBanner}
@@ -137,7 +181,7 @@ export default function HomeScreen() {
                 <Text style={styles.eventLiveText}>LIVE EVENT</Text>
               </View>
               <Pressable
-                onPress={e => { e.stopPropagation(); setEventBannerDismissed(true); }}
+                onPress={e => { e.stopPropagation(); dismissEventBanner(); }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 style={styles.dismissBtn}
               >
@@ -174,7 +218,7 @@ export default function HomeScreen() {
       )}
 
       {/* ── Trade Matches Strip ── */}
-      {!tradeMatchesDismissed && (
+      {tradeMatchesDismissed === false && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
@@ -188,7 +232,7 @@ export default function HomeScreen() {
                 <Text style={styles.seeAll}>See all</Text>
               </Pressable>
               <Pressable
-                onPress={() => setTradeMatchesDismissed(true)}
+                onPress={() => dismissTradeMatches()}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 style={{ marginLeft: 8 }}
               >

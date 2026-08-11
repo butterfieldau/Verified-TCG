@@ -19,9 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withTiming,
-  Easing,
-  runOnJS,
+  withSpring,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
@@ -31,7 +29,7 @@ import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
-import type { CollectionItem, WatchlistItem, Card } from '@/types';
+import type { CollectionItem, WatchlistItem } from '@/types';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -500,82 +498,8 @@ const imgStyles = StyleSheet.create({
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-// ─── Page indicator ───────────────────────────────────────────────────────────
-
-const MAX_DOTS = 7;
-
-interface PageIndicatorProps {
-  total: number;
-  current: number;
-}
-
-function PageIndicator({ total, current }: PageIndicatorProps) {
-  if (total <= 1) return null;
-
-  // Show at most MAX_DOTS dots, centred on the current index
-  const half = Math.floor(MAX_DOTS / 2);
-  let start = Math.max(0, current - half);
-  const end = Math.min(total - 1, start + MAX_DOTS - 1);
-  start = Math.max(0, end - MAX_DOTS + 1);
-
-  const dots: number[] = [];
-  for (let i = start; i <= end; i++) dots.push(i);
-
-  return (
-    <View style={dotStyles.row}>
-      {dots.map(i => (
-        <View
-          key={i}
-          style={[
-            dotStyles.dot,
-            i === current
-              ? dotStyles.dotActive
-              : dotStyles.dotInactive,
-            // smaller dots near the edges when window is shifted
-            (i === start && start > 0) || (i === end && end < total - 1)
-              ? dotStyles.dotEdge
-              : null,
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
-
-const dotStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  dot: {
-    borderRadius: 99,
-  },
-  dotActive: {
-    width: 20,
-    height: 5,
-    backgroundColor: C.primary,
-  },
-  dotInactive: {
-    width: 5,
-    height: 5,
-    backgroundColor: C.border,
-  },
-  dotEdge: {
-    width: 4,
-    height: 4,
-    opacity: 0.5,
-  },
-});
-
-// ─── Main screen ──────────────────────────────────────────────────────────────
-
 export default function CardDetailScreen() {
-  const { id, source } = useLocalSearchParams<{ id: string; source?: string }>();
-  const fromCollection = source === 'collection';
+  const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -585,72 +509,13 @@ export default function CardDetailScreen() {
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
-  const [card, setCard] = useState(
-    () => getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!,
-  );
+  const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
   const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
   const hasPassport = getCardPassport(card.id) !== null;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
-
-  // ── Swipe navigation between collection cards ──────────────────────────────
-  // Swiping updates card state in-place — no navigation, so back always works.
-  const collectionCards = collection.map(item => item.card);
-  const currentIndex = collectionCards.findIndex(c => c.id === card.id);
-  const prevCardId = currentIndex > 0 ? collectionCards[currentIndex - 1].id : null;
-  const nextCardId = currentIndex < collectionCards.length - 1 ? collectionCards[currentIndex + 1].id : null;
-  const inCollection = currentIndex !== -1;
-
-  const translateX = useSharedValue(0);
-
-  const SLIDE_OUT = { duration: 180, easing: Easing.out(Easing.ease) } as const;
-  const SLIDE_IN  = { duration: 220, easing: Easing.out(Easing.cubic) } as const;
-  const SNAP_BACK = { duration: 250, easing: Easing.out(Easing.ease) } as const;
-
-  function switchCard(newCardId: string, fromRight: boolean) {
-    const newCard = getCardById(newCardId);
-    if (!newCard) return;
-    // Snap translateX to the incoming edge immediately (no animation),
-    // then spring the new card into centre — only the card image moves.
-    translateX.value = fromRight ? W : -W;
-    setCard(newCard);
-    setPriceTab('Raw');
-    setLocalInCollection(false);
-    setLocalInWatchlist(false);
-    setShowAddedBanner(false);
-    setShowWishlistAddedBanner(false);
-    setShowWishlistPanel(false);
-    translateX.value = withTiming(0, SLIDE_IN);
-  }
-
-  const panGesture = Gesture.Pan()
-    .activeOffsetX([-12, 12])
-    .failOffsetY([-15, 15])
-    .onUpdate((e) => {
-      if ((e.translationX > 0 && prevCardId) || (e.translationX < 0 && nextCardId)) {
-        translateX.value = e.translationX; // 1:1 drag, no resistance
-      }
-    })
-    .onEnd((e) => {
-      const THRESHOLD = 60;
-      if (e.translationX > THRESHOLD && prevCardId) {
-        translateX.value = withTiming(W, SLIDE_OUT, () => {
-          runOnJS(switchCard)(prevCardId, false);
-        });
-      } else if (e.translationX < -THRESHOLD && nextCardId) {
-        translateX.value = withTiming(-W, SLIDE_OUT, () => {
-          runOnJS(switchCard)(nextCardId, true);
-        });
-      } else {
-        translateX.value = withTiming(0, SNAP_BACK);
-      }
-    });
-
-  const slideStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
 
   const activePrice = getTabPrice(card, priceTab);
 
@@ -719,43 +584,24 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card artwork — swipe left/right to browse collection cards */}
-        <GestureDetector gesture={fromCollection ? panGesture : Gesture.Pan()}>
-          <Animated.View style={[styles.cardStage, fromCollection ? slideStyle : undefined]}>
-            {card.imageUrl ? (
-              <ZoomableCardImage
-                imageUrl={card.imageUrl}
-                gradientStart={card.gradientStart}
-                gradientEnd={card.gradientEnd}
-              />
-            ) : (
-              <CardArtFallback
-                cardName={card.name}
-                cardNumber={card.number}
-                gradientStart={card.gradientStart}
-                gradientEnd={card.gradientEnd}
-                verificationStatus={card.verificationStatus}
-              />
-            )}
-
-            {/* Swipe edge hints — only visible when opened from Collection */}
-            {fromCollection && prevCardId && (
-              <View style={[styles.swipeHint, styles.swipeHintLeft]}>
-                <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
-              </View>
-            )}
-            {fromCollection && nextCardId && (
-              <View style={[styles.swipeHint, styles.swipeHintRight]}>
-                <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
-              </View>
-            )}
-          </Animated.View>
-        </GestureDetector>
-
-        {/* Page indicator — only when opened from Collection */}
-        {fromCollection && inCollection && (
-          <PageIndicator total={collectionCards.length} current={currentIndex} />
-        )}
+        {/* Card artwork */}
+        <View style={styles.cardStage}>
+          {card.imageUrl ? (
+            <ZoomableCardImage
+              imageUrl={card.imageUrl}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+            />
+          ) : (
+            <CardArtFallback
+              cardName={card.name}
+              cardNumber={card.number}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+              verificationStatus={card.verificationStatus}
+            />
+          )}
+        </View>
 
         {/* Title block */}
         <View style={styles.titleBlock}>
@@ -1013,19 +859,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     position: 'relative',
   },
-  swipeHint: {
-    position: 'absolute',
-    top: '50%',
-    marginTop: -16,
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 16,
-  },
-  swipeHintLeft: { left: -8 },
-  swipeHintRight: { right: -8 },
   titleBlock: { marginBottom: 20 },
   cardName: {
     fontSize: 26,
