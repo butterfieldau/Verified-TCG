@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -20,6 +21,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -535,6 +537,37 @@ export default function CardDetailScreen() {
   const hasNext = currentIndex >= 0 && currentIndex < swipeIds.length - 1;
   const cardIdsParam = cardIds as string | undefined;
 
+  // ── Swipe hint state ─────────────────────────────────────────────────────
+  const SWIPE_HINT_KEY = 'swipe_hint_seen_v1';
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const hintOpacity = useSharedValue(0);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function dismissHint() {
+    hintOpacity.value = withTiming(0, { duration: 300 });
+    setTimeout(() => setShowSwipeHint(false), 320);
+    AsyncStorage.setItem(SWIPE_HINT_KEY, '1').catch(() => {});
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+  }
+
+  useEffect(() => {
+    if (swipeIds.length <= 1) return;
+    AsyncStorage.getItem(SWIPE_HINT_KEY).then((val) => {
+      if (!val) {
+        setShowSwipeHint(true);
+        hintOpacity.value = withTiming(1, { duration: 400 });
+        hintTimerRef.current = setTimeout(() => dismissHint(), 3000);
+      }
+    }).catch(() => {});
+    return () => {
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
+
   function goToPrev() {
     if (!hasPrev) return;
     router.replace(`/card/${swipeIds[currentIndex - 1]}?cardIds=${cardIdsParam}` as any);
@@ -552,8 +585,10 @@ export default function CardDetailScreen() {
     .failOffsetY([-15, 15])
     .onEnd((e) => {
       if (e.translationX < -60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(dismissHint)();
         runOnJS(goToNext)();
       } else if (e.translationX > 60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(dismissHint)();
         runOnJS(goToPrev)();
       }
     });
@@ -702,6 +737,15 @@ export default function CardDetailScreen() {
               </Text>
             )}
           </View>
+        )}
+
+        {/* One-time swipe hint */}
+        {showSwipeHint && (
+          <Animated.View style={[styles.swipeHint, hintAnimStyle]}>
+            <Feather name="chevron-left" size={13} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.swipeHintText}>Swipe to browse your collection</Text>
+            <Feather name="chevron-right" size={13} color="rgba(255,255,255,0.7)" />
+          </Animated.View>
         )}
 
         {/* Title block */}
@@ -1156,6 +1200,24 @@ const styles = StyleSheet.create({
   passportInfo: { flex: 1 },
   passportTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   passportSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  swipeHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    alignSelf: 'center',
+    marginTop: -8,
+    marginBottom: 12,
+  },
+  swipeHintText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: 'rgba(255,255,255,0.75)',
+  },
   banner: {
     position: 'absolute',
     bottom: 100,
