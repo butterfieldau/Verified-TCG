@@ -37,6 +37,9 @@ const statStyles = StyleSheet.create({
 const MENU_ITEMS = [
   { icon: 'bell', label: 'Notifications', badge: '3', route: '/notifications' },
   { icon: 'star', label: 'Watchlist', route: '/watchlist' },
+  { icon: 'zap', label: 'Event Mode', badge: 'LIVE', route: '/event-mode', highlight: true },
+  { icon: 'git-branch', label: 'Trade Matches', badge: '4', route: '/trade-match' },
+  { icon: 'maximize', label: 'Trade QR', route: '/trade-qr' },
   { icon: 'package', label: 'My Listings', route: '/sell' },
   { icon: 'repeat', label: 'Trade Offers', route: '/trade' },
   { icon: 'shield', label: 'Verification', route: '/verification-info' },
@@ -146,12 +149,12 @@ export default function ProfileScreen() {
                 { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
               ]}
             >
-              <View style={[styles.menuIcon, { backgroundColor: C.muted }]}>
-                <Feather name={item.icon as any} size={16} color={C.foreground} />
+              <View style={[styles.menuIcon, { backgroundColor: (item as any).highlight ? `${C.primary}22` : C.muted }]}>
+                <Feather name={item.icon as any} size={16} color={(item as any).highlight ? C.primary : C.foreground} />
               </View>
-              <Text style={styles.menuLabel}>{item.label}</Text>
+              <Text style={[styles.menuLabel, (item as any).highlight && { color: C.primary }]}>{item.label}</Text>
               {item.badge && (
-                <View style={styles.menuBadge}>
+                <View style={[styles.menuBadge, { backgroundColor: (item as any).highlight ? C.primary : C.primary }]}>
                   <Text style={styles.menuBadgeText}>{item.badge}</Text>
                 </View>
               )}

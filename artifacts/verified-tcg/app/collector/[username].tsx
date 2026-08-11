@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { TCG_LIST } from '@/types';
+import { getCollectionMatch } from '@/services/matching';
 
 const C = colors.dark;
 
@@ -135,6 +136,7 @@ export default function CollectorProfileScreen() {
   const insets = useSafeAreaInsets();
   const { username } = useLocalSearchParams<{ username: string }>();
   const [activeTab, setActiveTab] = useState<ProfileTab>('collection');
+  const [showMatchCards, setShowMatchCards] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const collector = MOCK_COLLECTORS[username ?? ''] ?? FALLBACK_COLLECTOR;
@@ -222,6 +224,68 @@ export default function CollectorProfileScreen() {
           </Text>
         </View>
       </View>
+
+      {/* Collection Match block */}
+      {(() => {
+        const match = getCollectionMatch(collector.username);
+        if (!match) return null;
+        return (
+          <View style={[styles.matchBlock, { backgroundColor: C.card }]}>
+            <View style={[styles.matchBlockHeader, { backgroundColor: `${C.primary}18` }]}>
+              <Feather name="git-branch" size={14} color={C.primary} />
+              <Text style={[styles.matchBlockTitle, { color: C.primary }]}>COLLECTION MATCH</Text>
+            </View>
+            <View style={styles.matchBlockBody}>
+              <View style={styles.matchStat}>
+                <Text style={styles.matchStatValue}>{match.cardsYouHaveThatTheyWant}</Text>
+                <Text style={styles.matchStatLabel}>cards you have they want</Text>
+              </View>
+              <View style={[styles.matchDivider, { backgroundColor: C.border }]} />
+              <View style={styles.matchStat}>
+                <Text style={styles.matchStatValue}>{match.cardsTheyHaveThatYouWant}</Text>
+                <Text style={styles.matchStatLabel}>cards they have you want</Text>
+              </View>
+            </View>
+            {showMatchCards && (
+              <View style={styles.matchCardsGrid}>
+                <Text style={styles.matchCardsLabel}>YOU HAVE → THEY WANT</Text>
+                {match.matchCards.youHave.slice(0, 3).map((c, i) => (
+                  <View key={i} style={styles.matchCardRow}>
+                    <View style={[styles.matchCardThumb, { backgroundColor: c.color }]}>
+                      <Text style={styles.matchCardInitial}>{c.name[0]}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.matchCardName}>{c.name}</Text>
+                      <Text style={styles.matchCardGrade}>{c.grade}</Text>
+                    </View>
+                    <Text style={styles.matchCardValue}>${c.value.toLocaleString('en-AU')}</Text>
+                  </View>
+                ))}
+                <Text style={[styles.matchCardsLabel, { marginTop: 10 }]}>THEY HAVE → YOU WANT</Text>
+                {match.matchCards.theyHave.slice(0, 3).map((c, i) => (
+                  <View key={i} style={styles.matchCardRow}>
+                    <View style={[styles.matchCardThumb, { backgroundColor: c.color }]}>
+                      <Text style={styles.matchCardInitial}>{c.name[0]}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.matchCardName}>{c.name}</Text>
+                      <Text style={styles.matchCardGrade}>{c.grade}</Text>
+                    </View>
+                    <Text style={styles.matchCardValue}>${c.value.toLocaleString('en-AU')}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            <Pressable
+              onPress={() => setShowMatchCards(!showMatchCards)}
+              style={[styles.viewMatchesBtn, { backgroundColor: C.primary }]}
+            >
+              <Feather name={showMatchCards ? 'chevron-up' : 'git-branch'} size={14} color="#FFF" />
+              <Text style={styles.viewMatchesBtnText}>{showMatchCards ? 'Hide Matches' : 'View Matches'}</Text>
+            </Pressable>
+          </View>
+        );
+      })()}
 
       {/* Trade / Message actions */}
       <View style={styles.actionsRow}>
@@ -562,4 +626,32 @@ const styles = StyleSheet.create({
     marginTop: 12,
     lineHeight: 18,
   },
+  // Collection Match block
+  matchBlock: { borderRadius: 16, overflow: 'hidden', marginBottom: 14 },
+  matchBlockHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  matchBlockTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1.5 },
+  matchBlockBody: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
+    paddingVertical: 16, paddingHorizontal: 14,
+  },
+  matchStat: { alignItems: 'center', gap: 4, flex: 1 },
+  matchStatValue: { fontSize: 32, fontFamily: 'Inter_700Bold', color: C.foreground },
+  matchStatLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  matchDivider: { width: 1, height: 48 },
+  matchCardsGrid: { paddingHorizontal: 14, paddingBottom: 12, gap: 8 },
+  matchCardsLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1.5 },
+  matchCardRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  matchCardThumb: { width: 32, height: 44, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  matchCardInitial: { fontSize: 14, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
+  matchCardName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  matchCardGrade: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  matchCardValue: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.foreground },
+  viewMatchesBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 7, marginHorizontal: 14, marginBottom: 14, height: 42, borderRadius: 11,
+  },
+  viewMatchesBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFF' },
 });

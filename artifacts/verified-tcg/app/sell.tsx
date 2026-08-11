@@ -15,6 +15,7 @@ import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { CardCondition } from '@/types';
+import { MOCK_SMART_SELL_STATS } from '@/services/matching';
 
 const C = colors.dark;
 
@@ -201,6 +202,27 @@ export default function SellScreen() {
         {step === 3 && card && (
           <View style={styles.stepBody}>
             <Text style={styles.stepHint}>Set your asking price in AUD.</Text>
+
+            {/* Smart Sell demand insight */}
+            <View style={[styles.smartSellCard, { backgroundColor: `${C.primary}0D`, borderColor: `${C.primary}33` }]}>
+              <View style={styles.smartSellHeader}>
+                <Feather name="zap" size={13} color={C.primary} />
+                <Text style={[styles.smartSellTitle, { color: C.primary }]}>Smart Sell — Demand Insight</Text>
+              </View>
+              <View style={styles.smartSellStats}>
+                <SmartSellStat value={MOCK_SMART_SELL_STATS.totalWant} label="collectors want this" />
+                <SmartSellStat value={MOCK_SMART_SELL_STATS.exactGradeWant} label="want this exact grade" />
+                <SmartSellStat value={MOCK_SMART_SELL_STATS.atCurrentEvent} label="at your current event" />
+              </View>
+              <Pressable
+                onPress={() => router.push('/trade-match' as any)}
+                style={[styles.smartSellCta, { backgroundColor: C.primary }]}
+              >
+                <Text style={styles.smartSellCtaText}>Find Buyers</Text>
+                <Feather name="arrow-right" size={13} color="#FFF" />
+              </Pressable>
+            </View>
+
             <View style={[styles.priceBox, { backgroundColor: C.card }]}>
               <Text style={styles.priceCurrency}>$</Text>
               <TextInput
@@ -319,6 +341,21 @@ export default function SellScreen() {
     </View>
   );
 }
+
+function SmartSellStat({ value, label }: { value: number; label: string }) {
+  return (
+    <View style={smartStyles.stat}>
+      <Text style={smartStyles.value}>{value}</Text>
+      <Text style={smartStyles.label}>{label}</Text>
+    </View>
+  );
+}
+
+const smartStyles = StyleSheet.create({
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  value: { fontSize: 22, fontFamily: 'Inter_700Bold', color: C.foreground },
+  label: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center', lineHeight: 13 },
+});
 
 function DetailRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
@@ -514,4 +551,16 @@ const styles = StyleSheet.create({
   },
   successBtn: { paddingHorizontal: 40, paddingVertical: 14, borderRadius: 16, marginTop: 8 },
   successBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  // Smart Sell
+  smartSellCard: {
+    borderRadius: 14, borderWidth: 1, padding: 14, gap: 12,
+  },
+  smartSellHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  smartSellTitle: { fontSize: 12, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 },
+  smartSellStats: { flexDirection: 'row', justifyContent: 'space-around' },
+  smartSellCta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, height: 36, borderRadius: 10,
+  },
+  smartSellCtaText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFF' },
 });

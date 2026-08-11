@@ -15,6 +15,7 @@ import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { MOCK_LISTINGS } from '@/services/listings';
+import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { CollectionItem } from '@/types';
@@ -49,6 +50,7 @@ export default function CardDetailScreen() {
   const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
   const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
+  const hasPassport = getCardPassport(card.id) !== null;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -265,6 +267,21 @@ export default function CardDetailScreen() {
             <Feather name="heart" size={18} color={isWatched ? C.primary : C.foreground} />
           </Pressable>
         </View>
+
+        {/* Card Passport link — only for cards with a graded passport record */}
+        {hasPassport && <Pressable
+          onPress={() => router.push(`/card-passport/${card.id}` as any)}
+          style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
+        >
+          <View style={[styles.passportIcon, { backgroundColor: '#D4AF3722' }]}>
+            <Feather name="book-open" size={14} color="#D4AF37" />
+          </View>
+          <View style={styles.passportInfo}>
+            <Text style={[styles.passportTitle, { color: '#D4AF37' }]}>Card Passport</Text>
+            <Text style={styles.passportSub}>Ownership history, grading record & provenance</Text>
+          </View>
+          <Feather name="chevron-right" size={16} color="#D4AF37" />
+        </Pressable>}
 
         {/* For Sale listings */}
         <View style={styles.section}>
@@ -504,6 +521,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   buyBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  passportBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1,
+    padding: 14, marginBottom: 20,
+  },
+  passportIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  passportInfo: { flex: 1 },
+  passportTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  passportSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
   banner: {
     position: 'absolute',
     bottom: 100,
