@@ -10,6 +10,8 @@ export interface Notification {
   isRead: boolean;
   time: string;
   actionLabel?: string;
+  /** Expo Router href to push when the notification is tapped */
+  route?: string;
 }
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -23,6 +25,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     isRead: false,
     time: '2m ago',
     actionLabel: 'View Card',
+    route: '/card/umbreon-ex-pe',
   },
   {
     id: 'n-002',
@@ -66,6 +69,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     isRead: true,
     time: '2d ago',
     actionLabel: 'View Card',
+    route: '/card/pikachu-ex-151',
   },
   {
     id: 'n-007',

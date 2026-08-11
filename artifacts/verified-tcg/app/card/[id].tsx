@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -20,6 +21,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
@@ -29,7 +32,7 @@ import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
-import type { CollectionItem, WatchlistItem } from '@/types';
+import type { Card, CollectionItem, WatchlistItem } from '@/types';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -281,24 +284,54 @@ interface ZoomableCardImageProps {
   imageUrl: string;
   gradientStart: string;
   gradientEnd: string;
+  cardName: string;
+  cardNumber: string;
 }
 
-function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCardImageProps) {
+function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, cardNumber }: ZoomableCardImageProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  // Helper: clamp translation to the valid bounds for the current scale
+  function clampTranslation(tx: number, ty: number, s: number): { x: number; y: number } {
+    'worklet';
+    const maxX = Math.max(0, (s * CARD_W - CARD_W) / 2);
+    const maxY = Math.max(0, (s * CARD_H - CARD_H) / 2);
+    return {
+      x: Math.min(maxX, Math.max(-maxX, tx)),
+      y: Math.min(maxY, Math.max(-maxY, ty)),
+    };
+  }
 
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
       scale.value = Math.min(MAX_SCALE, Math.max(MIN_SCALE, savedScale.value * e.scale));
     })
     .onEnd(() => {
-      savedScale.value = scale.value;
-      if (scale.value < MIN_SCALE) {
+      const finalScale = scale.value;
+      savedScale.value = finalScale;
+      if (finalScale <= MIN_SCALE) {
+        // Fully zoomed out — snap back to center
         scale.value = withSpring(MIN_SCALE);
         savedScale.value = MIN_SCALE;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        // Reclamp existing translation to the new (smaller/larger) scale bounds
+        const clamped = clampTranslation(translateX.value, translateY.value, finalScale);
+        translateX.value = withSpring(clamped.x);
+        translateY.value = withSpring(clamped.y);
+        savedTranslateX.value = clamped.x;
+        savedTranslateY.value = clamped.y;
       }
     });
 
@@ -308,27 +341,70 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCar
       if (scale.value > 1.1) {
         scale.value = withSpring(1);
         savedScale.value = 1;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
       } else {
         scale.value = withSpring(2.5);
         savedScale.value = 2.5;
       }
     });
 
-  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture);
+  // Pan is gated: only activates when the image is zoomed in (scale > 1).
+  // At scale 1 the gesture fails immediately so outer card-navigation swipes are unaffected.
+  const panGesture = Gesture.Pan()
+    .manualActivation(true)
+    .onTouchesMove((_e, state) => {
+      if (scale.value > 1) {
+        state.activate();
+      } else {
+        state.fail();
+      }
+    })
+    .onUpdate((e) => {
+      // Clamp continuously so the background never peeks through during a drag
+      const clamped = clampTranslation(
+        savedTranslateX.value + e.translationX,
+        savedTranslateY.value + e.translationY,
+        scale.value,
+      );
+      translateX.value = clamped.x;
+      translateY.value = clamped.y;
+    })
+    .onEnd(() => {
+      // Persist the already-clamped position
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture, panGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
   }));
 
   const showImage = !imageError;
 
   return (
     <View style={imgStyles.container}>
-      {/* Gradient fallback always behind image */}
+      {/* Gradient background — always rendered as fallback layer */}
       <LinearGradient
         colors={[gradientStart, gradientEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Shimmer highlight over gradient — visible while loading or on error */}
+      <LinearGradient
+        colors={['transparent', 'rgba(255,255,255,0.14)', 'transparent']}
+        start={{ x: 0.3, y: 0 }}
+        end={{ x: 0.7, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
 
@@ -350,10 +426,25 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCar
           </Animated.View>
         </GestureDetector>
       ) : (
-        // Fallback: gradient + card initial (image failed)
-        <View style={imgStyles.fallbackContent}>
-          <Text style={imgStyles.fallbackHint}>No image available</Text>
-        </View>
+        // Fallback: gradient + card name/number (image failed)
+        <>
+          <View style={imgStyles.cardNumberBadge}>
+            <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+          </View>
+          <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+          <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+        </>
+      )}
+
+      {/* Card name/number overlay while image is still loading */}
+      {showImage && !imageLoaded && !imageError && (
+        <>
+          <View style={imgStyles.cardNumberBadge}>
+            <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+          </View>
+          <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+          <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+        </>
       )}
 
       {/* Zoom hint shown only while image is usable and loaded */}
@@ -435,15 +526,6 @@ const imgStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fallbackContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fallbackHint: {
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: 'rgba(255,255,255,0.5)',
-  },
   zoomHint: {
     position: 'absolute',
     bottom: 10,
@@ -499,7 +581,7 @@ const imgStyles = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, cardIds } = useLocalSearchParams<{ id: string; cardIds?: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -508,6 +590,71 @@ export default function CardDetailScreen() {
   const [showAddedBanner, setShowAddedBanner] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
+
+  // ── Swipe-between-cards state ────────────────────────────────────────────
+  // cardIds is a comma-separated list of card IDs from the filtered/sorted
+  // collection view. When present, swiping navigates only within that subset.
+  const swipeIds = cardIds ? (cardIds as string).split(',').filter(Boolean) : [];
+  const currentIndex = swipeIds.length > 0 ? swipeIds.indexOf(id ?? '') : -1;
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < swipeIds.length - 1;
+  const cardIdsParam = cardIds as string | undefined;
+
+  // ── Swipe hint state ─────────────────────────────────────────────────────
+  const SWIPE_HINT_KEY = 'swipe_hint_seen_v1';
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const hintOpacity = useSharedValue(0);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function dismissHint() {
+    hintOpacity.value = withTiming(0, { duration: 300 });
+    setTimeout(() => setShowSwipeHint(false), 320);
+    AsyncStorage.setItem(SWIPE_HINT_KEY, '1').catch(() => {});
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+  }
+
+  useEffect(() => {
+    if (swipeIds.length <= 1) return;
+    AsyncStorage.getItem(SWIPE_HINT_KEY).then((val) => {
+      if (!val) {
+        setShowSwipeHint(true);
+        hintOpacity.value = withTiming(1, { duration: 400 });
+        hintTimerRef.current = setTimeout(() => dismissHint(), 3000);
+      }
+    }).catch(() => {});
+    return () => {
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
+
+  function goToPrev() {
+    if (!hasPrev) return;
+    router.replace(`/card/${swipeIds[currentIndex - 1]}?cardIds=${cardIdsParam}` as any);
+  }
+
+  function goToNext() {
+    if (!hasNext) return;
+    router.replace(`/card/${swipeIds[currentIndex + 1]}?cardIds=${cardIdsParam}` as any);
+  }
+
+  // Horizontal pan gesture for swipe-to-navigate (doesn't interfere with the
+  // vertical ScrollView since we fail on primarily-vertical movement)
+  const swipeGesture = Gesture.Pan()
+    .activeOffsetX([-25, 25])
+    .failOffsetY([-15, 15])
+    .onEnd((e) => {
+      if (e.translationX < -60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(dismissHint)();
+        runOnJS(goToNext)();
+      } else if (e.translationX > 60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(dismissHint)();
+        runOnJS(goToPrev)();
+      }
+    });
 
   const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
@@ -559,7 +706,12 @@ export default function CardDetailScreen() {
   const gain24h = card.price.change24h;
   const gain7d = card.price.change7d;
 
+  // Dot indicator helpers
+  const showDots = swipeIds.length > 1;
+  const useDots = showDots && swipeIds.length <= 20;
+
   return (
+    <GestureDetector gesture={swipeGesture}>
     <View style={{ flex: 1, backgroundColor: C.background }}>
       <ScrollView
         style={styles.screen}
@@ -584,13 +736,15 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card artwork */}
+        {/* Card artwork + swipe navigation overlays */}
         <View style={styles.cardStage}>
           {card.imageUrl ? (
             <ZoomableCardImage
               imageUrl={card.imageUrl}
               gradientStart={card.gradientStart}
               gradientEnd={card.gradientEnd}
+              cardName={card.name}
+              cardNumber={card.number}
             />
           ) : (
             <CardArtFallback
@@ -601,7 +755,61 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
+
+          {/* Prev/next arrow buttons */}
+          {hasPrev && (
+            <Pressable
+              onPress={goToPrev}
+              style={styles.swipeArrowLeft}
+              hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+            >
+              <View style={styles.swipeArrowInner}>
+                <Feather name="chevron-left" size={20} color="rgba(255,255,255,0.9)" />
+              </View>
+            </Pressable>
+          )}
+          {hasNext && (
+            <Pressable
+              onPress={goToNext}
+              style={styles.swipeArrowRight}
+              hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+            >
+              <View style={styles.swipeArrowInner}>
+                <Feather name="chevron-right" size={20} color="rgba(255,255,255,0.9)" />
+              </View>
+            </Pressable>
+          )}
         </View>
+
+        {/* Dot / position indicator */}
+        {showDots && (
+          <View style={styles.dotRow}>
+            {useDots ? (
+              swipeIds.map((sid, i) => (
+                <View
+                  key={sid}
+                  style={[
+                    styles.dot,
+                    i === currentIndex ? styles.dotActive : styles.dotInactive,
+                  ]}
+                />
+              ))
+            ) : (
+              <Text style={styles.dotCounter}>
+                {currentIndex + 1} / {swipeIds.length}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* One-time swipe hint */}
+        {showSwipeHint && (
+          <Animated.View style={[styles.swipeHint, hintAnimStyle]}>
+            <Feather name="chevron-left" size={13} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.swipeHintText}>Swipe to browse your collection</Text>
+            <Feather name="chevron-right" size={13} color="rgba(255,255,255,0.7)" />
+          </Animated.View>
+        )}
 
         {/* Title block */}
         <View style={styles.titleBlock}>
@@ -833,6 +1041,7 @@ export default function CardDetailScreen() {
         />
       )}
     </View>
+    </GestureDetector>
   );
 }
 
@@ -858,6 +1067,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
     position: 'relative',
+  },
+  swipeArrowLeft: {
+    position: 'absolute',
+    left: -10,
+    top: '50%',
+    marginTop: -22,
+    zIndex: 10,
+  },
+  swipeArrowRight: {
+    position: 'absolute',
+    right: -10,
+    top: '50%',
+    marginTop: -22,
+    zIndex: 10,
+  },
+  swipeArrowInner: {
+    width: 36,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginBottom: 16,
+    flexWrap: 'wrap',
+  },
+  dot: {
+    borderRadius: 4,
+  },
+  dotActive: {
+    width: 18,
+    height: 5,
+    backgroundColor: C.primary,
+  },
+  dotInactive: {
+    width: 5,
+    height: 5,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  dotCounter: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
   },
   titleBlock: { marginBottom: 20 },
   cardName: {
@@ -1006,6 +1263,24 @@ const styles = StyleSheet.create({
   passportInfo: { flex: 1 },
   passportTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   passportSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  swipeHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    alignSelf: 'center',
+    marginTop: -8,
+    marginBottom: 12,
+  },
+  swipeHintText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: 'rgba(255,255,255,0.75)',
+  },
   banner: {
     position: 'absolute',
     bottom: 100,

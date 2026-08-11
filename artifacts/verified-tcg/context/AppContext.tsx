@@ -8,6 +8,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
@@ -22,6 +23,17 @@ import type {
 import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
+import {
+  syncWishlistToServer,
+  addWishlistItemToServer,
+  removeWishlistItemFromServer,
+  updateWishlistItemOnServer,
+} from '@/services/wishlistApi';
+import {
+  loadPersistedPrices,
+  saveRefreshedPrices,
+  applyPersistedCollectionPrices,
+} from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 
@@ -74,6 +86,49 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
 
+/**
+ * Bump this constant whenever WatchlistItem's shape changes (fields added,
+ * removed, or renamed). Add a corresponding case to migrateWatchlist() below
+ * so existing data is upgraded rather than discarded.
+ */
+const WATCHLIST_SCHEMA_VERSION = 1;
+
+interface WatchlistPayload {
+  version: number;
+  items: WatchlistItem[];
+}
+
+/**
+ * Migrate a parsed payload from an older schema version to the current one.
+ * Returns the migrated items, or null if the version gap is too large to
+ * bridge safely (caller will discard and show a user notice).
+ *
+ * How to add a migration:
+ *   1. Bump WATCHLIST_SCHEMA_VERSION.
+ *   2. Add a `case <old_version>:` block that transforms `items` from the old
+ *      shape to the new shape, then falls through to the next case.
+ */
+function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
+  let { version, items } = payload;
+
+  // Walk through each version gap in order.
+  while (version < WATCHLIST_SCHEMA_VERSION) {
+    switch (version) {
+      case 0:
+        // v0 → v1: the raw array format gains no new required fields in v1,
+        // so items are already structurally compatible — no field transforms needed.
+        version = 1;
+        break;
+      default:
+        // Unknown version — cannot migrate safely.
+        return null;
+    }
+  }
+
+  return items;
+}
+
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(MOCK_USER);
   const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
@@ -84,38 +139,123 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
-  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
+  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
 
-  // Load persisted watchlist from AsyncStorage on mount
+  // Load persisted watchlist and prices from AsyncStorage on mount
   useEffect(() => {
-    AsyncStorage.getItem(WATCHLIST_STORAGE_KEY)
-      .then(stored => {
-        if (stored !== null) {
-          try {
-            const parsed = JSON.parse(stored) as WatchlistItem[];
-            if (Array.isArray(parsed)) {
-              setWatchlist(parsed);
+    Promise.all([
+      AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
+      loadPersistedPrices(),
+    ]).then(async ([storedWatchlist, persisted]) => {
+      // Restore watchlist — handles versioned payloads and legacy plain arrays
+      if (storedWatchlist !== null) {
+        try {
+          const raw = JSON.parse(storedWatchlist);
+
+          // Detect legacy format (plain array written before versioning was added)
+          const payload: WatchlistPayload = Array.isArray(raw)
+            ? { version: 0, items: raw as WatchlistItem[] }
+            : (raw as WatchlistPayload);
+
+          if (payload.version === WATCHLIST_SCHEMA_VERSION) {
+            // Current version — use as-is
+            if (Array.isArray(payload.items)) {
+              setWatchlist(payload.items);
             }
-          } catch {
-            // Corrupted data — fall back to mock defaults
+          } else {
+            // Attempt migration
+            const migrated = migrateWatchlist(payload);
+            if (migrated !== null) {
+              setWatchlist(migrated);
+            } else {
+              // Migration failed — discard and notify the user
+              await AsyncStorage.removeItem(WATCHLIST_STORAGE_KEY);
+              Alert.alert(
+                'Wishlist Reset',
+                'Your saved wishlist could not be loaded after an app update. ' +
+                'Sorry for the inconvenience — you can re-add cards from the market.',
+                [{ text: 'OK' }],
+              );
+            }
           }
+        } catch {
+          // Corrupted JSON — fall back to mock defaults silently
         }
-      })
-      .finally(() => setWatchlistLoaded(true));
+      }
+
+      // Restore persisted prices onto collection items
+      if (persisted.collectionPrices !== null) {
+        setCollection(prev => applyPersistedCollectionPrices(prev, persisted.collectionPrices!));
+      }
+
+      // Restore persisted prices onto watchlist items (price field only —
+      // other watchlist data from storedWatchlist takes precedence)
+      if (persisted.watchlistPrices !== null) {
+        setWatchlist(prev => applyPersistedCollectionPrices(prev, persisted.watchlistPrices!));
+      }
+
+      // Restore last-updated timestamp
+      if (persisted.lastUpdated !== null) {
+        setPricesLastUpdated(persisted.lastUpdated);
+      }
+    }).finally(() => setWatchlistLoaded(true));
   }, []);
 
-  // Persist watchlist to AsyncStorage on every change (after initial load)
+  // Persist watchlist to AsyncStorage on every change (after initial load).
+  // Always written as a versioned payload so the loader can detect schema changes.
   useEffect(() => {
     if (!watchlistLoaded) return;
-    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist)).catch(() => {});
+    const payload: WatchlistPayload = { version: WATCHLIST_SCHEMA_VERSION, items: watchlist };
+    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
   }, [watchlist, watchlistLoaded]);
 
+  /**
+   * Server sync on initial load.
+   *
+   * Once AsyncStorage has been read, send the local list to the server and
+   * adopt the server's canonical merged result unconditionally — including
+   * when it is shorter, so tombstoned deletions from another device are
+   * applied here.
+   *
+   * Any network error is silenced: AsyncStorage acts as the offline cache and
+   * the next successful load will re-attempt the sync.
+   *
+   * Note: this is a single-tenant prototype — the server stores data for one
+   * fixed collector and requires no credentials.  See wishlistApi.ts.
+   */
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+
+    setWatchlist(snapshot => {
+      syncWishlistToServer(snapshot)
+        .then(serverCanonical => {
+          // Always adopt the server's canonical list (may be shorter if items
+          // were tombstoned/deleted on another device).
+          setWatchlist(serverCanonical);
+        })
+        .catch(() => {
+          // Network unavailable — stay with local cache
+        });
+      return snapshot; // unchanged while the request is in-flight
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlistLoaded]);
+
   const signIn = useCallback(async (_email: string, _password: string) => {
-    await Promise.resolve(); // simulate async
+    await Promise.resolve(); // simulate async sign-in
     setUser(MOCK_USER);
     setIsAuthenticated(true);
+
+    // On sign-in, sync with the server so the collector's list is fully
+    // restored on a new or reset device.
+    setWatchlist(snapshot => {
+      syncWishlistToServer(snapshot)
+        .then(serverCanonical => { setWatchlist(serverCanonical); })
+        .catch(() => {});
+      return snapshot;
+    });
   }, []);
 
   const signOut = useCallback(() => {
@@ -132,18 +272,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
+    // Optimistic local update
     setWatchlist(prev => [...prev, item]);
+    // Background mirror to server (silenced — AsyncStorage is the local cache)
+    addWishlistItemToServer(item).catch(() => {});
   }, []);
 
   const removeFromWatchlist = useCallback((id: string) => {
+    // Optimistic local update
     setWatchlist(prev => prev.filter(i => i.id !== id));
+    // Background mirror — DELETE records a server tombstone so future syncs
+    // from stale clients cannot resurrect the item.
+    removeWishlistItemFromServer(id).catch(() => {});
   }, []);
 
   const updateWatchlistItem = useCallback((
     id: string,
     patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
   ) => {
+    // Optimistic local update
     setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
+    // Background mirror to server
+    updateWishlistItemOnServer(id, patch).catch(() => {});
   }, []);
 
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
@@ -162,31 +312,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   }, []);
 
+  // Refs so refreshPrices can read the latest collection/watchlist without
+  // them being stale-closure-captured in the useCallback dependency array.
+  const collectionRef = useRef<CollectionItem[]>(collection);
+  const watchlistRef = useRef<WatchlistItem[]>(watchlist);
+  useEffect(() => { collectionRef.current = collection; }, [collection]);
+  useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
+
   const refreshPrices = useCallback(async () => {
     if (isPriceRefreshing) return;
     setIsPriceRefreshing(true);
     try {
       await fetchRefreshedPrices();
-      setCollection(prev =>
-        prev.map(item => ({
-          ...item,
-          card: {
-            ...item.card,
-            price: simulateRefreshedPrice(item.cardId, item.card.price),
-          },
-        })),
-      );
+      const now = new Date();
+
+      // Compute updated arrays using the latest ref values so we can
+      // both set state and persist in the same step — no setTimeout needed.
+      const updatedCollection = collectionRef.current.map(item => ({
+        ...item,
+        card: {
+          ...item.card,
+          price: simulateRefreshedPrice(item.cardId, item.card.price),
+        },
+      }));
+
       // Also refresh prices on watchlist cards so price-alert thresholds can trigger
-      setWatchlist(prev =>
-        prev.map(item => ({
-          ...item,
-          card: {
-            ...item.card,
-            price: simulateRefreshedPrice(item.cardId, item.card.price),
-          },
-        })),
-      );
-      setPricesLastUpdated(new Date());
+      const updatedWatchlist = watchlistRef.current.map(item => ({
+        ...item,
+        card: {
+          ...item.card,
+          price: simulateRefreshedPrice(item.cardId, item.card.price),
+        },
+      }));
+
+      setCollection(updatedCollection);
+      setWatchlist(updatedWatchlist);
+      setPricesLastUpdated(now);
+
+      // Await persistence so that an immediate restart cannot lose the data.
+      // Errors are caught and re-thrown so callers know the save failed.
+      await saveRefreshedPrices(updatedCollection, updatedWatchlist, now);
     } finally {
       setIsPriceRefreshing(false);
     }
@@ -225,7 +390,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 body: `${item.card.name} (${item.card.setName}) is now $${item.card.price.raw.toLocaleString('en-AU')} AUD — at or below your target of $${item.targetPrice!.toLocaleString('en-AU')} AUD.`,
                 isRead: false,
                 time: timeLabel,
-                actionLabel: 'View Wishlist',
+                actionLabel: 'View Card',
+                route: `/card/${item.cardId}`,
               },
               ...updated,
             ];

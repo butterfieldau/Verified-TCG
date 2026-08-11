@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -7,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -170,7 +172,10 @@ export default function CollectionScreen() {
                 <Pressable
                   key={item.id}
                   style={styles.gridItem}
-                  onPress={() => router.push(`/card/${item.card.id}`)}
+                  onPress={() => {
+                    const ids = filteredCards.map(i => i.card.id).join(',');
+                    router.push(`/card/${item.card.id}?cardIds=${ids}`);
+                  }}
                 >
                   <CardThumbnail card={item.card} grading={item.grading} />
                   <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
@@ -188,12 +193,27 @@ export default function CollectionScreen() {
               <Pressable
                 key={item.id}
                 style={[styles.itemRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${item.card.id}`)}
+                onPress={() => {
+                  const ids = filteredCards.map(i => i.card.id).join(',');
+                  router.push(`/card/${item.card.id}?cardIds=${ids}`);
+                }}
               >
-                <View
-                  style={[styles.cardPlaceholder, { backgroundColor: item.card.gradientStart }]}
-                >
-                  <Text style={styles.cardInitial}>{item.card.name[0]}</Text>
+                <View style={styles.cardPlaceholder}>
+                  {/* Gradient fallback — always rendered as base layer */}
+                  <LinearGradient
+                    colors={[item.card.gradientStart, item.card.gradientEnd]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+                  />
+                  {/* Card artwork on top of gradient */}
+                  {!!item.card.imageUrl && (
+                    <Image
+                      source={{ uri: item.card.imageUrl }}
+                      style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+                      resizeMode="cover"
+                    />
+                  )}
                   {item.grading && (
                     <View style={styles.cardGrade}>
                       <GradeBadge

@@ -1,4 +1,5 @@
 import type { Card, CardSet, TCGId } from '@/types';
+import { proxyImageUrl } from './imageProxy';
 
 export const CARD_SETS: CardSet[] = [
   { id: 'sv-ob',  name: 'Obsidian Flames',        tcg: 'pokemon',  releaseDate: '2023-08-11', totalCards: 230, series: 'Scarlet & Violet' },
@@ -120,6 +121,14 @@ export const MOCK_CARDS: Card[] = [
     verificationStatus: 'unverified',
   },
 ];
+
+// Apply CORS proxy to all image URLs so the browser can load card artwork.
+// This is done once at module load so every consumer gets proxied URLs automatically.
+MOCK_CARDS.forEach(card => {
+  if (card.imageUrl) {
+    card.imageUrl = proxyImageUrl(card.imageUrl);
+  }
+});
 
 export function getCardById(id: string): Card | undefined {
   return MOCK_CARDS.find(c => c.id === id);

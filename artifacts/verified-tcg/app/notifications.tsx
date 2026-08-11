@@ -127,7 +127,12 @@ export default function NotificationsScreen() {
             return (
               <Pressable
                 key={notif.id}
-                onPress={() => markRead(notif.id)}
+                onPress={() => {
+                  markRead(notif.id);
+                  if (notif.route) {
+                    router.push(notif.route as Parameters<typeof router.push>[0]);
+                  }
+                }}
                 style={({ pressed }) => [
                   styles.notifCard,
                   {
