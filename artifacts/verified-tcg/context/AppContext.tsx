@@ -8,6 +8,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
@@ -79,6 +80,48 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
 
+/**
+ * Bump this constant whenever WatchlistItem's shape changes (fields added,
+ * removed, or renamed). Add a corresponding case to migrateWatchlist() below
+ * so existing data is upgraded rather than discarded.
+ */
+const WATCHLIST_SCHEMA_VERSION = 1;
+
+interface WatchlistPayload {
+  version: number;
+  items: WatchlistItem[];
+}
+
+/**
+ * Migrate a parsed payload from an older schema version to the current one.
+ * Returns the migrated items, or null if the version gap is too large to
+ * bridge safely (caller will discard and show a user notice).
+ *
+ * How to add a migration:
+ *   1. Bump WATCHLIST_SCHEMA_VERSION.
+ *   2. Add a `case <old_version>:` block that transforms `items` from the old
+ *      shape to the new shape, then falls through to the next case.
+ */
+function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
+  let { version, items } = payload;
+
+  // Walk through each version gap in order.
+  while (version < WATCHLIST_SCHEMA_VERSION) {
+    switch (version) {
+      case 0:
+        // v0 → v1: the raw array format gains no new required fields in v1,
+        // so items are already structurally compatible — no field transforms needed.
+        version = 1;
+        break;
+      default:
+        // Unknown version — cannot migrate safely.
+        return null;
+    }
+  }
+
+  return items;
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(MOCK_USER);
   const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
@@ -98,16 +141,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     Promise.all([
       AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
       loadPersistedPrices(),
-    ]).then(([storedWatchlist, persisted]) => {
-      // Restore watchlist
+    ]).then(async ([storedWatchlist, persisted]) => {
+      // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
         try {
-          const parsed = JSON.parse(storedWatchlist) as WatchlistItem[];
-          if (Array.isArray(parsed)) {
-            setWatchlist(parsed);
+          const raw = JSON.parse(storedWatchlist);
+
+          // Detect legacy format (plain array written before versioning was added)
+          const payload: WatchlistPayload = Array.isArray(raw)
+            ? { version: 0, items: raw as WatchlistItem[] }
+            : (raw as WatchlistPayload);
+
+          if (payload.version === WATCHLIST_SCHEMA_VERSION) {
+            // Current version — use as-is
+            if (Array.isArray(payload.items)) {
+              setWatchlist(payload.items);
+            }
+          } else {
+            // Attempt migration
+            const migrated = migrateWatchlist(payload);
+            if (migrated !== null) {
+              setWatchlist(migrated);
+            } else {
+              // Migration failed — discard and notify the user
+              await AsyncStorage.removeItem(WATCHLIST_STORAGE_KEY);
+              Alert.alert(
+                'Wishlist Reset',
+                'Your saved wishlist could not be loaded after an app update. ' +
+                'Sorry for the inconvenience — you can re-add cards from the market.',
+                [{ text: 'OK' }],
+              );
+            }
           }
         } catch {
-          // Corrupted data — fall back to mock defaults
+          // Corrupted JSON — fall back to mock defaults silently
         }
       }
 
@@ -129,10 +196,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }).finally(() => setWatchlistLoaded(true));
   }, []);
 
-  // Persist watchlist to AsyncStorage on every change (after initial load)
+  // Persist watchlist to AsyncStorage on every change (after initial load).
+  // Always written as a versioned payload so the loader can detect schema changes.
   useEffect(() => {
     if (!watchlistLoaded) return;
-    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist)).catch(() => {});
+    const payload: WatchlistPayload = { version: WATCHLIST_SCHEMA_VERSION, items: watchlist };
+    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
   }, [watchlist, watchlistLoaded]);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
