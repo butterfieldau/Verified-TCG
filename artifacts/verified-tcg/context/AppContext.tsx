@@ -390,7 +390,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 body: `${item.card.name} (${item.card.setName}) is now $${item.card.price.raw.toLocaleString('en-AU')} AUD — at or below your target of $${item.targetPrice!.toLocaleString('en-AU')} AUD.`,
                 isRead: false,
                 time: timeLabel,
-                actionLabel: 'View Wishlist',
+                actionLabel: 'View Card',
+                route: `/card/${item.cardId}`,
               },
               ...updated,
             ];
