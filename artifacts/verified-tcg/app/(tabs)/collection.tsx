@@ -92,8 +92,8 @@ export default function CollectionScreen() {
           </Text>
         </View>
         <View style={styles.gainBadge}>
-          <Text style={[styles.gainText, { color: C.positive }]}>
-            +{portfolio.totalGainPercent.toFixed(1)}%
+          <Text style={[styles.gainText, { color: portfolio.totalGain >= 0 ? C.positive : C.negative }]}>
+            {portfolio.totalGain >= 0 ? '+' : ''}{portfolio.totalGainPercent.toFixed(1)}%
           </Text>
         </View>
       </View>
