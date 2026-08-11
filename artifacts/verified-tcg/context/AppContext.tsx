@@ -4,6 +4,7 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  useRef,
   useMemo,
   type ReactNode,
 } from 'react';
@@ -175,11 +176,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         })),
       );
+      // Also refresh prices on watchlist cards so price-alert thresholds can trigger
+      setWatchlist(prev =>
+        prev.map(item => ({
+          ...item,
+          card: {
+            ...item.card,
+            price: simulateRefreshedPrice(item.cardId, item.card.price),
+          },
+        })),
+      );
       setPricesLastUpdated(new Date());
     } finally {
       setIsPriceRefreshing(false);
     }
   }, [isPriceRefreshing]);
+
+  // Track which watchlist item IDs have already generated a price-alert notification
+  // so we don't create duplicates on every re-render.
+  const alertedItemIds = useRef<Set<string>>(new Set());
+
+  // Generate in-app price-alert notifications when an item is alert-enabled and at/below target
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+
+    const timeLabel = 'Just now';
+
+    setNotifications(prev => {
+      let updated = [...prev];
+
+      watchlist.forEach(item => {
+        const atTarget =
+          item.priceAlertEnabled &&
+          !!item.targetPrice &&
+          item.card.price.raw <= item.targetPrice;
+
+        const notifId = `price-alert-wl-${item.id}`;
+
+        if (atTarget && !alertedItemIds.current.has(item.id)) {
+          // Price is at/below target and alert hasn't fired yet — generate notification
+          const alreadyExists = updated.some(n => n.id === notifId);
+          if (!alreadyExists) {
+            updated = [
+              {
+                id: notifId,
+                type: 'price_alert',
+                title: `Price Alert — ${item.card.name}`,
+                body: `${item.card.name} (${item.card.setName}) is now $${item.card.price.raw.toLocaleString('en-AU')} AUD — at or below your target of $${item.targetPrice!.toLocaleString('en-AU')} AUD.`,
+                isRead: false,
+                time: timeLabel,
+                actionLabel: 'View Wishlist',
+              },
+              ...updated,
+            ];
+          }
+          alertedItemIds.current.add(item.id);
+        } else if (!item.priceAlertEnabled) {
+          // Alert was disabled — remove the generated notification and reset tracker
+          alertedItemIds.current.delete(item.id);
+          updated = updated.filter(n => n.id !== notifId);
+        } else if (!atTarget) {
+          // Price has risen above target — reset tracker so alert can fire again on next drop
+          alertedItemIds.current.delete(item.id);
+        }
+      });
+
+      return updated;
+    });
+  }, [watchlist, watchlistLoaded]);
 
   const unreadNotificationCount = useMemo(
     () => notifications.filter(n => !n.isRead).length,

@@ -234,14 +234,18 @@ function AddPanel({
 function WishCard({
   item,
   onRemove,
+  onToggleAlert,
 }: {
   item: WatchlistItem;
   onRemove: () => void;
+  onToggleAlert: () => void;
 }) {
   const price = item.card.price.raw;
   const change = item.card.price.change7d ?? 0;
   const isUp = change >= 0;
   const atTarget = item.targetPrice ? price <= item.targetPrice : false;
+  const hasTarget = !!item.targetPrice;
+  const alertOn = hasTarget && !!item.priceAlertEnabled;
 
   return (
     <Pressable
@@ -287,7 +291,7 @@ function WishCard({
         )}
       </View>
 
-      {/* Pricing + remove */}
+      {/* Pricing + actions */}
       <View style={styles.wishPricing}>
         <Text style={styles.wishPrice}>${price.toLocaleString('en-AU')}</Text>
         <View style={[
@@ -303,9 +307,29 @@ function WishCard({
             {isUp ? '+' : ''}{change.toFixed(1)}%
           </Text>
         </View>
-        <Pressable onPress={onRemove} style={styles.removeBtn} hitSlop={10}>
-          <Feather name="trash-2" size={13} color={C.mutedForeground} />
-        </Pressable>
+        <View style={styles.cardActions}>
+          {/* Bell toggle — only shown when a target price is set */}
+          {hasTarget && (
+            <Pressable
+              onPress={e => { e.stopPropagation?.(); onToggleAlert(); }}
+              style={[
+                styles.alertBtn,
+                alertOn && { backgroundColor: `${C.warning}22` },
+              ]}
+              hitSlop={8}
+              accessibilityLabel={alertOn ? 'Disable price alert' : 'Enable price alert'}
+            >
+              <Feather
+                name={alertOn ? 'bell' : 'bell-off'}
+                size={13}
+                color={alertOn ? C.warning : C.mutedForeground}
+              />
+            </Pressable>
+          )}
+          <Pressable onPress={e => { e.stopPropagation?.(); onRemove(); }} style={styles.removeBtn} hitSlop={10}>
+            <Feather name="trash-2" size={13} color={C.mutedForeground} />
+          </Pressable>
+        </View>
       </View>
     </Pressable>
   );
@@ -315,7 +339,7 @@ function WishCard({
 
 export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
-  const { watchlist, addToWatchlist, removeFromWatchlist } = useApp();
+  const { watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem } = useApp();
   const [sortBy, setSortBy] = useState<'added' | 'value' | 'change'>('added');
   const [showAddPanel, setShowAddPanel] = useState(false);
 
@@ -323,6 +347,11 @@ export default function WishlistScreen() {
 
   const existingCardIds = useMemo(
     () => new Set(watchlist.map(w => w.cardId)),
+    [watchlist],
+  );
+
+  const alertCount = useMemo(
+    () => watchlist.filter(w => w.priceAlertEnabled && !!w.targetPrice).length,
     [watchlist],
   );
 
@@ -355,6 +384,12 @@ export default function WishlistScreen() {
           <View style={[styles.countBadge, { backgroundColor: C.card }]}>
             <Text style={styles.countText}>{watchlist.length}</Text>
           </View>
+          {alertCount > 0 && (
+            <View style={[styles.alertCountBadge, { backgroundColor: `${C.warning}22` }]}>
+              <Feather name="bell" size={11} color={C.warning} />
+              <Text style={[styles.alertCountText, { color: C.warning }]}>{alertCount}</Text>
+            </View>
+          )}
           <Pressable
             onPress={() => setShowAddPanel(true)}
             style={[styles.addBtn, { backgroundColor: C.primary }]}
@@ -423,6 +458,9 @@ export default function WishlistScreen() {
                 key={item.id}
                 item={item}
                 onRemove={() => removeFromWatchlist(item.id)}
+                onToggleAlert={() =>
+                  updateWatchlistItem(item.id, { priceAlertEnabled: !item.priceAlertEnabled })
+                }
               />
             ))}
 
@@ -472,6 +510,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
   },
   countText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
+  alertCountBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+  },
+  alertCountText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   addBtn: {
     width: 40, height: 40, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
@@ -520,10 +563,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8,
   },
   changeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  cardActions: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  alertBtn: {
+    width: 28, height: 28,
+    alignItems: 'center', justifyContent: 'center',
+    borderRadius: 8,
+  },
   removeBtn: {
     width: 28, height: 28,
     alignItems: 'center', justifyContent: 'center',
-    marginTop: 2,
   },
 
   emptyContainer: { alignItems: 'center', paddingTop: 56, gap: 14 },
