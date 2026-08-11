@@ -20,6 +20,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
@@ -515,7 +516,7 @@ const imgStyles = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, cardIds } = useLocalSearchParams<{ id: string; cardIds?: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -524,6 +525,38 @@ export default function CardDetailScreen() {
   const [showAddedBanner, setShowAddedBanner] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
+
+  // ── Swipe-between-cards state ────────────────────────────────────────────
+  // cardIds is a comma-separated list of card IDs from the filtered/sorted
+  // collection view. When present, swiping navigates only within that subset.
+  const swipeIds = cardIds ? (cardIds as string).split(',').filter(Boolean) : [];
+  const currentIndex = swipeIds.length > 0 ? swipeIds.indexOf(id ?? '') : -1;
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < swipeIds.length - 1;
+  const cardIdsParam = cardIds as string | undefined;
+
+  function goToPrev() {
+    if (!hasPrev) return;
+    router.replace(`/card/${swipeIds[currentIndex - 1]}?cardIds=${cardIdsParam}` as any);
+  }
+
+  function goToNext() {
+    if (!hasNext) return;
+    router.replace(`/card/${swipeIds[currentIndex + 1]}?cardIds=${cardIdsParam}` as any);
+  }
+
+  // Horizontal pan gesture for swipe-to-navigate (doesn't interfere with the
+  // vertical ScrollView since we fail on primarily-vertical movement)
+  const swipeGesture = Gesture.Pan()
+    .activeOffsetX([-25, 25])
+    .failOffsetY([-15, 15])
+    .onEnd((e) => {
+      if (e.translationX < -60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(goToNext)();
+      } else if (e.translationX > 60 && Math.abs(e.translationX) > Math.abs(e.translationY)) {
+        runOnJS(goToPrev)();
+      }
+    });
 
   const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
@@ -575,7 +608,12 @@ export default function CardDetailScreen() {
   const gain24h = card.price.change24h;
   const gain7d = card.price.change7d;
 
+  // Dot indicator helpers
+  const showDots = swipeIds.length > 1;
+  const useDots = showDots && swipeIds.length <= 20;
+
   return (
+    <GestureDetector gesture={swipeGesture}>
     <View style={{ flex: 1, backgroundColor: C.background }}>
       <ScrollView
         style={styles.screen}
@@ -600,7 +638,7 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card artwork */}
+        {/* Card artwork + swipe navigation overlays */}
         <View style={styles.cardStage}>
           {card.imageUrl ? (
             <ZoomableCardImage
@@ -619,7 +657,52 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
+
+          {/* Prev/next arrow buttons */}
+          {hasPrev && (
+            <Pressable
+              onPress={goToPrev}
+              style={styles.swipeArrowLeft}
+              hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+            >
+              <View style={styles.swipeArrowInner}>
+                <Feather name="chevron-left" size={20} color="rgba(255,255,255,0.9)" />
+              </View>
+            </Pressable>
+          )}
+          {hasNext && (
+            <Pressable
+              onPress={goToNext}
+              style={styles.swipeArrowRight}
+              hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+            >
+              <View style={styles.swipeArrowInner}>
+                <Feather name="chevron-right" size={20} color="rgba(255,255,255,0.9)" />
+              </View>
+            </Pressable>
+          )}
         </View>
+
+        {/* Dot / position indicator */}
+        {showDots && (
+          <View style={styles.dotRow}>
+            {useDots ? (
+              swipeIds.map((sid, i) => (
+                <View
+                  key={sid}
+                  style={[
+                    styles.dot,
+                    i === currentIndex ? styles.dotActive : styles.dotInactive,
+                  ]}
+                />
+              ))
+            ) : (
+              <Text style={styles.dotCounter}>
+                {currentIndex + 1} / {swipeIds.length}
+              </Text>
+            )}
+          </View>
+        )}
 
         {/* Title block */}
         <View style={styles.titleBlock}>
@@ -851,6 +934,7 @@ export default function CardDetailScreen() {
         />
       )}
     </View>
+    </GestureDetector>
   );
 }
 
@@ -876,6 +960,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
     position: 'relative',
+  },
+  swipeArrowLeft: {
+    position: 'absolute',
+    left: -10,
+    top: '50%',
+    marginTop: -22,
+    zIndex: 10,
+  },
+  swipeArrowRight: {
+    position: 'absolute',
+    right: -10,
+    top: '50%',
+    marginTop: -22,
+    zIndex: 10,
+  },
+  swipeArrowInner: {
+    width: 36,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginBottom: 16,
+    flexWrap: 'wrap',
+  },
+  dot: {
+    borderRadius: 4,
+  },
+  dotActive: {
+    width: 18,
+    height: 5,
+    backgroundColor: C.primary,
+  },
+  dotInactive: {
+    width: 5,
+    height: 5,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  dotCounter: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
   },
   titleBlock: { marginBottom: 20 },
   cardName: {
