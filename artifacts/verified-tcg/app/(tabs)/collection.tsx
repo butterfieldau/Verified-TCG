@@ -170,7 +170,7 @@ export default function CollectionScreen() {
                 <Pressable
                   key={item.id}
                   style={styles.gridItem}
-                  onPress={() => router.push(`/card/${item.card.id}?source=collection`)}
+                  onPress={() => router.push(`/card/${item.card.id}`)}
                 >
                   <CardThumbnail card={item.card} grading={item.grading} />
                   <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
@@ -188,7 +188,7 @@ export default function CollectionScreen() {
               <Pressable
                 key={item.id}
                 style={[styles.itemRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${item.card.id}?source=collection`)}
+                onPress={() => router.push(`/card/${item.card.id}`)}
               >
                 <View
                   style={[styles.cardPlaceholder, { backgroundColor: item.card.gradientStart }]}
