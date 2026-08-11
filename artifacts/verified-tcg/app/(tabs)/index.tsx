@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -14,6 +14,7 @@ import { Logo } from '@/components/Logo';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { useApp } from '@/context/AppContext';
 import { getMarketMovers, getTrendingCards } from '@/services/market';
+import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import colors from '@/constants/colors';
 import type { PortfolioRange } from '@/types';
 
@@ -40,6 +41,9 @@ export default function HomeScreen() {
   const movers = getMarketMovers();
   const trending = getTrendingCards();
 
+  const [eventBannerDismissed, setEventBannerDismissed] = useState(false);
+  const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState(false);
+
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
@@ -51,6 +55,8 @@ export default function HomeScreen() {
   const chartMin = Math.min(...chartData.map(d => d.value));
   const chartMax = Math.max(...chartData.map(d => d.value));
   const chartRange = chartMax - chartMin || 1;
+
+  const previewMatches = MOCK_TRADE_MATCHES.slice(0, 2);
 
   function handleQuickAction(action: string) {
     if (action === 'scan') router.push('/(tabs)/scan');
@@ -95,6 +101,152 @@ export default function HomeScreen() {
           <Feather name="camera" size={16} color={C.primary} />
         </Pressable>
       </Pressable>
+
+      {/* ── Live Event Banner ── */}
+      {MOCK_EVENT.isActive && !eventBannerDismissed && (
+        <Pressable
+          onPress={() => router.push('/event-mode' as any)}
+          style={styles.eventBanner}
+        >
+          {/* Accent stripe */}
+          <View style={styles.eventBannerAccent} />
+          <View style={styles.eventBannerInner}>
+            <View style={styles.eventBannerTop}>
+              <View style={styles.eventLivePill}>
+                <View style={styles.eventLiveDot} />
+                <Text style={styles.eventLiveText}>LIVE EVENT</Text>
+              </View>
+              <Pressable
+                onPress={e => { e.stopPropagation(); setEventBannerDismissed(true); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={styles.dismissBtn}
+              >
+                <Feather name="x" size={14} color={C.mutedForeground} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.eventBannerName}>{MOCK_EVENT.name}</Text>
+            <Text style={styles.eventBannerVenue}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
+
+            <View style={styles.eventStatRow}>
+              <View style={styles.eventStat}>
+                <Text style={styles.eventStatValue}>{MOCK_EVENT.stats.tradeMatches}</Text>
+                <Text style={styles.eventStatLabel}>Trade{'\n'}Matches</Text>
+              </View>
+              <View style={styles.eventStatDivider} />
+              <View style={styles.eventStat}>
+                <Text style={styles.eventStatValue}>{MOCK_EVENT.stats.wishlistForSale}</Text>
+                <Text style={styles.eventStatLabel}>Wishlist{'\n'}For Sale</Text>
+              </View>
+              <View style={styles.eventStatDivider} />
+              <View style={styles.eventStat}>
+                <Text style={styles.eventStatValue}>{MOCK_EVENT.collectorsPresent}</Text>
+                <Text style={styles.eventStatLabel}>Collectors{'\n'}Present</Text>
+              </View>
+              <View style={{ flex: 1 }} />
+              <View style={styles.enterEventBtn}>
+                <Feather name="zap" size={14} color="#FFF" />
+                <Text style={styles.enterEventBtnText}>Enter</Text>
+              </View>
+            </View>
+          </View>
+        </Pressable>
+      )}
+
+      {/* ── Trade Matches Strip ── */}
+      {!tradeMatchesDismissed && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitle}>Trade Matches</Text>
+              <View style={[styles.matchCountPill, { backgroundColor: `${C.primary}22` }]}>
+                <Text style={[styles.matchCountText, { color: C.primary }]}>{MOCK_TRADE_MATCHES.length}</Text>
+              </View>
+            </View>
+            <View style={styles.sectionHeaderRight}>
+              <Pressable onPress={() => router.push('/trade-match' as any)}>
+                <Text style={styles.seeAll}>See all</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setTradeMatchesDismissed(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ marginLeft: 8 }}
+              >
+                <Feather name="x" size={14} color={C.mutedForeground} />
+              </Pressable>
+            </View>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 10, paddingRight: 4 }}
+          >
+            {previewMatches.map(match => (
+              <Pressable
+                key={match.id}
+                onPress={() => router.push('/trade-match' as any)}
+                style={[styles.tradeMatchCard, { backgroundColor: C.card }]}
+              >
+                {/* Match % */}
+                <View style={[styles.tradeMatchPill, { backgroundColor: matchColor(match.matchPercent) + '22' }]}>
+                  <View style={[styles.tradeMatchDot, { backgroundColor: matchColor(match.matchPercent) }]} />
+                  <Text style={[styles.tradeMatchPct, { color: matchColor(match.matchPercent) }]}>
+                    {match.matchPercent}%
+                  </Text>
+                </View>
+
+                {/* Cards side by side */}
+                <View style={styles.tradeMatchCards}>
+                  <View style={styles.tradeMatchSide}>
+                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color }]}>
+                      <Text style={styles.tradeMatchInitial}>{match.youWant.name[0]}</Text>
+                    </View>
+                    <Text style={styles.tradeMatchLabel}>YOU WANT</Text>
+                    <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.youWant.name}</Text>
+                    <Text style={styles.tradeMatchGrade}>{match.youWant.grade}</Text>
+                  </View>
+
+                  <View style={styles.tradeMatchSwap}>
+                    <Feather name="repeat" size={14} color={C.mutedForeground} />
+                  </View>
+
+                  <View style={styles.tradeMatchSide}>
+                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color }]}>
+                      <Text style={styles.tradeMatchInitial}>{match.theyWant.name[0]}</Text>
+                    </View>
+                    <Text style={styles.tradeMatchLabel}>THEY WANT</Text>
+                    <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.theyWant.name}</Text>
+                    <Text style={styles.tradeMatchGrade}>{match.theyWant.grade}</Text>
+                  </View>
+                </View>
+
+                {/* Collector row */}
+                <View style={[styles.tradeMatchCollector, { borderTopColor: C.border }]}>
+                  <View style={[styles.tradeMatchAvatar, { backgroundColor: match.collector.avatarColor }]}>
+                    <Text style={styles.tradeMatchAvatarText}>{match.collector.initials}</Text>
+                  </View>
+                  <Text style={styles.tradeMatchUsername} numberOfLines={1}>@{match.collector.username}</Text>
+                  {match.collector.isVerified && (
+                    <Feather name="check-circle" size={11} color={C.positive} />
+                  )}
+                </View>
+              </Pressable>
+            ))}
+
+            {/* View all card */}
+            <Pressable
+              onPress={() => router.push('/trade-match' as any)}
+              style={[styles.tradeMatchViewAll, { backgroundColor: C.card, borderColor: C.border }]}
+            >
+              <Feather name="arrow-right" size={20} color={C.primary} />
+              <Text style={[styles.tradeMatchViewAllText, { color: C.primary }]}>
+                View all{'\n'}{MOCK_TRADE_MATCHES.length - 2} more
+              </Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      )}
 
       {/* ── Portfolio Overview ── */}
       <View style={[styles.card, { backgroundColor: C.card }]}>
@@ -296,6 +448,12 @@ export default function HomeScreen() {
   );
 }
 
+function matchColor(pct: number) {
+  if (pct >= 90) return '#22C55E';
+  if (pct >= 75) return '#F59E0B';
+  return '#888888';
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: 20 },
@@ -338,7 +496,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 13,
-    marginBottom: 20,
+    marginBottom: 16,
     gap: 10,
     borderWidth: 1,
     borderColor: C.border,
@@ -350,6 +508,238 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
   },
   scanShortcut: { padding: 2 },
+
+  // ── Event Banner ──
+  eventBanner: {
+    borderRadius: 16,
+    marginBottom: 16,
+    overflow: 'hidden',
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: `${C.primary}44`,
+    flexDirection: 'row',
+  },
+  eventBannerAccent: {
+    width: 4,
+    backgroundColor: C.primary,
+  },
+  eventBannerInner: {
+    flex: 1,
+    padding: 14,
+    gap: 6,
+  },
+  eventBannerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eventLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: `${C.primary}22`,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  eventLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: C.positive,
+  },
+  eventLiveText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: C.primary,
+    letterSpacing: 1,
+  },
+  dismissBtn: {
+    padding: 2,
+  },
+  eventBannerName: {
+    fontSize: 17,
+    fontFamily: 'Rajdhani_700Bold',
+    color: C.foreground,
+    letterSpacing: -0.2,
+  },
+  eventBannerVenue: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    marginBottom: 4,
+  },
+  eventStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  eventStat: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  eventStatValue: {
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+    lineHeight: 22,
+  },
+  eventStatLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    lineHeight: 12,
+  },
+  eventStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: C.border,
+  },
+  enterEventBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: C.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  enterEventBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFF',
+  },
+
+  // ── Trade Matches Strip ──
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  matchCountPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  matchCountText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+  },
+  tradeMatchCard: {
+    width: 170,
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  tradeMatchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  tradeMatchDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  tradeMatchPct: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+  },
+  tradeMatchCards: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  tradeMatchSide: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  tradeMatchThumb: {
+    width: 48,
+    height: 66,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tradeMatchInitial: {
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  tradeMatchLabel: {
+    fontSize: 8,
+    fontFamily: 'Inter_700Bold',
+    color: C.mutedForeground,
+    letterSpacing: 0.8,
+  },
+  tradeMatchCardName: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+    textAlign: 'center',
+  },
+  tradeMatchGrade: {
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
+  tradeMatchSwap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 24,
+  },
+  tradeMatchCollector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderTopWidth: 1,
+    paddingTop: 8,
+  },
+  tradeMatchAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tradeMatchAvatarText: {
+    fontSize: 8,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFF',
+  },
+  tradeMatchUsername: {
+    flex: 1,
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  tradeMatchViewAll: {
+    width: 90,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+  },
+  tradeMatchViewAllText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+    lineHeight: 15,
+  },
+
   card: { borderRadius: 16, padding: 18, marginBottom: 20 },
   cardLabel: {
     fontSize: 11,
