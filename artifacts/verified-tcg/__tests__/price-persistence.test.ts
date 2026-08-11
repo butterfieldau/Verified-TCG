@@ -4,8 +4,12 @@
  * Tests the pure helpers in services/pricePersistence.ts that read/write
  * refreshed prices and the refresh timestamp to AsyncStorage.
  *
- * Also covers the end-to-end contract: save → load → apply confirms that
- * prices written after a refresh are fully restored on the next app start.
+ * Covers:
+ *   - saveRefreshedPrices: writes versioned envelope to PRICES_STORAGE_KEY
+ *   - loadPersistedPrices: happy path, version mismatch, corrupt data
+ *   - Legacy-key migration: data written by older app versions is preserved
+ *   - applyPersistedCollectionPrices: price patching helper
+ *   - End-to-end: save → load → apply confirms full round-trip
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,9 +17,12 @@ import {
   loadPersistedPrices,
   saveRefreshedPrices,
   applyPersistedCollectionPrices,
+  PRICES_STORAGE_KEY,
+  PRICE_PERSISTENCE_VERSION,
   COLLECTION_PRICES_KEY,
   WATCHLIST_PRICES_KEY,
   PRICES_LAST_UPDATED_KEY,
+  type PricesPayload,
 } from '../services/pricePersistence';
 import type { CollectionItem, WatchlistItem } from '../types';
 
@@ -77,47 +84,43 @@ beforeEach(async () => {
 // ── saveRefreshedPrices ───────────────────────────────────────────────────────
 
 describe('saveRefreshedPrices', () => {
-  it('writes collection prices, watchlist prices, and ISO timestamp to AsyncStorage', async () => {
+  it('writes a versioned envelope to PRICES_STORAGE_KEY', async () => {
     const collection = [makeCollectionItem('col-1', 100), makeCollectionItem('col-2', 200)];
     const watchlist = [makeWatchlistItem('wl-1', 50)];
     const now = new Date('2026-01-15T12:00:00.000Z');
 
     await saveRefreshedPrices(collection, watchlist, now);
 
-    const [storedCol, storedWl, storedTs] = await Promise.all([
-      AsyncStorage.getItem(COLLECTION_PRICES_KEY),
-      AsyncStorage.getItem(WATCHLIST_PRICES_KEY),
-      AsyncStorage.getItem(PRICES_LAST_UPDATED_KEY),
-    ]);
+    const raw = await AsyncStorage.getItem(PRICES_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+
+    const payload = JSON.parse(raw!) as PricesPayload;
+
+    // Envelope must carry the current schema version
+    expect(payload.version).toBe(PRICE_PERSISTENCE_VERSION);
 
     // Timestamp is stored as ISO string
-    expect(storedTs).toBe(now.toISOString());
+    expect(payload.lastUpdated).toBe(now.toISOString());
 
     // Collection price map contains every item
-    const colMap = JSON.parse(storedCol!) as Record<string, { raw: number }>;
-    expect(colMap['col-1'].raw).toBe(100);
-    expect(colMap['col-2'].raw).toBe(200);
+    expect(payload.collectionPrices['col-1'].raw).toBe(100);
+    expect(payload.collectionPrices['col-2'].raw).toBe(200);
 
     // Watchlist price map contains every item
-    const wlMap = JSON.parse(storedWl!) as Record<string, { raw: number }>;
-    expect(wlMap['wl-1'].raw).toBe(50);
+    expect(payload.watchlistPrices['wl-1'].raw).toBe(50);
   });
 
   it('overwrites a previous save with the latest prices', async () => {
-    const collection = [makeCollectionItem('col-1', 100)];
-    const now1 = new Date('2026-01-15T10:00:00.000Z');
-    await saveRefreshedPrices(collection, [], now1);
+    const collection1 = [makeCollectionItem('col-1', 100)];
+    await saveRefreshedPrices(collection1, [], new Date('2026-01-15T10:00:00.000Z'));
 
-    // Simulate a second refresh with a higher price
-    const updated = [makeCollectionItem('col-1', 110)];
+    const collection2 = [makeCollectionItem('col-1', 110)];
     const now2 = new Date('2026-01-15T11:00:00.000Z');
-    await saveRefreshedPrices(updated, [], now2);
+    await saveRefreshedPrices(collection2, [], now2);
 
-    const colMap = JSON.parse((await AsyncStorage.getItem(COLLECTION_PRICES_KEY))!) as Record<string, { raw: number }>;
-    const ts = await AsyncStorage.getItem(PRICES_LAST_UPDATED_KEY);
-
-    expect(colMap['col-1'].raw).toBe(110);
-    expect(ts).toBe(now2.toISOString());
+    const payload = JSON.parse((await AsyncStorage.getItem(PRICES_STORAGE_KEY))!) as PricesPayload;
+    expect(payload.collectionPrices['col-1'].raw).toBe(110);
+    expect(payload.lastUpdated).toBe(now2.toISOString());
   });
 });
 
@@ -150,22 +153,133 @@ describe('loadPersistedPrices', () => {
     expect(result.lastUpdated!.toISOString()).toBe(now.toISOString());
   });
 
-  it('returns null for a corrupted price entry without throwing', async () => {
-    await AsyncStorage.setItem(COLLECTION_PRICES_KEY, 'not-valid-json');
-    await AsyncStorage.setItem(PRICES_LAST_UPDATED_KEY, new Date().toISOString());
+  it('discards the payload when the version is newer than the current app understands', async () => {
+    const futurePayload: PricesPayload = {
+      version: PRICE_PERSISTENCE_VERSION + 1,
+      collectionPrices: { 'col-1': makePrice(999) },
+      watchlistPrices: {},
+      lastUpdated: new Date().toISOString(),
+    };
+    await AsyncStorage.setItem(PRICES_STORAGE_KEY, JSON.stringify(futurePayload));
+
+    const result = await loadPersistedPrices();
+
+    // Prices from a newer schema are not applied — collector re-fetches next refresh
+    expect(result.collectionPrices).toBeNull();
+    expect(result.watchlistPrices).toBeNull();
+    expect(result.lastUpdated).toBeNull();
+  });
+
+  it('returns null for a corrupted envelope without throwing', async () => {
+    await AsyncStorage.setItem(PRICES_STORAGE_KEY, 'not-valid-json');
 
     const result = await loadPersistedPrices();
     expect(result.collectionPrices).toBeNull();
-    expect(result.lastUpdated).not.toBeNull(); // timestamp was valid
+    expect(result.lastUpdated).toBeNull();
   });
+});
 
-  it('returns null for a corrupted timestamp without throwing', async () => {
-    const collection = [makeCollectionItem('col-1', 100)];
-    await saveRefreshedPrices(collection, [], new Date());
-    await AsyncStorage.setItem(PRICES_LAST_UPDATED_KEY, 'not-a-date');
+// ── legacy-key migration ──────────────────────────────────────────────────────
+
+describe('legacy-key migration', () => {
+  it('reads prices from the three legacy keys and migrates them to the versioned envelope', async () => {
+    const colMap = { 'col-1': makePrice(100), 'col-2': makePrice(200) };
+    const wlMap = { 'wl-1': makePrice(50) };
+    const ts = new Date('2026-01-10T08:00:00.000Z');
+
+    // Write using the old three-key format
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [WATCHLIST_PRICES_KEY, JSON.stringify(wlMap)],
+      [PRICES_LAST_UPDATED_KEY, ts.toISOString()],
+    ]);
 
     const result = await loadPersistedPrices();
-    expect(result.collectionPrices).not.toBeNull(); // prices were valid
+
+    // Prices should be restored from legacy keys
+    expect(result.collectionPrices).not.toBeNull();
+    expect(result.collectionPrices!['col-1'].raw).toBe(100);
+    expect(result.collectionPrices!['col-2'].raw).toBe(200);
+
+    expect(result.watchlistPrices).not.toBeNull();
+    expect(result.watchlistPrices!['wl-1'].raw).toBe(50);
+
+    expect(result.lastUpdated).not.toBeNull();
+    expect(result.lastUpdated!.toISOString()).toBe(ts.toISOString());
+  });
+
+  it('writes the versioned envelope after migration so subsequent loads skip the legacy path', async () => {
+    const colMap = { 'col-1': makePrice(100) };
+    const ts = new Date('2026-01-10T08:00:00.000Z');
+
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [PRICES_LAST_UPDATED_KEY, ts.toISOString()],
+    ]);
+
+    // First load triggers migration
+    await loadPersistedPrices();
+
+    // The new versioned key must be present after migration
+    const envelope = await AsyncStorage.getItem(PRICES_STORAGE_KEY);
+    expect(envelope).not.toBeNull();
+    const payload = JSON.parse(envelope!) as PricesPayload;
+    expect(payload.version).toBe(PRICE_PERSISTENCE_VERSION);
+    expect(payload.collectionPrices['col-1'].raw).toBe(100);
+  });
+
+  it('removes the legacy keys after a successful migration', async () => {
+    const colMap = { 'col-1': makePrice(100) };
+    const ts = new Date('2026-01-10T08:00:00.000Z');
+
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [WATCHLIST_PRICES_KEY, JSON.stringify({})],
+      [PRICES_LAST_UPDATED_KEY, ts.toISOString()],
+    ]);
+
+    await loadPersistedPrices();
+
+    // Legacy keys should be gone so future loads don't re-migrate stale data
+    const [col, wl, stamp] = await Promise.all([
+      AsyncStorage.getItem(COLLECTION_PRICES_KEY),
+      AsyncStorage.getItem(WATCHLIST_PRICES_KEY),
+      AsyncStorage.getItem(PRICES_LAST_UPDATED_KEY),
+    ]);
+    expect(col).toBeNull();
+    expect(wl).toBeNull();
+    expect(stamp).toBeNull();
+  });
+
+  it('migrates partial legacy data when only some keys are present', async () => {
+    // Only collection prices stored — watchlist key absent
+    const colMap = { 'col-1': makePrice(77) };
+    const ts = new Date('2026-01-10T08:00:00.000Z');
+
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [PRICES_LAST_UPDATED_KEY, ts.toISOString()],
+    ]);
+
+    const result = await loadPersistedPrices();
+
+    expect(result.collectionPrices!['col-1'].raw).toBe(77);
+    expect(result.watchlistPrices).not.toBeNull(); // empty map, not null
+  });
+
+  it('migrates collection prices even when the legacy timestamp is corrupt', async () => {
+    const colMap = { 'col-1': makePrice(55) };
+
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [PRICES_LAST_UPDATED_KEY, 'not-a-date'],
+    ]);
+
+    const result = await loadPersistedPrices();
+
+    // Prices still restored — bad timestamp should not block migration
+    expect(result.collectionPrices!['col-1'].raw).toBe(55);
+    // Timestamp treated as null when the stored value is not a valid date
     expect(result.lastUpdated).toBeNull();
   });
 });
@@ -214,6 +328,30 @@ describe('end-to-end: refresh completion followed by remount', () => {
     expect(restored[1].card.price.raw).toBe(210);
 
     // Timestamp should survive the round-trip.
+    expect(persisted.lastUpdated!.toISOString()).toBe(now.toISOString());
+  });
+
+  it('restores prices migrated from legacy keys on the first launch after upgrade', async () => {
+    const original = [makeCollectionItem('col-1', 100)];
+    const refreshed = [makeCollectionItem('col-1', 130)];
+    const now = new Date('2026-01-10T08:00:00.000Z');
+
+    // Simulate what the old app wrote before versioning was added
+    const colMap: Record<string, ReturnType<typeof makePrice>> = {};
+    refreshed.forEach(item => { colMap[item.id] = item.card.price; });
+
+    await AsyncStorage.multiSet([
+      [COLLECTION_PRICES_KEY, JSON.stringify(colMap)],
+      [WATCHLIST_PRICES_KEY, JSON.stringify({})],
+      [PRICES_LAST_UPDATED_KEY, now.toISOString()],
+    ]);
+
+    // Load — migration path
+    const persisted = await loadPersistedPrices();
+    const restored = applyPersistedCollectionPrices(original, persisted.collectionPrices!);
+
+    // Refreshed price from legacy storage must be applied
+    expect(restored[0].card.price.raw).toBe(130);
     expect(persisted.lastUpdated!.toISOString()).toBe(now.toISOString());
   });
 });
