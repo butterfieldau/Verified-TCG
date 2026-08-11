@@ -1,0 +1,6 @@
+import React from "react";
+import { Home as HomeIcon, Layers3, Camera, Compass, UserRound } from "lucide-react";
+export function BottomNav({ active = "Home" }: { active?: string }) {
+  const items = [{ label: "Home", Icon: HomeIcon }, { label: "Collection", Icon: Layers3 }, { label: "Scan", Icon: Camera }, { label: "Discover", Icon: Compass }, { label: "Profile", Icon: UserRound }];
+  return <nav className="fixed bottom-0 left-1/2 z-30 flex h-[74px] w-full max-w-[390px] -translate-x-1/2 items-end justify-around border-t border-white/10 bg-[#111114]/95 px-2 pb-2 backdrop-blur-xl">{items.map(({ label, Icon }) => label === "Scan" ? <button key={label} className="relative -top-5 flex h-14 w-14 items-center justify-center rounded-full border-4 border-[#111114] bg-red-600 text-white shadow-xl"><Icon size={23}/></button> : <button key={label} className={`flex w-16 flex-col items-center gap-1 text-[10px] font-semibold ${active === label ? "text-red-500" : "text-zinc-500"}`}><Icon size={19}/><span>{label}</span></button>)}</nav>;
+}

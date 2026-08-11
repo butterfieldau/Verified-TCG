@@ -1,0 +1,9 @@
+export const MOCK_CARDS = [
+  { id: 1, name: "Charizard VMAX", set: "Sword & Shield", number: "020/189", grade: "PSA 10", gradeScore: 10, grader: "PSA", value: 4250, purchasePrice: 1800, rarity: "Secret Rare", foil: true, color: "from-orange-600 via-red-500 to-yellow-400" },
+  { id: 2, name: "Pikachu V-UNION", set: "Celebrations", number: "006/025", grade: "BGS 9.5", gradeScore: 9.5, grader: "BGS", value: 890, purchasePrice: 450, rarity: "Ultra Rare", foil: true, color: "from-yellow-400 via-yellow-300 to-amber-200" },
+  { id: 3, name: "Mewtwo EX", set: "Base Set 2", number: "003/130", grade: "PSA 9", gradeScore: 9, grader: "PSA", value: 3100, purchasePrice: 2200, rarity: "Holo Rare", foil: true, color: "from-purple-600 via-violet-500 to-indigo-400" },
+  { id: 4, name: "Blastoise", set: "Base Set", number: "002/102", grade: "PSA 8", gradeScore: 8, grader: "PSA", value: 1650, purchasePrice: 1200, rarity: "Holo Rare", foil: true, color: "from-blue-600 via-cyan-500 to-blue-300" },
+  { id: 5, name: "Lugia Legend", set: "HeartGold & SoulSilver", number: "113/123", grade: "BGS 10", gradeScore: 10, grader: "BGS", value: 7800, purchasePrice: 3500, rarity: "Legend Card", foil: true, color: "from-slate-400 via-blue-200 to-indigo-100" },
+  { id: 6, name: "Rayquaza Gold Star", set: "Dragon Frontiers", number: "107/101", grade: "PSA 10", gradeScore: 10, grader: "PSA", value: 12500, purchasePrice: 5000, rarity: "Gold Star", foil: true, color: "from-emerald-500 via-green-400 to-teal-300" },
+];
+export const MOCK_USER = { name: "Alex Mercer", handle: "@alexmercer_tcg", memberSince: "March 2021", totalCards: 247, gradedCards: 89, portfolioValue: 34890, monthlyGain: 12.4, favoriteSets: ["Base Set", "Celebrations", "Dragon Frontiers"], tier: "Diamond Collector" };
