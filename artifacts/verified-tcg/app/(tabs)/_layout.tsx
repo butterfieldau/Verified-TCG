@@ -15,7 +15,8 @@ import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 
 // Custom raised Scan button — matches the mockup's -top-5 treatment.
-function ScanTabButton({ onPress }: { onPress?: () => void }) {
+// Accept the broader event type that Expo Router passes to tabBarButton.
+function ScanTabButton({ onPress }: { onPress?: (e: any) => void }) {
   return (
     <Pressable
       onPress={onPress}

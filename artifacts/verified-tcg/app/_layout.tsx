@@ -35,6 +35,13 @@ function RootLayoutNav() {
       <Stack.Screen name="create-account" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="card/[id]" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="search" options={{ animation: 'fade' }} />
+      <Stack.Screen
+        name="add-card"
+        options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+      />
+      <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }

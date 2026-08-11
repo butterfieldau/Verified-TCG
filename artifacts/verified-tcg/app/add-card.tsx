@@ -1,0 +1,517 @@
+import React, { useState } from 'react';
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import { useApp } from '@/context/AppContext';
+import { searchCards } from '@/services/cards';
+import colors from '@/constants/colors';
+import type { Card, CollectionItem, GradingCompany, CardCondition } from '@/types';
+
+const C = colors.dark;
+
+type Step = 'search' | 'details';
+type CardType = 'raw' | 'graded';
+
+const GRADERS: { label: string; value: GradingCompany }[] = [
+  { label: 'PSA', value: 'PSA' },
+  { label: 'BGS', value: 'BGS' },
+  { label: 'CGC', value: 'CGC' },
+];
+
+const CONDITIONS: { label: string; value: CardCondition }[] = [
+  { label: 'Mint', value: 'mint' },
+  { label: 'Near Mint', value: 'near_mint' },
+  { label: 'Excellent', value: 'excellent' },
+  { label: 'Good', value: 'good' },
+  { label: 'Played', value: 'played' },
+];
+
+const GRADES = [10, 9.5, 9, 8.5, 8, 7];
+
+export default function AddCardScreen() {
+  const insets = useSafeAreaInsets();
+  const { addToCollection } = useApp();
+  const [step, setStep] = useState<Step>('search');
+  const [query, setQuery] = useState('');
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
+  const [cardType, setCardType] = useState<CardType>('raw');
+  const [condition, setCondition] = useState<CardCondition>('near_mint');
+  const [grader, setGrader] = useState<GradingCompany>('PSA');
+  const [grade, setGrade] = useState(10);
+  const [purchasePrice, setPurchasePrice] = useState('');
+  const [certNumber, setCertNumber] = useState('');
+  const [notes, setNotes] = useState('');
+  const [success, setSuccess] = useState(false);
+
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const allCards = searchCards('');
+  const results = query.trim().length > 0 ? searchCards(query) : allCards;
+
+  function selectCard(card: Card) {
+    setSelectedCard(card);
+    setStep('details');
+  }
+
+  function handleAdd() {
+    if (!selectedCard) return;
+    const item: CollectionItem = {
+      id: `col-add-${Date.now()}`,
+      cardId: selectedCard.id,
+      card: selectedCard,
+      quantity: 1,
+      condition,
+      acquiredAt: new Date().toISOString().split('T')[0],
+      acquiredPrice: parseFloat(purchasePrice) || selectedCard.price.raw,
+      currency: 'AUD',
+      notes: notes || undefined,
+      grading: cardType === 'graded' ? {
+        company: grader,
+        grade,
+        certNumber: certNumber || `${grader}-${Date.now()}`,
+        gradedAt: new Date().toISOString().split('T')[0],
+      } : undefined,
+    };
+    addToCollection(item);
+    setSuccess(true);
+    setTimeout(() => router.back(), 1600);
+  }
+
+  if (success) {
+    return (
+      <View style={[styles.screen, styles.successScreen]}>
+        <View style={styles.successIcon}>
+          <Feather name="check-circle" size={64} color={C.positive} />
+        </View>
+        <Text style={styles.successTitle}>Card Added!</Text>
+        <Text style={styles.successSub}>{selectedCard?.name} added to your collection</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.screen, { paddingTop: topPad }]}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Pressable
+          onPress={() => (step === 'search' ? router.back() : setStep('search'))}
+          style={styles.closeBtn}
+        >
+          <Feather name={step === 'search' ? 'x' : 'arrow-left'} size={20} color={C.foreground} />
+        </Pressable>
+        <Text style={styles.title}>{step === 'search' ? 'Add Card' : 'Card Details'}</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      {/* Step indicator */}
+      <View style={styles.stepIndicator}>
+        {(['search', 'details'] as Step[]).map((s, i) => (
+          <React.Fragment key={s}>
+            <View style={styles.stepItem}>
+              <View style={[
+                styles.stepDot,
+                step === s
+                  ? { backgroundColor: C.primary }
+                  : (i === 0 && step === 'details')
+                    ? { backgroundColor: C.positive }
+                    : { backgroundColor: C.border },
+              ]}>
+                {i === 0 && step === 'details'
+                  ? <Feather name="check" size={12} color="#FFFFFF" />
+                  : <Text style={styles.stepNum}>{i + 1}</Text>
+                }
+              </View>
+              <Text style={[
+                styles.stepLabel,
+                step === s ? { color: C.foreground } : { color: C.mutedForeground },
+              ]}>
+                {s === 'search' ? 'Search' : 'Details'}
+              </Text>
+            </View>
+            {i === 0 && <View style={styles.stepLine} />}
+          </React.Fragment>
+        ))}
+      </View>
+
+      {/* Search step */}
+      {step === 'search' && (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.searchBar}>
+            <Feather name="search" size={16} color={C.mutedForeground} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search card name or set..."
+              placeholderTextColor={C.mutedForeground}
+              value={query}
+              onChangeText={setQuery}
+              autoFocus
+              selectionColor={C.primary}
+            />
+            {query.length > 0 && (
+              <Pressable onPress={() => setQuery('')}>
+                <Feather name="x" size={15} color={C.mutedForeground} />
+              </Pressable>
+            )}
+          </View>
+
+          <Text style={styles.sectionLabel}>
+            {query ? `Results (${results.length})` : 'All Cards'}
+          </Text>
+
+          {results.map(card => (
+            <Pressable
+              key={card.id}
+              onPress={() => selectCard(card)}
+              style={[styles.cardRow, { backgroundColor: C.card }]}
+            >
+              <View style={[styles.cardThumb, { backgroundColor: card.gradientStart }]}>
+                <Text style={styles.cardInitial}>{card.name[0]}</Text>
+              </View>
+              <View style={styles.cardInfo}>
+                <Text style={styles.cardName}>{card.name}</Text>
+                <Text style={styles.cardSet}>{card.setName} · {card.number}</Text>
+                <Text style={styles.cardRarity}>{card.rarity.replace(/_/g, ' ')}</Text>
+              </View>
+              <View style={styles.cardPricing}>
+                <Text style={styles.cardPrice}>${card.price.raw.toLocaleString()}</Text>
+                <Text style={styles.cardPriceLabel}>Raw</Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* Details step */}
+      {step === 'details' && selectedCard && (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          {/* Selected card preview */}
+          <View style={[styles.selectedCard, { backgroundColor: C.card }]}>
+            <View style={[styles.selectedThumb, { backgroundColor: selectedCard.gradientStart }]}>
+              <Text style={styles.selectedInitial}>{selectedCard.name[0]}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.selectedName}>{selectedCard.name}</Text>
+              <Text style={styles.selectedSet}>{selectedCard.setName} · {selectedCard.number}</Text>
+            </View>
+            <Pressable onPress={() => setStep('search')}>
+              <Text style={[styles.changeLink, { color: C.primary }]}>Change</Text>
+            </Pressable>
+          </View>
+
+          {/* Card type toggle */}
+          <Text style={styles.fieldLabel}>Card Type</Text>
+          <View style={styles.toggleRow}>
+            {(['raw', 'graded'] as CardType[]).map(t => (
+              <Pressable
+                key={t}
+                onPress={() => setCardType(t)}
+                style={[
+                  styles.toggleBtn,
+                  cardType === t && { backgroundColor: C.primary, borderColor: C.primary },
+                ]}
+              >
+                <Text style={[styles.toggleText, cardType === t && { color: '#FFFFFF' }]}>
+                  {t === 'raw' ? 'Raw / Ungraded' : 'Graded'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Raw — condition */}
+          {cardType === 'raw' && (
+            <View>
+              <Text style={styles.fieldLabel}>Condition</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {CONDITIONS.map(c => (
+                    <Pressable
+                      key={c.value}
+                      onPress={() => setCondition(c.value)}
+                      style={[
+                        styles.chip,
+                        condition === c.value && { backgroundColor: C.primary, borderColor: C.primary },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, condition === c.value && { color: '#FFFFFF' }]}>
+                        {c.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Graded — company + grade + cert */}
+          {cardType === 'graded' && (
+            <View>
+              <Text style={styles.fieldLabel}>Grading Company</Text>
+              <View style={styles.toggleRow}>
+                {GRADERS.map(g => (
+                  <Pressable
+                    key={g.value}
+                    onPress={() => setGrader(g.value)}
+                    style={[
+                      styles.toggleBtn,
+                      grader === g.value && { backgroundColor: C.primary, borderColor: C.primary },
+                    ]}
+                  >
+                    <Text style={[styles.toggleText, grader === g.value && { color: '#FFFFFF' }]}>
+                      {g.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.fieldLabel}>Grade</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {GRADES.map(g => (
+                    <Pressable
+                      key={g}
+                      onPress={() => setGrade(g)}
+                      style={[
+                        styles.chip,
+                        grade === g && { backgroundColor: C.primary, borderColor: C.primary },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, grade === g && { color: '#FFFFFF' }]}>{g}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </ScrollView>
+
+              <Text style={styles.fieldLabel}>Cert Number (optional)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="e.g. 88245612"
+                placeholderTextColor={C.mutedForeground}
+                value={certNumber}
+                onChangeText={setCertNumber}
+                selectionColor={C.primary}
+              />
+            </View>
+          )}
+
+          {/* Purchase price */}
+          <Text style={styles.fieldLabel}>Purchase Price (AUD)</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder={`e.g. ${selectedCard.price.raw.toFixed(2)}`}
+            placeholderTextColor={C.mutedForeground}
+            value={purchasePrice}
+            onChangeText={setPurchasePrice}
+            keyboardType="decimal-pad"
+            selectionColor={C.primary}
+          />
+
+          {/* Notes */}
+          <Text style={styles.fieldLabel}>Notes (optional)</Text>
+          <TextInput
+            style={[styles.textInput, styles.textInputMulti]}
+            placeholder="Condition notes, provenance, etc."
+            placeholderTextColor={C.mutedForeground}
+            value={notes}
+            onChangeText={setNotes}
+            multiline
+            numberOfLines={3}
+            selectionColor={C.primary}
+          />
+
+          {/* Add button */}
+          <Pressable onPress={handleAdd} style={styles.addBtn}>
+            <Feather name="plus" size={18} color="#FFFFFF" />
+            <Text style={styles.addBtnText}>Add to Collection</Text>
+          </Pressable>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: C.background },
+  successScreen: { alignItems: 'center', justifyContent: 'center', gap: 16 },
+  successIcon: { marginBottom: 8 },
+  successTitle: { fontSize: 26, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
+  successSub: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
+  stepIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  stepItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  stepDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepNum: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  stepLabel: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  stepLine: { flex: 1, height: 1, backgroundColor: C.border, marginHorizontal: 10 },
+  content: { paddingHorizontal: 20, paddingBottom: 40 },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: C.card,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: C.foreground,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+  },
+  cardThumb: {
+    width: 48,
+    height: 68,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardInitial: { fontSize: 22, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
+  cardInfo: { flex: 1, gap: 3 },
+  cardName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  cardSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  cardRarity: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: `${C.mutedForeground}88`,
+    textTransform: 'capitalize',
+  },
+  cardPricing: { alignItems: 'flex-end' },
+  cardPrice: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
+  cardPriceLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  selectedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 22,
+  },
+  selectedThumb: {
+    width: 48,
+    height: 68,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedInitial: { fontSize: 22, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
+  selectedName: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
+  selectedSet: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    marginTop: 2,
+  },
+  changeLink: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  fieldLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 10,
+    marginTop: 18,
+  },
+  toggleRow: { flexDirection: 'row', gap: 8 },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    alignItems: 'center',
+  },
+  toggleText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: C.border,
+  },
+  chipText: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.foreground },
+  textInput: {
+    backgroundColor: C.card,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: C.foreground,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  textInputMulti: {
+    minHeight: 90,
+    textAlignVertical: 'top',
+    paddingTop: 12,
+  },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: C.primary,
+    marginTop: 28,
+  },
+  addBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+});

@@ -35,14 +35,14 @@ const statStyles = StyleSheet.create({
 });
 
 const MENU_ITEMS = [
-  { icon: 'bell', label: 'Notifications', badge: '3' },
-  { icon: 'star', label: 'Watchlist' },
-  { icon: 'package', label: 'My Listings' },
-  { icon: 'repeat', label: 'Trade Offers' },
-  { icon: 'shield', label: 'Verification History' },
-  { icon: 'credit-card', label: 'Payment Methods' },
-  { icon: 'settings', label: 'Settings' },
-  { icon: 'help-circle', label: 'Help & Support' },
+  { icon: 'bell', label: 'Notifications', badge: '3', route: null },
+  { icon: 'star', label: 'Watchlist', route: null },
+  { icon: 'package', label: 'My Listings', route: null },
+  { icon: 'repeat', label: 'Trade Offers', route: null },
+  { icon: 'shield', label: 'Verification History', route: null },
+  { icon: 'credit-card', label: 'Payment Methods', route: null },
+  { icon: 'settings', label: 'Settings', route: '/settings' },
+  { icon: 'help-circle', label: 'Help & Support', route: null },
 ];
 
 export default function ProfileScreen() {
@@ -139,6 +139,7 @@ export default function ProfileScreen() {
           {MENU_ITEMS.map((item, idx) => (
             <Pressable
               key={item.label}
+              onPress={() => { if (item.route) router.push(item.route as any); }}
               style={({ pressed }) => [
                 styles.menuRow,
                 idx < MENU_ITEMS.length - 1 ? styles.menuDivider : null,
