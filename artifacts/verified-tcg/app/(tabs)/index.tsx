@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Logo } from '@/components/Logo';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { useApp } from '@/context/AppContext';
@@ -93,7 +94,9 @@ export default function HomeScreen() {
     AsyncStorage.setItem(TRADE_MATCHES_DISMISSED_KEY, String(MOCK_TRADE_MATCHES.length)).catch(() => {});
   }, []);
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // When NativeTabs (Liquid Glass) is active on iOS 26+, the native container
+  // already applies safe-area insets, so we must not add insets.top again.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const gain = portfolio.totalGain;
