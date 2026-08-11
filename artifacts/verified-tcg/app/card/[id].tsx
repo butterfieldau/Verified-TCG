@@ -688,8 +688,7 @@ export default function CardDetailScreen() {
   const gain7d = card.price.change7d;
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[{ flex: 1, backgroundColor: C.background }, slideStyle]}>
+    <Animated.View style={[{ flex: 1, backgroundColor: C.background }, slideStyle]}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
@@ -713,36 +712,38 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card artwork — full width, 2.5:3.5 aspect ratio */}
-        <View style={styles.cardStage}>
-          {card.imageUrl ? (
-            <ZoomableCardImage
-              imageUrl={card.imageUrl}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-            />
-          ) : (
-            <CardArtFallback
-              cardName={card.name}
-              cardNumber={card.number}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-              verificationStatus={card.verificationStatus}
-            />
-          )}
+        {/* Card artwork — swipe left/right here to move between collection cards */}
+        <GestureDetector gesture={panGesture}>
+          <View style={styles.cardStage}>
+            {card.imageUrl ? (
+              <ZoomableCardImage
+                imageUrl={card.imageUrl}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+              />
+            ) : (
+              <CardArtFallback
+                cardName={card.name}
+                cardNumber={card.number}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+                verificationStatus={card.verificationStatus}
+              />
+            )}
 
-          {/* Swipe edge hints — only when prev/next exists */}
-          {prevCardId && (
-            <View style={[styles.swipeHint, styles.swipeHintLeft]}>
-              <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
-            </View>
-          )}
-          {nextCardId && (
-            <View style={[styles.swipeHint, styles.swipeHintRight]}>
-              <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
-            </View>
-          )}
-        </View>
+            {/* Swipe edge hints — only when prev/next exists */}
+            {prevCardId && (
+              <View style={[styles.swipeHint, styles.swipeHintLeft]}>
+                <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
+              </View>
+            )}
+            {nextCardId && (
+              <View style={[styles.swipeHint, styles.swipeHintRight]}>
+                <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
+              </View>
+            )}
+          </View>
+        </GestureDetector>
 
         {/* Page indicator — only when card is in collection */}
         {inCollection && (
@@ -978,8 +979,7 @@ export default function CardDetailScreen() {
           onAdd={handleWishlistAdd}
         />
       )}
-      </Animated.View>
-    </GestureDetector>
+    </Animated.View>
   );
 }
 
