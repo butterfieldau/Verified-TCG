@@ -22,6 +22,11 @@ import type {
 import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
+import {
+  loadPersistedPrices,
+  saveRefreshedPrices,
+  applyPersistedCollectionPrices,
+} from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 
@@ -84,26 +89,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
-  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
+  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
 
-  // Load persisted watchlist from AsyncStorage on mount
+  // Load persisted watchlist and prices from AsyncStorage on mount
   useEffect(() => {
-    AsyncStorage.getItem(WATCHLIST_STORAGE_KEY)
-      .then(stored => {
-        if (stored !== null) {
-          try {
-            const parsed = JSON.parse(stored) as WatchlistItem[];
-            if (Array.isArray(parsed)) {
-              setWatchlist(parsed);
-            }
-          } catch {
-            // Corrupted data — fall back to mock defaults
+    Promise.all([
+      AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
+      loadPersistedPrices(),
+    ]).then(([storedWatchlist, persisted]) => {
+      // Restore watchlist
+      if (storedWatchlist !== null) {
+        try {
+          const parsed = JSON.parse(storedWatchlist) as WatchlistItem[];
+          if (Array.isArray(parsed)) {
+            setWatchlist(parsed);
           }
+        } catch {
+          // Corrupted data — fall back to mock defaults
         }
-      })
-      .finally(() => setWatchlistLoaded(true));
+      }
+
+      // Restore persisted prices onto collection items
+      if (persisted.collectionPrices !== null) {
+        setCollection(prev => applyPersistedCollectionPrices(prev, persisted.collectionPrices!));
+      }
+
+      // Restore persisted prices onto watchlist items (price field only —
+      // other watchlist data from storedWatchlist takes precedence)
+      if (persisted.watchlistPrices !== null) {
+        setWatchlist(prev => applyPersistedCollectionPrices(prev, persisted.watchlistPrices!));
+      }
+
+      // Restore last-updated timestamp
+      if (persisted.lastUpdated !== null) {
+        setPricesLastUpdated(persisted.lastUpdated);
+      }
+    }).finally(() => setWatchlistLoaded(true));
   }, []);
 
   // Persist watchlist to AsyncStorage on every change (after initial load)
@@ -162,31 +185,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   }, []);
 
+  // Refs so refreshPrices can read the latest collection/watchlist without
+  // them being stale-closure-captured in the useCallback dependency array.
+  const collectionRef = useRef<CollectionItem[]>(collection);
+  const watchlistRef = useRef<WatchlistItem[]>(watchlist);
+  useEffect(() => { collectionRef.current = collection; }, [collection]);
+  useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
+
   const refreshPrices = useCallback(async () => {
     if (isPriceRefreshing) return;
     setIsPriceRefreshing(true);
     try {
       await fetchRefreshedPrices();
-      setCollection(prev =>
-        prev.map(item => ({
-          ...item,
-          card: {
-            ...item.card,
-            price: simulateRefreshedPrice(item.cardId, item.card.price),
-          },
-        })),
-      );
+      const now = new Date();
+
+      // Compute updated arrays using the latest ref values so we can
+      // both set state and persist in the same step — no setTimeout needed.
+      const updatedCollection = collectionRef.current.map(item => ({
+        ...item,
+        card: {
+          ...item.card,
+          price: simulateRefreshedPrice(item.cardId, item.card.price),
+        },
+      }));
+
       // Also refresh prices on watchlist cards so price-alert thresholds can trigger
-      setWatchlist(prev =>
-        prev.map(item => ({
-          ...item,
-          card: {
-            ...item.card,
-            price: simulateRefreshedPrice(item.cardId, item.card.price),
-          },
-        })),
-      );
-      setPricesLastUpdated(new Date());
+      const updatedWatchlist = watchlistRef.current.map(item => ({
+        ...item,
+        card: {
+          ...item.card,
+          price: simulateRefreshedPrice(item.cardId, item.card.price),
+        },
+      }));
+
+      setCollection(updatedCollection);
+      setWatchlist(updatedWatchlist);
+      setPricesLastUpdated(now);
+
+      // Await persistence so that an immediate restart cannot lose the data.
+      // Errors are caught and re-thrown so callers know the save failed.
+      await saveRefreshedPrices(updatedCollection, updatedWatchlist, now);
     } finally {
       setIsPriceRefreshing(false);
     }
