@@ -281,9 +281,11 @@ interface ZoomableCardImageProps {
   imageUrl: string;
   gradientStart: string;
   gradientEnd: string;
+  cardName: string;
+  cardNumber: string;
 }
 
-function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCardImageProps) {
+function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, cardNumber }: ZoomableCardImageProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
 
@@ -324,11 +326,19 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCar
 
   return (
     <View style={imgStyles.container}>
-      {/* Gradient fallback always behind image */}
+      {/* Gradient background — always rendered as fallback layer */}
       <LinearGradient
         colors={[gradientStart, gradientEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Shimmer highlight over gradient — visible while loading or on error */}
+      <LinearGradient
+        colors={['transparent', 'rgba(255,255,255,0.14)', 'transparent']}
+        start={{ x: 0.3, y: 0 }}
+        end={{ x: 0.7, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
 
@@ -350,10 +360,25 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCar
           </Animated.View>
         </GestureDetector>
       ) : (
-        // Fallback: gradient + card initial (image failed)
-        <View style={imgStyles.fallbackContent}>
-          <Text style={imgStyles.fallbackHint}>No image available</Text>
-        </View>
+        // Fallback: gradient + card name/number (image failed)
+        <>
+          <View style={imgStyles.cardNumberBadge}>
+            <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+          </View>
+          <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+          <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+        </>
+      )}
+
+      {/* Card name/number overlay while image is still loading */}
+      {showImage && !imageLoaded && !imageError && (
+        <>
+          <View style={imgStyles.cardNumberBadge}>
+            <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+          </View>
+          <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+          <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+        </>
       )}
 
       {/* Zoom hint shown only while image is usable and loaded */}
@@ -434,15 +459,6 @@ const imgStyles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  fallbackContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fallbackHint: {
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: 'rgba(255,255,255,0.5)',
   },
   zoomHint: {
     position: 'absolute',
@@ -591,6 +607,8 @@ export default function CardDetailScreen() {
               imageUrl={card.imageUrl}
               gradientStart={card.gradientStart}
               gradientEnd={card.gradientEnd}
+              cardName={card.name}
+              cardNumber={card.number}
             />
           ) : (
             <CardArtFallback
