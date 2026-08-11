@@ -1,0 +1,889 @@
+import React, { useState, useEffect } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withRepeat,
+  withTiming,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
+import { DeviceMotion } from 'expo-sensors';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
+import { useApp } from '@/context/AppContext';
+import { getCardById } from '@/services/cards';
+import { MOCK_LISTINGS } from '@/services/listings';
+import { getCardPassport } from '@/services/matching';
+import colors from '@/constants/colors';
+import { RARITY_LABELS } from '@/types';
+import type { CollectionItem } from '@/types';
+
+const C = colors.dark;
+const { width: W } = Dimensions.get('window');
+
+/** Card aspect ratio: 2.5 wide × 3.5 tall */
+const CARD_W = W - 40;
+const CARD_H = CARD_W * (3.5 / 2.5);
+
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
+
+type PriceTab = 'Raw' | 'PSA 9' | 'PSA 10' | 'CGC 10' | 'BGS 9.5';
+
+const PRICE_TABS: PriceTab[] = ['Raw', 'PSA 9', 'PSA 10', 'CGC 10', 'BGS 9.5'];
+
+function getTabPrice(card: any, tab: PriceTab): number | undefined {
+  switch (tab) {
+    case 'Raw': return card.price.raw;
+    case 'PSA 9': return card.price.psa9;
+    case 'PSA 10': return card.price.psa10;
+    case 'CGC 10': return card.price.cgc10;
+    case 'BGS 9.5': return card.price.bgs95;
+    default: return card.price.raw;
+  }
+}
+
+// ─── Holographic shimmer overlay ─────────────────────────────────────────────
+//
+// Renders a rainbow prismatic layer over the card that shifts with device tilt.
+// Uses DeviceMotion (gyroscope) when available; auto-sweeps as a fallback.
+
+function HoloOverlay() {
+  const shiftX = useSharedValue(0);
+  const shiftY = useSharedValue(0);
+
+  useEffect(() => {
+    let sub: ReturnType<typeof DeviceMotion.addListener> | null = null;
+
+    DeviceMotion.isAvailableAsync().then((available) => {
+      if (available) {
+        DeviceMotion.setUpdateInterval(32); // ~30 fps
+        sub = DeviceMotion.addListener(({ rotation }) => {
+          if (!rotation) return;
+          // gamma: left/right tilt, beta: front/back tilt — clamp to ±0.6 rad
+          const gx = Math.max(-0.6, Math.min(0.6, rotation.gamma ?? 0));
+          const gy = Math.max(-0.6, Math.min(0.6, rotation.beta ?? 0));
+          shiftX.value = withSpring((gx / 0.6) * CARD_W * 0.35, { damping: 18, stiffness: 80 });
+          shiftY.value = withSpring((gy / 0.6) * CARD_H * 0.25, { damping: 18, stiffness: 80 });
+        });
+      } else {
+        // Fallback: gentle looping sweep across the card
+        shiftX.value = withRepeat(
+          withTiming(CARD_W * 0.38, {
+            duration: 3400,
+            easing: Easing.inOut(Easing.sin),
+          }),
+          -1,
+          true,
+        );
+      }
+    });
+
+    return () => {
+      sub?.remove();
+      cancelAnimation(shiftX);
+      cancelAnimation(shiftY);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const overlayStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: shiftX.value },
+      { translateY: shiftY.value },
+    ],
+  }));
+
+  return (
+    // pointerEvents="none" so the overlay never intercepts pinch / tap gestures
+    <View style={holoStyles.root} pointerEvents="none">
+      {/* Wide rainbow band that sweeps with tilt */}
+      <Animated.View style={[holoStyles.band, overlayStyle]}>
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0)',
+            'rgba(255, 30,120,0.22)',
+            'rgba(255,165,  0,0.26)',
+            'rgba(255,255,  0,0.22)',
+            'rgba(  0,255,140,0.26)',
+            'rgba(  0,140,255,0.28)',
+            'rgba(160,  0,255,0.24)',
+            'rgba(255, 30,120,0.20)',
+            'rgba(255,255,255,0)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ flex: 1 }}
+        />
+      </Animated.View>
+
+      {/* Soft highlight gloss spot */}
+      <Animated.View style={[holoStyles.gloss, overlayStyle]}>
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0.30)',
+            'rgba(255,255,255,0.08)',
+            'rgba(255,255,255,0)',
+          ]}
+          start={{ x: 0.25, y: 0 }}
+          end={{ x: 0.75, y: 1 }}
+          style={{ flex: 1, borderRadius: CARD_W * 0.4 }}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
+const holoStyles = StyleSheet.create({
+  root: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  band: {
+    position: 'absolute',
+    // Wider than the card so the sweep isn't clipped mid-way
+    left: -(CARD_W * 0.55),
+    top: -(CARD_H * 0.2),
+    width: CARD_W * 2.1,
+    height: CARD_H * 1.4,
+  },
+  gloss: {
+    position: 'absolute',
+    left: CARD_W * 0.08,
+    top: CARD_H * 0.04,
+    width: CARD_W * 0.60,
+    height: CARD_H * 0.28,
+    borderRadius: CARD_W * 0.4,
+  },
+});
+
+// ─── Zoomable card image ──────────────────────────────────────────────────────
+
+interface ZoomableCardImageProps {
+  imageUrl: string;
+  gradientStart: string;
+  gradientEnd: string;
+  isHolo?: boolean;
+  isFoil?: boolean;
+}
+
+function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, isHolo, isFoil }: ZoomableCardImageProps) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.min(MAX_SCALE, Math.max(MIN_SCALE, savedScale.value * e.scale));
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+      if (scale.value < MIN_SCALE) {
+        scale.value = withSpring(MIN_SCALE);
+        savedScale.value = MIN_SCALE;
+      }
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      if (scale.value > 1.1) {
+        scale.value = withSpring(1);
+        savedScale.value = 1;
+      } else {
+        scale.value = withSpring(2.5);
+        savedScale.value = 2.5;
+      }
+    });
+
+  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const showImage = !imageError;
+
+  return (
+    <View style={imgStyles.container}>
+      {/* Gradient fallback always behind image */}
+      <LinearGradient
+        colors={[gradientStart, gradientEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {showImage ? (
+        <GestureDetector gesture={composed}>
+          <Animated.View style={[imgStyles.imageWrap, animatedStyle]}>
+            <Image
+              source={{ uri: imageUrl }}
+              style={imgStyles.image}
+              resizeMode="contain"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
+            />
+            {!imageLoaded && (
+              <View style={imgStyles.spinner}>
+                <ActivityIndicator size="large" color="rgba(255,255,255,0.6)" />
+              </View>
+            )}
+          </Animated.View>
+        </GestureDetector>
+      ) : (
+        // Fallback: gradient + card initial (image failed)
+        <View style={imgStyles.fallbackContent}>
+          <Text style={imgStyles.fallbackHint}>No image available</Text>
+        </View>
+      )}
+
+      {/* Holographic shimmer — only on foil/holo cards, above image layer */}
+      {(isHolo || isFoil) && <HoloOverlay />}
+
+      {/* Zoom hint shown only while image is usable and loaded */}
+      {showImage && imageLoaded && (
+        <View style={imgStyles.zoomHint}>
+          <Feather name="zoom-in" size={11} color="rgba(255,255,255,0.55)" />
+          <Text style={imgStyles.zoomHintText}>Pinch or double-tap to zoom</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Gradient-only fallback (no imageUrl at all) ─────────────────────────────
+
+interface CardArtFallbackProps {
+  cardName: string;
+  cardNumber: string;
+  gradientStart: string;
+  gradientEnd: string;
+  verificationStatus?: string;
+  isHolo?: boolean;
+  isFoil?: boolean;
+}
+
+function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus, isHolo, isFoil }: CardArtFallbackProps) {
+  return (
+    <View style={imgStyles.container}>
+      <LinearGradient
+        colors={[gradientStart, gradientEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={['transparent', 'rgba(255,255,255,0.12)', 'transparent']}
+        start={{ x: 0.3, y: 0 }}
+        end={{ x: 0.7, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={imgStyles.cardNumberBadge}>
+        <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+      </View>
+      {verificationStatus === 'verified' && (
+        <View style={imgStyles.verifiedOverlay}>
+          <VerificationBadge status="verified" />
+        </View>
+      )}
+      <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+      <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+      {/* Holographic shimmer — above artwork, non-interactive */}
+      {(isHolo || isFoil) && <HoloOverlay />}
+    </View>
+  );
+}
+
+const imgStyles = StyleSheet.create({
+  container: {
+    width: CARD_W,
+    height: CARD_H,
+    borderRadius: 18,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.5,
+    shadowRadius: 22,
+    elevation: 20,
+  },
+  imageWrap: {
+    width: CARD_W,
+    height: CARD_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  image: {
+    width: CARD_W,
+    height: CARD_H,
+  },
+  spinner: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fallbackContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fallbackHint: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: 'rgba(255,255,255,0.5)',
+  },
+  zoomHint: {
+    position: 'absolute',
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  zoomHintText: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: 'rgba(255,255,255,0.55)',
+  },
+  cardNumberBadge: {
+    position: 'absolute',
+    top: 14,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+  },
+  cardNumberText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: 'rgba(255,255,255,0.75)',
+  },
+  verifiedOverlay: {
+    position: 'absolute',
+    top: 10,
+    right: 12,
+  },
+  cardInitialLarge: {
+    fontSize: 120,
+    fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.2)',
+  },
+  cardNameFallback: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+  },
+});
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function CardDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
+  const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
+  const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
+  const [localInCollection, setLocalInCollection] = useState(false);
+  const [localInWatchlist, setLocalInWatchlist] = useState(false);
+  const [showAddedBanner, setShowAddedBanner] = useState(false);
+
+  const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
+  const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
+  const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
+  const hasPassport = getCardPassport(card.id) !== null;
+
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const tabH = Platform.OS === 'web' ? 84 : 74;
+
+  const activePrice = getTabPrice(card, priceTab);
+
+  const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
+  const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
+
+  function handleAddToCollection() {
+    const newItem: CollectionItem = {
+      id: `col-${Date.now()}`,
+      cardId: card.id,
+      card,
+      quantity: 1,
+      condition: 'near_mint',
+      acquiredAt: new Date().toISOString().split('T')[0],
+      acquiredPrice: card.price.raw,
+      currency: 'AUD',
+    };
+    addToCollection(newItem);
+    setLocalInCollection(true);
+    setShowAddedBanner(true);
+    setTimeout(() => setShowAddedBanner(false), 2500);
+  }
+
+  function handleWatch() {
+    // Navigate to the wishlist screen so the collector can set grade/price
+    router.push('/wishlist' as any);
+  }
+
+  const gain24h = card.price.change24h;
+  const gain7d = card.price.change7d;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: C.background }}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Nav */}
+        <View style={styles.nav}>
+          <Pressable onPress={() => router.back()} style={styles.navBtn}>
+            <Feather name="arrow-left" size={20} color={C.foreground} />
+          </Pressable>
+          <View style={styles.navRight}>
+            <Pressable
+              onPress={handleWatch}
+              style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
+            >
+              <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
+            </Pressable>
+            <Pressable style={styles.navBtn}>
+              <Feather name="share-2" size={20} color={C.foreground} />
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Card artwork — full width, 2.5:3.5 aspect ratio */}
+        <View style={styles.cardStage}>
+          {card.imageUrl ? (
+            <ZoomableCardImage
+              imageUrl={card.imageUrl}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+              isHolo={card.isHolo}
+              isFoil={card.isFoil}
+            />
+          ) : (
+            <CardArtFallback
+              cardName={card.name}
+              cardNumber={card.number}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+              verificationStatus={card.verificationStatus}
+              isHolo={card.isHolo}
+              isFoil={card.isFoil}
+            />
+          )}
+        </View>
+
+        {/* Title block */}
+        <View style={styles.titleBlock}>
+          <Text style={styles.cardName}>{card.name}</Text>
+          <Text style={styles.cardMeta}>{card.setName} · {card.number}</Text>
+          <View style={styles.tagRow}>
+            <View style={[styles.tag, { backgroundColor: C.muted }]}>
+              <Text style={styles.tagText}>{RARITY_LABELS[card.rarity]}</Text>
+            </View>
+            <View style={[styles.tag, { backgroundColor: C.muted }]}>
+              <Text style={styles.tagText}>{card.year}</Text>
+            </View>
+            <View style={[styles.tag, { backgroundColor: C.muted }]}>
+              <Text style={styles.tagText}>
+                {card.tcg === 'pokemon' ? 'Pokémon' : card.tcg === 'magic' ? 'MTG' : 'One Piece'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Condition/grade price tabs */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.priceTabs}
+          contentContainerStyle={styles.priceTabsContent}
+        >
+          {PRICE_TABS.map(t => {
+            const price = getTabPrice(card, t);
+            if (!price) return null;
+            return (
+              <Pressable
+                key={t}
+                onPress={() => setPriceTab(t)}
+                style={[
+                  styles.priceTab,
+                  priceTab === t && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
+                ]}
+              >
+                <Text style={[styles.priceTabLabel, priceTab === t && { color: C.primary }]}>{t}</Text>
+                <Text style={[styles.priceTabValue, priceTab === t && { color: C.foreground }]}>
+                  ${price.toLocaleString('en-AU')}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {/* Market value card */}
+        <View style={[styles.card, { backgroundColor: C.card }]}>
+          <View style={styles.marketHeader}>
+            <View>
+              <Text style={styles.marketLabel}>Market Value</Text>
+              <Text style={styles.marketValue}>
+                ${activePrice?.toLocaleString('en-AU', { minimumFractionDigits: 2 }) ?? '—'} AUD
+              </Text>
+            </View>
+            <View style={styles.changeCol}>
+              {gain24h !== undefined && (
+                <Text style={[styles.changeBadge, { color: gain24h >= 0 ? C.positive : C.negative }]}>
+                  {gain24h >= 0 ? '+' : ''}{gain24h.toFixed(1)}% 24h
+                </Text>
+              )}
+              {gain7d !== undefined && (
+                <Text style={[styles.changeBadge, { color: gain7d >= 0 ? C.positive : C.negative }]}>
+                  {gain7d >= 0 ? '+' : ''}{gain7d.toFixed(1)}% 7d
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {/* Bar chart */}
+          <View style={styles.chartWrap}>
+            <View style={styles.chartLine}>
+              {Array.from({ length: 20 }, (_, i) => {
+                const noise = Math.sin(i * 0.8 + 1.5) * 0.3 + Math.sin(i * 0.3) * 0.5 + i / 20;
+                const h = Math.max(12 + noise * 30, 4);
+                return (
+                  <View
+                    key={i}
+                    style={[
+                      styles.chartBar,
+                      {
+                        height: h,
+                        backgroundColor: (gain7d ?? 0) >= 0 ? `${C.positive}99` : `${C.negative}99`,
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Raw</Text>
+              <Text style={styles.statValue}>${card.price.raw.toLocaleString()}</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>PSA 10</Text>
+              <Text style={styles.statValue}>
+                {card.price.psa10 ? `$${card.price.psa10.toLocaleString()}` : '—'}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>30d Change</Text>
+              <Text style={[
+                styles.statValue,
+                { color: (card.price.change30d ?? 0) >= 0 ? C.positive : C.negative },
+              ]}>
+                {card.price.change30d !== undefined
+                  ? `${card.price.change30d >= 0 ? '+' : ''}${card.price.change30d.toFixed(1)}%`
+                  : '—'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Action buttons */}
+        <View style={styles.actions}>
+          <Pressable
+            onPress={handleAddToCollection}
+            style={[styles.primaryBtn, isOwned && { backgroundColor: C.muted }]}
+            disabled={isOwned}
+          >
+            <Feather name={isOwned ? 'check' : 'plus'} size={18} color="#FFFFFF" />
+            <Text style={styles.primaryBtnText}>{isOwned ? 'In Collection' : 'Add to Collection'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleWatch}
+            style={[styles.secondaryBtn, isWatched && { borderColor: C.primary }]}
+          >
+            <Feather name="heart" size={18} color={isWatched ? C.primary : C.foreground} />
+          </Pressable>
+        </View>
+
+        {/* Card Passport link — only for cards with a graded passport record */}
+        {hasPassport && <Pressable
+          onPress={() => router.push(`/card-passport/${card.id}` as any)}
+          style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
+        >
+          <View style={[styles.passportIcon, { backgroundColor: '#D4AF3722' }]}>
+            <Feather name="book-open" size={14} color="#D4AF37" />
+          </View>
+          <View style={styles.passportInfo}>
+            <Text style={[styles.passportTitle, { color: '#D4AF37' }]}>Card Passport</Text>
+            <Text style={styles.passportSub}>Ownership history, grading record & provenance</Text>
+          </View>
+          <Feather name="chevron-right" size={16} color="#D4AF37" />
+        </Pressable>}
+
+        {/* For Sale listings */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Cards For Sale</Text>
+            <Text style={styles.sectionCount}>{allListings.length} listing{allListings.length !== 1 ? 's' : ''}</Text>
+          </View>
+          {allListings.map(listing => (
+            <Pressable key={listing.id} style={[styles.listingRow, { backgroundColor: C.card }]}>
+              <View style={styles.listingLeft}>
+                <Text style={styles.listingSellerName}>{listing.sellerName}</Text>
+                <View style={styles.listingMeta}>
+                  {listing.grading && (
+                    <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
+                  )}
+                  {listing.isVerifiedSeller && (
+                    <View style={styles.verifiedTag}>
+                      <Feather name="shield" size={11} color={C.positive} />
+                      <Text style={[styles.verifiedTagText, { color: C.positive }]}>Verified</Text>
+                    </View>
+                  )}
+                  {listing.sellerRating && (
+                    <View style={styles.ratingRow}>
+                      <Feather name="star" size={11} color="#F59E0B" />
+                      <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.listingWatchers}>
+                  {listing.watchCount} watching · {listing.views} views
+                </Text>
+              </View>
+              <View style={styles.listingRight}>
+                <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
+                <Text style={styles.listingCurrency}>AUD</Text>
+                <Pressable style={styles.buyBtn}>
+                  <Text style={styles.buyBtnText}>Buy</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
+
+      {/* Added banner */}
+      {showAddedBanner && (
+        <View style={styles.banner}>
+          <Feather name="check-circle" size={16} color={C.positive} />
+          <Text style={styles.bannerText}>Added to collection!</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: C.background },
+  content: { paddingHorizontal: 20 },
+  nav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  navRight: { flexDirection: 'row', gap: 8 },
+  navBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardStage: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  titleBlock: { marginBottom: 20 },
+  cardName: {
+    fontSize: 26,
+    fontFamily: 'Rajdhani_700Bold',
+    color: C.foreground,
+    letterSpacing: -0.3,
+  },
+  cardMeta: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  tagRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  tagText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  priceTabs: { marginBottom: 20 },
+  priceTabsContent: { gap: 8, paddingRight: 4 },
+  priceTab: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  priceTabLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    marginBottom: 3,
+  },
+  priceTabValue: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: C.mutedForeground,
+  },
+  card: { borderRadius: 16, padding: 18, marginBottom: 16 },
+  marketHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  marketLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  marketValue: {
+    fontSize: 28,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+    letterSpacing: -0.5,
+  },
+  changeCol: { alignItems: 'flex-end', gap: 4 },
+  changeBadge: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  chartWrap: { height: 52, marginVertical: 16 },
+  chartLine: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  chartBar: { flex: 1, borderRadius: 2, minHeight: 4 },
+  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  statItem: { alignItems: 'center' },
+  statLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  statValue: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  actions: { flexDirection: 'row', gap: 12, marginBottom: 28 },
+  primaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: C.primary,
+  },
+  primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  secondaryBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: C.border,
+    backgroundColor: C.card,
+  },
+  section: { marginBottom: 24 },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sectionTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground },
+  sectionCount: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  listingRow: {
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  listingLeft: { flex: 1, gap: 5 },
+  listingSellerName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  listingMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  verifiedTag: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  verifiedTagText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  ratingText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  listingWatchers: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  listingRight: { alignItems: 'flex-end', gap: 4 },
+  listingPrice: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
+  listingCurrency: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  buyBtn: {
+    backgroundColor: C.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  buyBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  passportBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1,
+    padding: 14, marginBottom: 20,
+  },
+  passportIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  passportInfo: { flex: 1 },
+  passportTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  passportSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  banner: {
+    position: 'absolute',
+    bottom: 100,
+    left: 40,
+    right: 40,
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+  },
+  bannerText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+});
