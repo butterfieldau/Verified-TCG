@@ -24,6 +24,12 @@ import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 import {
+  syncWishlistToServer,
+  addWishlistItemToServer,
+  removeWishlistItemFromServer,
+  updateWishlistItemOnServer,
+} from '@/services/wishlistApi';
+import {
   loadPersistedPrices,
   saveRefreshedPrices,
   applyPersistedCollectionPrices,
@@ -122,6 +128,7 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
   return items;
 }
 
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(MOCK_USER);
   const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
@@ -204,10 +211,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
   }, [watchlist, watchlistLoaded]);
 
+  /**
+   * Server sync on initial load.
+   *
+   * Once AsyncStorage has been read, send the local list to the server and
+   * adopt the server's canonical merged result unconditionally — including
+   * when it is shorter, so tombstoned deletions from another device are
+   * applied here.
+   *
+   * Any network error is silenced: AsyncStorage acts as the offline cache and
+   * the next successful load will re-attempt the sync.
+   *
+   * Note: this is a single-tenant prototype — the server stores data for one
+   * fixed collector and requires no credentials.  See wishlistApi.ts.
+   */
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+
+    setWatchlist(snapshot => {
+      syncWishlistToServer(snapshot)
+        .then(serverCanonical => {
+          // Always adopt the server's canonical list (may be shorter if items
+          // were tombstoned/deleted on another device).
+          setWatchlist(serverCanonical);
+        })
+        .catch(() => {
+          // Network unavailable — stay with local cache
+        });
+      return snapshot; // unchanged while the request is in-flight
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlistLoaded]);
+
   const signIn = useCallback(async (_email: string, _password: string) => {
-    await Promise.resolve(); // simulate async
+    await Promise.resolve(); // simulate async sign-in
     setUser(MOCK_USER);
     setIsAuthenticated(true);
+
+    // On sign-in, sync with the server so the collector's list is fully
+    // restored on a new or reset device.
+    setWatchlist(snapshot => {
+      syncWishlistToServer(snapshot)
+        .then(serverCanonical => { setWatchlist(serverCanonical); })
+        .catch(() => {});
+      return snapshot;
+    });
   }, []);
 
   const signOut = useCallback(() => {
@@ -224,18 +272,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
+    // Optimistic local update
     setWatchlist(prev => [...prev, item]);
+    // Background mirror to server (silenced — AsyncStorage is the local cache)
+    addWishlistItemToServer(item).catch(() => {});
   }, []);
 
   const removeFromWatchlist = useCallback((id: string) => {
+    // Optimistic local update
     setWatchlist(prev => prev.filter(i => i.id !== id));
+    // Background mirror — DELETE records a server tombstone so future syncs
+    // from stale clients cannot resurrect the item.
+    removeWishlistItemFromServer(id).catch(() => {});
   }, []);
 
   const updateWatchlistItem = useCallback((
     id: string,
     patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
   ) => {
+    // Optimistic local update
     setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
+    // Background mirror to server
+    updateWishlistItemOnServer(id, patch).catch(() => {});
   }, []);
 
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
