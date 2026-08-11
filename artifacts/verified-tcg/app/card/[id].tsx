@@ -294,16 +294,44 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  // Helper: clamp translation to the valid bounds for the current scale
+  function clampTranslation(tx: number, ty: number, s: number): { x: number; y: number } {
+    'worklet';
+    const maxX = Math.max(0, (s * CARD_W - CARD_W) / 2);
+    const maxY = Math.max(0, (s * CARD_H - CARD_H) / 2);
+    return {
+      x: Math.min(maxX, Math.max(-maxX, tx)),
+      y: Math.min(maxY, Math.max(-maxY, ty)),
+    };
+  }
 
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
       scale.value = Math.min(MAX_SCALE, Math.max(MIN_SCALE, savedScale.value * e.scale));
     })
     .onEnd(() => {
-      savedScale.value = scale.value;
-      if (scale.value < MIN_SCALE) {
+      const finalScale = scale.value;
+      savedScale.value = finalScale;
+      if (finalScale <= MIN_SCALE) {
+        // Fully zoomed out — snap back to center
         scale.value = withSpring(MIN_SCALE);
         savedScale.value = MIN_SCALE;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        // Reclamp existing translation to the new (smaller/larger) scale bounds
+        const clamped = clampTranslation(translateX.value, translateY.value, finalScale);
+        translateX.value = withSpring(clamped.x);
+        translateY.value = withSpring(clamped.y);
+        savedTranslateX.value = clamped.x;
+        savedTranslateY.value = clamped.y;
       }
     });
 
@@ -313,16 +341,51 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
       if (scale.value > 1.1) {
         scale.value = withSpring(1);
         savedScale.value = 1;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
       } else {
         scale.value = withSpring(2.5);
         savedScale.value = 2.5;
       }
     });
 
-  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture);
+  // Pan is gated: only activates when the image is zoomed in (scale > 1).
+  // At scale 1 the gesture fails immediately so outer card-navigation swipes are unaffected.
+  const panGesture = Gesture.Pan()
+    .manualActivation(true)
+    .onTouchesMove((_e, state) => {
+      if (scale.value > 1) {
+        state.activate();
+      } else {
+        state.fail();
+      }
+    })
+    .onUpdate((e) => {
+      // Clamp continuously so the background never peeks through during a drag
+      const clamped = clampTranslation(
+        savedTranslateX.value + e.translationX,
+        savedTranslateY.value + e.translationY,
+        scale.value,
+      );
+      translateX.value = clamped.x;
+      translateY.value = clamped.y;
+    })
+    .onEnd(() => {
+      // Persist the already-clamped position
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture, panGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
   }));
 
   const showImage = !imageError;
