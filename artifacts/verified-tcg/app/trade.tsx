@@ -14,36 +14,11 @@ import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { CollectionItem } from '@/types';
+import { getTradeCounterpartyCards } from '@/services/trade';
 
 const C = colors.dark;
 
-// ── Mock: Other collector's cards available for trade ─────────────────────────
-const THEIR_CARDS = [
-  {
-    id: 'their-001',
-    name: 'Pikachu ex',
-    set: 'SV: 151',
-    grade: 'TAG 10',
-    value: 875,
-    color: '#FFCC00',
-  },
-  {
-    id: 'their-002',
-    name: 'Lugia V',
-    set: 'Silver Tempest',
-    grade: 'PSA 10',
-    value: 340,
-    color: '#4A90D9',
-  },
-  {
-    id: 'their-003',
-    name: 'Jace, the Mind Sculptor',
-    set: 'Modern Horizons 3',
-    grade: 'Near Mint',
-    value: 220,
-    color: '#3B82F6',
-  },
-];
+const THEIR_CARDS = getTradeCounterpartyCards();
 
 type Step = 'select-offer' | 'select-receive' | 'review' | 'sent';
 

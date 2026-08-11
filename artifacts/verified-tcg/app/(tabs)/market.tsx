@@ -13,9 +13,8 @@ import { Feather } from '@expo/vector-icons';
 import { Chip } from '@/components/ui/Chip';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { GradeBadge } from '@/components/ui/Badge';
-import { getMarketMovers } from '@/services/market';
+import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from '@/services/market';
 import { MOCK_LISTINGS } from '@/services/listings';
-import { MOCK_CARDS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { TCGId } from '@/types';
 
@@ -32,45 +31,9 @@ const TCG_FILTERS: { label: string; value: TCGId | 'all' }[] = [
 
 const SORT_OPTIONS = ['Popularity', 'Price ↑', 'Price ↓', 'Newest'];
 
-const MOST_WATCHED = [
-  { card: MOCK_CARDS[1], watchers: 1247, price: 1450 },
-  { card: MOCK_CARDS[0], watchers: 892, price: 580 },
-  { card: MOCK_CARDS[4], watchers: 634, price: 680 },
-];
-
-const RECENT_SALES = [
-  { card: MOCK_CARDS[1], soldPrice: 1420, soldAt: '2h ago', grade: 'PSA 10' },
-  { card: MOCK_CARDS[0], soldPrice: 565, soldAt: '4h ago', grade: 'PSA 10' },
-  { card: MOCK_CARDS[3], soldPrice: 870, soldAt: '6h ago', grade: 'BGS 9.5' },
-  { card: MOCK_CARDS[8], soldPrice: 48, soldAt: '8h ago', grade: null },
-];
-
-const NEW_RELEASES = [
-  {
-    id: 'sv-pe',
-    name: 'Prismatic Evolutions',
-    tcg: 'Pokémon',
-    releaseDate: 'Jan 2025',
-    cards: 170,
-    highlight: 'Umbreon ex Alt Art',
-  },
-  {
-    id: 'op-09',
-    name: 'The Four Emperors',
-    tcg: 'One Piece',
-    releaseDate: 'Dec 2024',
-    cards: 121,
-    highlight: 'Luffy SEC',
-  },
-  {
-    id: 'sv-mh3',
-    name: 'Modern Horizons 3',
-    tcg: 'MTG',
-    releaseDate: 'Jun 2024',
-    cards: 303,
-    highlight: 'Nadu, Winged Wisdom',
-  },
-];
+const MOST_WATCHED = getMostWatched();
+const RECENT_SALES = getRecentSales();
+const NEW_RELEASES = getNewReleases();
 
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();

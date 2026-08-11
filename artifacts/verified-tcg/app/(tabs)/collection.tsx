@@ -17,6 +17,7 @@ import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId } from '@/types';
+import { getSealedProducts, getSetProgress } from '@/services/collection';
 
 const C = colors.dark;
 
@@ -36,16 +37,8 @@ const TCG_CHIPS: { label: string; value: TCGId | 'all' }[] = [
   { label: 'One Piece', value: 'onepiece' },
 ];
 
-const SEALED_PRODUCTS = [
-  { id: 'sealed-001', name: 'Prismatic Evolutions ETB', tcg: 'Pokémon', value: 420, qty: 2 },
-  { id: 'sealed-002', name: 'Obsidian Flames Booster Box', tcg: 'Pokémon', value: 380, qty: 1 },
-];
-
-const SET_PROGRESS = [
-  { id: 'sv-pe', name: 'Prismatic Evolutions', total: 170, owned: 42, tcg: 'Pokémon' },
-  { id: 'sv-ob', name: 'Obsidian Flames', total: 197, owned: 28, tcg: 'Pokémon' },
-  { id: 'op-01', name: 'Romance Dawn', total: 121, owned: 15, tcg: 'One Piece' },
-];
+const SEALED_PRODUCTS = getSealedProducts();
+const SET_PROGRESS = getSetProgress();
 
 export default function CollectionScreen() {
   const insets = useSafeAreaInsets();

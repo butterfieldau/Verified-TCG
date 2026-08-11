@@ -94,3 +94,42 @@ export function getForSaleItems(): CollectionItem[] {
 export function getForTradeItems(): CollectionItem[] {
   return MOCK_COLLECTION.filter(i => i.isForTrade);
 }
+
+// ── Sealed products ───────────────────────────────────────────────────────────
+
+export interface SealedProduct {
+  id: string;
+  name: string;
+  tcg: string;
+  value: number;
+  qty: number;
+}
+
+const MOCK_SEALED_PRODUCTS: SealedProduct[] = [
+  { id: 'sealed-001', name: 'Prismatic Evolutions ETB', tcg: 'Pokémon', value: 420, qty: 2 },
+  { id: 'sealed-002', name: 'Obsidian Flames Booster Box', tcg: 'Pokémon', value: 380, qty: 1 },
+];
+
+export function getSealedProducts(): SealedProduct[] {
+  return MOCK_SEALED_PRODUCTS;
+}
+
+// ── Set progress ──────────────────────────────────────────────────────────────
+
+export interface SetProgress {
+  id: string;
+  name: string;
+  total: number;
+  owned: number;
+  tcg: string;
+}
+
+const MOCK_SET_PROGRESS: SetProgress[] = [
+  { id: 'sv-pe', name: 'Prismatic Evolutions', total: 170, owned: 42, tcg: 'Pokémon' },
+  { id: 'sv-ob', name: 'Obsidian Flames', total: 197, owned: 28, tcg: 'Pokémon' },
+  { id: 'op-01', name: 'Romance Dawn', total: 121, owned: 15, tcg: 'One Piece' },
+];
+
+export function getSetProgress(): SetProgress[] {
+  return MOCK_SET_PROGRESS;
+}

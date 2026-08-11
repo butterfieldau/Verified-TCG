@@ -12,15 +12,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_LOOKING_FOR_RESULTS } from '@/services/matching';
+import { getLookingForCards } from '@/services/event';
 
 const C = colors.dark;
 
-const CARDS_TO_SEARCH = [
-  { id: 'lf-c1', name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', color: '#1A1B4B' },
-  { id: 'lf-c2', name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', color: '#FFD700' },
-  { id: 'lf-c3', name: 'Eevee ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 9', color: '#F5A623' },
-  { id: 'lf-c4', name: 'Charizard ex', set: 'Obsidian Flames', grade: 'Raw NM', color: '#E0540F' },
-];
+const CARDS_TO_SEARCH = getLookingForCards();
 
 export default function LookingForScreen() {
   const insets = useSafeAreaInsets();

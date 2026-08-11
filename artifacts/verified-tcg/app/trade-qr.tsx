@@ -11,6 +11,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
+import { getCollectorMatches } from '@/services/trade';
 
 const C = colors.dark;
 
@@ -61,11 +62,7 @@ function QRGrid() {
   );
 }
 
-const COLLECTOR_MATCHES = [
-  { id: 'm-001', cardName: 'Umbreon ex SIR', grade: 'PSA 10', value: 1450, color: '#1A1B4B', type: 'wishlist' as const },
-  { id: 'm-002', cardName: 'Eevee ex SIR', grade: 'PSA 9', value: 340, color: '#F5A623', type: 'for_trade' as const },
-  { id: 'm-003', cardName: 'Pikachu & Zekrom GX', grade: 'Raw NM', value: 95, color: '#FFD700', type: 'for_sale' as const },
-];
+const COLLECTOR_MATCHES = getCollectorMatches();
 
 export default function TradeQRScreen() {
   const insets = useSafeAreaInsets();

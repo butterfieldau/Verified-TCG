@@ -12,31 +12,13 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
+import { getMyCardsPool, getTheirCardsPool } from '@/services/trade';
+import type { OfferCard } from '@/services/trade';
 
 const C = colors.dark;
 
-interface OfferCard {
-  id: string;
-  name: string;
-  grade: string;
-  value: number;
-  color: string;
-}
-
-const MY_CARDS_POOL: OfferCard[] = [
-  { id: 'mc-001', name: 'Charizard ex', grade: 'PSA 10', value: 1200, color: '#E0540F' },
-  { id: 'mc-002', name: 'Pikachu ex', grade: 'TAG 10', value: 850, color: '#FFCC00' },
-  { id: 'mc-003', name: 'Rayquaza VMAX', grade: 'BGS 9.5', value: 890, color: '#3AE374' },
-  { id: 'mc-004', name: 'Luffy OP01', grade: 'CGC 10', value: 320, color: '#E63946' },
-  { id: 'mc-005', name: 'Lugia V', grade: 'PSA 9', value: 220, color: '#B0C4DE' },
-];
-
-const THEIR_CARDS_POOL: OfferCard[] = [
-  { id: 'tc-001', name: 'Umbreon ex SIR', grade: 'PSA 10', value: 1900, color: '#1A1B4B' },
-  { id: 'tc-002', name: 'Pikachu & Zekrom GX', grade: 'PSA 10', value: 1200, color: '#FFD700' },
-  { id: 'tc-003', name: 'Eevee ex SIR', grade: 'PSA 9', value: 340, color: '#F5A623' },
-  { id: 'tc-004', name: 'Jace, the Mind Sculptor', grade: 'Near Mint', value: 85, color: '#1E40AF' },
-];
+const MY_CARDS_POOL = getMyCardsPool();
+const THEIR_CARDS_POOL = getTheirCardsPool();
 
 type Side = 'mine' | 'theirs';
 

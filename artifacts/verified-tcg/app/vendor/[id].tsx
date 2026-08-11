@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_EVENT } from '@/services/matching';
+import { getVendorWantedCards, getVendorInventoryExtras } from '@/services/event';
 
 const C = colors.dark;
 
@@ -32,18 +33,8 @@ export default function VendorProfileScreen() {
     { label: 'About', value: 'about' },
   ];
 
-  const WANTED_CARDS = [
-    { id: 'wc-1', name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', color: '#1A1B4B', maxBuy: 1350 },
-    { id: 'wc-2', name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', color: '#FFD700', maxBuy: 1100 },
-    { id: 'wc-3', name: 'Eevee ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 9+', color: '#F5A623', maxBuy: 300 },
-  ];
-
-  const FULL_INVENTORY = [
-    ...vendor.topCards,
-    { name: 'Mewtwo ex', grade: 'PSA 9', price: 160, color: '#9B59B6' },
-    { name: 'Lugia V SIR', grade: 'Near Mint', price: 78, color: '#B0C4DE' },
-    { name: 'Boa Hancock OP04', grade: 'CGC 10', price: 95, color: '#FF8FAB' },
-  ];
+  const WANTED_CARDS = getVendorWantedCards();
+  const FULL_INVENTORY = [...vendor.topCards, ...getVendorInventoryExtras()];
 
   return (
     <ScrollView

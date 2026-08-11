@@ -12,15 +12,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_I_HAVE_THIS_RESULTS } from '@/services/matching';
+import { getHaveThisCards } from '@/services/event';
 
 const C = colors.dark;
 
-const MY_CARDS = [
-  { id: 'hv-c1', name: 'Charizard ex', set: 'Obsidian Flames', grade: 'PSA 10', color: '#E0540F' },
-  { id: 'hv-c2', name: 'Rayquaza VMAX', set: 'Evolving Skies', grade: 'BGS 9.5', color: '#3AE374' },
-  { id: 'hv-c3', name: 'Luffy OP01', set: 'Romance Dawn', grade: 'CGC 10', color: '#E63946' },
-  { id: 'hv-c4', name: 'Pikachu ex', set: 'SV: 151', grade: 'Near Mint', color: '#FFCC00' },
-];
+const MY_CARDS = getHaveThisCards();
 
 export default function HaveThisScreen() {
   const insets = useSafeAreaInsets();
