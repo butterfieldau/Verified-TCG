@@ -1,0 +1,364 @@
+## ADDITIONAL VERIFIED TCG FEATURE PROTOTYPES
+
+Before considering the UI/UX prototype complete, I also want you to design and build polished clickable prototype screens for the features that will make Verified TCG stand out from normal card collection apps.
+
+These features are mainly for VISUAL DESIGN + USER FLOW at this stage.
+
+Use realistic mock data only.
+
+Do NOT build complex backend systems, GPS infrastructure, live matching, messaging, payments or production algorithms yet.
+
+### 1. TRADE MATCH
+
+Create a dedicated Trade Match experience.
+
+Show collectors where:
+
+* they own cards I want
+* I own cards they want
+
+Example:
+
+**98% Trade Match**
+
+YOU WANT
+Pikachu & Zekrom GX
+PSA 10
+$1,200 AUD
+
+THEY WANT
+Charizard ex
+TAG 10
+$1,150 AUD
+
+Value Difference: $50
+
+Collector:
+@cardvaultsydney
+
+Verified Collector
+
+Buttons:
+
+**View Match**
+**Send Trade Offer**
+
+Make this feature feel exciting and important.
+
+---
+
+### 2. EVENT MODE
+
+Create a premium Event Mode screen for card shows such as:
+
+**TCXPO Sydney**
+
+Example dashboard:
+
+🔥 **17 collectors here have cards you want**
+
+🤝 **6 Trade Matches**
+
+💰 **11 wishlist cards are for sale here**
+
+👀 **8 collectors want cards you have**
+
+Sections:
+
+* Trade Matches
+* Wishlist Nearby
+* People Want Your Cards
+* For Sale At This Event
+* Trending At This Event
+
+Add a clear:
+
+**Enter Event Mode**
+
+and
+
+**Leave Event Mode**
+
+flow.
+
+Event Mode should look like one of the flagship Verified TCG features.
+
+---
+
+### 3. COLLECTION MATCH
+
+When viewing another collector profile, prominently show:
+
+**COLLECTION MATCH**
+
+Example:
+
+You have **14 cards they want**
+
+They have **7 cards you want**
+
+Button:
+
+**View Matches**
+
+Show the matching cards visually.
+
+---
+
+### 4. TRADE VALUE ASSISTANT
+
+Create a trade comparison screen.
+
+Example:
+
+**YOU OFFER**
+
+Charizard PSA 10
+$1,200
+
+Pikachu TAG 10
+$850
+
+Total: $2,050
+
+**THEY OFFER**
+
+Umbreon PSA 10
+$1,900
+
+Cash Adjustment: +$150
+
+Estimated Difference:
+
+**$0**
+
+Buttons:
+
+**Add Card**
+**Add Cash**
+**Send Offer**
+
+Make it very easy to understand visually.
+
+---
+
+### 5. TRADE QR
+
+Design a Trade QR feature.
+
+Users can open their collector QR code.
+
+Another collector scans it and sees:
+
+**You're trading with @cardvaultsydney**
+
+Then options:
+
+* View Wishlist Matches
+* View For Trade
+* View For Sale
+* Start Trade
+
+---
+
+### 6. I'M LOOKING FOR
+
+Inside Event Mode create:
+
+**I'm Looking For**
+
+User selects a card they want.
+
+Example:
+
+Pikachu & Zekrom GX
+PSA 10
+
+Then:
+
+**4 available at this event**
+
+Results can show:
+
+* collector
+* grade
+* estimated value
+* for sale / for trade
+* booth or event section where relevant
+
+---
+
+### 7. I HAVE THIS
+
+Reverse the matching flow.
+
+User selects a card they own.
+
+Show:
+
+**12 collectors here want this card**
+
+Then show:
+
+* potential buyers
+* potential trades
+* wishlist matches
+
+Button:
+
+**Find Matches**
+
+---
+
+### 8. COMPLETE MY SET
+
+Create a set completion screen.
+
+Example:
+
+**Prismatic Evolutions**
+
+142 / 180
+
+**78.9% Complete**
+
+38 cards missing
+
+At this event:
+
+18 available
+
+7 trade matches
+
+11 marketplace listings
+
+CTA:
+
+**Find Missing Cards**
+
+---
+
+### 9. WANTED BOARD
+
+Create an Event Mode Wanted Board.
+
+Example:
+
+@omarcollects
+Looking for:
+Pikachu & Zekrom GX PSA 10
+
+@cardking
+Looking for:
+Umbreon ex TAG 10
+
+Each request should have:
+
+**I Have This**
+
+button.
+
+---
+
+### 10. VENDOR MODE
+
+Design vendor profiles for card shops and event sellers.
+
+Example:
+
+**Anything TCG**
+
+Verified Vendor
+
+Booth 42
+
+TCXPO Sydney
+
+Show:
+
+* cards for sale
+* wanted cards
+* trade accepted
+* booth number
+* verified status
+
+Button:
+
+**View Inventory**
+
+---
+
+### 11. CARD PASSPORT
+
+Create a premium Card Passport concept for graded cards.
+
+Show:
+
+* card
+* grade
+* grading company
+* certification number
+* ownership verification
+* purchase history
+* Verified TCG transaction history
+* photos
+* previous verified ownership where available
+
+Do not claim card authenticity is guaranteed.
+
+---
+
+### 12. SMART SELL / SMART TRADE
+
+When a user marks a card:
+
+**For Sale**
+
+show something like:
+
+23 collectors want this card
+6 want this exact grade
+2 are at your current event
+
+When marked:
+
+**For Trade**
+
+show:
+
+18 collectors want it
+5 own cards on your wishlist
+3 are at your current event
+
+Buttons:
+
+**Find Buyers**
+
+or
+
+**Find Trade Matches**
+
+---
+
+## IMPORTANT
+
+These screens should feel integrated into the same Verified TCG design system.
+
+Do NOT make them look like separate mini-apps.
+
+Focus heavily on:
+
+* premium mobile UI
+* very clean information hierarchy
+* card imagery
+* matching indicators
+* verification badges
+* value comparisons
+* simple interactions
+* strong visual polish
+
+Use mock data and clickable prototype flows only.
+
+The goal is for me to be able to navigate through these features and understand exactly how Verified TCG could feel once the real backend is connected later.
+
+Do NOT spend significant development effort on real matching logic or infrastructure yet.

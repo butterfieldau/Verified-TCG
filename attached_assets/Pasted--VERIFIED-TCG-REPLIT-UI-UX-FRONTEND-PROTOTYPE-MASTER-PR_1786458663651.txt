@@ -1,0 +1,2014 @@
+# VERIFIED TCG — REPLIT UI/UX & FRONTEND PROTOTYPE MASTER PROMPT
+
+## PROJECT
+
+Build the initial frontend prototype and design system for:
+
+**Verified TCG**
+
+Domain:
+**verifiedtcg.co**
+
+Tagline:
+**COLLECT. VERIFY. TRADE.**
+
+Verified TCG is a modern trading card platform designed for collectors, traders, investors, buyers and sellers across multiple TCG ecosystems.
+
+The long-term vision is to become an all-in-one TCG platform where users can:
+
+* Discover cards
+* Scan cards
+* Identify cards
+* Track collections
+* Track portfolio value
+* Check market pricing
+* Verify cards
+* Verify sellers
+* Buy and sell cards
+* Trade cards
+* Track graded cards
+* Build public collector profiles
+* View market movements
+* Store proof of ownership
+* Create wanted lists
+* Eventually support multiple TCG franchises
+
+This phase is NOT about building the entire backend.
+
+The purpose of this Replit project is to create an exceptional, production-quality:
+
+**UI/UX + FRONTEND ARCHITECTURE + CLICKABLE PROTOTYPE**
+
+Once this stage is complete the codebase will be moved into GitHub and continued using Codex.
+
+---
+
+# 1. VERY IMPORTANT DEVELOPMENT RULE
+
+DO NOT over-engineer the backend.
+
+DO NOT spend large amounts of time building:
+
+* complex databases
+* card recognition AI
+* payment infrastructure
+* marketplace transaction processing
+* advanced authentication
+* scraping systems
+* external card APIs
+* grading-company integrations
+* real-time price feeds
+* AI verification
+* seller payout systems
+* complex server infrastructure
+
+Where these features appear in the interface, use clean mock data and realistic prototype behaviour.
+
+The goal is to establish:
+
+1. The design language
+2. Navigation
+3. Screens
+4. Components
+5. User experience
+6. Frontend architecture
+7. Responsive behaviour
+8. Prototype interactions
+
+The frontend must be structured properly so real APIs and backend systems can be connected later without redesigning the app.
+
+---
+
+# 2. BRAND IDENTITY
+
+Brand:
+
+**VERIFIED TCG**
+
+Tagline:
+
+**COLLECT. VERIFY. TRADE.**
+
+Primary brand colours:
+
+Red:
+`#FF1E2D`
+
+Near Black:
+`#0A0A0A`
+
+Dark Grey:
+`#1A1A1A`
+
+White:
+`#FFFFFF`
+
+The existing Verified TCG branding uses:
+
+* sharp angular shapes
+* strong Verified "V" identity
+* futuristic typography
+* black
+* dark charcoal
+* white
+* strong red accent
+* subtle metallic/3D influences
+
+However:
+
+DO NOT make the application feel like an esports website.
+
+DO NOT make it look like a crypto platform.
+
+DO NOT make it look like a cybersecurity company.
+
+DO NOT overload screens with red.
+
+The APP itself should feel much more refined than the branding artwork.
+
+Think:
+
+**Apple × StockX × modern fintech × high-end TCG collecting**
+
+The branding can be aggressive.
+
+The interface should be:
+
+* minimal
+* sophisticated
+* premium-feeling
+* fast
+* clean
+* extremely easy to understand
+
+Use red mainly for:
+
+* important actions
+* verification status
+* selected states
+* market highlights
+* CTAs
+
+Not giant red backgrounds everywhere.
+
+---
+
+# 3. DESIGN PRINCIPLES
+
+Every screen should feel intentionally designed.
+
+Avoid generic SaaS templates.
+
+Avoid giant dashboard cards everywhere.
+
+Avoid excessive gradients.
+
+Avoid excessive glassmorphism.
+
+Avoid childish Pokémon-style design.
+
+Avoid casino-style trading interfaces.
+
+Avoid cheap marketplace aesthetics.
+
+Avoid excessive borders.
+
+Avoid excessive text.
+
+Use generous whitespace.
+
+Use strong typography hierarchy.
+
+Use subtle shadows.
+
+Use dark surfaces carefully.
+
+Use beautiful card imagery prominently.
+
+Use small animations and micro-interactions.
+
+The experience should feel extremely polished on an iPhone.
+
+---
+
+# 4. MOBILE FIRST
+
+Verified TCG will eventually become a proper iOS and Android application.
+
+Design MOBILE FIRST.
+
+Create the frontend using:
+
+**React Native + Expo + TypeScript**
+
+Use a modern architecture that can later be moved outside Replit and maintained in GitHub.
+
+Use:
+
+* reusable components
+* reusable hooks
+* centralised theme
+* centralised typography
+* centralised spacing
+* reusable card components
+* reusable buttons
+* reusable modal components
+* reusable bottom sheets
+* clean TypeScript types
+
+Do not hard-code the entire app into giant screen files.
+
+Keep files modular.
+
+---
+
+# 5. NAVIGATION
+
+Use a modern mobile bottom navigation system.
+
+Primary navigation:
+
+### Home
+
+### Market
+
+### Scan
+
+### Collection
+
+### Profile
+
+The Scan action should be visually emphasised.
+
+It can either:
+
+* sit slightly raised in the navigation
+* have a distinctive icon
+* or have another tasteful treatment
+
+Do not make it gimmicky.
+
+---
+
+# 6. APP LAUNCH / SPLASH
+
+Create a premium launch experience.
+
+Show:
+
+Verified TCG logo
+
+Then subtly reveal:
+
+**COLLECT. VERIFY. TRADE.**
+
+Animation should be quick and tasteful.
+
+No long intro animation.
+
+---
+
+# 7. ONBOARDING
+
+Create approximately 3 onboarding screens.
+
+### Screen 1
+
+**Know what your cards are worth.**
+
+Track your collection and understand its current market value.
+
+### Screen 2
+
+**Buy with confidence.**
+
+Verification tools help collectors understand what they're buying.
+
+### Screen 3
+
+**Your entire collection. One place.**
+
+Track raw cards, graded cards and sealed products.
+
+Final CTA:
+
+**Get Started**
+
+Secondary:
+
+**I already have an account**
+
+Use realistic card imagery placeholders.
+
+---
+
+# 8. HOME SCREEN
+
+The Home screen must immediately make the platform feel useful.
+
+Top area:
+
+Verified TCG logo/avatar or simple branded header.
+
+Greeting such as:
+
+**Good morning, Omar**
+
+Below it:
+
+Search field:
+
+**Search cards, sets or products**
+
+Add a camera/scan shortcut.
+
+---
+
+## Portfolio Overview
+
+A sophisticated compact portfolio area showing:
+
+**Collection Value**
+
+Example:
+
+`$24,850.40 AUD`
+
+Movement:
+
+`+$1,245.20`
+
+`+5.27%`
+
+Allow:
+
+* 1D
+* 7D
+* 1M
+* 3M
+* 1Y
+* ALL
+
+Use a clean prototype chart.
+
+This is not a financial trading application so keep it collector-friendly.
+
+---
+
+## Quick Actions
+
+Four compact actions:
+
+**Scan Card**
+
+**Add Card**
+
+**Check Price**
+
+**Verify**
+
+---
+
+## Market Movers
+
+Show horizontally scrollable cards.
+
+Examples:
+
+* Pikachu
+* Charizard
+* Umbreon
+* One Piece cards
+* Magic: The Gathering cards
+
+Each item should show:
+
+Card image
+
+Name
+
+Set
+
+Current estimated value
+
+Percentage movement
+
+Example:
+
+`Umbreon ex`
+
+`Prismatic Evolutions`
+
+`$1,285`
+
+`+8.4%`
+
+---
+
+## Recently Added
+
+Show cards recently added to the user's collection.
+
+---
+
+## Trending
+
+Show popular cards currently being watched by collectors.
+
+---
+
+# 9. GLOBAL SEARCH
+
+Search should be one of the most polished parts of the application.
+
+Search:
+
+**Pikachu**
+
+Results should display intelligently.
+
+Allow filtering by:
+
+* Cards
+* Sets
+* Sealed
+* Users
+
+Card result format:
+
+IMAGE
+
+Pikachu ex
+
+Set name
+
+Card number
+
+Raw price
+
+PSA 10 price where available
+
+Verification/market indicator
+
+Search should feel instant using mock data.
+
+---
+
+# 10. CARD DETAIL PAGE
+
+This is one of the MOST IMPORTANT screens.
+
+Make this page excellent.
+
+Top section:
+
+Large high-resolution card image.
+
+Allow tapping to enlarge.
+
+Show:
+
+**Pikachu ex**
+
+Set
+
+Card number
+
+Rarity
+
+Year
+
+TCG
+
+---
+
+## Price
+
+Prominently show:
+
+**Market Value**
+
+Example:
+
+`$1,240 AUD`
+
+Then condition/grading options:
+
+Raw
+
+PSA 9
+
+PSA 10
+
+CGC 10
+
+BGS 10
+
+TAG 10
+
+Do not assume one grading company is the only relevant grader.
+
+---
+
+## Price History
+
+Beautiful chart.
+
+Ranges:
+
+1M
+
+3M
+
+6M
+
+1Y
+
+ALL
+
+---
+
+## Market Information
+
+Examples:
+
+Last Sale
+
+30 Day Average
+
+Highest Sale
+
+Lowest Sale
+
+Sales Volume
+
+Population if graded
+
+---
+
+## Collection Actions
+
+Primary:
+
+**Add to Collection**
+
+Secondary:
+
+**Watch Card**
+
+Another action:
+
+**I Own This**
+
+---
+
+## Marketplace
+
+Show:
+
+**Cards For Sale**
+
+Example listings:
+
+PSA 10
+
+TAG 10
+
+Raw Near Mint
+
+Seller
+
+Price
+
+Verification badge
+
+Allow:
+
+**View Listing**
+
+---
+
+# 11. SCANNER
+
+This will eventually become a major feature.
+
+For this stage build the interface only.
+
+Camera screen.
+
+Large scanning frame.
+
+Instructions:
+
+**Place your card inside the frame**
+
+Controls:
+
+Flash
+
+Gallery
+
+Help
+
+When simulated scan completes:
+
+Show:
+
+**Possible Match**
+
+Card image
+
+Card title
+
+Set
+
+Number
+
+Confidence:
+
+`98% Match`
+
+Buttons:
+
+**Confirm Card**
+
+**Try Again**
+
+Then:
+
+**Add to Collection**
+
+or
+
+**Check Value**
+
+Design the experience so actual recognition technology can be connected later.
+
+---
+
+# 12. COLLECTION
+
+This needs to feel significantly better than a spreadsheet.
+
+Header:
+
+**My Collection**
+
+Total:
+
+`$24,850`
+
+Cards:
+
+`186`
+
+Movement:
+
+`+4.8% this month`
+
+Tabs:
+
+**Cards**
+
+**Sealed**
+
+**Sets**
+
+Possibly:
+
+**Graded**
+
+Filters:
+
+TCG
+
+Set
+
+Condition
+
+Grade
+
+Grading Company
+
+Value
+
+Date Added
+
+---
+
+## Collection Views
+
+Allow prototype switching between:
+
+GRID
+
+LIST
+
+Grid should showcase card artwork beautifully.
+
+---
+
+# 13. COLLECTION ITEM
+
+When a card is owned, the user should be able to store:
+
+Card
+
+Quantity
+
+Condition
+
+Purchase Price
+
+Purchase Date
+
+Current Estimated Value
+
+Grading Company
+
+Grade
+
+Certification Number
+
+Where Purchased
+
+Private Notes
+
+Optional ownership photo
+
+Eventually this can support ownership verification.
+
+---
+
+# 14. PORTFOLIO
+
+Create a dedicated portfolio view accessible from the Collection or Home.
+
+Show:
+
+**Portfolio Value**
+
+Total invested
+
+Current value
+
+Profit/Loss
+
+Percentage
+
+Best performer
+
+Largest holding
+
+Total cards
+
+Total graded cards
+
+---
+
+## Allocation
+
+Show collection distribution by:
+
+TCG
+
+Set
+
+Raw vs graded
+
+Grading company
+
+Value tier
+
+Charts should be simple and elegant.
+
+Do not make it look like Bloomberg.
+
+---
+
+# 15. MARKET
+
+Create a Market page.
+
+Sections:
+
+**Trending**
+
+**Biggest Movers**
+
+**Most Watched**
+
+**Recent Sales**
+
+**Highest Value**
+
+**New Releases**
+
+---
+
+## TCG selector
+
+Allow:
+
+ALL
+
+POKÉMON
+
+ONE PIECE
+
+MAGIC
+
+OTHER
+
+Architecture must allow additional games later.
+
+Do NOT build Verified TCG as a Pokémon-only application.
+
+---
+
+# 16. MARKETPLACE PROTOTYPE
+
+Create marketplace browsing UI.
+
+Top search.
+
+Categories:
+
+Cards
+
+Graded
+
+Raw
+
+Sealed
+
+Filters:
+
+TCG
+
+Set
+
+Price
+
+Condition
+
+Grade
+
+Grading Company
+
+Seller Rating
+
+Verified Only
+
+Sort:
+
+Newest
+
+Price Low
+
+Price High
+
+Trending
+
+Recently Sold
+
+---
+
+# 17. LISTING CARD
+
+Every marketplace listing should clearly show:
+
+Card image
+
+Card title
+
+Grade
+
+Grading company
+
+Seller
+
+Price
+
+Seller verification status
+
+Listing verification status
+
+Watch/favourite action
+
+Example:
+
+**Pikachu & Zekrom GX**
+
+TAG 10
+
+$1,240 AUD
+
+Seller:
+
+CardVaultSydney
+
+✓ Verified Seller
+
+---
+
+# 18. VERIFIED SYSTEM
+
+"Verified" is central to the brand.
+
+Create a prototype trust system.
+
+The platform may eventually have different verification levels.
+
+For now design badges for:
+
+### Verified Account
+
+Identity or account verification.
+
+### Verified Seller
+
+Trusted marketplace seller.
+
+### Verified Ownership
+
+Evidence that a collector owns the displayed card.
+
+### Verified Listing
+
+Listing has passed relevant checks.
+
+Do NOT imply authentication guarantees that aren't actually being performed yet.
+
+In prototype text use wording such as:
+
+**Verification information**
+
+rather than claiming:
+
+**100% authentic**
+
+unless such functionality eventually exists.
+
+Create a small information screen explaining verification types.
+
+---
+
+# 19. SELL FLOW
+
+Prototype:
+
+**Sell a Card**
+
+Step 1:
+
+Select from collection
+
+OR
+
+Scan card
+
+Step 2:
+
+Card details
+
+Step 3:
+
+Condition / grade
+
+Step 4:
+
+Price
+
+Step 5:
+
+Photos
+
+Step 6:
+
+Preview listing
+
+Step 7:
+
+Publish
+
+No real marketplace backend required yet.
+
+Use mock interactions.
+
+---
+
+# 20. TRADE FEATURE
+
+Create a basic UI concept for:
+
+**Trade**
+
+Users can select cards they own and cards another collector owns.
+
+Example:
+
+YOU OFFER
+
+Charizard PSA 10
+
+$900 estimated value
+
+THEY OFFER
+
+Pikachu TAG 10
+
+$875 estimated value
+
+Value Difference:
+
+`$25`
+
+CTA:
+
+**Send Trade Offer**
+
+Again this is UI prototype only.
+
+---
+
+# 21. WATCHLIST
+
+Allow users to watch cards.
+
+Page:
+
+**Watchlist**
+
+Show:
+
+Card
+
+Current price
+
+Price movement
+
+Target price
+
+Alerts indicator
+
+Future backend may support price notifications.
+
+---
+
+# 22. PROFILE
+
+Profile should feel like a collector identity.
+
+Example:
+
+Avatar
+
+**Omar**
+
+`@omarcollects`
+
+Sydney, Australia
+
+Verified Account badge
+
+Stats:
+
+Cards
+
+Collection Value
+
+Trades
+
+Sales
+
+Joined
+
+Tabs:
+
+Collection
+
+For Sale
+
+Activity
+
+About
+
+Privacy settings must later allow users to hide financial information.
+
+For the prototype add:
+
+**Show collection value publicly**
+
+toggle.
+
+---
+
+# 23. PUBLIC COLLECTOR PROFILE
+
+Create a profile that other collectors can visit.
+
+Show:
+
+Username
+
+Verification
+
+Collector since
+
+Favourite TCGs
+
+Public collection
+
+Cards for sale
+
+Trade cards
+
+Completed trades
+
+Seller rating
+
+Do not show private collection information.
+
+---
+
+# 24. NOTIFICATIONS
+
+Design a notification centre.
+
+Examples:
+
+**Price Alert**
+
+Umbreon ex increased 8.4%.
+
+**Trade Offer**
+
+@cardvault sent you a trade offer.
+
+**Watchlist**
+
+A card on your watchlist was listed.
+
+**Market**
+
+A new sale was recorded for Pikachu ex.
+
+**Verification**
+
+Your seller verification has been approved.
+
+---
+
+# 25. ADD CARD MANUALLY
+
+Users must not be forced to scan.
+
+Flow:
+
+Search Card
+
+Select Card
+
+Select:
+
+Raw
+
+Graded
+
+If Raw:
+
+Condition
+
+If Graded:
+
+Grading Company
+
+Grade
+
+Certification Number
+
+Then:
+
+Purchase Price
+
+Purchase Date
+
+Quantity
+
+Notes
+
+Add.
+
+---
+
+# 26. GRADING COMPANIES
+
+Do not hard-code the product around PSA.
+
+Structure grading company values dynamically.
+
+Prototype examples can include:
+
+* PSA
+* TAG
+* CGC
+* Beckett / BGS
+* SGC
+* ARS
+* ACE
+* Other
+
+This should be managed using a configuration/data structure rather than duplicated throughout the application.
+
+---
+
+# 27. SUPPORTED ASSET TYPES
+
+Build the architecture so the collection can contain:
+
+### Raw Card
+
+### Graded Card
+
+### Sealed Product
+
+Potentially later:
+
+### Complete Set
+
+### Box / Case
+
+Do not make every database/frontend object assume everything is a single raw card.
+
+---
+
+# 28. TCG ARCHITECTURE
+
+Likewise, do not hard-code:
+
+`pokemon`
+
+throughout the application.
+
+Create a clean TCG structure.
+
+Example prototype values:
+
+`pokemon`
+
+`one-piece`
+
+`magic-the-gathering`
+
+`other`
+
+This needs to scale later.
+
+---
+
+# 29. MOCK DATA
+
+Create good realistic demo data.
+
+Do not use:
+
+Card 1
+
+Test Product
+
+Example Item
+
+Lorem Ipsum
+
+The prototype needs to look like a real application.
+
+Use realistic sample names such as:
+
+Umbreon ex
+
+Charizard ex
+
+Pikachu ex
+
+Pikachu & Zekrom GX
+
+Monkey D. Luffy
+
+Black Lotus
+
+etc.
+
+Prices should be displayed in:
+
+**AUD**
+
+Architecture should support additional currencies later.
+
+---
+
+# 30. EMPTY STATES
+
+Every screen must have thoughtfully designed empty states.
+
+For example:
+
+Collection empty:
+
+**Start your collection**
+
+Scan or search for your first card.
+
+Buttons:
+
+**Scan a Card**
+
+**Search Cards**
+
+Watchlist empty:
+
+**Nothing here yet**
+
+Watch cards you're interested in and they'll appear here.
+
+Do not leave screens blank.
+
+---
+
+# 31. LOADING STATES
+
+Design:
+
+Skeleton loaders
+
+Search loading
+
+Image loading
+
+Portfolio loading
+
+Scanner processing
+
+Marketplace loading
+
+Do not use giant generic spinning loaders everywhere.
+
+---
+
+# 32. ERROR STATES
+
+Create clean error components.
+
+Example:
+
+**Couldn't load cards**
+
+Something went wrong while retrieving market data.
+
+**Try Again**
+
+---
+
+# 33. DESIGN SYSTEM
+
+Build a dedicated central design system.
+
+Include:
+
+Colours
+
+Typography
+
+Spacing
+
+Radius
+
+Shadows
+
+Icons
+
+Buttons
+
+Inputs
+
+Cards
+
+Badges
+
+Chips
+
+Tabs
+
+Navigation
+
+Bottom sheets
+
+Modals
+
+Toast messages
+
+Charts
+
+Skeleton loaders
+
+Empty states
+
+Error states
+
+---
+
+# 34. COMPONENT ARCHITECTURE
+
+Example component organisation:
+
+`components/ui`
+
+`components/cards`
+
+`components/market`
+
+`components/collection`
+
+`components/profile`
+
+`components/scanner`
+
+`components/verification`
+
+`components/navigation`
+
+Do not duplicate components across screens unnecessarily.
+
+---
+
+# 35. DATA STRUCTURE
+
+Create TypeScript interfaces/models for future entities.
+
+Examples:
+
+User
+
+CollectorProfile
+
+TCG
+
+Set
+
+Card
+
+CardVariant
+
+CollectionItem
+
+SealedProduct
+
+Grade
+
+GradingCompany
+
+PriceRecord
+
+SaleRecord
+
+Listing
+
+Seller
+
+Trade
+
+TradeOffer
+
+WatchlistItem
+
+Verification
+
+Notification
+
+Do not build the full backend.
+
+Just establish clean frontend models.
+
+---
+
+# 36. MOCK SERVICE LAYER
+
+VERY IMPORTANT.
+
+Do not put huge arrays directly inside screens.
+
+Create a mock data/service layer.
+
+For example:
+
+`services/cards`
+
+`services/market`
+
+`services/collection`
+
+`services/listings`
+
+`services/profile`
+
+This should make it simple for Codex to replace mock services with real APIs later.
+
+Example:
+
+Current prototype:
+
+`getCardById()`
+
+returns mock data.
+
+Later:
+
+`getCardById()`
+
+can retrieve data from Supabase/API.
+
+Screen code should not need to be completely rewritten.
+
+---
+
+# 37. STATE MANAGEMENT
+
+Use simple sensible state management.
+
+Do not introduce unnecessarily complicated enterprise architecture.
+
+State should support prototype actions including:
+
+Adding a card
+
+Removing a card
+
+Watching a card
+
+Changing portfolio ranges
+
+Changing filters
+
+Changing tabs
+
+Creating a mock listing
+
+Sending a mock trade offer
+
+These actions only need to persist during the prototype session where appropriate.
+
+---
+
+# 38. ANIMATIONS
+
+Use tasteful animations.
+
+Examples:
+
+Page transitions
+
+Card press
+
+Watch animation
+
+Tab changes
+
+Scanner processing
+
+Portfolio number changes
+
+Bottom sheet opening
+
+Verification badge appearance
+
+Keep everything subtle.
+
+No excessive bouncing.
+
+No flashy gaming effects.
+
+---
+
+# 39. CARD IMAGES
+
+Create the app so actual card images can later come from external APIs/CDNs.
+
+For prototype purposes use clean remote placeholders or provided assets where available.
+
+Maintain proper card aspect ratios.
+
+Never stretch card artwork.
+
+Use image fallbacks.
+
+---
+
+# 40. ACCESSIBILITY
+
+Use:
+
+Proper touch targets
+
+Readable font sizes
+
+Strong contrast
+
+Accessible labels
+
+Safe areas
+
+Keyboard-safe forms
+
+Do not sacrifice usability for visual aesthetics.
+
+---
+
+# 41. AUTHENTICATION UI
+
+Create authentication screens only.
+
+No complicated backend auth needed during this stage.
+
+Screens:
+
+Sign In
+
+Create Account
+
+Forgot Password
+
+Continue with Apple
+
+Continue with Google
+
+Email
+
+Password
+
+Create the architecture so Supabase Auth can later be connected.
+
+---
+
+# 42. SETTINGS
+
+Settings screen:
+
+Account
+
+Profile
+
+Currency
+
+Notifications
+
+Privacy
+
+Verification
+
+Security
+
+Appearance
+
+Support
+
+Terms
+
+Privacy Policy
+
+Delete Account
+
+Log Out
+
+Currency default:
+
+**AUD**
+
+---
+
+# 43. DARK MODE
+
+The primary Verified TCG experience should use the dark brand aesthetic.
+
+However the architecture should support theming properly.
+
+Do not scatter colour hex values throughout files.
+
+Use theme tokens.
+
+---
+
+# 44. RESPONSIVENESS
+
+Primary target:
+
+iPhone.
+
+But ensure it behaves correctly on:
+
+larger iPhones
+
+smaller iPhones
+
+Android phones
+
+tablet-sized screens
+
+Do not simply stretch phone screens across tablets.
+
+---
+
+# 45. DEVELOPMENT QUALITY
+
+Use:
+
+TypeScript
+
+Strong typing
+
+Clean naming
+
+Reusable components
+
+Proper folders
+
+Consistent imports
+
+Minimal dependencies
+
+Comments only where useful
+
+No huge monolithic files
+
+No unnecessary framework experimentation
+
+No duplicated styling
+
+No fake backend complexity
+
+---
+
+# 46. IMPORTANT: FUTURE CODEX HANDOFF
+
+This project WILL be moved to GitHub and continued by Codex.
+
+Therefore optimise for:
+
+**clean maintainable source code**
+
+rather than Replit-specific hacks.
+
+Avoid unnecessary Replit lock-in.
+
+Do not build anything that only functions inside Replit unless absolutely necessary.
+
+The repository should eventually be able to run locally with standard commands.
+
+---
+
+# 47. README
+
+Create a high-quality:
+
+`README.md`
+
+Document:
+
+Verified TCG overview
+
+Technology
+
+Folder structure
+
+How to run locally
+
+Design system
+
+Navigation
+
+Mock services
+
+Current completed screens
+
+Prototype limitations
+
+Future API integration points
+
+Known TODOs
+
+---
+
+# 48. PROJECT STATUS FILE
+
+Create:
+
+`PROJECT_STATUS.md`
+
+Use sections:
+
+## COMPLETED
+
+## IN PROGRESS
+
+## PROTOTYPE ONLY
+
+## NOT YET BUILT
+
+## BACKEND REQUIRED
+
+## API REQUIRED
+
+## FUTURE PHASE
+
+This document will be used when handing the repo to Codex.
+
+---
+
+# 49. CODEX HANDOFF FILE
+
+Create:
+
+`CODEX_HANDOFF.md`
+
+Explain clearly:
+
+* how the project works
+* architecture decisions
+* navigation
+* theme system
+* component system
+* mock services
+* existing models
+* which functionality is fake/prototype-only
+* what should eventually connect to APIs
+* important technical decisions
+* technical debt
+* next recommended development steps
+
+Do not claim prototype functionality is production-ready.
+
+---
+
+# 50. FIRST BUILD PRIORITY
+
+Do NOT attempt all features simultaneously.
+
+Build the core design system first.
+
+Then create the primary navigation.
+
+Then prioritise these screens:
+
+1. Splash
+2. Onboarding
+3. Home
+4. Search
+5. Card Detail
+6. Scanner
+7. Collection
+8. Collection Item
+9. Market
+10. Marketplace
+11. Profile
+12. Settings
+
+Once those look polished and work together, create the supporting prototype screens.
+
+QUALITY OVER QUANTITY.
+
+I would rather have 12 exceptionally polished screens than 40 mediocre screens.
+
+---
+
+# 51. VISUAL REVIEW
+
+Before considering the prototype complete:
+
+Review every major screen visually.
+
+Check:
+
+spacing
+
+alignment
+
+typography
+
+navigation
+
+card image sizing
+
+safe areas
+
+scroll behaviour
+
+button consistency
+
+dark surfaces
+
+contrast
+
+empty states
+
+loading states
+
+overall polish
+
+The interface should look like a real venture-backed consumer application rather than an AI-generated template.
+
+---
+
+# 52. DO NOT DO YET
+
+Do NOT implement:
+
+Real Stripe payments
+
+Seller payouts
+
+Production marketplace checkout
+
+Escrow
+
+Real card authentication
+
+AI image recognition
+
+Production card scanner
+
+Blockchain
+
+NFT functionality
+
+Production grading integrations
+
+Complex scraping
+
+Production email infrastructure
+
+Push notification backend
+
+Chat/messaging backend
+
+Real-time price ingestion
+
+Automated valuation algorithms
+
+Production Supabase database
+
+Complex admin panel
+
+Seller dispute system
+
+Tax calculations
+
+Shipping infrastructure
+
+These are future Codex phases.
+
+---
+
+# 53. FINAL GOAL OF THIS REPLIT STAGE
+
+When finished I should be able to open Verified TCG on my phone and navigate around the application as though it were already a real product.
+
+I should be able to:
+
+Search a card
+
+Open it
+
+See its market value
+
+Simulate scanning it
+
+Add it to my collection
+
+See my collection value change
+
+Watch the card
+
+Browse the market
+
+View marketplace listings
+
+View verification information
+
+View my collector profile
+
+Simulate selling/trading
+
+without requiring the production backend.
+
+The prototype must make the Verified TCG concept immediately understandable.
+
+Most importantly:
+
+**DO NOT rush into backend development.**
+
+**DO NOT build expensive infrastructure.**
+
+**DO NOT over-engineer.**
+
+First make Verified TCG look and feel exceptional.
+
+We will build the real data, infrastructure, integrations and production systems after this UI/UX stage has been approved.
