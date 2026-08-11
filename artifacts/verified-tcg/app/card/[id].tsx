@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -18,12 +18,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withRepeat,
-  withTiming,
-  Easing,
-  cancelAnimation,
 } from 'react-native-reanimated';
-import { DeviceMotion } from 'expo-sensors';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { useApp } from '@/context/AppContext';
@@ -59,132 +54,15 @@ function getTabPrice(card: any, tab: PriceTab): number | undefined {
   }
 }
 
-// ─── Holographic shimmer overlay ─────────────────────────────────────────────
-//
-// Renders a rainbow prismatic layer over the card that shifts with device tilt.
-// Uses DeviceMotion (gyroscope) when available; auto-sweeps as a fallback.
-
-function HoloOverlay() {
-  const shiftX = useSharedValue(0);
-  const shiftY = useSharedValue(0);
-
-  useEffect(() => {
-    let sub: ReturnType<typeof DeviceMotion.addListener> | null = null;
-
-    DeviceMotion.isAvailableAsync().then((available) => {
-      if (available) {
-        DeviceMotion.setUpdateInterval(32); // ~30 fps
-        sub = DeviceMotion.addListener(({ rotation }) => {
-          if (!rotation) return;
-          // gamma: left/right tilt, beta: front/back tilt — clamp to ±0.6 rad
-          const gx = Math.max(-0.6, Math.min(0.6, rotation.gamma ?? 0));
-          const gy = Math.max(-0.6, Math.min(0.6, rotation.beta ?? 0));
-          shiftX.value = withSpring((gx / 0.6) * CARD_W * 0.35, { damping: 18, stiffness: 80 });
-          shiftY.value = withSpring((gy / 0.6) * CARD_H * 0.25, { damping: 18, stiffness: 80 });
-        });
-      } else {
-        // Fallback: gentle looping sweep across the card
-        shiftX.value = withRepeat(
-          withTiming(CARD_W * 0.38, {
-            duration: 3400,
-            easing: Easing.inOut(Easing.sin),
-          }),
-          -1,
-          true,
-        );
-      }
-    });
-
-    return () => {
-      sub?.remove();
-      cancelAnimation(shiftX);
-      cancelAnimation(shiftY);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const overlayStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: shiftX.value },
-      { translateY: shiftY.value },
-    ],
-  }));
-
-  return (
-    // pointerEvents="none" so the overlay never intercepts pinch / tap gestures
-    <View style={holoStyles.root} pointerEvents="none">
-      {/* Wide rainbow band that sweeps with tilt */}
-      <Animated.View style={[holoStyles.band, overlayStyle]}>
-        <LinearGradient
-          colors={[
-            'rgba(255,255,255,0)',
-            'rgba(255, 30,120,0.22)',
-            'rgba(255,165,  0,0.26)',
-            'rgba(255,255,  0,0.22)',
-            'rgba(  0,255,140,0.26)',
-            'rgba(  0,140,255,0.28)',
-            'rgba(160,  0,255,0.24)',
-            'rgba(255, 30,120,0.20)',
-            'rgba(255,255,255,0)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ flex: 1 }}
-        />
-      </Animated.View>
-
-      {/* Soft highlight gloss spot */}
-      <Animated.View style={[holoStyles.gloss, overlayStyle]}>
-        <LinearGradient
-          colors={[
-            'rgba(255,255,255,0.30)',
-            'rgba(255,255,255,0.08)',
-            'rgba(255,255,255,0)',
-          ]}
-          start={{ x: 0.25, y: 0 }}
-          end={{ x: 0.75, y: 1 }}
-          style={{ flex: 1, borderRadius: CARD_W * 0.4 }}
-        />
-      </Animated.View>
-    </View>
-  );
-}
-
-const holoStyles = StyleSheet.create({
-  root: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  band: {
-    position: 'absolute',
-    // Wider than the card so the sweep isn't clipped mid-way
-    left: -(CARD_W * 0.55),
-    top: -(CARD_H * 0.2),
-    width: CARD_W * 2.1,
-    height: CARD_H * 1.4,
-  },
-  gloss: {
-    position: 'absolute',
-    left: CARD_W * 0.08,
-    top: CARD_H * 0.04,
-    width: CARD_W * 0.60,
-    height: CARD_H * 0.28,
-    borderRadius: CARD_W * 0.4,
-  },
-});
-
 // ─── Zoomable card image ──────────────────────────────────────────────────────
 
 interface ZoomableCardImageProps {
   imageUrl: string;
   gradientStart: string;
   gradientEnd: string;
-  isHolo?: boolean;
-  isFoil?: boolean;
 }
 
-function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, isHolo, isFoil }: ZoomableCardImageProps) {
+function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCardImageProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
 
@@ -257,9 +135,6 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, isHolo, isFoi
         </View>
       )}
 
-      {/* Holographic shimmer — only on foil/holo cards, above image layer */}
-      {(isHolo || isFoil) && <HoloOverlay />}
-
       {/* Zoom hint shown only while image is usable and loaded */}
       {showImage && imageLoaded && (
         <View style={imgStyles.zoomHint}>
@@ -279,11 +154,9 @@ interface CardArtFallbackProps {
   gradientStart: string;
   gradientEnd: string;
   verificationStatus?: string;
-  isHolo?: boolean;
-  isFoil?: boolean;
 }
 
-function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus, isHolo, isFoil }: CardArtFallbackProps) {
+function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus }: CardArtFallbackProps) {
   return (
     <View style={imgStyles.container}>
       <LinearGradient
@@ -308,8 +181,6 @@ function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, ver
       )}
       <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
       <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
-      {/* Holographic shimmer — above artwork, non-interactive */}
-      {(isHolo || isFoil) && <HoloOverlay />}
     </View>
   );
 }
@@ -485,8 +356,6 @@ export default function CardDetailScreen() {
               imageUrl={card.imageUrl}
               gradientStart={card.gradientStart}
               gradientEnd={card.gradientEnd}
-              isHolo={card.isHolo}
-              isFoil={card.isFoil}
             />
           ) : (
             <CardArtFallback
@@ -495,8 +364,6 @@ export default function CardDetailScreen() {
               gradientStart={card.gradientStart}
               gradientEnd={card.gradientEnd}
               verificationStatus={card.verificationStatus}
-              isHolo={card.isHolo}
-              isFoil={card.isFoil}
             />
           )}
         </View>
