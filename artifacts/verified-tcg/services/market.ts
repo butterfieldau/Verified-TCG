@@ -129,3 +129,41 @@ const MOCK_NEW_RELEASES: SetRelease[] = [
 export function getNewReleases(): SetRelease[] {
   return MOCK_NEW_RELEASES;
 }
+
+// ── Price refresh simulation ──────────────────────────────────────────────────
+
+import type { PriceRecord } from '@/types';
+
+/**
+ * Simulates a market price refresh for a single card by applying a small
+ * realistic variation (±3%) seeded on the current minute so repeated calls
+ * within the same minute are stable, but a new pull-to-refresh a minute later
+ * yields a visibly different result.
+ */
+export function simulateRefreshedPrice(cardId: string, current: PriceRecord): PriceRecord {
+  const timeBucket = Math.floor(Date.now() / 60000); // changes every minute
+  const cardSeed = cardId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const raw01 = ((timeBucket * 9301 + cardSeed * 49297) % 233280) / 233280; // 0..1
+  const variation = 1 + (raw01 - 0.5) * 0.06; // ±3%
+
+  function vary(v: number | undefined): number | undefined {
+    return v !== undefined ? Math.round(v * variation * 100) / 100 : undefined;
+  }
+
+  return {
+    ...current,
+    raw:   Math.round(current.raw * variation * 100) / 100,
+    psa9:  vary(current.psa9),
+    psa10: vary(current.psa10),
+    bgs9:  vary(current.bgs9),
+    bgs95: vary(current.bgs95),
+    cgc9:  vary(current.cgc9),
+    cgc10: vary(current.cgc10),
+    updatedAt: new Date().toISOString().split('T')[0],
+  };
+}
+
+/** Simulates a short async delay for the refresh network call. */
+export async function fetchRefreshedPrices(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 1200));
+}

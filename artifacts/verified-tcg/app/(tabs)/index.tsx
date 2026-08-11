@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -37,9 +38,13 @@ function getGreeting() {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user, portfolio, portfolioRange, setPortfolioRange, collection } = useApp();
+  const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated } = useApp();
   const movers = getMarketMovers();
   const trending = getTrendingCards();
+
+  const onRefresh = useCallback(async () => {
+    await refreshPrices();
+  }, [refreshPrices]);
 
   const [eventBannerDismissed, setEventBannerDismissed] = useState(false);
   const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState(false);
@@ -69,6 +74,14 @@ export default function HomeScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isPriceRefreshing}
+          onRefresh={onRefresh}
+          tintColor={C.primary}
+          colors={[C.primary]}
+        />
+      }
     >
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -250,7 +263,14 @@ export default function HomeScreen() {
 
       {/* ── Portfolio Overview ── */}
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <Text style={styles.cardLabel}>Collection Value</Text>
+        <View style={styles.cardLabelRow}>
+          <Text style={styles.cardLabel}>Collection Value</Text>
+          {pricesLastUpdated && (
+            <Text style={styles.lastUpdated}>
+              Updated {formatLastUpdated(pricesLastUpdated)}
+            </Text>
+          )}
+        </View>
         <Text style={styles.portfolioValue}>
           ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
         </Text>
@@ -446,6 +466,18 @@ export default function HomeScreen() {
       </View>
     </ScrollView>
   );
+}
+
+function formatLastUpdated(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 
 function matchColor(pct: number) {
@@ -741,13 +773,24 @@ const styles = StyleSheet.create({
   },
 
   card: { borderRadius: 16, padding: 18, marginBottom: 20 },
+  cardLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   cardLabel: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     color: C.mutedForeground,
     letterSpacing: 1.5,
     textTransform: 'uppercase',
-    marginBottom: 8,
+  },
+  lastUpdated: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    opacity: 0.7,
   },
   portfolioValue: {
     fontSize: 32,

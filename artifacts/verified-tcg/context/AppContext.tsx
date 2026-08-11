@@ -18,6 +18,7 @@ import type {
 } from '@/types';
 import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
+import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 
 interface AppState {
   user: User | null;
@@ -29,6 +30,8 @@ interface AppState {
   portfolioRange: PortfolioRange;
   marketFilters: MarketFilters;
   activeTCG: TCGId | null;
+  pricesLastUpdated: Date | null;
+  isPriceRefreshing: boolean;
 }
 
 interface AppActions {
@@ -43,6 +46,7 @@ interface AppActions {
   setCollectionFilters: (filters: Partial<CollectionFilters>) => void;
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
   setActiveTCG: (tcg: TCGId | null) => void;
+  refreshPrices: () => Promise<void>;
 }
 
 type AppContextType = AppState & AppActions;
@@ -68,6 +72,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
+  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
+  const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
     await Promise.resolve(); // simulate async
@@ -111,6 +117,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
+  const refreshPrices = useCallback(async () => {
+    if (isPriceRefreshing) return;
+    setIsPriceRefreshing(true);
+    try {
+      await fetchRefreshedPrices();
+      setCollection(prev =>
+        prev.map(item => ({
+          ...item,
+          card: {
+            ...item.card,
+            price: simulateRefreshedPrice(item.cardId, item.card.price),
+          },
+        })),
+      );
+      setPricesLastUpdated(new Date());
+    } finally {
+      setIsPriceRefreshing(false);
+    }
+  }, [isPriceRefreshing]);
+
   const portfolio = useMemo<PortfolioSummary>(() => {
     const totalValue = collection.reduce(
       (sum, item) => sum + getItemCurrentValue(item) * item.quantity,
@@ -144,10 +170,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         user, isAuthenticated,
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
+        pricesLastUpdated, isPriceRefreshing,
         signIn, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
+        refreshPrices,
       }}
     >
       {children}

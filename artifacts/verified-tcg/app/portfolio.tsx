@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -113,10 +114,26 @@ const ALLOC_TABS: { label: string; value: AllocTab }[] = [
   { label: 'Value Tier', value: 'value_tier' },
 ];
 
+function formatLastUpdated(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
+
 export default function PortfolioScreen() {
   const insets = useSafeAreaInsets();
-  const { portfolio, collection } = useApp();
+  const { portfolio, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated } = useApp();
   const [allocTab, setAllocTab] = useState<AllocTab>('tcg');
+
+  const onRefresh = useCallback(async () => {
+    await refreshPrices();
+  }, [refreshPrices]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const isPositive = portfolio.totalGain >= 0;
@@ -214,6 +231,14 @@ export default function PortfolioScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={{ paddingTop: topPad + 8, paddingBottom: 40 }}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isPriceRefreshing}
+          onRefresh={onRefresh}
+          tintColor={C.primary}
+          colors={[C.primary]}
+        />
+      }
     >
       {/* Header */}
       <View style={styles.header}>
@@ -245,6 +270,11 @@ export default function PortfolioScreen() {
             {isPositive ? '+' : ''}${Math.abs(portfolio.totalGain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
           </Text>
         </View>
+        {pricesLastUpdated && (
+          <Text style={styles.heroUpdated}>
+            Prices as of {formatLastUpdated(pricesLastUpdated)}
+          </Text>
+        )}
       </View>
 
       {/* Stats grid */}
@@ -383,6 +413,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   heroRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  heroUpdated: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    opacity: 0.7,
+    marginTop: 10,
+  },
   gainPill: {
     flexDirection: 'row',
     alignItems: 'center',
