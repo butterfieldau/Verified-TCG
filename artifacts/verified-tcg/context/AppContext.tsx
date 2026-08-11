@@ -38,6 +38,7 @@ interface AppActions {
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
+  updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>) => void;
   setPortfolioRange: (range: PortfolioRange) => void;
   setCollectionFilters: (filters: Partial<CollectionFilters>) => void;
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
@@ -95,6 +96,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWatchlist(prev => prev.filter(i => i.id !== id));
   }, []);
 
+  const updateWatchlistItem = useCallback((
+    id: string,
+    patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
+  ) => {
+    setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
+  }, []);
+
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
     setCollectionFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
@@ -138,7 +146,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         watchlist, portfolioRange, marketFilters, activeTCG,
         signIn, signOut,
         addToCollection, removeFromCollection,
-        addToWatchlist, removeFromWatchlist,
+        addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
       }}
     >

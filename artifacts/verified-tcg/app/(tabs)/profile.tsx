@@ -11,7 +11,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { getWatchlist } from '@/services/profile';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
 import colors from '@/constants/colors';
@@ -36,7 +35,7 @@ const statStyles = StyleSheet.create({
 
 const MENU_ITEMS = [
   { icon: 'bell', label: 'Notifications', badge: '3', route: '/notifications' },
-  { icon: 'star', label: 'Watchlist', route: '/watchlist' },
+  { icon: 'heart', label: 'Wishlist', route: '/wishlist' },
   { icon: 'zap', label: 'Event Mode', badge: 'LIVE', route: '/event-mode', highlight: true },
   { icon: 'git-branch', label: 'Trade Matches', badge: '4', route: '/trade-match' },
   { icon: 'maximize', label: 'Trade QR', route: '/trade-qr' },
@@ -50,8 +49,7 @@ const MENU_ITEMS = [
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { user, signOut } = useApp();
-  const watchlist = getWatchlist();
+  const { user, signOut, watchlist } = useApp();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -113,12 +111,14 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Watchlist preview */}
+      {/* Wishlist preview */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Watchlist</Text>
-          <Pressable>
-            <Text style={styles.seeAll}>See all ({watchlist.length})</Text>
+          <Text style={styles.sectionTitle}>Wishlist</Text>
+          <Pressable onPress={() => router.push('/wishlist' as any)}>
+            <Text style={styles.seeAll}>
+              {watchlist.length > 0 ? `See all (${watchlist.length})` : 'Add cards'}
+            </Text>
           </Pressable>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>

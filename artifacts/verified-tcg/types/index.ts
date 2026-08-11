@@ -147,6 +147,7 @@ export interface WatchlistItem {
   id: string;
   cardId: string;
   card: Card;
+  desiredGrade?: string;
   targetPrice?: number;
   addedAt: string;
   priceAlertEnabled?: boolean;

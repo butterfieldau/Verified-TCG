@@ -317,15 +317,8 @@ export default function CardDetailScreen() {
   }
 
   function handleWatch() {
-    if (!isWatched) {
-      addToWatchlist({
-        id: `wl-${Date.now()}`,
-        cardId: card.id,
-        card,
-        addedAt: new Date().toISOString().split('T')[0],
-      });
-      setLocalInWatchlist(true);
-    }
+    // Navigate to the wishlist screen so the collector can set grade/price
+    router.push('/wishlist' as any);
   }
 
   const gain24h = card.price.change24h;

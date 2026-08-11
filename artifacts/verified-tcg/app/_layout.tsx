@@ -47,6 +47,7 @@ function RootLayoutNav() {
       <Stack.Screen name="sell" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="trade" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="wishlist" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collector/[username]" options={{ animation: 'slide_from_right' }} />
     </Stack>

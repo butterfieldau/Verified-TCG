@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_EVENT } from '@/services/matching';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
@@ -30,6 +31,16 @@ export default function EventModeScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [isInEvent, setIsInEvent] = useState(false);
   const [activeTab, setActiveTab] = useState<EventTab>('matches');
+  const { watchlist } = useApp();
+
+  // Scale event stats with live wishlist length
+  const wishlistCount = watchlist.length;
+  const liveStats = {
+    collectorsWithYourWants: Math.max(0, Math.round(MOCK_EVENT.stats.collectorsWithYourWants * (wishlistCount / 3))),
+    tradeMatches: Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches * (wishlistCount / 3))),
+    wishlistForSale: Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale * (wishlistCount / 3))),
+    wantYourCards: MOCK_EVENT.stats.wantYourCards,
+  };
 
   if (!isInEvent) {
     return (
@@ -60,11 +71,23 @@ export default function EventModeScreen() {
 
           {/* Preview stats */}
           <Text style={styles.previewTitle}>What's available for you</Text>
+          {wishlistCount === 0 && (
+            <Pressable
+              onPress={() => router.push('/wishlist' as any)}
+              style={[styles.wishlistNudge, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}
+            >
+              <Feather name="heart" size={14} color={C.primary} />
+              <Text style={[styles.wishlistNudgeText, { color: C.primary }]}>
+                Add cards to your wishlist to see personalised event stats
+              </Text>
+              <Feather name="chevron-right" size={14} color={C.primary} />
+            </Pressable>
+          )}
           <View style={styles.statsGrid}>
-            <StatTile icon="heart" value={MOCK_EVENT.stats.collectorsWithYourWants} label="Collectors with cards you want" color={C.primary} />
-            <StatTile icon="repeat" value={MOCK_EVENT.stats.tradeMatches} label="Trade matches at event" color='#22C55E' />
-            <StatTile icon="tag" value={MOCK_EVENT.stats.wishlistForSale} label="Wishlist cards for sale" color='#F59E0B' />
-            <StatTile icon="eye" value={MOCK_EVENT.stats.wantYourCards} label="Want cards you have" color='#3B82F6' />
+            <StatTile icon="heart" value={liveStats.collectorsWithYourWants} label="Collectors with cards you want" color={C.primary} />
+            <StatTile icon="repeat" value={liveStats.tradeMatches} label="Trade matches at event" color='#22C55E' />
+            <StatTile icon="tag" value={liveStats.wishlistForSale} label="Wishlist cards for sale" color='#F59E0B' />
+            <StatTile icon="eye" value={liveStats.wantYourCards} label="Want cards you have" color='#3B82F6' />
           </View>
 
           {/* What you get */}
@@ -119,10 +142,10 @@ export default function EventModeScreen() {
 
       {/* Stat highlights */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statScroll} contentContainerStyle={styles.statScrollContent}>
-        <MiniStat icon="🔥" value={MOCK_EVENT.stats.collectorsWithYourWants} label="have your wants" onPress={() => setActiveTab('wishlist')} />
-        <MiniStat icon="🤝" value={MOCK_EVENT.stats.tradeMatches} label="trade matches" onPress={() => setActiveTab('matches')} />
-        <MiniStat icon="💰" value={MOCK_EVENT.stats.wishlistForSale} label="wishlist for sale" onPress={() => setActiveTab('for_sale')} />
-        <MiniStat icon="👀" value={MOCK_EVENT.stats.wantYourCards} label="want your cards" onPress={() => setActiveTab('want_yours')} />
+        <MiniStat icon="🔥" value={liveStats.collectorsWithYourWants} label="have your wants" onPress={() => setActiveTab('wishlist')} />
+        <MiniStat icon="🤝" value={liveStats.tradeMatches} label="trade matches" onPress={() => setActiveTab('matches')} />
+        <MiniStat icon="💰" value={liveStats.wishlistForSale} label="wishlist for sale" onPress={() => setActiveTab('for_sale')} />
+        <MiniStat icon="👀" value={liveStats.wantYourCards} label="want your cards" onPress={() => setActiveTab('want_yours')} />
       </ScrollView>
 
       {/* Quick action buttons */}
@@ -370,6 +393,11 @@ const styles = StyleSheet.create({
   enterBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: 16, backgroundColor: C.primary },
   enterBtnText: { fontSize: 17, fontFamily: 'Inter_700Bold', color: '#FFF' },
   enterDisclaimer: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}77`, textAlign: 'center', lineHeight: 18 },
+  wishlistNudge: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 12, borderWidth: 1, padding: 12, marginBottom: 4,
+  },
+  wishlistNudgeText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold', lineHeight: 18 },
   // Event dashboard
   eventHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

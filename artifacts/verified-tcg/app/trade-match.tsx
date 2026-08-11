@@ -13,6 +13,7 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_TRADE_MATCHES } from '@/services/matching';
 import type { TradeMatch } from '@/services/matching';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
@@ -20,8 +21,12 @@ export default function TradeMatchScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { watchlist } = useApp();
 
-  const selectedMatch = MOCK_TRADE_MATCHES.find(m => m.id === selectedId);
+  // Show up to one match per wishlist item (min 1 so demo is never blank)
+  const visibleMatches = MOCK_TRADE_MATCHES.slice(0, Math.max(1, watchlist.length));
+
+  const selectedMatch = visibleMatches.find(m => m.id === selectedId);
 
   if (selectedMatch) {
     return <MatchDetail match={selectedMatch} onBack={() => setSelectedId(null)} />;
@@ -36,18 +41,35 @@ export default function TradeMatchScreen() {
         </Pressable>
         <Text style={styles.title}>Trade Matches</Text>
         <View style={[styles.countPill, { backgroundColor: `${C.primary}22` }]}>
-          <Text style={[styles.countText, { color: C.primary }]}>{MOCK_TRADE_MATCHES.length}</Text>
+          <Text style={[styles.countText, { color: C.primary }]}>{visibleMatches.length}</Text>
         </View>
       </View>
 
       {/* Subtitle */}
       <View style={styles.subtitleRow}>
         <Feather name="zap" size={14} color={C.primary} />
-        <Text style={styles.subtitle}>Collectors who have what you want — and want what you have</Text>
+        <Text style={styles.subtitle}>
+          {watchlist.length > 0
+            ? `Based on your ${watchlist.length} wishlist ${watchlist.length === 1 ? 'card' : 'cards'} — collectors who have what you want`
+            : 'Add cards to your wishlist to find collectors who have what you want'}
+        </Text>
       </View>
 
+      {watchlist.length === 0 && (
+        <Pressable
+          onPress={() => router.push('/wishlist' as any)}
+          style={[styles.emptyWishlistBanner, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}
+        >
+          <Feather name="heart" size={16} color={C.primary} />
+          <Text style={[styles.emptyWishlistText, { color: C.primary }]}>
+            Build your wishlist to unlock trade matches
+          </Text>
+          <Feather name="chevron-right" size={16} color={C.primary} />
+        </Pressable>
+      )}
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {MOCK_TRADE_MATCHES.map((match, idx) => (
+        {visibleMatches.map((match, idx) => (
           <Pressable
             key={match.id}
             onPress={() => setSelectedId(match.id)}
@@ -328,6 +350,14 @@ const styles = StyleSheet.create({
   collectorMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
   arrowWrap: {},
   disclaimer: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}77`, textAlign: 'center', lineHeight: 18, marginTop: 8 },
+  emptyWishlistBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 20, marginBottom: 8,
+    borderRadius: 12, borderWidth: 1, padding: 14,
+  },
+  emptyWishlistText: {
+    flex: 1, fontSize: 13, fontFamily: 'Inter_600SemiBold', lineHeight: 18,
+  },
   // Detail view
   scoreCard: { borderRadius: 16, padding: 20, borderWidth: 1, alignItems: 'center', gap: 8 },
   scoreBadge: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
