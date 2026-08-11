@@ -11,7 +11,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
-import { getNotifications } from '@/services/notifications';
+import { useApp } from '@/context/AppContext';
 import type { NotifType } from '@/services/notifications';
 
 const C = colors.dark;
@@ -29,22 +29,22 @@ function notifIcon(type: NotifType): { name: keyof typeof Feather.glyphMap; colo
 
 export default function NotificationsScreen() {
   const insets = useSafeAreaInsets();
-  const [notifications, setNotifications] = useState(getNotifications);
+  const { notifications, unreadNotificationCount, markNotificationRead, markAllNotificationsRead } = useApp();
   const [filter, setFilter] = useState<NotifType | 'all'>('all');
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const unreadCount = notifications.filter(n => !n.isRead).length;
+  const unreadCount = unreadNotificationCount;
 
   const filtered = filter === 'all'
     ? notifications
     : notifications.filter(n => n.type === filter);
 
   function markAllRead() {
-    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    markAllNotificationsRead();
   }
 
   function markRead(id: string) {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    markNotificationRead(id);
   }
 
   const FILTERS: { label: string; value: NotifType | 'all' }[] = [

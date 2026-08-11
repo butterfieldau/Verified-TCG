@@ -19,6 +19,8 @@ import type {
 import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
+import { getNotifications } from '@/services/notifications';
+import type { Notification } from '@/services/notifications';
 
 interface AppState {
   user: User | null;
@@ -32,6 +34,8 @@ interface AppState {
   activeTCG: TCGId | null;
   pricesLastUpdated: Date | null;
   isPriceRefreshing: boolean;
+  notifications: Notification[];
+  unreadNotificationCount: number;
 }
 
 interface AppActions {
@@ -47,6 +51,8 @@ interface AppActions {
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
   setActiveTCG: (tcg: TCGId | null) => void;
   refreshPrices: () => Promise<void>;
+  markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -74,6 +80,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
     await Promise.resolve(); // simulate async
@@ -117,6 +124,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
+  const markNotificationRead = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  }, []);
+
   const refreshPrices = useCallback(async () => {
     if (isPriceRefreshing) return;
     setIsPriceRefreshing(true);
@@ -136,6 +151,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setIsPriceRefreshing(false);
     }
   }, [isPriceRefreshing]);
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter(n => !n.isRead).length,
+    [notifications],
+  );
 
   const portfolio = useMemo<PortfolioSummary>(() => {
     const totalValue = collection.reduce(
@@ -171,11 +191,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
+        notifications, unreadNotificationCount,
         signIn, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
+        markNotificationRead, markAllNotificationsRead,
       }}
     >
       {children}
