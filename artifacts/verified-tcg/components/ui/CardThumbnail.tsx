@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GradeBadge } from './Badge';
 import type { Card, CollectionItem } from '@/types';
@@ -20,12 +20,18 @@ export function CardThumbnail({
   const width = compact ? 110 : 140;
   const height = compact ? 158 : 196;
 
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
   const displayPrice = grading
     ? (card.price.psa10 ?? card.price.raw)
     : card.price.raw;
 
+  const showImage = !!card.imageUrl && !imageError;
+
   return (
     <View style={[styles.card, { width, height }]}>
+      {/* Gradient background — always rendered as fallback layer */}
       <LinearGradient
         colors={[card.gradientStart, card.gradientEnd]}
         start={{ x: 0, y: 0 }}
@@ -33,7 +39,7 @@ export function CardThumbnail({
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Shimmer highlight */}
+      {/* Shimmer highlight over gradient */}
       <LinearGradient
         colors={['transparent', 'rgba(255,255,255,0.18)', 'transparent']}
         start={{ x: 0.3, y: 0 }}
@@ -41,24 +47,47 @@ export function CardThumbnail({
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Card number */}
-      <View style={styles.numberBadge}>
-        <Text style={styles.numberText}>{card.number}</Text>
-      </View>
+      {/* Real card artwork */}
+      {showImage && (
+        <Image
+          source={{ uri: card.imageUrl }}
+          style={[StyleSheet.absoluteFill, styles.cardImage]}
+          resizeMode="cover"
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageError(true)}
+        />
+      )}
 
-      {/* Large card name */}
-      <Text style={[styles.bigName, { fontSize: compact ? 22 : 28 }]} numberOfLines={1}>
-        {card.name.split(' ')[0]}
-      </Text>
+      {/* Loading spinner — shown while image is in flight */}
+      {showImage && !imageLoaded && !imageError && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
+        </View>
+      )}
 
-      {/* Grade badge */}
+      {/* Overlay text/badges are hidden once a real image loads cleanly */}
+      {(!showImage || !imageLoaded) && (
+        <>
+          {/* Card number */}
+          <View style={styles.numberBadge}>
+            <Text style={styles.numberText}>{card.number}</Text>
+          </View>
+
+          {/* Large card name */}
+          <Text style={[styles.bigName, { fontSize: compact ? 22 : 28 }]} numberOfLines={1}>
+            {card.name.split(' ')[0]}
+          </Text>
+        </>
+      )}
+
+      {/* Grade badge — always on top */}
       {grading && (
         <View style={styles.gradeBadge}>
           <GradeBadge grade={grading.grade} company={grading.company} size={compact ? 'sm' : 'md'} />
         </View>
       )}
 
-      {/* Bottom info bar */}
+      {/* Bottom info bar — always visible */}
       <View style={styles.bottom}>
         <Text style={styles.bottomName} numberOfLines={1}>{card.name}</Text>
         {showPrice && (
@@ -82,6 +111,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 10,
     elevation: 8,
+  },
+  cardImage: {
+    borderRadius: 12,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   numberBadge: {
     position: 'absolute',
