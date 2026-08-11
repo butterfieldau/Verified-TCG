@@ -3,9 +3,11 @@ import React, {
   useContext,
   useState,
   useCallback,
+  useEffect,
   useMemo,
   type ReactNode,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
   WatchlistItem,
@@ -19,6 +21,8 @@ import type {
 import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
+import { getNotifications } from '@/services/notifications';
+import type { Notification } from '@/services/notifications';
 
 interface AppState {
   user: User | null;
@@ -32,6 +36,8 @@ interface AppState {
   activeTCG: TCGId | null;
   pricesLastUpdated: Date | null;
   isPriceRefreshing: boolean;
+  notifications: Notification[];
+  unreadNotificationCount: number;
 }
 
 interface AppActions {
@@ -47,6 +53,8 @@ interface AppActions {
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
   setActiveTCG: (tcg: TCGId | null) => void;
   refreshPrices: () => Promise<void>;
+  markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -63,17 +71,45 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
   sortOrder: 'desc',
 };
 
+const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(MOCK_USER);
   const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
   const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
+  const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(new Date());
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+
+  // Load persisted watchlist from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem(WATCHLIST_STORAGE_KEY)
+      .then(stored => {
+        if (stored !== null) {
+          try {
+            const parsed = JSON.parse(stored) as WatchlistItem[];
+            if (Array.isArray(parsed)) {
+              setWatchlist(parsed);
+            }
+          } catch {
+            // Corrupted data — fall back to mock defaults
+          }
+        }
+      })
+      .finally(() => setWatchlistLoaded(true));
+  }, []);
+
+  // Persist watchlist to AsyncStorage on every change (after initial load)
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+    AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist)).catch(() => {});
+  }, [watchlist, watchlistLoaded]);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
     await Promise.resolve(); // simulate async
@@ -117,6 +153,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
+  const markNotificationRead = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  }, []);
+
   const refreshPrices = useCallback(async () => {
     if (isPriceRefreshing) return;
     setIsPriceRefreshing(true);
@@ -136,6 +180,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setIsPriceRefreshing(false);
     }
   }, [isPriceRefreshing]);
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter(n => !n.isRead).length,
+    [notifications],
+  );
 
   const portfolio = useMemo<PortfolioSummary>(() => {
     const totalValue = collection.reduce(
@@ -171,11 +220,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
+        notifications, unreadNotificationCount,
         signIn, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
+        markNotificationRead, markAllNotificationsRead,
       }}
     >
       {children}

@@ -3,11 +3,13 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -18,6 +20,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
@@ -27,7 +30,226 @@ import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
-import type { CollectionItem } from '@/types';
+import type { CollectionItem, WatchlistItem, Card } from '@/types';
+
+const GRADE_OPTIONS = [
+  'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
+];
+
+// ─── Inline Wishlist Panel ────────────────────────────────────────────────────
+
+interface WishlistPanelProps {
+  card: Card;
+  onClose: () => void;
+  onAdd: (item: WatchlistItem) => void;
+}
+
+function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
+  const [grade, setGrade] = useState('Raw');
+  const [targetPriceText, setTargetPriceText] = useState('');
+
+  function handleConfirm() {
+    const targetPrice = parseFloat(targetPriceText);
+    const item: WatchlistItem = {
+      id: `wl-${Date.now()}`,
+      cardId: card.id,
+      card,
+      desiredGrade: grade,
+      targetPrice: isNaN(targetPrice) || targetPrice <= 0 ? undefined : targetPrice,
+      addedAt: new Date().toISOString().split('T')[0],
+      priceAlertEnabled: false,
+    };
+    onAdd(item);
+    onClose();
+  }
+
+  const C2 = colors.dark;
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={panelStyles.overlay}
+    >
+      <Pressable style={panelStyles.backdrop} onPress={onClose} />
+      <View style={[panelStyles.panel, { backgroundColor: C2.card }]}>
+        <View style={panelStyles.handle} />
+        <Text style={panelStyles.title}>Add to Wishlist</Text>
+
+        {/* Card preview */}
+        <View style={panelStyles.cardRow}>
+          <View style={[panelStyles.thumb, { backgroundColor: card.gradientStart }]}>
+            <Text style={panelStyles.thumbInitial}>{card.name[0]}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={panelStyles.cardName} numberOfLines={1}>{card.name}</Text>
+            <Text style={panelStyles.cardMeta}>{card.setName} · {card.tcg.toUpperCase()}</Text>
+            <Text style={panelStyles.cardPrice}>
+              Market: ${card.price.raw.toLocaleString('en-AU')} AUD
+            </Text>
+          </View>
+        </View>
+
+        {/* Grade picker */}
+        <Text style={panelStyles.label}>Desired Grade</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={panelStyles.gradeRow}>
+          {GRADE_OPTIONS.map(g => (
+            <Pressable
+              key={g}
+              onPress={() => setGrade(g)}
+              style={[
+                panelStyles.gradeChip,
+                grade === g
+                  ? { backgroundColor: C2.primary }
+                  : { backgroundColor: C2.muted },
+              ]}
+            >
+              <Text style={[
+                panelStyles.gradeChipText,
+                grade === g ? { color: '#FFF' } : { color: C2.mutedForeground },
+              ]}>
+                {g}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* Target price */}
+        <Text style={panelStyles.label}>
+          Target Price <Text style={panelStyles.optional}>(optional)</Text>
+        </Text>
+        <View style={[panelStyles.priceRow, { backgroundColor: C2.muted }]}>
+          <Text style={panelStyles.currencyPrefix}>$</Text>
+          <TextInput
+            style={panelStyles.priceInput}
+            value={targetPriceText}
+            onChangeText={setTargetPriceText}
+            placeholder="e.g. 450"
+            placeholderTextColor={C2.mutedForeground}
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+          />
+          <Text style={panelStyles.currencySuffix}>AUD</Text>
+        </View>
+
+        {/* Actions */}
+        <View style={panelStyles.actions}>
+          <Pressable
+            onPress={onClose}
+            style={[panelStyles.cancelBtn, { backgroundColor: C2.muted }]}
+          >
+            <Text style={[panelStyles.cancelBtnText, { color: C2.foreground }]}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleConfirm}
+            style={[panelStyles.confirmBtn, { backgroundColor: C2.primary }]}
+          >
+            <Feather name="heart" size={15} color="#FFF" />
+            <Text style={panelStyles.confirmBtnText}>Add to Wishlist</Text>
+          </Pressable>
+        </View>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const panelStyles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    zIndex: 100,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  panel: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 36,
+    gap: 0,
+  },
+  handle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  title: {
+    fontSize: 20,
+    fontFamily: 'Rajdhani_700Bold',
+    color: colors.dark.foreground,
+    marginBottom: 16,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 20,
+  },
+  thumb: {
+    width: 44, height: 44, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  thumbInitial: {
+    fontSize: 20, fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.8)',
+  },
+  cardName: {
+    fontSize: 15, fontFamily: 'Inter_600SemiBold',
+    color: colors.dark.foreground,
+  },
+  cardMeta: {
+    fontSize: 12, fontFamily: 'Inter_400Regular',
+    color: colors.dark.mutedForeground, marginTop: 2,
+  },
+  cardPrice: {
+    fontSize: 12, fontFamily: 'Inter_500Medium',
+    color: colors.dark.primary, marginTop: 2,
+  },
+  label: {
+    fontSize: 12, fontFamily: 'Inter_600SemiBold',
+    color: colors.dark.mutedForeground,
+    textTransform: 'uppercase', letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  optional: {
+    fontSize: 11, fontFamily: 'Inter_400Regular',
+    color: colors.dark.mutedForeground, textTransform: 'none',
+  },
+  gradeRow: { gap: 8, marginBottom: 20 },
+  gradeChip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+  },
+  gradeChipText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  priceRow: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: 12, paddingHorizontal: 14, marginBottom: 24, height: 48,
+  },
+  currencyPrefix: {
+    fontSize: 16, fontFamily: 'Inter_600SemiBold',
+    color: colors.dark.mutedForeground, marginRight: 4,
+  },
+  priceInput: {
+    flex: 1, fontSize: 16, fontFamily: 'Inter_400Regular',
+    color: colors.dark.foreground,
+  },
+  currencySuffix: {
+    fontSize: 13, fontFamily: 'Inter_500Medium',
+    color: colors.dark.mutedForeground,
+  },
+  actions: { flexDirection: 'row', gap: 12 },
+  cancelBtn: {
+    flex: 1, height: 50, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  cancelBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  confirmBtn: {
+    flex: 2, height: 50, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  confirmBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFF' },
+});
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
@@ -277,6 +499,79 @@ const imgStyles = StyleSheet.create({
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
+// ─── Page indicator ───────────────────────────────────────────────────────────
+
+const MAX_DOTS = 7;
+
+interface PageIndicatorProps {
+  total: number;
+  current: number;
+}
+
+function PageIndicator({ total, current }: PageIndicatorProps) {
+  if (total <= 1) return null;
+
+  // Show at most MAX_DOTS dots, centred on the current index
+  const half = Math.floor(MAX_DOTS / 2);
+  let start = Math.max(0, current - half);
+  const end = Math.min(total - 1, start + MAX_DOTS - 1);
+  start = Math.max(0, end - MAX_DOTS + 1);
+
+  const dots: number[] = [];
+  for (let i = start; i <= end; i++) dots.push(i);
+
+  return (
+    <View style={dotStyles.row}>
+      {dots.map(i => (
+        <View
+          key={i}
+          style={[
+            dotStyles.dot,
+            i === current
+              ? dotStyles.dotActive
+              : dotStyles.dotInactive,
+            // smaller dots near the edges when window is shifted
+            (i === start && start > 0) || (i === end && end < total - 1)
+              ? dotStyles.dotEdge
+              : null,
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const dotStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  dot: {
+    borderRadius: 99,
+  },
+  dotActive: {
+    width: 20,
+    height: 5,
+    backgroundColor: C.primary,
+  },
+  dotInactive: {
+    width: 5,
+    height: 5,
+    backgroundColor: C.border,
+  },
+  dotEdge: {
+    width: 4,
+    height: 4,
+    opacity: 0.5,
+  },
+});
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -285,14 +580,70 @@ export default function CardDetailScreen() {
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
+  const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
+  const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
-  const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
+  const [card, setCard] = useState(
+    () => getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!,
+  );
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
   const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
   const hasPassport = getCardPassport(card.id) !== null;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
+
+  // ── Swipe navigation between collection cards ──────────────────────────────
+  // Swiping updates card state in-place — no navigation, so back always works.
+  const collectionCards = collection.map(item => item.card);
+  const currentIndex = collectionCards.findIndex(c => c.id === card.id);
+  const prevCardId = currentIndex > 0 ? collectionCards[currentIndex - 1].id : null;
+  const nextCardId = currentIndex < collectionCards.length - 1 ? collectionCards[currentIndex + 1].id : null;
+  const inCollection = currentIndex !== -1;
+
+  const translateX = useSharedValue(0);
+
+  function switchCard(newCardId: string, fromRight: boolean) {
+    const newCard = getCardById(newCardId);
+    if (!newCard) return;
+    setCard(newCard);
+    setPriceTab('Raw');
+    setLocalInCollection(false);
+    setLocalInWatchlist(false);
+    setShowAddedBanner(false);
+    setShowWishlistAddedBanner(false);
+    setShowWishlistPanel(false);
+    // Snap to opposite edge then animate to centre — seamless slide-in
+    translateX.value = fromRight ? W : -W;
+    translateX.value = withSpring(0, { damping: 20 });
+  }
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-15, 15])
+    .failOffsetY([-20, 20])
+    .onUpdate((e) => {
+      if ((e.translationX > 0 && prevCardId) || (e.translationX < 0 && nextCardId)) {
+        translateX.value = e.translationX * 0.6; // slight resistance
+      }
+    })
+    .onEnd((e) => {
+      const THRESHOLD = 80;
+      if (e.translationX > THRESHOLD && prevCardId) {
+        translateX.value = withSpring(W, { damping: 20 }, () => {
+          runOnJS(switchCard)(prevCardId, false);
+        });
+      } else if (e.translationX < -THRESHOLD && nextCardId) {
+        translateX.value = withSpring(-W, { damping: 20 }, () => {
+          runOnJS(switchCard)(nextCardId, true);
+        });
+      } else {
+        translateX.value = withSpring(0, { damping: 20 });
+      }
+    });
+
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
   const activePrice = getTabPrice(card, priceTab);
 
@@ -316,16 +667,29 @@ export default function CardDetailScreen() {
     setTimeout(() => setShowAddedBanner(false), 2500);
   }
 
-  function handleWatch() {
-    // Navigate to the wishlist screen so the collector can set grade/price
-    router.push('/wishlist' as any);
+  function handleWishlistToggle() {
+    if (isWatched) {
+      // Already on wishlist — navigate there
+      router.push('/wishlist' as any);
+    } else {
+      // Open inline grade/price prompt
+      setShowWishlistPanel(true);
+    }
+  }
+
+  function handleWishlistAdd(item: WatchlistItem) {
+    addToWatchlist(item);
+    setLocalInWatchlist(true);
+    setShowWishlistAddedBanner(true);
+    setTimeout(() => setShowWishlistAddedBanner(false), 2500);
   }
 
   const gain24h = card.price.change24h;
   const gain7d = card.price.change7d;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.background }}>
+    <GestureDetector gesture={panGesture}>
+      <Animated.View style={[{ flex: 1, backgroundColor: C.background }, slideStyle]}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
@@ -338,7 +702,7 @@ export default function CardDetailScreen() {
           </Pressable>
           <View style={styles.navRight}>
             <Pressable
-              onPress={handleWatch}
+              onPress={handleWishlistToggle}
               style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
             >
               <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
@@ -366,7 +730,24 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
+
+          {/* Swipe edge hints — only when prev/next exists */}
+          {prevCardId && (
+            <View style={[styles.swipeHint, styles.swipeHintLeft]}>
+              <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
+            </View>
+          )}
+          {nextCardId && (
+            <View style={[styles.swipeHint, styles.swipeHintRight]}>
+              <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
+            </View>
+          )}
         </View>
+
+        {/* Page indicator — only when card is in collection */}
+        {inCollection && (
+          <PageIndicator total={collectionCards.length} current={currentIndex} />
+        )}
 
         {/* Title block */}
         <View style={styles.titleBlock}>
@@ -496,10 +877,22 @@ export default function CardDetailScreen() {
             <Text style={styles.primaryBtnText}>{isOwned ? 'In Collection' : 'Add to Collection'}</Text>
           </Pressable>
           <Pressable
-            onPress={handleWatch}
-            style={[styles.secondaryBtn, isWatched && { borderColor: C.primary }]}
+            onPress={handleWishlistToggle}
+            style={[
+              styles.wishlistBtn,
+              isWatched
+                ? { backgroundColor: `${C.primary}22`, borderColor: C.primary }
+                : { backgroundColor: C.card, borderColor: C.border },
+            ]}
           >
-            <Feather name="heart" size={18} color={isWatched ? C.primary : C.foreground} />
+            <Feather
+              name="heart"
+              size={16}
+              color={isWatched ? C.primary : C.foreground}
+            />
+            <Text style={[styles.wishlistBtnText, isWatched && { color: C.primary }]}>
+              {isWatched ? 'On Wishlist' : 'Wishlist'}
+            </Text>
           </Pressable>
         </View>
 
@@ -561,14 +954,32 @@ export default function CardDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* Added banner */}
+      {/* Added to collection banner */}
       {showAddedBanner && (
         <View style={styles.banner}>
           <Feather name="check-circle" size={16} color={C.positive} />
           <Text style={styles.bannerText}>Added to collection!</Text>
         </View>
       )}
-    </View>
+
+      {/* Added to wishlist banner */}
+      {showWishlistAddedBanner && (
+        <View style={[styles.banner, { bottom: 140 }]}>
+          <Feather name="heart" size={16} color={C.primary} />
+          <Text style={styles.bannerText}>Added to wishlist!</Text>
+        </View>
+      )}
+
+      {/* Wishlist grade/price panel */}
+      {showWishlistPanel && (
+        <WishlistPanel
+          card={card}
+          onClose={() => setShowWishlistPanel(false)}
+          onAdd={handleWishlistAdd}
+        />
+      )}
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -592,8 +1003,22 @@ const styles = StyleSheet.create({
   },
   cardStage: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 8,
+    position: 'relative',
   },
+  swipeHint: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -16,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 16,
+  },
+  swipeHintLeft: { left: -8 },
+  swipeHintRight: { right: -8 },
   titleBlock: { marginBottom: 20 },
   cardName: {
     fontSize: 26,
@@ -683,15 +1108,20 @@ const styles = StyleSheet.create({
     backgroundColor: C.primary,
   },
   primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
-  secondaryBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
+  wishlistBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    height: 52,
+    paddingHorizontal: 16,
+    borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: C.border,
-    backgroundColor: C.card,
+  },
+  wishlistBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
   },
   section: { marginBottom: 24 },
   sectionHeader: {

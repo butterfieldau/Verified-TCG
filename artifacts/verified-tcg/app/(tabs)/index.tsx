@@ -38,7 +38,7 @@ function getGreeting() {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated } = useApp();
+  const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
   const movers = getMarketMovers();
   const trending = getTrendingCards();
 
@@ -89,6 +89,13 @@ export default function HomeScreen() {
         <View style={styles.headerRight}>
           <Pressable style={styles.iconBtn} onPress={() => router.push('/notifications')}>
             <Feather name="bell" size={20} color={C.foreground} />
+            {unreadNotificationCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </Text>
+              </View>
+            )}
           </Pressable>
           <Pressable style={styles.avatar}>
             <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
@@ -503,6 +510,24 @@ const styles = StyleSheet.create({
     backgroundColor: C.card,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  notifBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFFFFF',
+    lineHeight: 12,
   },
   avatar: {
     width: 38,

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GradeBadge } from './Badge';
 import type { Card, CollectionItem } from '@/types';
@@ -9,6 +9,66 @@ interface CardThumbnailProps {
   grading?: CollectionItem['grading'];
   compact?: boolean;
   showPrice?: boolean;
+}
+
+function ShimmerSkeleton({
+  gradientStart,
+  gradientEnd,
+}: {
+  gradientStart: string;
+  gradientEnd: string;
+}) {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmerAnim, {
+          toValue: 0,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [shimmerAnim]);
+
+  // Translate the shimmer band across the card
+  const translateX = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-160, 160],
+  });
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {/* Pulsing shimmer sweep */}
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={[
+            'transparent',
+            'rgba(255,255,255,0.28)',
+            'transparent',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+    </View>
+  );
 }
 
 export function CardThumbnail({
@@ -28,10 +88,14 @@ export function CardThumbnail({
     : card.price.raw;
 
   const showImage = !!card.imageUrl && !imageError;
+  // Show shimmer while image is requested but not yet loaded or errored
+  const showShimmer = showImage && !imageLoaded && !imageError;
+  // Show the text fallback when there's no image or it errored
+  const showFallback = !showImage || imageError || !imageLoaded;
 
   return (
     <View style={[styles.card, { width, height }]}>
-      {/* Gradient background — always rendered as fallback layer */}
+      {/* Gradient background — always rendered as the base fallback layer */}
       <LinearGradient
         colors={[card.gradientStart, card.gradientEnd]}
         start={{ x: 0, y: 0 }}
@@ -39,13 +103,21 @@ export function CardThumbnail({
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Shimmer highlight over gradient */}
+      {/* Shimmer highlight accent over gradient */}
       <LinearGradient
         colors={['transparent', 'rgba(255,255,255,0.18)', 'transparent']}
         start={{ x: 0.3, y: 0 }}
         end={{ x: 0.7, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
+
+      {/* Animated shimmer skeleton — shown while image is in flight */}
+      {showShimmer && (
+        <ShimmerSkeleton
+          gradientStart={card.gradientStart}
+          gradientEnd={card.gradientEnd}
+        />
+      )}
 
       {/* Real card artwork */}
       {showImage && (
@@ -58,23 +130,19 @@ export function CardThumbnail({
         />
       )}
 
-      {/* Loading spinner — shown while image is in flight */}
-      {showImage && !imageLoaded && !imageError && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
-        </View>
-      )}
-
-      {/* Overlay text/badges are hidden once a real image loads cleanly */}
-      {(!showImage || !imageLoaded) && (
+      {/* Text fallback — shown while loading or on error, hidden once image loads cleanly */}
+      {showFallback && (
         <>
           {/* Card number */}
           <View style={styles.numberBadge}>
             <Text style={styles.numberText}>{card.number}</Text>
           </View>
 
-          {/* Large card name */}
-          <Text style={[styles.bigName, { fontSize: compact ? 22 : 28 }]} numberOfLines={1}>
+          {/* Large card initial / first word */}
+          <Text
+            style={[styles.bigName, { fontSize: compact ? 22 : 28 }]}
+            numberOfLines={1}
+          >
             {card.name.split(' ')[0]}
           </Text>
         </>
@@ -83,13 +151,19 @@ export function CardThumbnail({
       {/* Grade badge — always on top */}
       {grading && (
         <View style={styles.gradeBadge}>
-          <GradeBadge grade={grading.grade} company={grading.company} size={compact ? 'sm' : 'md'} />
+          <GradeBadge
+            grade={grading.grade}
+            company={grading.company}
+            size={compact ? 'sm' : 'md'}
+          />
         </View>
       )}
 
       {/* Bottom info bar — always visible */}
       <View style={styles.bottom}>
-        <Text style={styles.bottomName} numberOfLines={1}>{card.name}</Text>
+        <Text style={styles.bottomName} numberOfLines={1}>
+          {card.name}
+        </Text>
         {showPrice && (
           <Text style={styles.bottomPrice}>
             ${displayPrice.toLocaleString('en-AU')} AUD
@@ -114,11 +188,6 @@ const styles = StyleSheet.create({
   },
   cardImage: {
     borderRadius: 12,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   numberBadge: {
     position: 'absolute',
