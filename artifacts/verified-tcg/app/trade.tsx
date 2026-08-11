@@ -15,6 +15,7 @@ import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { CollectionItem } from '@/types';
 import { getTradeCounterpartyCards } from '@/services/trade';
+import { MOCK_SMART_SELL_STATS } from '@/services/matching';
 
 const C = colors.dark;
 
@@ -110,6 +111,36 @@ export default function TradeScreen() {
           <View style={styles.stepBody}>
             <Text style={styles.stepTitle}>What will you offer?</Text>
             <Text style={styles.stepHint}>Select a card from your collection to offer in this trade.</Text>
+
+            {/* Smart Trade demand insight */}
+            <View style={[styles.smartTradeCard, { backgroundColor: `${C.primary}0D`, borderColor: `${C.primary}33` }]}>
+              <View style={styles.smartTradeHeader}>
+                <Feather name="zap" size={13} color={C.primary} />
+                <Text style={[styles.smartTradeTitle, { color: C.primary }]}>Smart Trade — Demand Insight</Text>
+              </View>
+              <View style={styles.smartTradeStats}>
+                <View style={styles.smartTradeStat}>
+                  <Text style={styles.smartTradeValue}>{MOCK_SMART_SELL_STATS.tradeMatchCount}</Text>
+                  <Text style={styles.smartTradeLabel}>collectors want this</Text>
+                </View>
+                <View style={styles.smartTradeStat}>
+                  <Text style={styles.smartTradeValue}>{MOCK_SMART_SELL_STATS.ownWishlistCount}</Text>
+                  <Text style={styles.smartTradeLabel}>own cards on your wishlist</Text>
+                </View>
+                <View style={styles.smartTradeStat}>
+                  <Text style={styles.smartTradeValue}>{MOCK_SMART_SELL_STATS.atEventTradeCount}</Text>
+                  <Text style={styles.smartTradeLabel}>at your current event</Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={() => router.push('/trade-match' as any)}
+                style={[styles.smartTradeCta, { backgroundColor: C.primary }]}
+              >
+                <Text style={styles.smartTradeCtaText}>Find Trade Matches</Text>
+                <Feather name="arrow-right" size={13} color="#FFF" />
+              </Pressable>
+            </View>
+
             {collection.filter(i => i.isForTrade || true).map(item => (
               <Pressable
                 key={item.id}
@@ -432,4 +463,55 @@ const styles = StyleSheet.create({
   },
   successBtn: { paddingHorizontal: 40, paddingVertical: 14, borderRadius: 16, marginTop: 8 },
   successBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  // Smart Trade panel
+  smartTradeCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  smartTradeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  smartTradeTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.2,
+  },
+  smartTradeStats: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  smartTradeStat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  smartTradeValue: {
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+  },
+  smartTradeLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    lineHeight: 13,
+  },
+  smartTradeCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 36,
+    borderRadius: 10,
+  },
+  smartTradeCtaText: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFFFFF',
+  },
 });
