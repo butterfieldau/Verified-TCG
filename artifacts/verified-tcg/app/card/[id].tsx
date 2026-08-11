@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +13,13 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
@@ -22,6 +31,13 @@ import type { CollectionItem } from '@/types';
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
+
+/** Card aspect ratio: 2.5 wide × 3.5 tall */
+const CARD_W = W - 40;
+const CARD_H = CARD_W * (3.5 / 2.5);
+
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
 
 type PriceTab = 'Raw' | 'PSA 9' | 'PSA 10' | 'CGC 10' | 'BGS 9.5';
 
@@ -37,6 +53,229 @@ function getTabPrice(card: any, tab: PriceTab): number | undefined {
     default: return card.price.raw;
   }
 }
+
+// ─── Zoomable card image ──────────────────────────────────────────────────────
+
+interface ZoomableCardImageProps {
+  imageUrl: string;
+  gradientStart: string;
+  gradientEnd: string;
+}
+
+function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd }: ZoomableCardImageProps) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.min(MAX_SCALE, Math.max(MIN_SCALE, savedScale.value * e.scale));
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+      if (scale.value < MIN_SCALE) {
+        scale.value = withSpring(MIN_SCALE);
+        savedScale.value = MIN_SCALE;
+      }
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      if (scale.value > 1.1) {
+        scale.value = withSpring(1);
+        savedScale.value = 1;
+      } else {
+        scale.value = withSpring(2.5);
+        savedScale.value = 2.5;
+      }
+    });
+
+  const composed = Gesture.Simultaneous(pinchGesture, doubleTapGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const showImage = !imageError;
+
+  return (
+    <View style={imgStyles.container}>
+      {/* Gradient fallback always behind image */}
+      <LinearGradient
+        colors={[gradientStart, gradientEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {showImage ? (
+        <GestureDetector gesture={composed}>
+          <Animated.View style={[imgStyles.imageWrap, animatedStyle]}>
+            <Image
+              source={{ uri: imageUrl }}
+              style={imgStyles.image}
+              resizeMode="contain"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
+            />
+            {!imageLoaded && (
+              <View style={imgStyles.spinner}>
+                <ActivityIndicator size="large" color="rgba(255,255,255,0.6)" />
+              </View>
+            )}
+          </Animated.View>
+        </GestureDetector>
+      ) : (
+        // Fallback: gradient + card initial (image failed)
+        <View style={imgStyles.fallbackContent}>
+          <Text style={imgStyles.fallbackHint}>No image available</Text>
+        </View>
+      )}
+
+      {/* Zoom hint shown only while image is usable and loaded */}
+      {showImage && imageLoaded && (
+        <View style={imgStyles.zoomHint}>
+          <Feather name="zoom-in" size={11} color="rgba(255,255,255,0.55)" />
+          <Text style={imgStyles.zoomHintText}>Pinch or double-tap to zoom</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Gradient-only fallback (no imageUrl at all) ─────────────────────────────
+
+interface CardArtFallbackProps {
+  cardName: string;
+  cardNumber: string;
+  gradientStart: string;
+  gradientEnd: string;
+  verificationStatus?: string;
+}
+
+function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus }: CardArtFallbackProps) {
+  return (
+    <View style={imgStyles.container}>
+      <LinearGradient
+        colors={[gradientStart, gradientEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={['transparent', 'rgba(255,255,255,0.12)', 'transparent']}
+        start={{ x: 0.3, y: 0 }}
+        end={{ x: 0.7, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={imgStyles.cardNumberBadge}>
+        <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
+      </View>
+      {verificationStatus === 'verified' && (
+        <View style={imgStyles.verifiedOverlay}>
+          <VerificationBadge status="verified" />
+        </View>
+      )}
+      <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
+      <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
+    </View>
+  );
+}
+
+const imgStyles = StyleSheet.create({
+  container: {
+    width: CARD_W,
+    height: CARD_H,
+    borderRadius: 18,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.5,
+    shadowRadius: 22,
+    elevation: 20,
+  },
+  imageWrap: {
+    width: CARD_W,
+    height: CARD_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  image: {
+    width: CARD_W,
+    height: CARD_H,
+  },
+  spinner: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fallbackContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fallbackHint: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: 'rgba(255,255,255,0.5)',
+  },
+  zoomHint: {
+    position: 'absolute',
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  zoomHintText: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: 'rgba(255,255,255,0.55)',
+  },
+  cardNumberBadge: {
+    position: 'absolute',
+    top: 14,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+  },
+  cardNumberText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: 'rgba(255,255,255,0.75)',
+  },
+  verifiedOverlay: {
+    position: 'absolute',
+    top: 10,
+    right: 12,
+  },
+  cardInitialLarge: {
+    fontSize: 120,
+    fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.2)',
+  },
+  cardNameFallback: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+  },
+});
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -117,20 +356,23 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Card image (gradient placeholder) */}
+        {/* Card artwork — full width, 2.5:3.5 aspect ratio */}
         <View style={styles.cardStage}>
-          <View style={[styles.cardVisual, { backgroundColor: card.gradientStart }]}>
-            <View style={styles.cardSheen} />
-            <View style={styles.cardNumberBadge}>
-              <Text style={styles.cardNumberText}>{card.number}</Text>
-            </View>
-            <Text style={styles.cardInitialLarge}>{card.name[0]}</Text>
-            {card.verificationStatus === 'verified' && (
-              <View style={styles.verifiedOverlay}>
-                <VerificationBadge status="verified" />
-              </View>
-            )}
-          </View>
+          {card.imageUrl ? (
+            <ZoomableCardImage
+              imageUrl={card.imageUrl}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+            />
+          ) : (
+            <CardArtFallback
+              cardName={card.name}
+              cardNumber={card.number}
+              gradientStart={card.gradientStart}
+              gradientEnd={card.gradientEnd}
+              verificationStatus={card.verificationStatus}
+            />
+          )}
         </View>
 
         {/* Title block */}
@@ -355,38 +597,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardStage: { alignItems: 'center', marginBottom: 24 },
-  cardVisual: {
-    width: W * 0.55,
-    height: W * 0.55 * 1.4,
-    borderRadius: 18,
+  cardStage: {
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 20,
-    overflow: 'hidden',
-    transform: [{ rotate: '2deg' }],
+    marginBottom: 24,
   },
-  cardSheen: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  cardNumberBadge: { position: 'absolute', top: 12, left: 14 },
-  cardNumberText: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: 'rgba(255,255,255,0.7)',
-  },
-  cardInitialLarge: {
-    fontSize: 72,
-    fontFamily: 'Rajdhani_700Bold',
-    color: 'rgba(255,255,255,0.25)',
-  },
-  verifiedOverlay: { position: 'absolute', top: 10, right: 10 },
   titleBlock: { marginBottom: 20 },
   cardName: {
     fontSize: 26,
