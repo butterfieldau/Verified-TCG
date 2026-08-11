@@ -42,6 +42,13 @@ function RootLayoutNav() {
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
       />
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="portfolio" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="verification-info" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="sell" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="trade" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="collector/[username]" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }

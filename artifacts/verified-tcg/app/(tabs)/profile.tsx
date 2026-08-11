@@ -35,12 +35,12 @@ const statStyles = StyleSheet.create({
 });
 
 const MENU_ITEMS = [
-  { icon: 'bell', label: 'Notifications', badge: '3', route: null },
-  { icon: 'star', label: 'Watchlist', route: null },
-  { icon: 'package', label: 'My Listings', route: null },
-  { icon: 'repeat', label: 'Trade Offers', route: null },
-  { icon: 'shield', label: 'Verification History', route: null },
-  { icon: 'credit-card', label: 'Payment Methods', route: null },
+  { icon: 'bell', label: 'Notifications', badge: '3', route: '/notifications' },
+  { icon: 'star', label: 'Watchlist', route: '/watchlist' },
+  { icon: 'package', label: 'My Listings', route: '/sell' },
+  { icon: 'repeat', label: 'Trade Offers', route: '/trade' },
+  { icon: 'shield', label: 'Verification', route: '/verification-info' },
+  { icon: 'pie-chart', label: 'Portfolio', route: '/portfolio' },
   { icon: 'settings', label: 'Settings', route: '/settings' },
   { icon: 'help-circle', label: 'Help & Support', route: null },
 ];

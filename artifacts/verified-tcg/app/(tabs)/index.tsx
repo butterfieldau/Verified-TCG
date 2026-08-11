@@ -70,7 +70,7 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <Logo variant="white" width={110} height={48} />
         <View style={styles.headerRight}>
-          <Pressable style={styles.iconBtn}>
+          <Pressable style={styles.iconBtn} onPress={() => router.push('/notifications')}>
             <Feather name="bell" size={20} color={C.foreground} />
           </Pressable>
           <Pressable style={styles.avatar}>
