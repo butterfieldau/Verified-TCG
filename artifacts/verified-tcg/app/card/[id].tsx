@@ -18,6 +18,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
@@ -277,6 +278,79 @@ const imgStyles = StyleSheet.create({
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
+// ─── Page indicator ───────────────────────────────────────────────────────────
+
+const MAX_DOTS = 7;
+
+interface PageIndicatorProps {
+  total: number;
+  current: number;
+}
+
+function PageIndicator({ total, current }: PageIndicatorProps) {
+  if (total <= 1) return null;
+
+  // Show at most MAX_DOTS dots, centred on the current index
+  const half = Math.floor(MAX_DOTS / 2);
+  let start = Math.max(0, current - half);
+  const end = Math.min(total - 1, start + MAX_DOTS - 1);
+  start = Math.max(0, end - MAX_DOTS + 1);
+
+  const dots: number[] = [];
+  for (let i = start; i <= end; i++) dots.push(i);
+
+  return (
+    <View style={dotStyles.row}>
+      {dots.map(i => (
+        <View
+          key={i}
+          style={[
+            dotStyles.dot,
+            i === current
+              ? dotStyles.dotActive
+              : dotStyles.dotInactive,
+            // smaller dots near the edges when window is shifted
+            (i === start && start > 0) || (i === end && end < total - 1)
+              ? dotStyles.dotEdge
+              : null,
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const dotStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  dot: {
+    borderRadius: 99,
+  },
+  dotActive: {
+    width: 20,
+    height: 5,
+    backgroundColor: C.primary,
+  },
+  dotInactive: {
+    width: 5,
+    height: 5,
+    backgroundColor: C.border,
+  },
+  dotEdge: {
+    width: 4,
+    height: 4,
+    opacity: 0.5,
+  },
+});
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -293,6 +367,46 @@ export default function CardDetailScreen() {
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
+
+  // ── Swipe navigation between collection cards ──────────────────────────────
+  const collectionCards = collection.map(item => item.card);
+  const currentIndex = collectionCards.findIndex(c => c.id === card.id);
+  const prevCard = currentIndex > 0 ? collectionCards[currentIndex - 1] : null;
+  const nextCard = currentIndex < collectionCards.length - 1 ? collectionCards[currentIndex + 1] : null;
+  const inCollection = currentIndex !== -1;
+
+  const translateX = useSharedValue(0);
+
+  function navigateTo(cardId: string) {
+    router.replace(`/card/${cardId}` as any);
+  }
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-15, 15])
+    .failOffsetY([-20, 20])
+    .onUpdate((e) => {
+      if ((e.translationX > 0 && prevCard) || (e.translationX < 0 && nextCard)) {
+        translateX.value = e.translationX * 0.6; // slight resistance
+      }
+    })
+    .onEnd((e) => {
+      const THRESHOLD = 80;
+      if (e.translationX > THRESHOLD && prevCard) {
+        translateX.value = withSpring(W, { damping: 20 }, () => {
+          runOnJS(navigateTo)(prevCard.id);
+        });
+      } else if (e.translationX < -THRESHOLD && nextCard) {
+        translateX.value = withSpring(-W, { damping: 20 }, () => {
+          runOnJS(navigateTo)(nextCard.id);
+        });
+      } else {
+        translateX.value = withSpring(0, { damping: 20 });
+      }
+    });
+
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
   const activePrice = getTabPrice(card, priceTab);
 
@@ -325,7 +439,8 @@ export default function CardDetailScreen() {
   const gain7d = card.price.change7d;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.background }}>
+    <GestureDetector gesture={panGesture}>
+      <Animated.View style={[{ flex: 1, backgroundColor: C.background }, slideStyle]}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
@@ -366,7 +481,24 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
+
+          {/* Swipe edge hints — only when prev/next exists */}
+          {prevCard && (
+            <View style={[styles.swipeHint, styles.swipeHintLeft]}>
+              <Feather name="chevron-left" size={18} color="rgba(255,255,255,0.5)" />
+            </View>
+          )}
+          {nextCard && (
+            <View style={[styles.swipeHint, styles.swipeHintRight]}>
+              <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.5)" />
+            </View>
+          )}
         </View>
+
+        {/* Page indicator — only when card is in collection */}
+        {inCollection && (
+          <PageIndicator total={collectionCards.length} current={currentIndex} />
+        )}
 
         {/* Title block */}
         <View style={styles.titleBlock}>
@@ -568,7 +700,8 @@ export default function CardDetailScreen() {
           <Text style={styles.bannerText}>Added to collection!</Text>
         </View>
       )}
-    </View>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -592,8 +725,22 @@ const styles = StyleSheet.create({
   },
   cardStage: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 8,
+    position: 'relative',
   },
+  swipeHint: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -16,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 16,
+  },
+  swipeHintLeft: { left: -8 },
+  swipeHintRight: { right: -8 },
   titleBlock: { marginBottom: 20 },
   cardName: {
     fontSize: 26,
