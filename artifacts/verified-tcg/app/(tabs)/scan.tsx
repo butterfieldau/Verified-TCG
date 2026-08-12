@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Animated,
   Dimensions,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -29,11 +30,18 @@ const SCAN_RESULT = MOCK_CARDS[0]; // Charizard ex as simulated result
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { addToCollection, incrementScanCount, subscriptionTier, scansUsed, scanLimit } = useApp();
+  const { addToCollection, incrementScanCount, subscriptionTier, scansUsed, scanLimit, scanResetDate } = useApp();
   const isLimitExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed >= scanLimit;
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [addedToCollection, setAddedToCollection] = useState(false);
+  const [showLimitSheet, setShowLimitSheet] = useState(false);
+
+  // Format reset date as "1 Sep", "12 Oct", etc.
+  const resetLabel = scanResetDate.toLocaleDateString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+  });
 
   const scanLineAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -102,7 +110,26 @@ export default function ScanScreen() {
     addToCollection(item);
     incrementScanCount();
     setAddedToCollection(true);
-    setScanState('confirmed');
+
+    // Free users who just hit the 30th scan see the limit bottom sheet
+    // instead of the normal "Added to collection" confirmation screen.
+    const willBeExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed + 1 >= scanLimit;
+    if (willBeExhausted) {
+      // Card is added; surface the limit moment then return to idle (disabled).
+      setScanState('idle');
+      setShowLimitSheet(true);
+    } else {
+      setScanState('confirmed');
+    }
+  }
+
+  function handleDismissLimitSheet() {
+    setShowLimitSheet(false);
+  }
+
+  function handleUpgradeFromSheet() {
+    setShowLimitSheet(false);
+    router.push('/pro-subscription');
   }
 
   function handleCheckValue() {
@@ -131,6 +158,37 @@ export default function ScanScreen() {
       {/* Scan limit banner — visible in idle state when in last 20% of quota */}
       {scanState === 'idle' && <ScanLimitBanner />}
 
+      {/* 30th-scan limit bottom sheet */}
+      <Modal
+        visible={showLimitSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={handleDismissLimitSheet}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={handleDismissLimitSheet} />
+        <View style={[styles.sheet, { paddingBottom: Math.max(botPad, 24) }]}>
+          <View style={styles.sheetHandle} />
+
+          <View style={styles.sheetIconWrap}>
+            <Feather name="camera-off" size={32} color={C.mutedForeground} />
+          </View>
+
+          <Text style={styles.sheetTitle}>Monthly scan limit reached</Text>
+          <Text style={styles.sheetBody}>
+            You've used your 30 free scans this month.{'\n'}Resets {resetLabel}.
+          </Text>
+
+          <Pressable onPress={handleUpgradeFromSheet} style={styles.sheetPrimaryBtn}>
+            <Feather name="zap" size={16} color="#FFFFFF" />
+            <Text style={styles.sheetPrimaryBtnText}>Unlock Unlimited Scanning</Text>
+          </Pressable>
+
+          <Pressable onPress={handleDismissLimitSheet} style={styles.sheetGhostBtn}>
+            <Text style={styles.sheetGhostBtnText}>Got it</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       {/* Scanner viewfinder */}
       {isActiveView && (
         <View style={styles.viewfinder}>
@@ -151,8 +209,17 @@ export default function ScanScreen() {
             {/* Idle state */}
             {scanState === 'idle' && (
               <View style={styles.idleCenter}>
-                <Feather name="camera" size={48} color={`${C.primary}55`} />
+                <Feather
+                  name={isLimitExhausted ? 'camera-off' : 'camera'}
+                  size={48}
+                  color={isLimitExhausted ? `${C.mutedForeground}55` : `${C.primary}55`}
+                />
               </View>
+            )}
+
+            {/* Dim overlay when scan limit is exhausted */}
+            {isLimitExhausted && (
+              <View style={[styles.exhaustedOverlay, { pointerEvents: 'none' }]} />
             )}
 
             {/* Scanning badge */}
@@ -213,34 +280,55 @@ export default function ScanScreen() {
       {/* Controls */}
       <View style={styles.controls}>
         {isActiveView && (
-          <View style={styles.iconRow}>
-            <Pressable
-              onPress={() => setFlashEnabled(f => !f)}
-              style={[
-                styles.iconBtn,
-                flashEnabled && { backgroundColor: `#F59E0B22`, borderColor: '#F59E0B' },
-              ]}
-            >
-              <Feather name="zap" size={22} color={flashEnabled ? '#F59E0B' : C.foreground} />
-            </Pressable>
+          <View>
+            <View style={styles.iconRow}>
+              <Pressable
+                onPress={() => setFlashEnabled(f => !f)}
+                disabled={isLimitExhausted}
+                style={[
+                  styles.iconBtn,
+                  flashEnabled && !isLimitExhausted && { backgroundColor: `#F59E0B22`, borderColor: '#F59E0B' },
+                  isLimitExhausted && styles.iconBtnDisabled,
+                ]}
+              >
+                <Feather name="zap" size={22} color={isLimitExhausted ? C.mutedForeground : (flashEnabled ? '#F59E0B' : C.foreground)} />
+              </Pressable>
 
-            <Pressable
-              onPress={startScan}
-              style={[styles.scanTrigger, isLimitExhausted && styles.scanTriggerDisabled]}
-              accessibilityLabel={isLimitExhausted ? 'Scan limit reached — upgrade to Pro' : 'Start scan'}
-            >
-              <View style={styles.scanTriggerInner}>
-                <Feather
-                  name={isLimitExhausted ? 'lock' : 'camera'}
-                  size={28}
-                  color="#FFFFFF"
-                />
-              </View>
-            </Pressable>
+              {/* When limit is exhausted, replace the scan trigger with a "Scan limit reached" label */}
+              {isLimitExhausted ? (
+                <View style={styles.limitReachedLabel}>
+                  <Feather name="lock" size={16} color={C.mutedForeground} />
+                  <Text style={styles.limitReachedText}>Scan limit reached</Text>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={startScan}
+                  style={styles.scanTrigger}
+                  accessibilityLabel="Start scan"
+                >
+                  <View style={styles.scanTriggerInner}>
+                    <Feather name="camera" size={28} color="#FFFFFF" />
+                  </View>
+                </Pressable>
+              )}
 
-            <Pressable style={styles.iconBtn} onPress={() => router.push('/add-card')}>
-              <Feather name="image" size={22} color={C.foreground} />
-            </Pressable>
+              <Pressable
+                disabled={isLimitExhausted}
+                style={[styles.iconBtn, isLimitExhausted && styles.iconBtnDisabled]}
+                onPress={() => !isLimitExhausted && router.push('/add-card')}
+              >
+                <Feather name="image" size={22} color={isLimitExhausted ? C.mutedForeground : C.foreground} />
+              </Pressable>
+            </View>
+
+            {/* Upgrade to Pro link — visible only when limit is exhausted */}
+            {isLimitExhausted && (
+              <Pressable onPress={() => router.push('/pro-subscription')} style={styles.upgradeLinkRow}>
+                <Feather name="zap" size={13} color={C.primary} />
+                <Text style={styles.upgradeLinkText}>Upgrade to Pro for unlimited scanning</Text>
+                <Feather name="chevron-right" size={13} color={C.primary} />
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -511,5 +599,122 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: C.foreground,
+  },
+
+  // ── Exhausted overlay ───────────────────────────────────────────────────────
+  exhaustedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 18,
+  },
+
+  // ── Disabled icon button ────────────────────────────────────────────────────
+  iconBtnDisabled: {
+    opacity: 0.4,
+  },
+
+  // ── "Scan limit reached" label (replaces scan trigger) ─────────────────────
+  limitReachedLabel: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  limitReachedText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+
+  // ── "Upgrade to Pro" link below the controls ────────────────────────────────
+  upgradeLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 14,
+  },
+  upgradeLinkText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: C.primary,
+  },
+
+  // ── 30th-scan limit bottom sheet ────────────────────────────────────────────
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  sheet: {
+    backgroundColor: C.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    alignItems: 'center',
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    marginBottom: 24,
+  },
+  sheetIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: C.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontFamily: 'Rajdhani_700Bold',
+    color: C.foreground,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  sheetBody: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  sheetPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: C.primary,
+    alignSelf: 'stretch',
+    marginBottom: 10,
+  },
+  sheetPrimaryBtnText: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFFFFF',
+  },
+  sheetGhostBtn: {
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    marginBottom: 4,
+  },
+  sheetGhostBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
   },
 });
