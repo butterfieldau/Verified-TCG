@@ -525,7 +525,7 @@ const styles = StyleSheet.create({
   qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
 
   // Tab bar
-  tabBar: { borderBottomWidth: 1 },
+  tabBar: { borderBottomWidth: 1, height: 42, flexShrink: 0 },
   tabBarContent: { paddingHorizontal: 16 },
   tabItem: {
     paddingHorizontal: 14, paddingVertical: 10,
