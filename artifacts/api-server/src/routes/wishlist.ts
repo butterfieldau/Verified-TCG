@@ -97,7 +97,7 @@ wishlistRouter.post("/wishlist/sync", async (req: AuthenticatedRequest, res) => 
     return;
   }
 
-  const parsed = req.body.items.map(parseBody);
+  const parsed = (req.body.items as unknown[]).map(parseBody);
   if (parsed.some((item): item is null => item === null)) {
     res.status(400).json({ error: "items contain an invalid wishlist shape" });
     return;
@@ -178,7 +178,7 @@ wishlistRouter.patch("/wishlist/:id", async (req: AuthenticatedRequest, res) => 
   if (patch.priceAlertEnabled !== undefined && typeof patch.priceAlertEnabled === "boolean") values.priceAlertEnabled = patch.priceAlertEnabled;
   if (patch.alertType !== undefined && typeof patch.alertType === "string") values.alertType = patch.alertType;
 
-  const updated = await db.update(wishlistItemsTable).set(values).where(and(eq(wishlistItemsTable.id, id), eq(wishlistItemsTable.userId, req.user!.id))).returning();
+  const updated = await db.update(wishlistItemsTable).set(values).where(and(eq(wishlistItemsTable.id, String(id)), eq(wishlistItemsTable.userId, req.user!.id))).returning();
   if (updated.length === 0) {
     res.status(404).json({ error: "Item not found" });
     return;
@@ -188,7 +188,7 @@ wishlistRouter.patch("/wishlist/:id", async (req: AuthenticatedRequest, res) => 
 
 wishlistRouter.delete("/wishlist/:id", async (req: AuthenticatedRequest, res) => {
   await ensureUser(req.user!);
-  const removed = await db.delete(wishlistItemsTable).where(and(eq(wishlistItemsTable.id, req.params.id), eq(wishlistItemsTable.userId, req.user!.id))).returning({ id: wishlistItemsTable.id });
+  const removed = await db.delete(wishlistItemsTable).where(and(eq(wishlistItemsTable.id, String(req.params.id)), eq(wishlistItemsTable.userId, req.user!.id))).returning({ id: wishlistItemsTable.id });
   res.json({ ok: true, removed: removed.length });
 });
 
