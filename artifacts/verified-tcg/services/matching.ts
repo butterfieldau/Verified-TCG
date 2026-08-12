@@ -5,6 +5,26 @@
 
 // ── Trade Matches ─────────────────────────────────────────────────────────────
 
+export interface TradeMatchCard {
+  name: string;
+  set: string;
+  grade: string;
+  value: number;
+  color: string;
+  imageUrl?: string;
+}
+
+export interface AlternativeCombination {
+  /** Short label, e.g. "Option A" */
+  label: string;
+  description: string;
+  /** Cards you would offer instead */
+  yourCards: { name: string; grade: string; value: number; color: string }[];
+  /** Cards they would offer instead */
+  theirCards: { name: string; grade: string; value: number; color: string }[];
+  estimatedBalance: number;
+}
+
 export interface TradeMatch {
   id: string;
   matchPercent: number;
@@ -18,22 +38,14 @@ export interface TradeMatch {
     rating: number;
     tradesCount: number;
   };
-  youWant: {
-    name: string;
-    set: string;
-    grade: string;
-    value: number;
-    color: string;
-    imageUrl?: string;
-  };
-  theyWant: {
-    name: string;
-    set: string;
-    grade: string;
-    value: number;
-    color: string;
-    imageUrl?: string;
-  };
+  youWant: TradeMatchCard;
+  theyWant: TradeMatchCard;
+  /** Pro-only: estimated cash to add (positive = you pay, negative = they pay, 0 = even). */
+  suggestedCashBalance: number;
+  /** Pro-only: smart suggestion text shown in the detail view. */
+  smartSuggestion: string;
+  /** Pro-only: alternative card combinations for this trade. */
+  alternativeCombinations: AlternativeCombination[];
 }
 
 export const MOCK_TRADE_MATCHES: TradeMatch[] = [
@@ -52,6 +64,33 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
     },
     youWant: { name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', value: 1200, color: '#FFD700', imageUrl: 'https://images.pokemontcg.io/sm9/33_hires.png' },
     theyWant: { name: 'Charizard ex', set: 'Obsidian Flames', grade: 'TAG 10', value: 1150, color: '#E0540F', imageUrl: 'https://images.pokemontcg.io/sv3/125_hires.png' },
+    suggestedCashBalance: 0,
+    smartSuggestion: 'Near-perfect value match — both parties benefit equally. This is one of the strongest trade opportunities on the platform today.',
+    alternativeCombinations: [
+      {
+        label: 'Option A',
+        description: 'Swap Charizard ex for two mid-tier cards of equal value',
+        yourCards: [{ name: 'Pikachu & Zekrom GX', grade: 'PSA 10', value: 1200, color: '#FFD700' }],
+        theirCards: [
+          { name: 'Lugia V SIR', grade: 'CGC 9', value: 620, color: '#B0C4DE' },
+          { name: 'Rayquaza VMAX', grade: 'BGS 9', value: 580, color: '#3AE374' },
+        ],
+        estimatedBalance: 0,
+      },
+      {
+        label: 'Option B',
+        description: 'Add Pikachu ex to sweeten the deal further',
+        yourCards: [
+          { name: 'Pikachu & Zekrom GX', grade: 'PSA 10', value: 1200, color: '#FFD700' },
+          { name: 'Pikachu ex', grade: 'PSA 9', value: 248, color: '#FFCC00' },
+        ],
+        theirCards: [
+          { name: 'Charizard ex', grade: 'TAG 10', value: 1150, color: '#E0540F' },
+          { name: 'Eevee ex SIR', grade: 'PSA 9', value: 320, color: '#F5A623' },
+        ],
+        estimatedBalance: -22,
+      },
+    ],
   },
   {
     id: 'tm-002',
@@ -68,6 +107,20 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
     },
     youWant: { name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 1450, color: '#1A1B4B', imageUrl: 'https://images.pokemontcg.io/sv8pt5/161_hires.png' },
     theyWant: { name: 'Rayquaza VMAX', set: 'Evolving Skies', grade: 'BGS 9.5', value: 890, color: '#3AE374', imageUrl: 'https://images.pokemontcg.io/swsh7/218_hires.png' },
+    suggestedCashBalance: 560,
+    smartSuggestion: 'Large value gap detected. Adding $560 AUD cash would close the difference and make this deal fair for both parties. Priya has a 5.0 rating — highly reliable.',
+    alternativeCombinations: [
+      {
+        label: 'Option A',
+        description: 'Add Luffy OP01 to close the value gap',
+        yourCards: [
+          { name: 'Rayquaza VMAX', grade: 'BGS 9.5', value: 890, color: '#3AE374' },
+          { name: 'Luffy OP01', grade: 'CGC 10', value: 320, color: '#E63946' },
+        ],
+        theirCards: [{ name: 'Umbreon ex SIR', grade: 'PSA 10', value: 1450, color: '#1A1B4B' }],
+        estimatedBalance: -240,
+      },
+    ],
   },
   {
     id: 'tm-003',
@@ -84,6 +137,20 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
     },
     youWant: { name: 'Lugia V SIR', set: 'Silver Tempest', grade: 'CGC 10', value: 680, color: '#B0C4DE', imageUrl: 'https://images.pokemontcg.io/swsh12/186_hires.png' },
     theyWant: { name: 'Pikachu ex', set: 'SV: 151', grade: 'PSA 9', value: 340, color: '#FFCC00', imageUrl: 'https://images.pokemontcg.io/sv3pt5/25_hires.png' },
+    suggestedCashBalance: 340,
+    smartSuggestion: 'You\'re offering a card worth twice theirs. Adding $340 AUD cash closes the gap. Alternatively, ask them to include a second card from their collection.',
+    alternativeCombinations: [
+      {
+        label: 'Option A',
+        description: 'Ask Melbourne TCG to add a second card',
+        yourCards: [{ name: 'Lugia V SIR', grade: 'CGC 10', value: 680, color: '#B0C4DE' }],
+        theirCards: [
+          { name: 'Pikachu ex', grade: 'PSA 9', value: 340, color: '#FFCC00' },
+          { name: 'Eevee ex SIR', grade: 'Near Mint', value: 195, color: '#F5A623' },
+        ],
+        estimatedBalance: 145,
+      },
+    ],
   },
   {
     id: 'tm-004',
@@ -100,6 +167,22 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
     },
     youWant: { name: 'Eevee ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 520, color: '#F5A623', imageUrl: 'https://images.pokemontcg.io/sv8pt5/186_hires.png' },
     theyWant: { name: 'Luffy OP01', set: 'Romance Dawn', grade: 'CGC 10', value: 320, color: '#E63946', imageUrl: 'https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png' },
+    suggestedCashBalance: 200,
+    smartSuggestion: 'Moderate value gap. Offering $200 AUD alongside Luffy OP01 would make this trade fair and is likely to be accepted quickly — Omar has completed 12 trades.',
+    alternativeCombinations: [
+      {
+        label: 'Option A',
+        description: 'Add Pikachu ex to balance values',
+        yourCards: [
+          { name: 'Eevee ex SIR', grade: 'PSA 10', value: 520, color: '#F5A623' },
+        ],
+        theirCards: [
+          { name: 'Luffy OP01', grade: 'CGC 10', value: 320, color: '#E63946' },
+          { name: 'Pikachu ex', grade: 'Near Mint', value: 165, color: '#FFCC00' },
+        ],
+        estimatedBalance: 35,
+      },
+    ],
   },
 ];
 
@@ -217,6 +300,9 @@ export const MOCK_EVENT: TCGEvent = {
       },
       youWant: { name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 1450, color: '#1A1B4B' },
       theyWant: { name: 'Charizard ex', set: 'Obsidian Flames', grade: 'PSA 10', value: 1380, color: '#E0540F' },
+      suggestedCashBalance: 0,
+      smartSuggestion: 'Near-even trade — both parties benefit equally at this event.',
+      alternativeCombinations: [],
     },
     {
       id: 'etm-002',
@@ -233,6 +319,9 @@ export const MOCK_EVENT: TCGEvent = {
       },
       youWant: { name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', value: 1200, color: '#FFD700' },
       theyWant: { name: 'Rayquaza VMAX', set: 'Evolving Skies', grade: 'BGS 9.5', value: 890, color: '#3AE374' },
+      suggestedCashBalance: 310,
+      smartSuggestion: 'You\'re offering a higher-value card. Adding $310 AUD cash would balance the trade.',
+      alternativeCombinations: [],
     },
   ],
   wishlistNearby: [
