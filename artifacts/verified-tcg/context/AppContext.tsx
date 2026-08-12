@@ -39,6 +39,13 @@ import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
+import {
+  SCAN_STATE_STORAGE_KEY,
+  nextMonthFirstDay,
+  advancePastResetDate,
+  saveScanState,
+  loadScanState,
+} from '@/services/scanStatePersistence';
 
 interface AppState {
   user: User | null;
@@ -114,7 +121,6 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
-const SCAN_STATE_STORAGE_KEY = '@verified_tcg/scan_state';
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -188,14 +194,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [scansLoaded, setScansLoaded] = useState(false);
   const scanLimit = FREE_SCAN_LIMIT;
 
-  /**
-   * Compute the first day of next calendar month relative to `from`.
-   * Used both for initial state and when advancing after a reset.
-   */
-  function nextMonthFirstDay(from: Date): Date {
-    return new Date(from.getFullYear(), from.getMonth() + 1, 1);
-  }
-
   const [scanResetDate, setScanResetDate] = useState<Date>(() =>
     nextMonthFirstDay(new Date()),
   );
@@ -208,16 +206,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * reset the scan counter and advance the reset date until it is in the
    * future. This keeps the displayed "resets 1 Sep" label and the exhaustion
    * gate accurate without requiring an external clock service.
+   *
+   * The advance logic lives in advancePastResetDate (scanStatePersistence.ts)
+   * so it can be tested in isolation without mounting the full component tree.
    */
   useEffect(() => {
-    const now = new Date();
-    if (scanResetDate <= now) {
-      // Advance reset date until it is in the future
-      let next = scanResetDate;
-      while (next <= now) {
-        next = nextMonthFirstDay(next);
-      }
-      setScanResetDate(next);
+    const { newResetDate, didReset } = advancePastResetDate(scanResetDate, new Date());
+    if (didReset) {
+      setScanResetDate(newResetDate);
       setScansUsed(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -228,7 +224,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     Promise.all([
       AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
       loadPersistedPrices(),
-      AsyncStorage.getItem(SCAN_STATE_STORAGE_KEY),
+      loadScanState(),
     ]).then(async ([storedWatchlist, persisted, storedScanState]) => {
       // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
@@ -282,24 +278,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPricesLastUpdated(persisted.lastUpdated);
       }
 
-      // Restore scan state — keyed by reset date so the monthly rollover in
-      // the quota-period guard (above) automatically resets the count.
+      // Restore scan state — both values loaded together via loadScanState().
+      // The quota-period guard effect (above) will fire after state is set and
+      // detect if the reset date is in the past, zeroing scansUsed and advancing
+      // the date as needed. The persist effect then writes the updated pair.
       if (storedScanState !== null) {
-        try {
-          const { scansUsed: savedScans, scanResetDate: savedResetDateISO } = JSON.parse(storedScanState) as {
-            scansUsed: number;
-            scanResetDate: string;
-          };
-          const savedResetDate = new Date(savedResetDateISO);
-          if (!isNaN(savedResetDate.getTime())) {
-            // Restore both values; the existing quota-period guard effect will
-            // detect if savedResetDate is in the past and advance/reset as needed.
-            setScanResetDate(savedResetDate);
-            setScansUsed(savedScans);
-          }
-        } catch {
-          // Corrupted JSON — fall back to defaults silently (0 scans, next month)
-        }
+        setScanResetDate(storedScanState.scanResetDate);
+        setScansUsed(storedScanState.scansUsed);
       }
     }).finally(() => {
       setWatchlistLoaded(true);
@@ -317,12 +302,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Persist scan state to AsyncStorage on every change (after initial load).
   // Both values must be written together so the loader can cross-check them.
+  // Uses saveScanState() from scanStatePersistence (same module tested by
+  // __tests__/scan-state-persistence.test.ts).
   useEffect(() => {
     if (!scansLoaded) return;
-    AsyncStorage.setItem(
-      SCAN_STATE_STORAGE_KEY,
-      JSON.stringify({ scansUsed, scanResetDate: scanResetDate.toISOString() }),
-    ).catch(() => {});
+    saveScanState(scansUsed, scanResetDate).catch(() => {});
   }, [scansUsed, scanResetDate, scansLoaded]);
 
   /**
