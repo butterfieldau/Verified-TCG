@@ -672,9 +672,11 @@ const styles = StyleSheet.create({
   statPillValue: { fontSize: 22, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 26 },
   statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
-  // Quick actions
-  qaStrip: { flexGrow: 0, flexShrink: 0, height: 60 },
-  qaStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
+  // Stat grid (4-column fixed row)
+  statGrid: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
+
+  // Quick actions (2×2 grid)
+  qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
   qaBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,

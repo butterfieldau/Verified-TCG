@@ -15,11 +15,13 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
+  const { signIn } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -35,11 +37,15 @@ export default function SignInScreen() {
     }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800)); // mock delay
     try {
+      await signIn(email, password);
       await AsyncStorage.setItem('hasOnboarded', 'true');
-    } catch {}
-    router.replace('/(tabs)');
+      router.replace('/(tabs)');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

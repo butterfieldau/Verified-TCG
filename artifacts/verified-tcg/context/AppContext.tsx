@@ -37,6 +37,11 @@ import {
 } from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
+import {
+  restoreSession,
+  signInWithPassword,
+  signOut as authSignOut,
+} from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 import {
@@ -166,8 +171,8 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(MOCK_USER);
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
@@ -341,13 +346,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlistLoaded]);
 
-  const signIn = useCallback(async (_email: string, _password: string) => {
-    await Promise.resolve(); // simulate async sign-in
-    setUser(MOCK_USER);
+  // Restore session on mount (handles app restarts and token refresh)
+  useEffect(() => {
+    restoreSession().then(session => {
+      if (!session) return;
+      setUser({
+        id: session.user.id,
+        email: session.user.email ?? '',
+        displayName: typeof session.user.user_metadata?.display_name === 'string'
+          ? session.user.user_metadata.display_name
+          : (session.user.email ?? 'Collector'),
+        username: session.user.email?.split('@')[0] ?? 'collector',
+        joinedAt: new Date().toISOString(),
+        tcgPreferences: MOCK_USER.tcgPreferences,
+        stats: MOCK_USER.stats,
+      });
+      setIsAuthenticated(true);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    const session = await signInWithPassword(email, password);
+    setUser({
+      id: session.user.id,
+      email: session.user.email ?? email,
+      displayName: typeof session.user.user_metadata?.display_name === 'string'
+        ? session.user.user_metadata.display_name
+        : (session.user.email ?? email),
+      username: (session.user.email ?? email).split('@')[0],
+      tcgPreferences: MOCK_USER.tcgPreferences,
+      joinedAt: new Date().toISOString(),
+      stats: MOCK_USER.stats,
+    });
     setIsAuthenticated(true);
 
-    // On sign-in, sync with the server so the collector's list is fully
-    // restored on a new or reset device.
+    // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
       syncWishlistToServer(snapshot)
         .then(serverCanonical => { setWatchlist(serverCanonical); })
@@ -357,6 +391,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(() => {
+    authSignOut().catch(() => {});
     setUser(null);
     setIsAuthenticated(false);
   }, []);
