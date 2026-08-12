@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
 import {
@@ -82,7 +83,7 @@ export default function ProFeaturePreview({
       {/* CTA button */}
       <Pressable
         style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaButtonPressed]}
-        onPress={() => setSheetOpen(true)}
+        onPress={() => router.push('/pro-subscription')}
         accessibilityRole="button"
         accessibilityLabel={ctaLabel}
       >

@@ -19,12 +19,19 @@ const C = colors.dark;
 type EventTab = 'matches' | 'wishlist' | 'want_yours' | 'for_sale' | 'trending';
 
 const TABS: { label: string; value: EventTab }[] = [
-  { label: 'Matches', value: 'matches' },
-  { label: 'Wishlist', value: 'wishlist' },
-  { label: 'Want Yours', value: 'want_yours' },
-  { label: 'For Sale', value: 'for_sale' },
-  { label: 'Trending', value: 'trending' },
+  { label: 'Matches',   value: 'matches'    },
+  { label: 'Wishlist',  value: 'wishlist'   },
+  { label: 'Want Yours',value: 'want_yours' },
+  { label: 'For Sale',  value: 'for_sale'   },
+  { label: 'Trending',  value: 'trending'   },
 ];
+
+const QUICK_ACTIONS = [
+  { icon: 'search',  label: "I'm Looking For", route: '/event/looking-for' },
+  { icon: 'package', label: 'I Have This',      route: '/event/have-this'  },
+  { icon: 'list',    label: 'Wanted Board',     route: '/event/wanted-board'},
+  { icon: 'grid',    label: 'Complete My Set',  route: '/event/complete-my-set'},
+] as const;
 
 export default function EventModeScreen() {
   const insets = useSafeAreaInsets();
@@ -33,88 +40,110 @@ export default function EventModeScreen() {
   const [activeTab, setActiveTab] = useState<EventTab>('matches');
   const { watchlist } = useApp();
 
-  // Scale event stats with live wishlist length
   const wishlistCount = watchlist.length;
   const liveStats = {
     collectorsWithYourWants: Math.max(0, Math.round(MOCK_EVENT.stats.collectorsWithYourWants * (wishlistCount / 3))),
-    tradeMatches: Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches * (wishlistCount / 3))),
-    wishlistForSale: Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale * (wishlistCount / 3))),
-    wantYourCards: MOCK_EVENT.stats.wantYourCards,
+    tradeMatches:            Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches            * (wishlistCount / 3))),
+    wishlistForSale:         Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale         * (wishlistCount / 3))),
+    wantYourCards:           MOCK_EVENT.stats.wantYourCards,
   };
 
+  // ── Entry Screen ─────────────────────────────────────────────────────────────
   if (!isInEvent) {
     return (
       <View style={[styles.screen, { backgroundColor: C.background }]}>
-        <View style={[styles.header, { paddingTop: topPad + 8 }]}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        {/* Nav */}
+        <View style={[styles.nav, { paddingTop: topPad + 8 }]}>
+          <Pressable onPress={() => router.back()} style={styles.navBack}>
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
-          <Text style={styles.title}>Event Mode</Text>
+          <Text style={styles.navTitle}>Event Mode</Text>
           <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.enterContent} showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={[styles.eventHero, { backgroundColor: C.card }]}>
-            <View style={[styles.eventBadge, { backgroundColor: `${C.primary}22` }]}>
-              <Feather name="map-pin" size={12} color={C.primary} />
-              <Text style={[styles.eventBadgeText, { color: C.primary }]}>LIVE EVENT DETECTED</Text>
+        <ScrollView
+          contentContainerStyle={[styles.enterScroll, { paddingBottom: Math.max(insets.bottom, 24) + 16 }]}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Hero card */}
+          <View style={[styles.heroCard, { backgroundColor: C.card }]}>
+            <View style={styles.heroBadgeRow}>
+              <View style={[styles.heroBadge, { backgroundColor: `${C.primary}22` }]}>
+                <View style={styles.livePulse} />
+                <Text style={[styles.heroBadgeText, { color: C.primary }]}>LIVE EVENT DETECTED</Text>
+              </View>
             </View>
-            <Text style={styles.eventName}>{MOCK_EVENT.name}</Text>
-            <Text style={styles.eventVenue}>{MOCK_EVENT.venue} · {MOCK_EVENT.city}</Text>
-            <Text style={styles.eventDates}>{MOCK_EVENT.dates}</Text>
-            <View style={styles.attendeePill}>
+            <Text style={styles.heroName}>{MOCK_EVENT.name}</Text>
+            <Text style={styles.heroVenue}>{MOCK_EVENT.venue}</Text>
+            <Text style={styles.heroCity}>{MOCK_EVENT.city} · {MOCK_EVENT.dates}</Text>
+            <View style={[styles.heroDivider, { backgroundColor: C.border }]} />
+            <View style={styles.heroMeta}>
               <Feather name="users" size={13} color={C.mutedForeground} />
-              <Text style={styles.attendeeText}>{MOCK_EVENT.collectorsPresent} collectors registered</Text>
+              <Text style={styles.heroMetaText}>{MOCK_EVENT.collectorsPresent} collectors registered</Text>
             </View>
           </View>
 
-          {/* Preview stats */}
-          <Text style={styles.previewTitle}>What's available for you</Text>
+          {/* Stats preview */}
+          <Text style={styles.sectionLabel}>What's waiting for you</Text>
           {wishlistCount === 0 && (
             <Pressable
               onPress={() => router.push('/wishlist' as any)}
-              style={[styles.wishlistNudge, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}
+              style={[styles.nudge, { backgroundColor: `${C.primary}12`, borderColor: `${C.primary}33` }]}
             >
               <Feather name="heart" size={14} color={C.primary} />
-              <Text style={[styles.wishlistNudgeText, { color: C.primary }]}>
+              <Text style={[styles.nudgeText, { color: C.primary }]}>
                 Add cards to your wishlist to see personalised event stats
               </Text>
               <Feather name="chevron-right" size={14} color={C.primary} />
             </Pressable>
           )}
+
           <View style={styles.statsGrid}>
-            <StatTile icon="heart" value={liveStats.collectorsWithYourWants} label="Collectors with cards you want" color={C.primary} />
-            <StatTile icon="repeat" value={liveStats.tradeMatches} label="Trade matches at event" color='#22C55E' />
-            <StatTile icon="tag" value={liveStats.wishlistForSale} label="Wishlist cards for sale" color='#F59E0B' />
-            <StatTile icon="eye" value={liveStats.wantYourCards} label="Want cards you have" color='#3B82F6' />
+            {[
+              { icon: 'heart' as const,        value: liveStats.collectorsWithYourWants, label: 'Have your wants',     color: C.primary   },
+              { icon: 'repeat' as const,       value: liveStats.tradeMatches,            label: 'Trade matches',       color: '#22C55E'   },
+              { icon: 'tag' as const,          value: liveStats.wishlistForSale,         label: 'Wishlist for sale',   color: '#F59E0B'   },
+              { icon: 'eye' as const,          value: liveStats.wantYourCards,           label: 'Want your cards',     color: '#3B82F6'   },
+            ].map(s => (
+              <View key={s.icon} style={[styles.statCard, { backgroundColor: C.card }]}>
+                <View style={[styles.statIconWrap, { backgroundColor: `${s.color}18` }]}>
+                  <Feather name={s.icon} size={16} color={s.color} />
+                </View>
+                <Text style={styles.statCardValue}>{s.value}</Text>
+                <Text style={styles.statCardLabel}>{s.label}</Text>
+              </View>
+            ))}
           </View>
 
-          {/* What you get */}
+          {/* Feature list */}
           <View style={[styles.featureCard, { backgroundColor: C.card }]}>
-            <Text style={styles.featureTitle}>Event Mode unlocks</Text>
-            {[
-              { icon: 'map-pin', text: 'See who\'s at this event with cards you want' },
-              { icon: 'repeat', text: 'Find trade matches on the floor in real time' },
-              { icon: 'shopping-bag', text: 'Browse vendor inventory and listings' },
-              { icon: 'list', text: 'Post to the Wanted Board for collectors to see' },
-              { icon: 'check-square', text: 'Track set completion with on-site availability' },
-            ].map((f, i) => (
+            <Text style={styles.featureHeading}>Event Mode unlocks</Text>
+            {([
+              { icon: 'map-pin',      text: "See who's at the event with cards you want"      },
+              { icon: 'repeat',       text: 'Find trade matches on the floor in real time'    },
+              { icon: 'shopping-bag', text: 'Browse vendor inventory and listings'            },
+              { icon: 'list',         text: 'Post to the Wanted Board for collectors to see'  },
+              { icon: 'check-square', text: 'Track set completion with on-site availability'  },
+            ] as const).map((f, i) => (
               <View key={i} style={styles.featureRow}>
-                <View style={[styles.featureIcon, { backgroundColor: `${C.primary}22` }]}>
-                  <Feather name={f.icon as any} size={14} color={C.primary} />
+                <View style={[styles.featureIconWrap, { backgroundColor: `${C.primary}18` }]}>
+                  <Feather name={f.icon} size={14} color={C.primary} />
                 </View>
                 <Text style={styles.featureText}>{f.text}</Text>
               </View>
             ))}
           </View>
 
-          <Pressable onPress={() => setIsInEvent(true)} style={styles.enterBtn}>
+          {/* CTA */}
+          <Pressable
+            onPress={() => setIsInEvent(true)}
+            style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.85 : 1 }]}
+          >
             <Feather name="zap" size={18} color="#FFF" />
-            <Text style={styles.enterBtnText}>Enter Event Mode</Text>
+            <Text style={styles.ctaText}>Enter Event Mode</Text>
           </Pressable>
 
-          <Text style={styles.enterDisclaimer}>
+          <Text style={styles.disclaimer}>
             Event Mode uses your wishlist and collection data to surface relevant matches. No GPS is used.
           </Text>
         </ScrollView>
@@ -122,123 +151,177 @@ export default function EventModeScreen() {
     );
   }
 
-  // ── Active Event Dashboard ──────────────────────────────────────────────────
+  // ── Active Dashboard ──────────────────────────────────────────────────────────
   return (
     <View style={[styles.screen, { backgroundColor: C.background }]}>
-      {/* Event header */}
-      <View style={[styles.eventHeader, { paddingTop: topPad + 8 }]}>
-        <View style={styles.eventHeaderLeft}>
-          <View style={[styles.liveDot]} />
-          <View>
-            <Text style={styles.eventHeaderName}>{MOCK_EVENT.name}</Text>
-            <Text style={styles.eventHeaderSub}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
+
+      {/* ── Header ── */}
+      <View style={[styles.dashHeader, { paddingTop: topPad + 10 }]}>
+        <View style={styles.dashHeaderLeft}>
+          <View style={styles.liveRow}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveLabel}>LIVE</Text>
           </View>
+          <Text style={styles.dashEventName} numberOfLines={1}>{MOCK_EVENT.name}</Text>
+          <Text style={styles.dashEventSub}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
         </View>
-        <Pressable onPress={() => setIsInEvent(false)} style={[styles.leaveBtn, { backgroundColor: `${C.primary}22` }]}>
-          <Feather name="log-out" size={14} color={C.primary} />
+        <Pressable
+          onPress={() => setIsInEvent(false)}
+          style={[styles.leaveBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
+        >
+          <Feather name="log-out" size={13} color={C.primary} />
           <Text style={[styles.leaveBtnText, { color: C.primary }]}>Leave</Text>
         </Pressable>
       </View>
 
-      {/* Stat highlights */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statScroll} contentContainerStyle={styles.statScrollContent}>
-        <MiniStat icon="🔥" value={liveStats.collectorsWithYourWants} label="have your wants" onPress={() => setActiveTab('wishlist')} />
-        <MiniStat icon="🤝" value={liveStats.tradeMatches} label="trade matches" onPress={() => setActiveTab('matches')} />
-        <MiniStat icon="💰" value={liveStats.wishlistForSale} label="wishlist for sale" onPress={() => setActiveTab('for_sale')} />
-        <MiniStat icon="👀" value={liveStats.wantYourCards} label="want your cards" onPress={() => setActiveTab('want_yours')} />
-      </ScrollView>
-
-      {/* Quick action buttons */}
-      <View style={styles.quickActions}>
-        <QuickAction icon="search" label="I'm Looking For" onPress={() => router.push('/event/looking-for' as any)} />
-        <QuickAction icon="package" label="I Have This" onPress={() => router.push('/event/have-this' as any)} />
-        <QuickAction icon="list" label="Wanted Board" onPress={() => router.push('/event/wanted-board' as any)} />
-        <QuickAction icon="grid" label="Complete My Set" onPress={() => router.push('/event/complete-my-set' as any)} />
-      </View>
-
-      {/* Section tabs */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabs} contentContainerStyle={styles.tabsContent}>
-        {TABS.map(t => (
+      {/* ── Stat strip ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.statStrip}
+        contentContainerStyle={styles.statStripContent}
+      >
+        {([
+          { emoji: '🔥', value: liveStats.collectorsWithYourWants, label: 'have your wants', tab: 'wishlist'   },
+          { emoji: '🤝', value: liveStats.tradeMatches,            label: 'trade matches',   tab: 'matches'    },
+          { emoji: '💰', value: liveStats.wishlistForSale,         label: 'for sale',        tab: 'for_sale'   },
+          { emoji: '👀', value: liveStats.wantYourCards,           label: 'want yours',      tab: 'want_yours' },
+        ] as const).map(s => (
           <Pressable
-            key={t.value}
-            onPress={() => setActiveTab(t.value)}
-            style={[styles.tab, activeTab === t.value && { borderBottomColor: C.primary }]}
+            key={s.emoji}
+            onPress={() => setActiveTab(s.tab as EventTab)}
+            style={[styles.statPill, { backgroundColor: C.card }, activeTab === s.tab && { borderColor: C.primary, borderWidth: 1 }]}
           >
-            <Text style={[styles.tabText, activeTab === t.value && { color: C.foreground }]}>{t.label}</Text>
+            <Text style={styles.statPillEmoji}>{s.emoji}</Text>
+            <Text style={styles.statPillValue}>{s.value}</Text>
+            <Text style={styles.statPillLabel}>{s.label}</Text>
           </Pressable>
         ))}
       </ScrollView>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.tabContent, { paddingBottom: Math.max(insets.bottom, 12) }]} showsVerticalScrollIndicator={false}>
-        {/* TRADE MATCHES */}
+      {/* ── Quick actions ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.qaStrip}
+        contentContainerStyle={styles.qaStripContent}
+      >
+        {QUICK_ACTIONS.map(a => (
+          <Pressable
+            key={a.label}
+            onPress={() => router.push(a.route as any)}
+            style={({ pressed }) => [styles.qaBtn, { backgroundColor: C.card, opacity: pressed ? 0.7 : 1 }]}
+          >
+            <View style={[styles.qaIconWrap, { backgroundColor: `${C.primary}18` }]}>
+              <Feather name={a.icon} size={16} color={C.primary} />
+            </View>
+            <Text style={styles.qaLabel}>{a.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      {/* ── Section tabs ── */}
+      <View style={[styles.tabBar, { borderBottomColor: C.border }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBarContent}>
+          {TABS.map(t => (
+            <Pressable
+              key={t.value}
+              onPress={() => setActiveTab(t.value)}
+              style={[styles.tabItem, activeTab === t.value && { borderBottomColor: C.primary }]}
+            >
+              <Text style={[styles.tabItemText, activeTab === t.value && { color: C.foreground }]}>
+                {t.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* ── Tab content ── */}
+      <ScrollView
+        style={styles.tabContent}
+        contentContainerStyle={[styles.tabContentInner, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* MATCHES */}
         {activeTab === 'matches' && (
-          <View style={{ gap: 12 }}>
+          <View style={styles.cardList}>
             {MOCK_EVENT.tradeMatchesAtEvent.map(match => (
               <Pressable
                 key={match.id}
                 onPress={() => router.push('/trade-match' as any)}
                 style={[styles.matchCard, { backgroundColor: C.card }]}
               >
-                <View style={styles.matchTopRow}>
-                  <View style={[styles.matchPill, { backgroundColor: '#22C55E22' }]}>
+                <View style={styles.matchHeader}>
+                  <View style={[styles.matchBadge, { backgroundColor: '#22C55E18' }]}>
                     <View style={[styles.matchDot, { backgroundColor: '#22C55E' }]} />
-                    <Text style={[styles.matchPctText, { color: '#22C55E' }]}>{match.matchPercent}% Match</Text>
+                    <Text style={[styles.matchBadgeText, { color: '#22C55E' }]}>{match.matchPercent}% Match</Text>
                   </View>
-                  <Text style={styles.atEventLabel}>AT THIS EVENT</Text>
+                  <Text style={styles.atEventTag}>AT THIS EVENT</Text>
                 </View>
-                <View style={styles.matchMini}>
-                  <View style={styles.matchMiniSide}>
-                    <View style={[styles.matchMiniThumb, { backgroundColor: match.youWant.color }]} />
-                    <View>
-                      <Text style={styles.matchMiniLabel}>YOU WANT</Text>
-                      <Text style={styles.matchMiniName} numberOfLines={1}>{match.youWant.name}</Text>
-                      <Text style={styles.matchMiniGrade}>{match.youWant.grade} · ${match.youWant.value.toLocaleString()}</Text>
+
+                <View style={styles.matchTrades}>
+                  <View style={styles.matchSide}>
+                    <View style={[styles.matchThumb, { backgroundColor: match.youWant.color }]} />
+                    <View style={styles.matchSideInfo}>
+                      <Text style={styles.matchSideLabel}>YOU WANT</Text>
+                      <Text style={styles.matchSideName} numberOfLines={1}>{match.youWant.name}</Text>
+                      <Text style={styles.matchSideMeta}>{match.youWant.grade} · ${match.youWant.value.toLocaleString()}</Text>
                     </View>
                   </View>
-                  <Feather name="repeat" size={14} color={C.mutedForeground} />
-                  <View style={styles.matchMiniSide}>
-                    <View style={[styles.matchMiniThumb, { backgroundColor: match.theyWant.color }]} />
-                    <View>
-                      <Text style={styles.matchMiniLabel}>THEY WANT</Text>
-                      <Text style={styles.matchMiniName} numberOfLines={1}>{match.theyWant.name}</Text>
-                      <Text style={styles.matchMiniGrade}>{match.theyWant.grade} · ${match.theyWant.value.toLocaleString()}</Text>
+                  <View style={[styles.matchSwapIcon, { backgroundColor: C.background }]}>
+                    <Feather name="repeat" size={12} color={C.mutedForeground} />
+                  </View>
+                  <View style={[styles.matchSide, styles.matchSideRight]}>
+                    <View style={styles.matchSideInfo}>
+                      <Text style={[styles.matchSideLabel, { textAlign: 'right' }]}>THEY WANT</Text>
+                      <Text style={[styles.matchSideName, { textAlign: 'right' }]} numberOfLines={1}>{match.theyWant.name}</Text>
+                      <Text style={[styles.matchSideMeta, { textAlign: 'right' }]}>{match.theyWant.grade} · ${match.theyWant.value.toLocaleString()}</Text>
                     </View>
+                    <View style={[styles.matchThumb, { backgroundColor: match.theyWant.color }]} />
                   </View>
                 </View>
-                <View style={[styles.matchCollectorRow, { borderTopColor: C.border }]}>
+
+                <View style={[styles.matchFooter, { borderTopColor: C.border }]}>
                   <View style={[styles.matchAvatar, { backgroundColor: match.collector.avatarColor }]}>
                     <Text style={styles.matchAvatarText}>{match.collector.initials}</Text>
                   </View>
-                  <Text style={styles.matchCollectorName}>@{match.collector.username}</Text>
-                  {match.collector.isVerified && <Feather name="check-circle" size={12} color={C.positive} />}
+                  <Text style={styles.matchUsername}>@{match.collector.username}</Text>
+                  {match.collector.isVerified && (
+                    <Feather name="check-circle" size={11} color={C.positive} />
+                  )}
                   <View style={{ flex: 1 }} />
-                  <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+                  <Text style={styles.matchLocation}>{match.collector.location}</Text>
+                  <Feather name="chevron-right" size={14} color={C.mutedForeground} />
                 </View>
               </Pressable>
             ))}
-            <Pressable onPress={() => router.push('/trade-match' as any)} style={[styles.viewAllBtn, { borderColor: C.border }]}>
-              <Text style={styles.viewAllText}>View All Trade Matches</Text>
-              <Feather name="arrow-right" size={14} color={C.mutedForeground} />
+            <Pressable
+              onPress={() => router.push('/trade-match' as any)}
+              style={[styles.viewAllRow, { borderColor: C.border }]}
+            >
+              <Text style={[styles.viewAllText, { color: C.mutedForeground }]}>View All Trade Matches</Text>
+              <Feather name="arrow-right" size={13} color={C.mutedForeground} />
             </Pressable>
           </View>
         )}
 
         {/* WISHLIST NEARBY */}
         {activeTab === 'wishlist' && (
-          <View style={{ gap: 10 }}>
+          <View style={styles.cardList}>
             {MOCK_EVENT.wishlistNearby.map(item => (
-              <View key={item.id} style={[styles.listCard, { backgroundColor: C.card }]}>
+              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
                 <View style={[styles.listThumb, { backgroundColor: item.color }]}>
                   <Text style={styles.listInitial}>{item.cardName[0]}</Text>
                 </View>
                 <View style={styles.listInfo}>
-                  <Text style={styles.listCardName}>{item.cardName}</Text>
+                  <Text style={styles.listName}>{item.cardName}</Text>
                   <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
                   <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
                 </View>
                 <View style={styles.listRight}>
-                  <View style={[styles.availPill, { backgroundColor: `${C.positive}22` }]}>
-                    <Text style={[styles.availText, { color: C.positive }]}>{item.availableCount} avail.</Text>
+                  <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
+                    <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
                   </View>
                   <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
                   {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
@@ -250,25 +333,28 @@ export default function EventModeScreen() {
 
         {/* WANT YOUR CARDS */}
         {activeTab === 'want_yours' && (
-          <View style={{ gap: 10 }}>
+          <View style={styles.cardList}>
             {MOCK_EVENT.wantYourCards.map(item => (
-              <View key={item.id} style={[styles.listCard, { backgroundColor: C.card }]}>
+              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
                 <View style={[styles.listThumb, { backgroundColor: item.color }]}>
                   <Text style={styles.listInitial}>{item.cardName[0]}</Text>
                 </View>
                 <View style={styles.listInfo}>
-                  <Text style={styles.listCardName}>{item.cardName}</Text>
+                  <Text style={styles.listName}>{item.cardName}</Text>
                   <Text style={styles.listMeta}>{item.grade}</Text>
-                  <View style={styles.avatarCluster}>
+                  <View style={styles.clusterRow}>
                     {item.collectors.slice(0, 3).map(c => (
-                      <View key={c.username} style={[styles.clusterAvatar, { backgroundColor: c.color }]}>
+                      <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
                         <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
                       </View>
                     ))}
                     <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
                   </View>
                 </View>
-                <Pressable onPress={() => router.push('/event/have-this' as any)} style={[styles.haveThisBtn, { backgroundColor: `${C.primary}22` }]}>
+                <Pressable
+                  onPress={() => router.push('/event/have-this' as any)}
+                  style={[styles.haveThisBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
+                >
                   <Text style={[styles.haveThisBtnText, { color: C.primary }]}>I Have This</Text>
                 </Pressable>
               </View>
@@ -278,7 +364,7 @@ export default function EventModeScreen() {
 
         {/* FOR SALE */}
         {activeTab === 'for_sale' && (
-          <View style={{ gap: 10 }}>
+          <View style={styles.cardList}>
             {MOCK_EVENT.forSaleAtEvent.map(item => (
               <Pressable
                 key={item.id}
@@ -286,15 +372,17 @@ export default function EventModeScreen() {
                   ? router.push(`/vendor/${item.vendorId}` as any)
                   : router.push(`/collector/${item.sellerUsername}` as any)
                 }
-                style={[styles.listCard, { backgroundColor: C.card }]}
+                style={[styles.listRow, { backgroundColor: C.card }]}
               >
                 <View style={[styles.listThumb, { backgroundColor: item.color }]}>
                   <Text style={styles.listInitial}>{item.cardName[0]}</Text>
                 </View>
                 <View style={styles.listInfo}>
-                  <Text style={styles.listCardName}>{item.cardName}</Text>
+                  <Text style={styles.listName}>{item.cardName}</Text>
                   <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                  {item.booth && <Text style={styles.boothText}>{item.booth}</Text>}
+                  {item.booth && (
+                    <Text style={[styles.boothText, { color: C.primary }]}>{item.booth}</Text>
+                  )}
                 </View>
                 <View style={styles.listRight}>
                   <Text style={styles.listPrice}>${item.askingPrice.toLocaleString('en-AU')}</Text>
@@ -308,19 +396,19 @@ export default function EventModeScreen() {
 
         {/* TRENDING */}
         {activeTab === 'trending' && (
-          <View style={{ gap: 10 }}>
+          <View style={styles.cardList}>
             {MOCK_EVENT.trending.map((item, i) => (
-              <View key={item.id} style={[styles.listCard, { backgroundColor: C.card }]}>
+              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
                 <Text style={styles.trendRank}>#{i + 1}</Text>
                 <View style={[styles.listThumb, { backgroundColor: item.color }]}>
                   <Text style={styles.listInitial}>{item.cardName[0]}</Text>
                 </View>
                 <View style={styles.listInfo}>
-                  <Text style={styles.listCardName}>{item.cardName}</Text>
+                  <Text style={styles.listName}>{item.cardName}</Text>
                   <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                  <View style={styles.watcherRow}>
-                    <Feather name="eye" size={11} color={C.mutedForeground} />
-                    <Text style={styles.watcherText}>{item.watchers} watching</Text>
+                  <View style={styles.watchRow}>
+                    <Feather name="eye" size={10} color={C.mutedForeground} />
+                    <Text style={styles.watchText}>{item.watchers} watching</Text>
                   </View>
                 </View>
                 <Text style={[styles.trendChange, { color: C.positive }]}>{item.change}</Text>
@@ -333,136 +421,188 @@ export default function EventModeScreen() {
   );
 }
 
-function StatTile({ icon, value, label, color }: { icon: string; value: number; label: string; color: string }) {
-  return (
-    <View style={[styles.statTile, { backgroundColor: C.card }]}>
-      <Feather name={icon as any} size={18} color={color} />
-      <Text style={styles.statTileValue}>{value}</Text>
-      <Text style={styles.statTileLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function MiniStat({ icon, value, label, onPress }: { icon: string; value: number; label: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.miniStat, { backgroundColor: C.card }]}>
-      <Text style={styles.miniStatIcon}>{icon}</Text>
-      <Text style={styles.miniStatValue}>{value}</Text>
-      <Text style={styles.miniStatLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function QuickAction({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.quickAction, { backgroundColor: C.card }]}>
-      <Feather name={icon as any} size={18} color={C.foreground} />
-      <Text style={styles.quickActionLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 14,
-  },
-  backBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
-  // Enter screen
-  enterContent: { paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
-  eventHero: { borderRadius: 20, padding: 20, alignItems: 'center', gap: 10 },
-  eventBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
-  eventBadgeText: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
-  eventName: { fontSize: 26, fontFamily: 'Rajdhani_700Bold', color: C.foreground, textAlign: 'center', letterSpacing: -0.3 },
-  eventVenue: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  eventDates: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  attendeePill: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  attendeeText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  previewTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  statTile: { width: '47%', borderRadius: 14, padding: 14, alignItems: 'center', gap: 6 },
-  statTileValue: { fontSize: 32, fontFamily: 'Inter_700Bold', color: C.foreground },
-  statTileLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
-  featureCard: { borderRadius: 16, padding: 18, gap: 14 },
-  featureTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  featureIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  featureText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  enterBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: 16, backgroundColor: C.primary },
-  enterBtnText: { fontSize: 17, fontFamily: 'Inter_700Bold', color: '#FFF' },
-  enterDisclaimer: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}77`, textAlign: 'center', lineHeight: 18 },
-  wishlistNudge: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, borderWidth: 1, padding: 12, marginBottom: 4,
-  },
-  wishlistNudgeText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold', lineHeight: 18 },
-  // Event dashboard
-  eventHeader: {
+
+  // ── Entry screen ──────────────────────────────────────────────────────────────
+  nav: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12,
   },
-  eventHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.positive },
-  eventHeaderName: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
-  eventHeaderSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  leaveBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10 },
+  navBack: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: C.card, alignItems: 'center', justifyContent: 'center',
+  },
+  navTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
+
+  enterScroll: { paddingHorizontal: 20, paddingTop: 4, gap: 16 },
+
+  heroCard: { borderRadius: 20, padding: 20, alignItems: 'center', gap: 8 },
+  heroBadgeRow: { alignItems: 'center' },
+  heroBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+  },
+  livePulse: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.primary },
+  heroBadgeText: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1.2 },
+  heroName: { fontSize: 24, fontFamily: 'Rajdhani_700Bold', color: C.foreground, textAlign: 'center', letterSpacing: -0.3 },
+  heroVenue: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  heroCity: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, textAlign: 'center' },
+  heroDivider: { width: '100%', height: 1, marginVertical: 4 },
+  heroMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  heroMetaText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
+  sectionLabel: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+
+  nudge: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 12, borderWidth: 1, padding: 12,
+  },
+  nudgeText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold', lineHeight: 18 },
+
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  statCard: { width: '47%', borderRadius: 16, padding: 16, alignItems: 'center', gap: 6 },
+  statIconWrap: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  statCardValue: { fontSize: 30, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 34 },
+  statCardLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+
+  featureCard: { borderRadius: 16, padding: 18, gap: 14 },
+  featureHeading: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  featureIconWrap: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  featureText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, lineHeight: 18 },
+
+  cta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, height: 56, borderRadius: 16, backgroundColor: C.primary,
+  },
+  ctaText: { fontSize: 17, fontFamily: 'Inter_700Bold', color: '#FFF' },
+
+  disclaimer: {
+    fontSize: 11, fontFamily: 'Inter_400Regular',
+    color: `${C.mutedForeground}66`, textAlign: 'center', lineHeight: 17,
+  },
+
+  // ── Active dashboard ──────────────────────────────────────────────────────────
+  dashHeader: {
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingBottom: 12,
+  },
+  dashHeaderLeft: { flex: 1, gap: 2, marginRight: 12 },
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.positive },
+  liveLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', color: C.positive, letterSpacing: 1.2 },
+  dashEventName: { fontSize: 18, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
+  dashEventSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  leaveBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+  },
   leaveBtnText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
-  statScroll: { height: 90, flexShrink: 0 },
-  statScrollContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 10 },
-  miniStat: { borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center', gap: 2 },
-  miniStatIcon: { fontSize: 18 },
-  miniStatValue: { fontSize: 20, fontFamily: 'Inter_700Bold', color: C.foreground },
-  miniStatLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
-  quickActions: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, marginBottom: 12 },
-  quickAction: { flex: 1, borderRadius: 12, paddingVertical: 10, alignItems: 'center', gap: 5 },
-  quickActionLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', color: C.foreground, textAlign: 'center' },
-  tabs: { borderBottomWidth: 1, borderBottomColor: C.border },
-  tabsContent: { paddingHorizontal: 16 },
-  tab: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-  tabContent: { paddingHorizontal: 16, paddingTop: 8 },
-  // Cards
+
+  // Stat strip
+  statStrip: { flexGrow: 0 },
+  statStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
+  statPill: {
+    borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10,
+    alignItems: 'center', gap: 2, minWidth: 80,
+  },
+  statPillEmoji: { fontSize: 16 },
+  statPillValue: { fontSize: 22, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 26 },
+  statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+
+  // Quick actions
+  qaStrip: { flexGrow: 0 },
+  qaStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
+  qaBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+  },
+  qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+
+  // Tab bar
+  tabBar: { borderBottomWidth: 1 },
+  tabBarContent: { paddingHorizontal: 16 },
+  tabItem: {
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+  },
+  tabItemText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
+
+  // Tab content
+  tabContent: { flex: 1 },
+  tabContentInner: { paddingHorizontal: 16, paddingTop: 12 },
+  cardList: { gap: 10 },
+
+  // Match cards
   matchCard: { borderRadius: 16, padding: 14, gap: 12 },
-  matchTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  matchPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  matchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  matchBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+  },
   matchDot: { width: 5, height: 5, borderRadius: 3 },
-  matchPctText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
-  atEventLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1 },
-  matchMini: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  matchMiniSide: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  matchMiniThumb: { width: 36, height: 50, borderRadius: 6 },
-  matchMiniLabel: { fontSize: 8, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1 },
-  matchMiniName: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  matchMiniGrade: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  matchCollectorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 10, borderTopWidth: 1 },
-  matchAvatar: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  matchAvatarText: { fontSize: 10, fontFamily: 'Inter_700Bold', color: '#FFF' },
-  matchCollectorName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  listCard: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, padding: 12, gap: 12 },
-  listThumb: { width: 44, height: 62, borderRadius: 7, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  matchBadgeText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  atEventTag: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1 },
+  matchTrades: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  matchSide: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  matchSideRight: { justifyContent: 'flex-end' },
+  matchThumb: { width: 34, height: 48, borderRadius: 6, flexShrink: 0 },
+  matchSideInfo: { flex: 1 },
+  matchSideLabel: { fontSize: 8, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1, marginBottom: 2 },
+  matchSideName: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  matchSideMeta: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
+  matchSwapIcon: {
+    width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+  },
+  matchFooter: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingTop: 10, borderTopWidth: 1,
+  },
+  matchAvatar: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  matchAvatarText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: '#FFF' },
+  matchUsername: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  matchLocation: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
+  viewAllRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, borderRadius: 12, paddingVertical: 12, borderWidth: 1, marginTop: 2,
+  },
+  viewAllText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+
+  // List rows (shared across Wishlist / Want Yours / For Sale / Trending)
+  listRow: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: 14, padding: 12, gap: 12,
+  },
+  listThumb: {
+    width: 44, height: 62, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
   listInitial: { fontSize: 20, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
   listInfo: { flex: 1, gap: 3 },
-  listCardName: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  listName: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   listMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   listValue: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
   listRight: { alignItems: 'flex-end', gap: 4 },
-  availPill: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
-  availText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  listPrice: { fontSize: 15, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
   listSeller: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  listPrice: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
-  boothText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.primary },
-  avatarCluster: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  clusterAvatar: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  availTag: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+  availTagText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  boothText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+
+  // Want Yours
+  clusterRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  clusterDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   clusterInitial: { fontSize: 8, fontFamily: 'Inter_700Bold', color: '#FFF' },
   clusterCount: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  haveThisBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10 },
+  haveThisBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
   haveThisBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+
+  // Trending
   trendRank: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.mutedForeground, width: 24, textAlign: 'center' },
-  watcherRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  watcherText: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  trendChange: { fontSize: 13, fontFamily: 'Inter_700Bold' },
-  viewAllBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 12, paddingVertical: 12, borderWidth: 1 },
-  viewAllText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
+  watchRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  watchText: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  trendChange: { fontSize: 14, fontFamily: 'Rajdhani_700Bold' },
 });
