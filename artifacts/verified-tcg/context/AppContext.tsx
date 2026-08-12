@@ -114,6 +114,7 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+const SCAN_STATE_STORAGE_KEY = '@verified_tcg/scan_state';
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -184,6 +185,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
   const [scansUsed, setScansUsed] = useState(0);
+  const [scansLoaded, setScansLoaded] = useState(false);
   const scanLimit = FREE_SCAN_LIMIT;
 
   /**
@@ -221,12 +223,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanResetDate]);
 
-  // Load persisted watchlist and prices from AsyncStorage on mount
+  // Load persisted watchlist, prices, and scan state from AsyncStorage on mount
   useEffect(() => {
     Promise.all([
       AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
       loadPersistedPrices(),
-    ]).then(async ([storedWatchlist, persisted]) => {
+      AsyncStorage.getItem(SCAN_STATE_STORAGE_KEY),
+    ]).then(async ([storedWatchlist, persisted, storedScanState]) => {
       // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
         try {
@@ -278,7 +281,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (persisted.lastUpdated !== null) {
         setPricesLastUpdated(persisted.lastUpdated);
       }
-    }).finally(() => setWatchlistLoaded(true));
+
+      // Restore scan state — keyed by reset date so the monthly rollover in
+      // the quota-period guard (above) automatically resets the count.
+      if (storedScanState !== null) {
+        try {
+          const { scansUsed: savedScans, scanResetDate: savedResetDateISO } = JSON.parse(storedScanState) as {
+            scansUsed: number;
+            scanResetDate: string;
+          };
+          const savedResetDate = new Date(savedResetDateISO);
+          if (!isNaN(savedResetDate.getTime())) {
+            // Restore both values; the existing quota-period guard effect will
+            // detect if savedResetDate is in the past and advance/reset as needed.
+            setScanResetDate(savedResetDate);
+            setScansUsed(savedScans);
+          }
+        } catch {
+          // Corrupted JSON — fall back to defaults silently (0 scans, next month)
+        }
+      }
+    }).finally(() => {
+      setWatchlistLoaded(true);
+      setScansLoaded(true);
+    });
   }, []);
 
   // Persist watchlist to AsyncStorage on every change (after initial load).
@@ -288,6 +314,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const payload: WatchlistPayload = { version: WATCHLIST_SCHEMA_VERSION, items: watchlist };
     AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
   }, [watchlist, watchlistLoaded]);
+
+  // Persist scan state to AsyncStorage on every change (after initial load).
+  // Both values must be written together so the loader can cross-check them.
+  useEffect(() => {
+    if (!scansLoaded) return;
+    AsyncStorage.setItem(
+      SCAN_STATE_STORAGE_KEY,
+      JSON.stringify({ scansUsed, scanResetDate: scanResetDate.toISOString() }),
+    ).catch(() => {});
+  }, [scansUsed, scanResetDate, scansLoaded]);
 
   /**
    * Server sync on initial load.
