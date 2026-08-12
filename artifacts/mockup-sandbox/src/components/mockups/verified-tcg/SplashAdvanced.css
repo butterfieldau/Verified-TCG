@@ -1,536 +1,81 @@
-/* ── Root ───────────────────────────────────────────────────────────────────── */
-.splash-root {
-  width: 390px;
-  height: 844px;
-  background: #06060A;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-  font-family: 'Inter', 'Helvetica Neue', sans-serif;
-}
-
-/* ── Background glows ───────────────────────────────────────────────────────── */
-.bg-glow-primary {
-  position: absolute;
-  width: 450px;
-  height: 450px;
-  border-radius: 50%;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -60%);
-  background: radial-gradient(circle, rgba(220,38,38,0.18) 0%, rgba(220,38,38,0.05) 50%, transparent 70%);
-  pointer-events: none;
-  animation: glowPulse 4s ease-in-out infinite;
-}
-
-.bg-glow-secondary {
-  position: absolute;
-  width: 280px;
-  height: 280px;
-  border-radius: 50%;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -65%);
-  background: radial-gradient(circle, rgba(251,146,60,0.10) 0%, transparent 70%);
-  pointer-events: none;
-  animation: glowPulse 4s ease-in-out 2s infinite;
-}
-
-@keyframes glowPulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-
-/* ── Card stack ─────────────────────────────────────────────────────────────── */
-.card-stack {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 340px;
-  margin-bottom: 36px;
-  pointer-events: none;
-}
-
-.card-position {
-  position: absolute;
-}
-
-/* ── Slab animations ────────────────────────────────────────────────────────── */
-.slab-outer {
-  animation:
-    cardEnter 0.85s cubic-bezier(0.16, 1, 0.3, 1) var(--delay, 0s) both,
-    cardFloat 6s ease-in-out calc(var(--delay, 0s) + 0.85s) infinite;
+@keyframes float {
+  0%, 100% { transform: translateY(0px) rotate(var(--rot, 0deg)) scale(var(--scale, 1)); }
+  50% { transform: translateY(-10px) rotate(calc(var(--rot, 0deg) + 1deg)) scale(var(--scale, 1)); }
 }
 
 @keyframes cardEnter {
-  0%   { transform: translateY(70vh) rotate(calc(var(--rot, 0deg) * 2.5)) scale(0.45); opacity: 0; }
+  0% { transform: translateY(80vh) rotate(calc(var(--rot, 0deg) * 2)) scale(0.5); opacity: 0; }
   100% { transform: translateY(0) rotate(var(--rot, 0deg)) scale(var(--scale, 1)); opacity: 1; }
 }
 
-@keyframes cardFloat {
-  0%, 100% { transform: translateY(0px) rotate(var(--rot, 0deg)) scale(var(--scale, 1)); }
-  50%       { transform: translateY(-9px) rotate(calc(var(--rot, 0deg) + 0.8deg)) scale(var(--scale, 1)); }
-}
-
-/* ── Slab housing ───────────────────────────────────────────────────────────── */
-.slab-housing {
-  width: 190px;
-  height: 300px;
-  border-radius: 12px;
-  background: linear-gradient(160deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%);
-  border: 1px solid rgba(255,255,255,0.18);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  box-shadow:
-    0 30px 60px -10px rgba(0,0,0,0.95),
-    0 0 0 1px rgba(255,255,255,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.25);
-  backdrop-filter: blur(6px);
-  position: relative;
-}
-
-/* ── Label area ─────────────────────────────────────────────────────────────── */
-.slab-label-area {
-  flex-shrink: 0;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #fff;
-  box-shadow: inset 0 0 8px rgba(0,0,0,0.12);
-}
-
-.grader-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px;
-}
-
-.grader-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  line-height: 1;
-}
-
-.grader-logo-text {
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: 1px;
-  font-family: 'Arial Black', sans-serif;
-}
-
-.grader-sub-text {
-  font-size: 5.5px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  margin-top: 1px;
-}
-
-/* Holographic sticker */
-.holo-sticker {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    #FF6B6B, #FFD93D, #6BCB77, #4D96FF, #C77DFF, #FF6B6B
-  );
-  box-shadow: 0 0 4px rgba(255,255,255,0.6);
-  animation: holoSpin 4s linear infinite;
-}
-
-@keyframes holoSpin {
-  from { filter: hue-rotate(0deg); }
-  to   { filter: hue-rotate(360deg); }
-}
-
-/* Label body */
-.label-body {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 6px 8px;
-  gap: 6px;
-}
-
-.label-card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.label-set {
-  font-size: 7px;
-  font-weight: 700;
-  color: #999;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.label-name {
-  font-size: 11px;
-  font-weight: 900;
-  color: #111;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: -0.2px;
-}
-
-.label-cardno {
-  font-size: 7.5px;
-  font-weight: 600;
-  color: #666;
-}
-
-.sub-grades {
-  display: flex;
-  gap: 3px;
-  margin-top: 3px;
-}
-
-.sub-grade-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-}
-
-.sub-grade-label {
-  font-size: 5.5px;
-  font-weight: 700;
-  color: #999;
-  letter-spacing: 0.3px;
-}
-
-.sub-grade-val {
-  font-size: 8px;
-  font-weight: 900;
-  color: #111;
-}
-
-.cert-no {
-  font-size: 6.5px;
-  color: #aaa;
-  margin-top: 2px;
-  font-family: 'Courier New', monospace;
-}
-
-/* Grade badge */
-.grade-badge-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.grade-badge {
-  width: 46px;
-  height: 46px;
-  border-radius: 5px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-}
-
-.grade-label-text {
-  font-size: 6px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  position: relative;
-  z-index: 1;
-}
-
-.grade-number {
-  font-size: 26px;
-  font-weight: 900;
-  line-height: 1;
-  position: relative;
-  z-index: 1;
-  font-family: 'Arial Black', sans-serif;
-}
-
-.grade-shimmer-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.45) 50%, transparent 65%);
-  background-size: 200% 200%;
-  animation: shimmer 2.5s ease-in-out 1.5s infinite;
-}
-
-@keyframes shimmer {
-  0%   { background-position: -100% 0; }
-  100% { background-position: 200% 0; }
-}
-
-/* Barcode */
-.barcode-strip {
-  display: flex;
-  align-items: flex-end;
-  gap: 1px;
-  height: 12px;
-}
-
-.barcode-line {
-  height: 100%;
-  background: #333;
-  border-radius: 0.5px;
-}
-
-/* ── Card art area ──────────────────────────────────────────────────────────── */
-.card-art-area {
-  flex: 1;
-  border-radius: 6px;
-  overflow: hidden;
-  position: relative;
-  border: 1px solid rgba(0,0,0,0.5);
-  box-shadow: inset 0 0 24px rgba(0,0,0,0.6);
-}
-
-.card-art-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  position: relative;
-  z-index: 1;
-  display: block;
-}
-
-.card-art-fallback {
-  position: absolute;
-  inset: 0;
-}
-
-.card-art-shape1 {
-  position: absolute;
-  right: -16px;
-  top: -16px;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.2);
-  filter: blur(16px);
-}
-
-.card-art-shape2 {
-  position: absolute;
-  left: -20px;
-  bottom: -20px;
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.4);
-  filter: blur(20px);
-}
-
-.holo-foil {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    135deg,
-    transparent 30%,
-    rgba(255,255,255,0.25) 50%,
-    transparent 70%
-  );
-  background-size: 200% 200%;
-  animation: holoFoil 6s ease-in-out infinite;
-  mix-blend-mode: overlay;
-  pointer-events: none;
-  z-index: 2;
-}
-
-@keyframes holoFoil {
-  0%, 100% { background-position: 0% 50%; opacity: 0.4; }
-  50%       { background-position: 100% 50%; opacity: 0.7; }
-}
-
-.card-inner-border {
-  position: absolute;
-  inset: 3px;
-  border-radius: 4px;
-  border: 1px solid rgba(255,255,255,0.2);
-  pointer-events: none;
-  z-index: 3;
-}
-
-/* ── Slab reflections / highlights ─────────────────────────────────────────── */
-.slab-reflection-top {
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  border-radius: 12px;
-  background: linear-gradient(
-    105deg,
-    transparent 20%,
-    rgba(255,255,255,0.08) 25%,
-    transparent 30%,
-    transparent 50%,
-    rgba(255,255,255,0.04) 55%,
-    transparent 60%
-  );
-  background-size: 200% 200%;
-  animation: holoFoil 8s linear infinite;
-  mix-blend-mode: overlay;
-}
-
-.slab-edge-left {
-  pointer-events: none;
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 2px;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(255,255,255,0.08), transparent);
-  border-radius: 12px 0 0 12px;
-}
-
-.slab-edge-top {
-  pointer-events: none;
-  position: absolute;
-  top: 0;
-  right: 0;
-  height: 2px;
-  width: 100%;
-  background: linear-gradient(to left, rgba(255,255,255,0.5), rgba(255,255,255,0.08), transparent);
-  border-radius: 0 12px 0 0;
-}
-
-/* ── Branding ───────────────────────────────────────────────────────────────── */
-.branding-block {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-  z-index: 10;
-}
-
-.logo-img {
-  width: 260px;
-  filter: drop-shadow(0 0 28px rgba(255,255,255,0.14));
-}
-
-.logo-fallback {
-  font-family: 'Rajdhani', sans-serif;
-  font-size: 42px;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: -0.5px;
-  margin: 0;
-}
-
-.tagline {
-  margin-top: 10px;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 4.5px;
-  color: rgba(255,255,255,0.35);
-  text-transform: uppercase;
-}
-
-/* ── CTA ────────────────────────────────────────────────────────────────────── */
-.enter-btn {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: #CC0000;
-  border: none;
-  border-radius: 50px;
-  padding: 16px 44px;
-  margin-top: 28px;
-  cursor: pointer;
-  overflow: hidden;
-  box-shadow: 0 0 40px rgba(204,0,0,0.35), 0 0 80px rgba(204,0,0,0.12);
-  transition: transform 0.15s, box-shadow 0.15s;
-  z-index: 10;
-}
-
-.enter-btn:hover {
-  transform: scale(1.04);
-  box-shadow: 0 0 60px rgba(204,0,0,0.5);
-}
-
-.enter-btn:active { transform: scale(0.97); }
-
-.enter-btn-text {
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 3px;
-  color: #fff;
-  position: relative;
-  z-index: 1;
-}
-
-.enter-btn-arrow {
-  width: 16px;
-  height: 16px;
-  color: #fff;
-  position: relative;
-  z-index: 1;
-  transition: transform 0.25s;
-}
-
-.enter-btn:hover .enter-btn-arrow { transform: translateX(4px); }
-
-.btn-shimmer {
-  position: absolute;
-  inset: 0;
-  width: 200%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
-  animation: shimmer 3s linear infinite;
-}
-
-.guest-link {
-  font-size: 11px;
-  color: rgba(255,255,255,0.25);
-  margin-top: 14px;
-  cursor: pointer;
-  z-index: 10;
-  transition: color 0.2s;
-}
-.guest-link:hover { color: rgba(255,255,255,0.5); }
-
-/* ── Shared animations ──────────────────────────────────────────────────────── */
-.logo-reveal {
-  animation: logoReveal 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.6s both;
-}
-
-.subtitle-reveal {
-  animation: slideUpFade 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.85s both;
-}
-
-.btn-enter {
-  animation: slideUpFade 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 1.0s both;
-}
-
 @keyframes logoReveal {
-  0%   { transform: scale(0.86); opacity: 0; filter: blur(12px); }
-  100% { transform: scale(1);    opacity: 1; filter: blur(0px); }
+  0% { transform: scale(0.85); opacity: 0; filter: blur(12px); }
+  100% { transform: scale(1); opacity: 1; filter: blur(0px); }
 }
 
 @keyframes slideUpFade {
-  0%   { transform: translateY(28px); opacity: 0; }
-  100% { transform: translateY(0);    opacity: 1; }
+  0% { transform: translateY(30px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%) skewX(-15deg); }
+  100% { transform: translateX(200%) skewX(-15deg); }
+}
+
+@keyframes holo {
+  0%, 100% { opacity: 0.3; background-position: 0% 50%; }
+  50% { opacity: 0.6; background-position: 100% 50%; }
+}
+
+.card-wrapper {
+  animation: cardEnter 0.8s cubic-bezier(0.16, 1, 0.3, 1) var(--delay, 0s) both, float 6s ease-in-out calc(var(--delay, 0s) + 0.8s) infinite;
+}
+
+.logo-reveal {
+  animation: logoReveal 1s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s both;
+}
+
+.subtitle-reveal {
+  animation: slideUpFade 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.7s both;
+}
+
+.btn-enter {
+  animation: slideUpFade 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.9s both;
+}
+
+.animate-shimmer {
+  animation: shimmer 3s infinite linear;
+}
+
+.grade-shimmer {
+  animation: shimmer 2.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  animation-delay: 1.5s;
+}
+
+.holo-sweep {
+  background-size: 200% 200%;
+  animation: holo 6s ease-in-out infinite;
+}
+
+.slab-container {
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.15),
+    inset 0 0 20px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+}
+
+.slab-glass-reflection {
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.1) 25%,
+    transparent 30%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.05) 55%,
+    transparent 60%
+  );
+  background-size: 200% 200%;
+  animation: holo 8s linear infinite;
 }

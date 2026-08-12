@@ -5,7 +5,6 @@ export const modules: ModuleMap = {
   "./components/mockups/verified-tcg/CardDetail.tsx": () => import("../components/mockups/verified-tcg/CardDetail.tsx"),
   "./components/mockups/verified-tcg/Collection.tsx": () => import("../components/mockups/verified-tcg/Collection.tsx"),
   "./components/mockups/verified-tcg/Discover.tsx": () => import("../components/mockups/verified-tcg/Discover.tsx"),
-  "./components/mockups/verified-tcg/EventMode.tsx": () => import("../components/mockups/verified-tcg/EventMode.tsx"),
   "./components/mockups/verified-tcg/Home.tsx": () => import("../components/mockups/verified-tcg/Home.tsx"),
   "./components/mockups/verified-tcg/Onboarding.tsx": () => import("../components/mockups/verified-tcg/Onboarding.tsx"),
   "./components/mockups/verified-tcg/Profile.tsx": () => import("../components/mockups/verified-tcg/Profile.tsx"),
