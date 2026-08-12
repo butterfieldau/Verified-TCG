@@ -42,6 +42,7 @@ function RootLayoutNav() {
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
       />
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="portfolio" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collection-insights" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="verification-info" options={{ animation: 'slide_from_right' }} />

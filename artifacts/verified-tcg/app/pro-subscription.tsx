@@ -22,6 +22,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import colors from '@/constants/colors';
 import { SUBSCRIPTION_CONFIG } from '@/services/subscription';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
@@ -35,6 +36,7 @@ type FeatherIconName = React.ComponentProps<typeof Feather>['name'];
 
 export default function ProSubscriptionScreen() {
   const [cycle, setCycle] = useState<BillingCycle>('annual');
+  const { isAuthenticated, setSubscriptionTier } = useApp();
 
   const monthly = SUBSCRIPTION_CONFIG.monthlyPriceAUD;
   const annual = SUBSCRIPTION_CONFIG.annualPriceAUD;
@@ -42,7 +44,13 @@ export default function ProSubscriptionScreen() {
   const saving = SUBSCRIPTION_CONFIG.annualSavingPercent;
 
   function handleStartTrial() {
-    console.log('[ProSubscription] Trial started — prototype only');
+    if (!isAuthenticated) {
+      router.push({ pathname: '/create-account', params: { next: '/pro-subscription' } } as any);
+      return;
+    }
+    // Billing is not connected yet; keep the entitlement transition explicit
+    // so the complete upgrade experience can be tested end to end.
+    setSubscriptionTier('pro');
     router.back();
   }
 
@@ -154,7 +162,7 @@ export default function ProSubscriptionScreen() {
           </Pressable>
 
           <Text style={styles.ctaSecondary}>
-            Keep using Verified TCG Free anytime.
+            {isAuthenticated ? 'Keep using Verified TCG Free anytime.' : 'Create a free account before starting your trial.'}
           </Text>
         </View>
 

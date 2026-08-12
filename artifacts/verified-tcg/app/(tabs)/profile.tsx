@@ -15,6 +15,7 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
 import { ProBadge } from '@/components/ui/ProBadge';
+import { Button } from '@/components/ui/Button';
 import colors from '@/constants/colors';
 import { TCG_LIST } from '@/types';
 
@@ -58,7 +59,7 @@ const PRO_BENEFITS_ITEMS = [
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
-    user, signOut, watchlist,
+    user, isAuthenticated, signOut, watchlist, collection, portfolio,
     subscriptionTier, profileTheme,
     selectedIcon, foundingMemberClaimed,
   } = useApp();
@@ -104,10 +105,23 @@ export default function ProfileScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Profile</Text>
-        <Pressable style={styles.editBtn}>
+        <Pressable onPress={() => router.push('/edit-profile' as any)} style={styles.editBtn}>
           <Feather name="edit-2" size={17} color={C.foreground} />
         </Pressable>
       </View>
+
+      {!isAuthenticated && (
+        <View style={styles.guestBanner}>
+          <View style={styles.guestBannerIcon}>
+            <Feather name="user-plus" size={18} color={C.primary} />
+          </View>
+          <View style={styles.guestBannerCopy}>
+            <Text style={styles.guestBannerTitle}>You’re exploring as a guest</Text>
+            <Text style={styles.guestBannerText}>Create a free account to save your profile and collection across devices.</Text>
+          </View>
+          <Button size="sm" onPress={() => router.push('/create-account' as any)}>Create Account</Button>
+        </View>
+      )}
 
       {/* Profile card — background tinted by the collector's chosen profile theme */}
       <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
@@ -117,14 +131,14 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.nameBlock}>
             <View style={styles.nameRow}>
-              <Text style={styles.displayName}>{user?.displayName}</Text>
+                <Text style={styles.displayName}>{user?.displayName ?? 'Guest Collector'}</Text>
               {/* PRO badge — subscription tier indicator, distinct from Verified Seller/Account identity badges */}
               {isPro && <ProBadge />}
               {user?.isVerifiedSeller && (
                 <StatusBadge label="Verified Seller" color={C.verifiedBadge} variant="subtle" />
               )}
             </View>
-            <Text style={styles.username}>@{user?.username}</Text>
+            <Text style={styles.username}>{user?.username ? `@${user.username}` : 'Guest mode'}</Text>
             {/* Founding Member badge — shown when Pro user has claimed their badge */}
             {isPro && foundingMemberClaimed && (
               <View style={styles.foundingRow}>
@@ -141,7 +155,7 @@ export default function ProfileScreen() {
             )}
             <Text style={styles.location}>
               <Feather name="map-pin" size={11} color={C.mutedForeground} />{' '}
-              {user?.location}
+              {user?.location ?? 'Explore freely'}
             </Text>
           </View>
         </View>
@@ -154,9 +168,9 @@ export default function ProfileScreen() {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatBlock label="Cards" value={user?.stats.collectionCount ?? 0} />
+          <StatBlock label="Cards" value={user?.stats.collectionCount ?? collection.length} />
           <View style={styles.statDivider} />
-          <StatBlock label="Value" value={`$${((user?.stats.collectionValue ?? 0) / 1000).toFixed(1)}k`} />
+          <StatBlock label="Value" value={`$${((user?.stats.collectionValue ?? portfolio.totalValue) / 1000).toFixed(1)}k`} />
           <View style={styles.statDivider} />
           <StatBlock label="Trades" value={user?.stats.tradesCount ?? 0} />
           <View style={styles.statDivider} />
@@ -236,7 +250,13 @@ export default function ProfileScreen() {
           {MENU_ITEMS.map((item, idx) => (
             <Pressable
               key={item.label}
-              onPress={() => { if (item.route) router.push(item.route as any); }}
+              onPress={() => {
+                if ((item as any).proOnly && !isPro) {
+                  router.push('/pro-subscription' as any);
+                } else if (item.route) {
+                  router.push(item.route as any);
+                }
+              }}
               style={({ pressed }) => [
                 styles.menuRow,
                 idx < MENU_ITEMS.length - 1 ? styles.menuDivider : null,
@@ -258,14 +278,23 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Sign out */}
-      <Pressable
-        onPress={() => { signOut(); router.replace('/welcome'); }}
-        style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: `${C.destructive}44` }]}
-      >
-        <Feather name="log-out" size={16} color={C.destructive} />
-        <Text style={[styles.signOutText, { color: C.destructive }]}>Sign Out</Text>
-      </Pressable>
+      {isAuthenticated ? (
+        <Pressable
+          onPress={() => { signOut(); router.replace('/welcome'); }}
+          style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: `${C.destructive}44` }]}
+        >
+          <Feather name="log-out" size={16} color={C.destructive} />
+          <Text style={[styles.signOutText, { color: C.destructive }]}>Sign Out</Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={() => router.push('/sign-in' as any)}
+          style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: C.border }]}
+        >
+          <Feather name="log-in" size={16} color={C.foreground} />
+          <Text style={[styles.signOutText, { color: C.foreground }]}>Sign In</Text>
+        </Pressable>
+      )}
 
       <Text style={styles.versionText}>Verified TCG v1.0.0</Text>
     </ScrollView>
@@ -291,6 +320,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   profileCard: { borderRadius: 16, padding: 18, marginBottom: 24 },
+  guestBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 16, backgroundColor: `${C.primary}12`, borderWidth: 1, borderColor: `${C.primary}33`, marginBottom: 18 },
+  guestBannerIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: `${C.primary}22`, alignItems: 'center', justifyContent: 'center' },
+  guestBannerCopy: { flex: 1 },
+  guestBannerTitle: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground, marginBottom: 3 },
+  guestBannerText: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   avatarRow: { flexDirection: 'row', gap: 14, alignItems: 'flex-start', marginBottom: 14 },
   avatar: {
     width: 64,
