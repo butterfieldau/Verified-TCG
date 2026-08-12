@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { Button } from '@/components/ui/Button';
@@ -147,12 +146,9 @@ export default function OnboardingScreen() {
     }
   };
 
-  const handleGetStarted = async () => {
+  const handleGetStarted = () => {
     setLoading(true);
-    try {
-      await AsyncStorage.setItem('hasOnboarded', 'true');
-    } catch {}
-    router.replace('/(tabs)');
+    router.replace('/sign-in');
   };
 
   const handleBack = () => {

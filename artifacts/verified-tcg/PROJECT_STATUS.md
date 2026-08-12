@@ -43,6 +43,8 @@ These features are fully designed, implemented, and working within the prototype
 
 ## IN PROGRESS
 
+- Authentication boundary — Supabase email/password sign-in, sign-up, recovery, session restoration, and bearer tokens are wired; production secure storage, social providers, and collection persistence remain.
+
 Features that have scaffolding but require more work.
 
 - Seller profile / my listings management (profile menu links to sell modal, full seller dashboard not yet built)
@@ -55,7 +57,7 @@ Features that have scaffolding but require more work.
 
 These features exist in the UI but are entirely mocked — no real logic, data, or backend.
 
-- Authentication (pre-authenticated in AppContext; no real sign-in/out persistence)
+- Authentication (Supabase integration started; requires configured project credentials and secure mobile token storage)
 - Card scanner (simulated result only; no real camera permission or AI recognition)
 - Sell flow (mock publish; no real listing created anywhere)
 - Trade offer (mock send; no real trade system)
