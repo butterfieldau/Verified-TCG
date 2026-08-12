@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
+  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -169,6 +170,80 @@ export default function HomeScreen() {
         </Pressable>
       </Pressable>
 
+      {/* ── Portfolio Overview ── */}
+      <View style={[styles.card, { backgroundColor: C.card }]}>
+        <View style={styles.cardLabelRow}>
+          <Text style={styles.cardLabel}>Collection Value</Text>
+          {pricesLastUpdated && (
+            <Text style={styles.lastUpdated}>
+              Updated {formatLastUpdated(pricesLastUpdated)}
+            </Text>
+          )}
+        </View>
+        <Text style={styles.portfolioValue}>
+          ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+        </Text>
+        <View style={styles.changeRow}>
+          <Text style={[styles.changeAmount, { color: isPositive ? C.positive : C.negative }]}>
+            {isPositive ? '+' : ''}${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+          </Text>
+          <Text style={[styles.changePct, { color: isPositive ? C.positive : C.negative }]}>
+            {isPositive ? '+' : ''}{gainPct.toFixed(2)}%
+          </Text>
+        </View>
+
+        {/* Mini bar chart */}
+        <View style={styles.chart}>
+          <View style={styles.chartLine}>
+            {chartData.slice(-20).map((pt, i, arr) => {
+              const pct = (pt.value - chartMin) / chartRange;
+              const prevPct = i > 0 ? (arr[i - 1].value - chartMin) / chartRange : pct;
+              const isUp = pct >= prevPct;
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.chartBar,
+                    {
+                      height: 40 * pct + 4,
+                      backgroundColor: isPositive
+                        ? `${C.positive}${isUp ? 'BB' : '55'}`
+                        : `${C.negative}${isUp ? '55' : 'BB'}`,
+                    },
+                  ]}
+                />
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Range picker */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ranges}>
+          {RANGES.map(r => (
+            <Pressable
+              key={r}
+              onPress={() => setPortfolioRange(r)}
+              style={[
+                styles.rangeBtn,
+                {
+                  backgroundColor: portfolioRange === r ? C.primary : 'transparent',
+                  borderColor: portfolioRange === r ? C.primary : C.border,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.rangeText,
+                  { color: portfolioRange === r ? '#FFFFFF' : C.mutedForeground },
+                ]}
+              >
+                {r}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
       {/* ── Live Event Banner ── */}
       {MOCK_EVENT.isActive && eventBannerDismissed === false && (
         <Pressable
@@ -266,8 +341,10 @@ export default function HomeScreen() {
                 {/* Cards side by side */}
                 <View style={styles.tradeMatchCards}>
                   <View style={styles.tradeMatchSide}>
-                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color }]}>
-                      <Text style={styles.tradeMatchInitial}>{match.youWant.name[0]}</Text>
+                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color, overflow: 'hidden' }]}>
+                      {match.youWant.imageUrl
+                        ? <Image source={{ uri: match.youWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        : <Text style={styles.tradeMatchInitial}>{match.youWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>YOU WANT</Text>
                     <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.youWant.name}</Text>
@@ -279,8 +356,10 @@ export default function HomeScreen() {
                   </View>
 
                   <View style={styles.tradeMatchSide}>
-                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color }]}>
-                      <Text style={styles.tradeMatchInitial}>{match.theyWant.name[0]}</Text>
+                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color, overflow: 'hidden' }]}>
+                      {match.theyWant.imageUrl
+                        ? <Image source={{ uri: match.theyWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        : <Text style={styles.tradeMatchInitial}>{match.theyWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>THEY WANT</Text>
                     <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.theyWant.name}</Text>
@@ -314,80 +393,6 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
       )}
-
-      {/* ── Portfolio Overview ── */}
-      <View style={[styles.card, { backgroundColor: C.card }]}>
-        <View style={styles.cardLabelRow}>
-          <Text style={styles.cardLabel}>Collection Value</Text>
-          {pricesLastUpdated && (
-            <Text style={styles.lastUpdated}>
-              Updated {formatLastUpdated(pricesLastUpdated)}
-            </Text>
-          )}
-        </View>
-        <Text style={styles.portfolioValue}>
-          ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
-        </Text>
-        <View style={styles.changeRow}>
-          <Text style={[styles.changeAmount, { color: isPositive ? C.positive : C.negative }]}>
-            {isPositive ? '+' : ''}${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
-          </Text>
-          <Text style={[styles.changePct, { color: isPositive ? C.positive : C.negative }]}>
-            {isPositive ? '+' : ''}{gainPct.toFixed(2)}%
-          </Text>
-        </View>
-
-        {/* Mini bar chart */}
-        <View style={styles.chart}>
-          <View style={styles.chartLine}>
-            {chartData.slice(-20).map((pt, i, arr) => {
-              const pct = (pt.value - chartMin) / chartRange;
-              const prevPct = i > 0 ? (arr[i - 1].value - chartMin) / chartRange : pct;
-              const isUp = pct >= prevPct;
-              return (
-                <View
-                  key={i}
-                  style={[
-                    styles.chartBar,
-                    {
-                      height: 40 * pct + 4,
-                      backgroundColor: isPositive
-                        ? `${C.positive}${isUp ? 'BB' : '55'}`
-                        : `${C.negative}${isUp ? '55' : 'BB'}`,
-                    },
-                  ]}
-                />
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Range picker */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ranges}>
-          {RANGES.map(r => (
-            <Pressable
-              key={r}
-              onPress={() => setPortfolioRange(r)}
-              style={[
-                styles.rangeBtn,
-                {
-                  backgroundColor: portfolioRange === r ? C.primary : 'transparent',
-                  borderColor: portfolioRange === r ? C.primary : C.border,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.rangeText,
-                  { color: portfolioRange === r ? '#FFFFFF' : C.mutedForeground },
-                ]}
-              >
-                {r}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
 
       {/* ── Quick Actions ── */}
       <View style={styles.actions}>

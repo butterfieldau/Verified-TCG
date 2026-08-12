@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
 import colors from '@/constants/colors';
@@ -51,7 +52,9 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, signOut, watchlist } = useApp();
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
+  // adding insets.top on top of that creates a large black gap.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const tcgNames = (user?.tcgPreferences ?? [])

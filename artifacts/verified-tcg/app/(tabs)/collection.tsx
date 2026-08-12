@@ -16,6 +16,7 @@ import { GradeBadge } from '@/components/ui/Badge';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useApp } from '@/context/AppContext';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId } from '@/types';
@@ -49,7 +50,9 @@ export default function CollectionScreen() {
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
+  // adding insets.top on top of that creates a large black gap.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const baseFiltered =

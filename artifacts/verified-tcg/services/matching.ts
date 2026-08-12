@@ -24,6 +24,7 @@ export interface TradeMatch {
     grade: string;
     value: number;
     color: string;
+    imageUrl?: string;
   };
   theyWant: {
     name: string;
@@ -31,6 +32,7 @@ export interface TradeMatch {
     grade: string;
     value: number;
     color: string;
+    imageUrl?: string;
   };
 }
 
@@ -48,8 +50,8 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
       rating: 4.9,
       tradesCount: 67,
     },
-    youWant: { name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', value: 1200, color: '#FFD700' },
-    theyWant: { name: 'Charizard ex', set: 'Obsidian Flames', grade: 'TAG 10', value: 1150, color: '#E0540F' },
+    youWant: { name: 'Pikachu & Zekrom GX', set: 'Sun & Moon', grade: 'PSA 10', value: 1200, color: '#FFD700', imageUrl: 'https://images.pokemontcg.io/sm9/33_hires.png' },
+    theyWant: { name: 'Charizard ex', set: 'Obsidian Flames', grade: 'TAG 10', value: 1150, color: '#E0540F', imageUrl: 'https://images.pokemontcg.io/sv3/125_hires.png' },
   },
   {
     id: 'tm-002',
@@ -64,8 +66,8 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
       rating: 5.0,
       tradesCount: 23,
     },
-    youWant: { name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 1450, color: '#1A1B4B' },
-    theyWant: { name: 'Rayquaza VMAX', set: 'Evolving Skies', grade: 'BGS 9.5', value: 890, color: '#3AE374' },
+    youWant: { name: 'Umbreon ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 1450, color: '#1A1B4B', imageUrl: 'https://images.pokemontcg.io/sv8pt5/161_hires.png' },
+    theyWant: { name: 'Rayquaza VMAX', set: 'Evolving Skies', grade: 'BGS 9.5', value: 890, color: '#3AE374', imageUrl: 'https://images.pokemontcg.io/swsh7/218_hires.png' },
   },
   {
     id: 'tm-003',
@@ -80,8 +82,8 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
       rating: 4.7,
       tradesCount: 41,
     },
-    youWant: { name: 'Lugia V SIR', set: 'Silver Tempest', grade: 'CGC 10', value: 680, color: '#B0C4DE' },
-    theyWant: { name: 'Pikachu ex', set: 'SV: 151', grade: 'PSA 9', value: 340, color: '#FFCC00' },
+    youWant: { name: 'Lugia V SIR', set: 'Silver Tempest', grade: 'CGC 10', value: 680, color: '#B0C4DE', imageUrl: 'https://images.pokemontcg.io/swsh12/186_hires.png' },
+    theyWant: { name: 'Pikachu ex', set: 'SV: 151', grade: 'PSA 9', value: 340, color: '#FFCC00', imageUrl: 'https://images.pokemontcg.io/sv3pt5/25_hires.png' },
   },
   {
     id: 'tm-004',
@@ -96,8 +98,8 @@ export const MOCK_TRADE_MATCHES: TradeMatch[] = [
       rating: 4.8,
       tradesCount: 12,
     },
-    youWant: { name: 'Eevee ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 520, color: '#F5A623' },
-    theyWant: { name: 'Luffy OP01', set: 'Romance Dawn', grade: 'CGC 10', value: 320, color: '#E63946' },
+    youWant: { name: 'Eevee ex SIR', set: 'Prismatic Evolutions', grade: 'PSA 10', value: 520, color: '#F5A623', imageUrl: 'https://images.pokemontcg.io/sv8pt5/186_hires.png' },
+    theyWant: { name: 'Luffy OP01', set: 'Romance Dawn', grade: 'CGC 10', value: 320, color: '#E63946', imageUrl: 'https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png' },
   },
 ];
 
