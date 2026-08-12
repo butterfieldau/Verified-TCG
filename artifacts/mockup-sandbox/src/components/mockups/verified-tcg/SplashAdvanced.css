@@ -1,0 +1,81 @@
+@keyframes float {
+  0%, 100% { transform: translateY(0px) rotate(var(--rot, 0deg)) scale(var(--scale, 1)); }
+  50% { transform: translateY(-10px) rotate(calc(var(--rot, 0deg) + 1deg)) scale(var(--scale, 1)); }
+}
+
+@keyframes cardEnter {
+  0% { transform: translateY(80vh) rotate(calc(var(--rot, 0deg) * 2)) scale(0.5); opacity: 0; }
+  100% { transform: translateY(0) rotate(var(--rot, 0deg)) scale(var(--scale, 1)); opacity: 1; }
+}
+
+@keyframes logoReveal {
+  0% { transform: scale(0.85); opacity: 0; filter: blur(12px); }
+  100% { transform: scale(1); opacity: 1; filter: blur(0px); }
+}
+
+@keyframes slideUpFade {
+  0% { transform: translateY(30px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%) skewX(-15deg); }
+  100% { transform: translateX(200%) skewX(-15deg); }
+}
+
+@keyframes holo {
+  0%, 100% { opacity: 0.3; background-position: 0% 50%; }
+  50% { opacity: 0.6; background-position: 100% 50%; }
+}
+
+.card-wrapper {
+  animation: cardEnter 0.8s cubic-bezier(0.16, 1, 0.3, 1) var(--delay, 0s) both, float 6s ease-in-out calc(var(--delay, 0s) + 0.8s) infinite;
+}
+
+.logo-reveal {
+  animation: logoReveal 1s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s both;
+}
+
+.subtitle-reveal {
+  animation: slideUpFade 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.7s both;
+}
+
+.btn-enter {
+  animation: slideUpFade 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.9s both;
+}
+
+.animate-shimmer {
+  animation: shimmer 3s infinite linear;
+}
+
+.grade-shimmer {
+  animation: shimmer 2.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  animation-delay: 1.5s;
+}
+
+.holo-sweep {
+  background-size: 200% 200%;
+  animation: holo 6s ease-in-out infinite;
+}
+
+.slab-container {
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.15),
+    inset 0 0 20px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+}
+
+.slab-glass-reflection {
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.1) 25%,
+    transparent 30%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.05) 55%,
+    transparent 60%
+  );
+  background-size: 200% 200%;
+  animation: holo 8s linear infinite;
+}

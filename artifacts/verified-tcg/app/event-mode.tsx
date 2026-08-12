@@ -205,13 +205,8 @@ export default function EventModeScreen() {
         </Pressable>
       </View>
 
-      {/* ── Stat strip ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.statStrip}
-        contentContainerStyle={styles.statStripContent}
-      >
+      {/* ── Stat grid (4-column fixed row) ── */}
+      <View style={styles.statGrid}>
         {([
           { emoji: '🔥', value: liveStats.collectorsWithYourWants, label: 'have your wants', tab: 'wishlist'   },
           { emoji: '🤝', value: liveStats.tradeMatches,            label: 'trade matches',   tab: 'matches'    },
@@ -221,22 +216,21 @@ export default function EventModeScreen() {
           <Pressable
             key={s.emoji}
             onPress={() => setActiveTab(s.tab as EventTab)}
-            style={[styles.statPill, { backgroundColor: C.card }, activeTab === s.tab && { borderColor: C.primary, borderWidth: 1 }]}
+            style={[
+              styles.statPill,
+              { backgroundColor: C.card, borderColor: 'transparent', borderWidth: 1 },
+              activeTab === s.tab && { borderColor: C.primary },
+            ]}
           >
             <Text style={styles.statPillEmoji}>{s.emoji}</Text>
             <Text style={styles.statPillValue}>{s.value}</Text>
             <Text style={styles.statPillLabel}>{s.label}</Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </View>
 
-      {/* ── Quick actions ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.qaStrip}
-        contentContainerStyle={styles.qaStripContent}
-      >
+      {/* ── Quick actions (2×2 grid) ── */}
+      <View style={styles.qaGrid}>
         {QUICK_ACTIONS.map(a => (
           <Pressable
             key={a.label}
@@ -244,12 +238,12 @@ export default function EventModeScreen() {
             style={({ pressed }) => [styles.qaBtn, { backgroundColor: C.card, opacity: pressed ? 0.7 : 1 }]}
           >
             <View style={[styles.qaIconWrap, { backgroundColor: `${C.primary}18` }]}>
-              <Feather name={a.icon} size={16} color={C.primary} />
+              <Feather name={a.icon} size={17} color={C.primary} />
             </View>
             <Text style={styles.qaLabel}>{a.label}</Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </View>
 
       {/* ── Section tabs ── */}
       <ScrollView

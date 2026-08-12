@@ -10,5 +10,6 @@ export const modules: ModuleMap = {
   "./components/mockups/verified-tcg/Profile.tsx": () => import("../components/mockups/verified-tcg/Profile.tsx"),
   "./components/mockups/verified-tcg/Scanner.tsx": () => import("../components/mockups/verified-tcg/Scanner.tsx"),
   "./components/mockups/verified-tcg/Splash.tsx": () => import("../components/mockups/verified-tcg/Splash.tsx"),
+  "./components/mockups/verified-tcg/SplashAdvanced.tsx": () => import("../components/mockups/verified-tcg/SplashAdvanced.tsx"),
   "./components/mockups/verified-tcg/Welcome.tsx": () => import("../components/mockups/verified-tcg/Welcome.tsx")
 };
