@@ -126,7 +126,6 @@ export default function SignInScreen() {
           {[
             { icon: 'globe', label: 'Google', provider: 'google' as const },
             { icon: 'smartphone', label: 'Apple', provider: 'apple' as const },
-            { icon: 'twitter', label: 'X', provider: 'twitter' as const },
           ].map(s => (
             <Pressable
               key={s.label}

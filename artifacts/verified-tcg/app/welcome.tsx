@@ -112,12 +112,6 @@ export default function WelcomeScreen() {
             dark
             onPress={() => handleOAuthAuth('apple')}
           />
-          <SocialButton
-            icon="twitter"
-            label="Continue with X"
-            dark
-            onPress={() => handleOAuthAuth('twitter')}
-          />
         </View>
 
         {/* Sign in link */}
