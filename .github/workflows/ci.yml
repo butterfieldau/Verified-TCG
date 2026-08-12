@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=true
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Run mobile tests
+        run: pnpm --filter @workspace/verified-tcg test -- --runInBand
+
+      - name: Build workspace
+        env:
+          # The current Expo static-build script requires a deployment host
+          # while it bundles. CI uses a non-routable placeholder; production
+          # deployments must provide their real public host.
+          EXPO_PUBLIC_DOMAIN: ci.invalid
+        run: pnpm run build

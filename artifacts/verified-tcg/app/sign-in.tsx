@@ -10,11 +10,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
@@ -24,6 +24,7 @@ export default function SignInScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { signIn } = useApp();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -35,11 +36,14 @@ export default function SignInScreen() {
     }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800)); // mock delay
     try {
-      await AsyncStorage.setItem('hasOnboarded', 'true');
-    } catch {}
-    router.replace('/(tabs)');
+      await signIn(email, password);
+      router.replace('/(tabs)');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to sign in.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -108,7 +112,7 @@ export default function SignInScreen() {
           ].map(s => (
             <Pressable
               key={s.label}
-              onPress={handleSignIn}
+              onPress={() => setError(`${s.label} sign-in is not configured yet.`)}
               style={({ pressed }) => [styles.socialBtn, { opacity: pressed ? 0.7 : 1 }]}
             >
               <Feather name={s.icon as any} size={18} color={C.foreground} />

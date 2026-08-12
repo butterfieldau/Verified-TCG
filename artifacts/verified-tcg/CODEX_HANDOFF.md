@@ -215,9 +215,9 @@ setActiveTCG(tcg: TCGId | null)
 
 ### What's Fake in AppContext
 
-- `isAuthenticated` starts as `true` — there is no real auth check
+- Authentication now restores a Supabase session and starts unauthenticated when no valid session exists.
 - `portfolio` is static from `MOCK_PORTFOLIO` — does not recompute from `collection` changes
-- `signIn()` always succeeds and sets `MOCK_USER`
+- `signIn()` calls Supabase email/password authentication and maps the returned user into the current profile shape.
 
 When connecting Supabase Auth, replace the auth actions in AppContext and recalculate `portfolio` from the real collection.
 
