@@ -10,6 +10,7 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
+import { restoreSession } from '@/services/auth';
 
 const C = colors.dark;
 
@@ -27,8 +28,9 @@ export default function SplashScreen() {
 
     const timer = setTimeout(async () => {
       try {
+        const session = await restoreSession();
         const onboarded = await AsyncStorage.getItem('hasOnboarded');
-        if (onboarded === 'true') {
+        if (session || onboarded === 'true') {
           router.replace('/(tabs)');
         } else {
           router.replace('/welcome');

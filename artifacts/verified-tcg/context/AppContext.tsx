@@ -40,7 +40,9 @@ import type { Notification } from '@/services/notifications';
 import {
   restoreSession,
   signInWithPassword,
+  signInWithOAuth,
   signOut as authSignOut,
+  type OAuthProvider,
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
@@ -88,6 +90,7 @@ interface AppState {
 
 interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
   addToCollection: (item: CollectionItem) => void;
   removeFromCollection: (id: string) => void;
@@ -133,6 +136,22 @@ const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
  * so existing data is upgraded rather than discarded.
  */
 const WATCHLIST_SCHEMA_VERSION = 1;
+
+function userFromSession(session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }): User {
+  const email = session.user.email ?? '';
+  const displayName = typeof session.user.user_metadata?.display_name === 'string'
+    ? session.user.user_metadata.display_name
+    : (email || 'Collector');
+  return {
+    id: session.user.id,
+    email,
+    displayName,
+    username: email.split('@')[0] || 'collector',
+    joinedAt: new Date().toISOString(),
+    tcgPreferences: MOCK_USER.tcgPreferences,
+    stats: MOCK_USER.stats,
+  };
+}
 
 interface WatchlistPayload {
   version: number;
@@ -350,17 +369,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     restoreSession().then(session => {
       if (!session) return;
-      setUser({
-        id: session.user.id,
-        email: session.user.email ?? '',
-        displayName: typeof session.user.user_metadata?.display_name === 'string'
-          ? session.user.user_metadata.display_name
-          : (session.user.email ?? 'Collector'),
-        username: session.user.email?.split('@')[0] ?? 'collector',
-        joinedAt: new Date().toISOString(),
-        tcgPreferences: MOCK_USER.tcgPreferences,
-        stats: MOCK_USER.stats,
-      });
+      setUser(userFromSession(session));
       setIsAuthenticated(true);
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -368,17 +377,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     const session = await signInWithPassword(email, password);
-    setUser({
-      id: session.user.id,
-      email: session.user.email ?? email,
-      displayName: typeof session.user.user_metadata?.display_name === 'string'
-        ? session.user.user_metadata.display_name
-        : (session.user.email ?? email),
-      username: (session.user.email ?? email).split('@')[0],
-      tcgPreferences: MOCK_USER.tcgPreferences,
-      joinedAt: new Date().toISOString(),
-      stats: MOCK_USER.stats,
-    });
+    setUser(userFromSession(session));
     setIsAuthenticated(true);
 
     // Sync wishlist with server after sign-in
@@ -388,6 +387,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
       return snapshot;
     });
+  }, []);
+
+  const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
+    const session = await signInWithOAuth(provider);
+    if (!session) return false;
+    setUser(userFromSession(session));
+    setIsAuthenticated(true);
+    return true;
   }, []);
 
   const signOut = useCallback(() => {
@@ -640,7 +647,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, activeAlertCount,
-        signIn, signOut,
+        signIn, signInWithProvider, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,

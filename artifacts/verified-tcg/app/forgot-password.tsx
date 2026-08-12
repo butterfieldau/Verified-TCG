@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import colors from '@/constants/colors';
+import { requestPasswordReset } from '@/services/auth';
 
 const C = colors.dark;
 
@@ -31,9 +32,14 @@ export default function ForgotPasswordScreen() {
     }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    setSent(true);
+    try {
+      await requestPasswordReset(email);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send the reset link.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
