@@ -169,7 +169,7 @@ export default function EventModeScreen() {
         ))}
       </ScrollView>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.tabContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.tabContent, { paddingBottom: Math.max(insets.bottom, 12) }]} showsVerticalScrollIndicator={false}>
         {/* TRADE MATCHES */}
         {activeTab === 'matches' && (
           <View style={{ gap: 12 }}>
@@ -409,7 +409,7 @@ const styles = StyleSheet.create({
   eventHeaderSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   leaveBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10 },
   leaveBtnText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
-  statScroll: { height: 90, maxHeight: 90, flexShrink: 0 },
+  statScroll: { height: 90, flexShrink: 0 },
   statScrollContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 10 },
   miniStat: { borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center', gap: 2 },
   miniStatIcon: { fontSize: 18 },
@@ -422,7 +422,7 @@ const styles = StyleSheet.create({
   tabsContent: { paddingHorizontal: 16 },
   tab: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-  tabContent: { padding: 16, paddingBottom: 48 },
+  tabContent: { paddingHorizontal: 16, paddingTop: 8 },
   // Cards
   matchCard: { borderRadius: 16, padding: 14, gap: 12 },
   matchTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

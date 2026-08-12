@@ -15,6 +15,8 @@ import { useApp } from '@/context/AppContext';
 import { MOCK_CARDS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { CollectionItem } from '@/types';
+import { canUseUnlimitedScanner } from '@/services/subscription';
+import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
@@ -27,7 +29,8 @@ const SCAN_RESULT = MOCK_CARDS[0]; // Charizard ex as simulated result
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { addToCollection } = useApp();
+  const { addToCollection, incrementScanCount, subscriptionTier, scansUsed, scanLimit } = useApp();
+  const isLimitExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed >= scanLimit;
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [addedToCollection, setAddedToCollection] = useState(false);
@@ -73,6 +76,9 @@ export default function ScanScreen() {
   }, [scanState]);
 
   function startScan() {
+    // Free users who have used all their monthly scans cannot start a new scan.
+    // ScanLimitBanner already shows the upgrade prompt in this state.
+    if (isLimitExhausted) return;
     fadeAnim.setValue(0);
     setScanState('scanning');
   }
@@ -94,6 +100,7 @@ export default function ScanScreen() {
       currency: 'AUD',
     };
     addToCollection(item);
+    incrementScanCount();
     setAddedToCollection(true);
     setScanState('confirmed');
   }
@@ -120,6 +127,9 @@ export default function ScanScreen() {
           <Feather name="plus" size={19} color={C.foreground} />
         </Pressable>
       </View>
+
+      {/* Scan limit banner — visible in idle state when in last 20% of quota */}
+      {scanState === 'idle' && <ScanLimitBanner />}
 
       {/* Scanner viewfinder */}
       {isActiveView && (
@@ -214,9 +224,17 @@ export default function ScanScreen() {
               <Feather name="zap" size={22} color={flashEnabled ? '#F59E0B' : C.foreground} />
             </Pressable>
 
-            <Pressable onPress={startScan} style={styles.scanTrigger}>
+            <Pressable
+              onPress={startScan}
+              style={[styles.scanTrigger, isLimitExhausted && styles.scanTriggerDisabled]}
+              accessibilityLabel={isLimitExhausted ? 'Scan limit reached — upgrade to Pro' : 'Start scan'}
+            >
               <View style={styles.scanTriggerInner}>
-                <Feather name="camera" size={28} color="#FFFFFF" />
+                <Feather
+                  name={isLimitExhausted ? 'lock' : 'camera'}
+                  size={28}
+                  color="#FFFFFF"
+                />
               </View>
             </Pressable>
 
@@ -443,6 +461,12 @@ const styles = StyleSheet.create({
     borderColor: C.background,
   },
   scanTriggerInner: { alignItems: 'center', justifyContent: 'center' },
+  scanTriggerDisabled: {
+    backgroundColor: C.muted,
+    shadowOpacity: 0,
+    borderColor: C.border,
+    opacity: 0.7,
+  },
   actionStack: { gap: 10 },
   primaryActionBtn: {
     flexDirection: 'row',

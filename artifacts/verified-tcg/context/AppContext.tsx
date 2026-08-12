@@ -36,6 +36,8 @@ import {
 } from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
+import { FREE_SCAN_LIMIT } from '@/services/subscription';
+import type { SubscriptionTier } from '@/services/subscription';
 
 interface AppState {
   user: User | null;
@@ -51,6 +53,11 @@ interface AppState {
   isPriceRefreshing: boolean;
   notifications: Notification[];
   unreadNotificationCount: number;
+  // ── Subscription ──────────────────────────────────────────────────────────
+  subscriptionTier: SubscriptionTier;
+  scansUsed: number;
+  scanLimit: number;
+  scanResetDate: Date;
 }
 
 interface AppActions {
@@ -68,6 +75,9 @@ interface AppActions {
   refreshPrices: () => Promise<void>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
+  // ── Subscription ──────────────────────────────────────────────────────────
+  setSubscriptionTier: (tier: SubscriptionTier) => void;
+  incrementScanCount: () => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -142,6 +152,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+
+  // ── Subscription state ─────────────────────────────────────────────────────
+  const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
+  const [scansUsed, setScansUsed] = useState(0);
+  const scanLimit = FREE_SCAN_LIMIT;
+
+  /**
+   * Compute the first day of next calendar month relative to `from`.
+   * Used both for initial state and when advancing after a reset.
+   */
+  function nextMonthFirstDay(from: Date): Date {
+    return new Date(from.getFullYear(), from.getMonth() + 1, 1);
+  }
+
+  const [scanResetDate, setScanResetDate] = useState<Date>(() =>
+    nextMonthFirstDay(new Date()),
+  );
+
+  /**
+   * Quota period guard — fires on mount and whenever the reset date changes.
+   *
+   * If the reset date is in the past (e.g. the app was left open across a
+   * month boundary, or the initial date was computed just before midnight),
+   * reset the scan counter and advance the reset date until it is in the
+   * future. This keeps the displayed "resets 1 Sep" label and the exhaustion
+   * gate accurate without requiring an external clock service.
+   */
+  useEffect(() => {
+    const now = new Date();
+    if (scanResetDate <= now) {
+      // Advance reset date until it is in the future
+      let next = scanResetDate;
+      while (next <= now) {
+        next = nextMonthFirstDay(next);
+      }
+      setScanResetDate(next);
+      setScansUsed(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanResetDate]);
 
   // Load persisted watchlist and prices from AsyncStorage on mount
   useEffect(() => {
@@ -312,6 +362,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   }, []);
 
+  // ── Subscription actions ───────────────────────────────────────────────────
+
+  const setSubscriptionTier = useCallback((tier: SubscriptionTier) => {
+    setSubscriptionTierState(tier);
+  }, []);
+
+  const incrementScanCount = useCallback(() => {
+    // Only count scans against the Free quota; Pro is unlimited.
+    // Cap defensively at the limit so the value never overflows the UI range.
+    setSubscriptionTierState(tier => {
+      if (tier === 'free') {
+        setScansUsed(prev => Math.min(prev + 1, FREE_SCAN_LIMIT));
+      }
+      return tier; // unchanged
+    });
+  }, []);
+
   // Refs so refreshPrices can read the latest collection/watchlist without
   // them being stale-closure-captured in the useCallback dependency array.
   const collectionRef = useRef<CollectionItem[]>(collection);
@@ -457,6 +524,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
         markNotificationRead, markAllNotificationsRead,
+        subscriptionTier, scansUsed, scanLimit, scanResetDate,
+        setSubscriptionTier, incrementScanCount,
       }}
     >
       {children}
