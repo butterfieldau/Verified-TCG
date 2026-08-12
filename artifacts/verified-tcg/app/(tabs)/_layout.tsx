@@ -13,6 +13,7 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
 import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
+import DevSubscriptionToggle from '@/components/ui/DevSubscriptionToggle';
 
 // Custom raised Scan button — matches the mockup's -top-5 treatment.
 // Accept the broader event type that Expo Router passes to tabBarButton.
@@ -162,10 +163,12 @@ function ClassicTabLayout() {
 }
 
 export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
-  }
-  return <ClassicTabLayout />;
+  return (
+    <View style={{ flex: 1 }}>
+      {isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />}
+      <DevSubscriptionToggle />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
