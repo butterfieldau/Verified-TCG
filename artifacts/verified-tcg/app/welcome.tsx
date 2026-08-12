@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
   legal: {
     fontSize: 11,
     fontFamily: 'Inter_400Regular',
-    color: C.subtleText ?? C.mutedForeground,
+    color: C.mutedForeground,
     textAlign: 'center',
     lineHeight: 16,
     opacity: 0.7,
