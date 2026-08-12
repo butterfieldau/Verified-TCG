@@ -13,6 +13,8 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_I_HAVE_THIS_RESULTS } from '@/services/matching';
 import { getHaveThisCards } from '@/services/event';
+import { useApp } from '@/context/AppContext';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 
 const C = colors.dark;
 
@@ -22,6 +24,8 @@ export default function HaveThisScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [selectedCard, setSelectedCard] = useState<typeof MY_CARDS[0] | null>(null);
+  const { subscriptionTier } = useApp();
+  const isPro = subscriptionTier === 'pro';
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background }]}>
@@ -38,6 +42,7 @@ export default function HaveThisScreen() {
           Select a card you own to see which collectors at this event want it.
         </Text>
 
+        {/* Card picker — always free */}
         <Text style={styles.sectionLabel}>YOUR COLLECTION</Text>
         <View style={{ gap: 10 }}>
           {MY_CARDS.map(card => (
@@ -64,72 +69,105 @@ export default function HaveThisScreen() {
           ))}
         </View>
 
+        {/* Results — Pro only */}
         {selectedCard && (
-          <View style={{ gap: 12, marginTop: 8 }}>
-            {/* Result summary */}
-            <View style={[styles.resultBanner, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}>
-              <Text style={[styles.resultBannerValue, { color: C.primary }]}>{MOCK_I_HAVE_THIS_RESULTS.length}</Text>
-              <Text style={[styles.resultBannerLabel, { color: C.primary }]}>
-                collectors here want {selectedCard.name}
-              </Text>
-            </View>
-
-            {/* Trade match count */}
-            <View style={[styles.matchSummary, { backgroundColor: C.card }]}>
-              <View style={styles.matchSumRow}>
-                <View style={[styles.matchSumIcon, { backgroundColor: `${C.positive}22` }]}>
-                  <Feather name="repeat" size={14} color={C.positive} />
+          <ProFeaturePreview
+            featureTitle="I Have This"
+            description="See which collectors at this event want your card, including trade matches and contact details."
+            previewContent={
+              <View style={{ gap: 12 }}>
+                <View style={[styles.resultBanner, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}>
+                  <Text style={[styles.resultBannerValue, { color: C.primary }]}>{MOCK_I_HAVE_THIS_RESULTS.length}</Text>
+                  <Text style={[styles.resultBannerLabel, { color: C.primary }]}>
+                    collectors here want {selectedCard.name}
+                  </Text>
                 </View>
-                <View>
-                  <Text style={styles.matchSumValue}>{MOCK_I_HAVE_THIS_RESULTS.filter(r => r.hasTradeMatch).length} Trade Matches</Text>
-                  <Text style={styles.matchSumSub}>They own cards on your wishlist too</Text>
-                </View>
-              </View>
-            </View>
-
-            <Text style={styles.sectionLabel}>INTERESTED COLLECTORS</Text>
-            {MOCK_I_HAVE_THIS_RESULTS.map(result => (
-              <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
-                <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
-                  <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
-                </View>
-                <View style={styles.resultInfo}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
-                    {result.isVerified && (
-                      <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
-                        <Feather name="check-circle" size={9} color={C.positive} />
-                        <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.wantedGrade}>Wants: {result.wantedGrade}</Text>
-                  {result.hasTradeMatch && (
-                    <View style={[styles.tradeMatchBadge, { backgroundColor: `${C.positive}22` }]}>
-                      <Feather name="zap" size={9} color={C.positive} />
-                      <Text style={[styles.tradeMatchText, { color: C.positive }]}>Trade Match</Text>
+                <Text style={styles.sectionLabel}>INTERESTED COLLECTORS</Text>
+                {MOCK_I_HAVE_THIS_RESULTS.slice(0, 2).map(result => (
+                  <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
+                    <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
+                      <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
                     </View>
-                  )}
+                    <View style={styles.resultInfo}>
+                      <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
+                      <Text style={styles.wantedGrade}>Wants: {result.wantedGrade}</Text>
+                    </View>
+                    <View style={[styles.matchBtn, { backgroundColor: C.card, borderColor: C.border }]}>
+                      <Text style={[styles.matchBtnText, { color: C.mutedForeground }]}>View</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            }
+            lockedContent={
+              <View style={{ gap: 12 }}>
+                {/* Result summary */}
+                <View style={[styles.resultBanner, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}44` }]}>
+                  <Text style={[styles.resultBannerValue, { color: C.primary }]}>{MOCK_I_HAVE_THIS_RESULTS.length}</Text>
+                  <Text style={[styles.resultBannerLabel, { color: C.primary }]}>
+                    collectors here want {selectedCard.name}
+                  </Text>
                 </View>
+
+                {/* Trade match count */}
+                <View style={[styles.matchSummary, { backgroundColor: C.card }]}>
+                  <View style={styles.matchSumRow}>
+                    <View style={[styles.matchSumIcon, { backgroundColor: `${C.positive}22` }]}>
+                      <Feather name="repeat" size={14} color={C.positive} />
+                    </View>
+                    <View>
+                      <Text style={styles.matchSumValue}>{MOCK_I_HAVE_THIS_RESULTS.filter(r => r.hasTradeMatch).length} Trade Matches</Text>
+                      <Text style={styles.matchSumSub}>They own cards on your wishlist too</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <Text style={styles.sectionLabel}>INTERESTED COLLECTORS</Text>
+                {MOCK_I_HAVE_THIS_RESULTS.map(result => (
+                  <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
+                    <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
+                      <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
+                    </View>
+                    <View style={styles.resultInfo}>
+                      <View style={styles.nameRow}>
+                        <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
+                        {result.isVerified && (
+                          <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
+                            <Feather name="check-circle" size={9} color={C.positive} />
+                            <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.wantedGrade}>Wants: {result.wantedGrade}</Text>
+                      {result.hasTradeMatch && (
+                        <View style={[styles.tradeMatchBadge, { backgroundColor: `${C.positive}22` }]}>
+                          <Feather name="zap" size={9} color={C.positive} />
+                          <Text style={[styles.tradeMatchText, { color: C.positive }]}>Trade Match</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Pressable
+                      onPress={() => router.push('/trade-match' as any)}
+                      style={[styles.matchBtn, { backgroundColor: result.hasTradeMatch ? C.primary : C.card, borderColor: result.hasTradeMatch ? 'transparent' : C.border }]}
+                    >
+                      <Text style={[styles.matchBtnText, { color: result.hasTradeMatch ? '#FFF' : C.mutedForeground }]}>
+                        {result.hasTradeMatch ? 'Match' : 'View'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ))}
+
                 <Pressable
                   onPress={() => router.push('/trade-match' as any)}
-                  style={[styles.matchBtn, { backgroundColor: result.hasTradeMatch ? C.primary : C.card, borderColor: result.hasTradeMatch ? 'transparent' : C.border }]}
+                  style={[styles.findBtn, { backgroundColor: C.primary }]}
                 >
-                  <Text style={[styles.matchBtnText, { color: result.hasTradeMatch ? '#FFF' : C.mutedForeground }]}>
-                    {result.hasTradeMatch ? 'Match' : 'View'}
-                  </Text>
+                  <Feather name="zap" size={16} color="#FFF" />
+                  <Text style={styles.findBtnText}>Find Matches</Text>
                 </Pressable>
               </View>
-            ))}
-
-            <Pressable
-              onPress={() => router.push('/trade-match' as any)}
-              style={[styles.findBtn, { backgroundColor: C.primary }]}
-            >
-              <Feather name="zap" size={16} color="#FFF" />
-              <Text style={styles.findBtnText}>Find Matches</Text>
-            </Pressable>
-          </View>
+            }
+            ctaLabel="Unlock I Have This with Pro"
+          />
         )}
       </ScrollView>
     </View>

@@ -12,6 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_WANTED_BOARD } from '@/services/matching';
+import { useApp } from '@/context/AppContext';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 
 const C = colors.dark;
 
@@ -19,6 +21,111 @@ export default function WantedBoardScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [responded, setResponded] = useState<string[]>([]);
+  const { subscriptionTier } = useApp();
+  const isPro = subscriptionTier === 'pro';
+
+  const boardList = (
+    <>
+      {MOCK_WANTED_BOARD.map(item => {
+        const hasResponded = responded.includes(item.id);
+        return (
+          <View key={item.id} style={[styles.wantCard, { backgroundColor: C.card }]}>
+            <View style={styles.wantTop}>
+              <View style={[styles.avatar, { backgroundColor: item.collectorColor }]}>
+                <Text style={styles.avatarText}>{item.collectorInitials}</Text>
+              </View>
+              <View style={styles.collectorInfo}>
+                <View style={styles.nameRow}>
+                  <Text style={styles.collectorName}>@{item.collectorUsername}</Text>
+                  {item.isVerified && (
+                    <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
+                      <Feather name="check-circle" size={9} color={C.positive} />
+                      <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.lookingLabel}>Looking for:</Text>
+              </View>
+            </View>
+
+            <View style={styles.cardWant}>
+              <View style={[styles.cardThumb, { backgroundColor: item.color }]}>
+                <Text style={styles.cardInitial}>{item.cardName[0]}</Text>
+              </View>
+              <View style={styles.cardWantInfo}>
+                <Text style={styles.cardWantName}>{item.cardName}</Text>
+                <Text style={styles.cardWantMeta}>{item.set}</Text>
+                <View style={[styles.gradePill, { backgroundColor: C.muted }]}>
+                  <Text style={styles.gradePillText}>{item.grade}</Text>
+                </View>
+                {item.maxBudget && (
+                  <Text style={styles.budgetText}>Budget: up to ${item.maxBudget.toLocaleString('en-AU')}</Text>
+                )}
+              </View>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                setResponded(prev => [...prev, item.id]);
+              }}
+              style={[
+                styles.haveThisBtn,
+                { backgroundColor: hasResponded ? `${C.positive}22` : C.primary },
+              ]}
+            >
+              {hasResponded ? (
+                <>
+                  <Feather name="check-circle" size={14} color={C.positive} />
+                  <Text style={[styles.haveThisBtnText, { color: C.positive }]}>Response Sent</Text>
+                </>
+              ) : (
+                <>
+                  <Feather name="zap" size={14} color="#FFF" />
+                  <Text style={[styles.haveThisBtnText, { color: '#FFF' }]}>I Have This</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        );
+      })}
+
+      {/* Post your own want */}
+      <Pressable style={[styles.postWantBtn, { borderColor: C.border }]}>
+        <Feather name="plus-circle" size={18} color={C.primary} />
+        <View>
+          <Text style={styles.postWantTitle}>Post to Wanted Board</Text>
+          <Text style={styles.postWantSub}>Let collectors know what you're looking for</Text>
+        </View>
+      </Pressable>
+    </>
+  );
+
+  const previewList = (
+    <>
+      {MOCK_WANTED_BOARD.slice(0, 2).map(item => (
+        <View key={item.id} style={[styles.wantCard, { backgroundColor: C.card }]}>
+          <View style={styles.wantTop}>
+            <View style={[styles.avatar, { backgroundColor: item.collectorColor }]}>
+              <Text style={styles.avatarText}>{item.collectorInitials}</Text>
+            </View>
+            <View style={styles.collectorInfo}>
+              <Text style={styles.collectorName}>@{item.collectorUsername}</Text>
+              <Text style={styles.lookingLabel}>Looking for:</Text>
+            </View>
+          </View>
+          <View style={styles.cardWant}>
+            <View style={[styles.cardThumb, { backgroundColor: item.color }]}>
+              <Text style={styles.cardInitial}>{item.cardName[0]}</Text>
+            </View>
+            <View style={styles.cardWantInfo}>
+              <Text style={styles.cardWantName}>{item.cardName}</Text>
+              <Text style={styles.cardWantMeta}>{item.set}</Text>
+            </View>
+          </View>
+        </View>
+      ))}
+    </>
+  );
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background }]}>
@@ -40,77 +147,13 @@ export default function WantedBoardScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {MOCK_WANTED_BOARD.map(item => {
-          const hasResponded = responded.includes(item.id);
-          return (
-            <View key={item.id} style={[styles.wantCard, { backgroundColor: C.card }]}>
-              <View style={styles.wantTop}>
-                <View style={[styles.avatar, { backgroundColor: item.collectorColor }]}>
-                  <Text style={styles.avatarText}>{item.collectorInitials}</Text>
-                </View>
-                <View style={styles.collectorInfo}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.collectorName}>@{item.collectorUsername}</Text>
-                    {item.isVerified && (
-                      <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
-                        <Feather name="check-circle" size={9} color={C.positive} />
-                        <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.lookingLabel}>Looking for:</Text>
-                </View>
-              </View>
-
-              <View style={styles.cardWant}>
-                <View style={[styles.cardThumb, { backgroundColor: item.color }]}>
-                  <Text style={styles.cardInitial}>{item.cardName[0]}</Text>
-                </View>
-                <View style={styles.cardWantInfo}>
-                  <Text style={styles.cardWantName}>{item.cardName}</Text>
-                  <Text style={styles.cardWantMeta}>{item.set}</Text>
-                  <View style={[styles.gradePill, { backgroundColor: C.muted }]}>
-                    <Text style={styles.gradePillText}>{item.grade}</Text>
-                  </View>
-                  {item.maxBudget && (
-                    <Text style={styles.budgetText}>Budget: up to ${item.maxBudget.toLocaleString('en-AU')}</Text>
-                  )}
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => {
-                  setResponded(prev => [...prev, item.id]);
-                }}
-                style={[
-                  styles.haveThisBtn,
-                  { backgroundColor: hasResponded ? `${C.positive}22` : C.primary },
-                ]}
-              >
-                {hasResponded ? (
-                  <>
-                    <Feather name="check-circle" size={14} color={C.positive} />
-                    <Text style={[styles.haveThisBtnText, { color: C.positive }]}>Response Sent</Text>
-                  </>
-                ) : (
-                  <>
-                    <Feather name="zap" size={14} color="#FFF" />
-                    <Text style={[styles.haveThisBtnText, { color: '#FFF' }]}>I Have This</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
-          );
-        })}
-
-        {/* Post your own want */}
-        <Pressable style={[styles.postWantBtn, { borderColor: C.border }]}>
-          <Feather name="plus-circle" size={18} color={C.primary} />
-          <View>
-            <Text style={styles.postWantTitle}>Post to Wanted Board</Text>
-            <Text style={styles.postWantSub}>Let collectors know what you're looking for</Text>
-          </View>
-        </Pressable>
+        <ProFeaturePreview
+          featureTitle="Wanted Board"
+          description="See what every collector at this event is searching for. Respond with 'I Have This' to start a trade."
+          previewContent={previewList}
+          lockedContent={boardList}
+          ctaLabel="Unlock Wanted Board with Pro"
+        />
       </ScrollView>
     </View>
   );
