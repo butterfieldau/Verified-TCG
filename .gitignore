@@ -47,9 +47,3 @@ Thumbs.db
 # Replit
 .cache/
 .local/
-
-# Environment and credentials
-.env
-.env.*
-!.env.example
-~$*.txt

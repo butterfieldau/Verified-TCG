@@ -25,25 +25,8 @@ app.use(
     },
   }),
 );
-const allowedOrigins = new Set(
-  (process.env.API_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Native clients do not send an Origin header. Browser callers must be
-    // explicitly allowlisted once the production web origin is known.
-    if (!origin || allowedOrigins.has(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error("Origin is not allowed"));
-  },
-}));
-app.use(express.json({ limit: "256kb" }));
+app.use(cors());
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);

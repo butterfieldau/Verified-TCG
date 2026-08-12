@@ -21,8 +21,8 @@ import type {
   User,
   PortfolioSummary,
 } from '@/types';
-import { MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
-import { MOCK_USER } from '@/services/profile';
+import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
+import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 import {
   syncWishlistToServer,
@@ -39,8 +39,6 @@ import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
-import { restoreSession, signInWithPassword, signOut as signOutSession } from '@/services/auth';
-import { getCollectionFromServer, saveCollectionItemToServer, removeCollectionItemFromServer } from '@/services/collectionApi';
 import {
   SCAN_STATE_STORAGE_KEY,
   nextMonthFirstDay,
@@ -52,7 +50,6 @@ import {
 interface AppState {
   user: User | null;
   isAuthenticated: boolean;
-  isAuthLoading: boolean;
   collection: CollectionItem[];
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
@@ -169,14 +166,10 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  // Do not seed a real session with another collector's prototype data.
-  // Collection persistence is the next Stage 1 slice; until then these remain
-  // empty and are populated only by authenticated user actions.
-  const [collection, setCollection] = useState<CollectionItem[]>([]);
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [user, setUser] = useState<User | null>(MOCK_USER);
+  const [isAuthenticated, setIsAuthenticated] = useState(true); // mock: pre-authenticated
+  const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
@@ -204,26 +197,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [scanResetDate, setScanResetDate] = useState<Date>(() =>
     nextMonthFirstDay(new Date()),
   );
-
-  useEffect(() => {
-    restoreSession().then(session => {
-      if (!session) return;
-      setUser({
-        ...MOCK_USER,
-        id: session.user.id,
-        email: session.user.email ?? MOCK_USER.email,
-        displayName: typeof session.user.user_metadata?.display_name === 'string'
-          ? session.user.user_metadata.display_name
-          : MOCK_USER.displayName,
-      });
-      setIsAuthenticated(true);
-      getCollectionFromServer().then(setCollection).catch(() => {});
-      syncWishlistToServer([]).then(setWatchlist).catch(() => {});
-    }).catch(() => {
-      setUser(null);
-      setIsAuthenticated(false);
-    }).finally(() => setIsAuthLoading(false));
-  }, []);
 
   /**
    * Quota period guard — fires on mount and whenever the reset date changes.
@@ -347,8 +320,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * Any network error is silenced: AsyncStorage acts as the offline cache and
    * the next successful load will re-attempt the sync.
    *
-   * The server now scopes wishlist data to the authenticated Supabase user.
-   * Network failures remain non-fatal so the local cache can be used offline.
+   * Note: this is a single-tenant prototype — the server stores data for one
+   * fixed collector and requires no credentials.  See wishlistApi.ts.
    */
   useEffect(() => {
     if (!watchlistLoaded) return;
@@ -368,18 +341,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlistLoaded]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const session = await signInWithPassword(email, password);
-    setUser({
-      ...MOCK_USER,
-      id: session.user.id,
-      email: session.user.email ?? email,
-      displayName: typeof session.user.user_metadata?.display_name === 'string'
-        ? session.user.user_metadata.display_name
-        : MOCK_USER.displayName,
-    });
+  const signIn = useCallback(async (_email: string, _password: string) => {
+    await Promise.resolve(); // simulate async sign-in
+    setUser(MOCK_USER);
     setIsAuthenticated(true);
-    getCollectionFromServer().then(setCollection).catch(() => {});
 
     // On sign-in, sync with the server so the collector's list is fully
     // restored on a new or reset device.
@@ -392,19 +357,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(() => {
-    void signOutSession();
     setUser(null);
     setIsAuthenticated(false);
   }, []);
 
   const addToCollection = useCallback((item: CollectionItem) => {
     setCollection(prev => [...prev, item]);
-    saveCollectionItemToServer(item).catch(() => {});
   }, []);
 
   const removeFromCollection = useCallback((id: string) => {
     setCollection(prev => prev.filter(i => i.id !== id));
-    removeCollectionItemFromServer(id).catch(() => {});
   }, []);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
@@ -638,7 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider
       value={{
-        user, isAuthenticated, isAuthLoading,
+        user, isAuthenticated,
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
