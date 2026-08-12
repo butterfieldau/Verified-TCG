@@ -12,6 +12,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 
 /** Amber dev palette — intentionally distinct from the product's red/black. */
@@ -39,6 +40,21 @@ function DevToggleInner() {
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
+      {/* View Pro Screen shortcut */}
+      <Pressable
+        onPress={() => router.push('/pro-subscription')}
+        style={({ pressed }) => [styles.pill, styles.pillScreen, pressed && styles.pillPressed]}
+        accessibilityRole="button"
+        accessibilityLabel="DEV: Open Pro subscription screen"
+      >
+        <View style={styles.devBadge}>
+          <Text style={styles.devBadgeText}>DEV</Text>
+        </View>
+        <Feather name="star" size={12} color={DEV.pillText} />
+        <Text style={styles.tierText}>Pro Screen</Text>
+      </Pressable>
+
+      {/* Tier toggle */}
       <Pressable
         onPress={toggle}
         style={({ pressed }) => [styles.pill, pressed && styles.pillPressed]}
@@ -74,6 +90,8 @@ const styles = StyleSheet.create({
     bottom: 90,   // above the 74px tab bar
     right: 12,
     zIndex: 9999,
+    gap: 6,
+    alignItems: 'flex-end',
   },
   pill: {
     flexDirection: 'row',
@@ -91,6 +109,9 @@ const styles = StyleSheet.create({
   },
   pillPressed: {
     opacity: 0.8,
+  },
+  pillScreen: {
+    backgroundColor: '#6D28D9', // purple — distinct from tier toggle amber
   },
   devBadge: {
     backgroundColor: DEV.bg,

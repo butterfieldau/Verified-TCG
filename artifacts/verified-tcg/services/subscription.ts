@@ -16,11 +16,11 @@ export type SubscriptionTier = 'free' | 'pro';
 
 // ─── Pricing constants ────────────────────────────────────────────────────────
 
-export const MONTHLY_PRICE_AUD = 7.99;
-export const ANNUAL_PRICE_AUD = 59.99;
-export const ANNUAL_SAVING_PERCENT = Math.round(
-  (1 - ANNUAL_PRICE_AUD / (MONTHLY_PRICE_AUD * 12)) * 100,
-);
+export const MONTHLY_PRICE_AUD = 8.99;
+export const ANNUAL_PRICE_AUD = 79.99;
+/** Equivalent monthly cost when billed annually (rounded to 2 dp). */
+export const ANNUAL_MONTHLY_EQUIV = parseFloat((ANNUAL_PRICE_AUD / 12).toFixed(2)); // 6.67
+export const ANNUAL_SAVING_PERCENT = 25; // Marketing figure; actual math ≈ 26 %
 
 // ─── Scan limit constants ─────────────────────────────────────────────────────
 
@@ -34,10 +34,102 @@ export const SCAN_LIMIT_BANNER_THRESHOLD = 0.8;
 export const SUBSCRIPTION_CONFIG = {
   monthlyPriceAUD: MONTHLY_PRICE_AUD,
   annualPriceAUD: ANNUAL_PRICE_AUD,
+  annualMonthlyEquiv: ANNUAL_MONTHLY_EQUIV,
   annualSavingPercent: ANNUAL_SAVING_PERCENT,
   freeScanLimit: FREE_SCAN_LIMIT,
   scanLimitBannerThreshold: SCAN_LIMIT_BANNER_THRESHOLD,
   freeAlertLimit: 5,
+  trialDays: 7,
+  /** Ordered list of Pro benefit cards shown on the subscription screen. */
+  benefits: [
+    {
+      key: 'unlimited-scanning',
+      title: 'Unlimited Scanning',
+      subtitle: 'Scan as many cards as you like — no monthly cap, ever.',
+      icon: 'camera',
+    },
+    {
+      key: 'pricing-plus',
+      title: 'Pricing+',
+      subtitle: 'Full 90-day price history, trend charts, and market signals for every card.',
+      icon: 'trending-up',
+    },
+    {
+      key: 'event-mode-plus',
+      title: 'Event Mode+',
+      subtitle: 'Advanced event analytics, grading queue, and wanted-board insights.',
+      icon: 'zap',
+    },
+    {
+      key: 'trade-match-plus',
+      title: 'Trade Match+',
+      subtitle: 'Full match profiles, contact details, and complete trade history.',
+      icon: 'repeat',
+    },
+    {
+      key: 'smart-alerts',
+      title: 'Smart Alerts',
+      subtitle: 'Unlimited price alerts on any card — never miss a dip or a spike.',
+      icon: 'bell',
+    },
+    {
+      key: 'pro-identity',
+      title: 'Pro Identity',
+      subtitle: 'Custom card icons, profile themes, Pro badge, and Founding Member status.',
+      icon: 'award',
+    },
+  ] as const,
+  /** Free vs Pro comparison rows, grouped by category. */
+  comparison: [
+    {
+      category: 'Collection',
+      rows: [
+        { feature: 'Card scanning', free: '30 / month', pro: 'Unlimited' },
+        { feature: 'Collection size', free: 'Unlimited', pro: 'Unlimited' },
+        { feature: 'CSV / JSON export', free: false, pro: true },
+        { feature: 'Collection insights & ROI', free: false, pro: true },
+      ],
+    },
+    {
+      category: 'Pricing',
+      rows: [
+        { feature: 'Current card value', free: true, pro: true },
+        { feature: '7-day price history', free: false, pro: true },
+        { feature: '30-day price history', free: false, pro: true },
+        { feature: '90-day price history', free: false, pro: true },
+        { feature: 'Market trend signals', free: false, pro: true },
+      ],
+    },
+    {
+      category: 'Trading',
+      rows: [
+        { feature: 'Trade Match discovery', free: true, pro: true },
+        { feature: 'Match contact details', free: false, pro: true },
+        { feature: 'Full trade history', free: false, pro: true },
+        { feature: 'Event Mode analytics', free: false, pro: true },
+        { feature: 'Wanted-board insights', free: false, pro: true },
+      ],
+    },
+    {
+      category: 'Alerts',
+      rows: [
+        { feature: 'Price alerts', free: '5 max', pro: 'Unlimited' },
+        { feature: 'Trade-offer alerts', free: true, pro: true },
+        { feature: 'Wishlist match alerts', free: true, pro: true },
+      ],
+    },
+    {
+      category: 'Identity',
+      rows: [
+        { feature: 'Collector profile', free: true, pro: true },
+        { feature: 'Custom card icons', free: false, pro: true },
+        { feature: 'Profile themes', free: false, pro: true },
+        { feature: 'Pro badge', free: false, pro: true },
+        { feature: 'Founding Member status', free: false, pro: true },
+        { feature: 'Verified Drops early access', free: false, pro: true },
+      ],
+    },
+  ] as const,
 } as const;
 
 // ─── Entitlements ─────────────────────────────────────────────────────────────
