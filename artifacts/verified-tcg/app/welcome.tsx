@@ -99,7 +99,20 @@ export default function WelcomeScreen() {
           </Text>
         </View>
 
-        {/* Social auth buttons */}
+        <Pressable
+          onPress={async () => {
+            await AsyncStorage.setItem('hasOnboarded', 'true');
+            router.replace('/(tabs)');
+          }}
+          style={({ pressed }) => [styles.guestPrimary, { opacity: pressed ? 0.8 : 1 }]}
+        >
+          <Feather name="compass" size={18} color={C.primaryForeground} />
+          <Text style={styles.guestPrimaryText}>Explore as guest</Text>
+        </Pressable>
+
+        <Text style={styles.authPrompt}>Or sign in to save your collection</Text>
+
+        {/* Optional social auth buttons */}
         <View style={styles.buttons}>
           <SocialButton
             icon="globe"
@@ -121,17 +134,6 @@ export default function WelcomeScreen() {
             <Text style={styles.signinLink}>Sign in </Text>
           </Text>
           <Feather name="arrow-right" size={13} color={C.foreground} />
-        </Pressable>
-
-        <Pressable
-          onPress={async () => {
-            await AsyncStorage.setItem('hasOnboarded', 'true');
-            router.replace('/(tabs)');
-          }}
-          style={styles.guestRow}
-        >
-          <Text style={styles.guestText}>Continue as guest</Text>
-          <Text style={styles.guestSubtext}>You can create an account later</Text>
         </Pressable>
 
         {/* Legal */}
@@ -238,22 +240,27 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
   },
-  guestRow: {
+  guestPrimary: {
+    height: 50,
+    borderRadius: 25,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 20,
-    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: C.primary,
+    marginBottom: 14,
   },
-  guestText: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-    color: C.foreground,
+  guestPrimaryText: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: C.primaryForeground,
   },
-  guestSubtext: {
-    marginTop: 5,
+  authPrompt: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
+    textAlign: 'center',
+    marginBottom: 12,
   },
   legal: {
     fontSize: 11,

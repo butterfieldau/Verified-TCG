@@ -8,8 +8,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
@@ -20,6 +21,7 @@ const C = colors.dark;
 
 export default function CreateAccountScreen() {
   const insets = useSafeAreaInsets();
+  const { next } = useLocalSearchParams<{ next?: string }>();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,8 +46,14 @@ export default function CreateAccountScreen() {
     try {
       const session = await signUp(email, password, name);
       if (session) {
-        // Auto-confirmed — go straight to onboarding
-        router.replace('/onboarding');
+        // Auto-confirmed — resume the feature that requested the account,
+        // otherwise give the new collector the normal onboarding introduction.
+        if (next) {
+          await AsyncStorage.setItem('hasOnboarded', 'true');
+          router.replace(next as any);
+        } else {
+          router.replace('/onboarding');
+        }
       } else {
         // Email confirmation required
         setAwaitingConfirmation(true);
@@ -66,7 +74,7 @@ export default function CreateAccountScreen() {
           We sent a confirmation link to{'\n'}<Text style={{ color: C.foreground }}>{email}</Text>
           {'\n\n'}Open it to activate your account, then come back to sign in.
         </Text>
-        <Pressable onPress={() => router.replace('/sign-in')} style={styles.signInRow}>
+        <Pressable onPress={() => router.replace({ pathname: '/sign-in', params: next ? { next } : undefined } as any)} style={styles.signInRow}>
           <Text style={styles.signInText}>
             Already confirmed? <Text style={styles.signInLink}>Sign in</Text>
           </Text>

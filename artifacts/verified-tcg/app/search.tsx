@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   FlatList,
   Platform,
@@ -17,6 +17,7 @@ import { getMarketMovers } from '@/services/market';
 import { searchCards, CARD_SETS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
+import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
 
 const C = colors.dark;
 
@@ -62,17 +63,45 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<SearchCategory>('cards');
+  const [remoteResults, setRemoteResults] = useState<CatalogCard[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState('');
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  const cardResults = query.trim().length > 0 ? searchCards(query) : [];
+  const localCardResults = query.trim().length > 0 ? searchCards(query) : [];
+  const cardResults = remoteResults.length > 0 ? remoteResults.map(catalogCardToAppCard) : localCardResults;
   const setResults = query.trim().length > 0
     ? CARD_SETS.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))
     : [];
   const trendingMovers = getMarketMovers();
 
   const isEmpty = query.trim().length === 0;
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed || category !== 'cards') {
+      setRemoteResults([]);
+      setRemoteError('');
+      return;
+    }
+    const controller = new AbortController();
+    setRemoteLoading(true);
+    setRemoteError('');
+    const timer = setTimeout(() => {
+      searchCatalog(trimmed, controller.signal)
+        .then(result => setRemoteResults(result.data ?? []))
+        .catch(error => {
+          if (error?.name !== 'AbortError') {
+            setRemoteResults([]);
+            setRemoteError('Live catalogue unavailable — showing local results.');
+          }
+        })
+        .finally(() => setRemoteLoading(false));
+    }, 350);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query, category]);
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
@@ -190,7 +219,11 @@ export default function SearchScreen() {
 
             {/* Cards result header */}
             {!isEmpty && category === 'cards' && (
-              <Text style={styles.sectionTitle}>Cards ({cardResults.length})</Text>
+              <View>
+                <Text style={styles.sectionTitle}>{remoteLoading ? 'Searching live catalogue…' : `Cards (${cardResults.length})`}</Text>
+                {remoteError ? <Text style={styles.liveError}>{remoteError}</Text> : null}
+                {!remoteError && remoteResults.length > 0 ? <Text style={styles.liveSource}>Live catalogue and pricing · JustTCG</Text> : null}
+              </View>
             )}
           </View>
         )}
@@ -314,6 +347,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 20,
   },
+  liveSource: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.positive, marginBottom: 10 },
+  liveError: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 10 },
   emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   emptyBody: {

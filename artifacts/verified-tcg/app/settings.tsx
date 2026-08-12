@@ -12,6 +12,8 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
+import { Button } from '@/components/ui/Button';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
@@ -81,6 +83,7 @@ function ToggleRow({
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const { isAuthenticated } = useApp();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   const [priceAlerts, setPriceAlerts] = useState(true);
@@ -89,6 +92,11 @@ export default function SettingsScreen() {
   const [publicCollection, setPublicCollection] = useState(true);
   const [showPortfolioValue, setShowPortfolioValue] = useState(false);
   const [faceIdEnabled, setFaceIdEnabled] = useState(true);
+
+  const requireAccount = (destination?: string) => {
+    if (isAuthenticated && destination) router.push(destination as any);
+    else if (!isAuthenticated) router.push('/create-account');
+  };
 
   return (
     <ScrollView
@@ -112,6 +120,22 @@ export default function SettingsScreen() {
         <SettingRow icon="globe" label="Language" value="English" onPress={() => {}} />
         <SettingRow icon="moon" label="Appearance" value="Dark" onPress={() => {}} isLast />
       </View>
+
+      {!isAuthenticated && (
+        <View style={styles.accountPrompt}>
+          <View style={styles.accountPromptIcon}>
+            <Feather name="user-plus" size={18} color={C.primary} />
+          </View>
+          <Text style={styles.accountPromptTitle}>Create your free account</Text>
+          <Text style={styles.accountPromptBody}>
+            Keep exploring as a guest, or create an account to edit your profile, sync your collection, and unlock account features.
+          </Text>
+          <Button fullWidth onPress={() => router.push('/create-account')}>Create an Account</Button>
+          <Pressable onPress={() => router.push('/sign-in')} style={styles.accountSignIn}>
+            <Text style={styles.accountSignInText}>Already have an account? Sign in</Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* Notifications */}
       <Text style={styles.sectionLabel}>Notifications</Text>
@@ -159,14 +183,14 @@ export default function SettingsScreen() {
           value={faceIdEnabled}
           onChange={setFaceIdEnabled}
         />
-        <SettingRow icon="key" label="Change Password" onPress={() => {}} isLast />
+        <SettingRow icon="key" label="Change Password" onPress={() => requireAccount('/forgot-password')} isLast />
       </View>
 
       {/* Account */}
       <Text style={styles.sectionLabel}>Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <SettingRow icon="user" label="Edit Profile" onPress={() => {}} />
-        <SettingRow icon="credit-card" label="Payment Methods" onPress={() => {}} />
+        <SettingRow icon="user" label="Edit Profile" onPress={() => requireAccount('/edit-profile')} />
+        <SettingRow icon="credit-card" label="Payment Methods" onPress={() => requireAccount('/pro-subscription')} />
         <SettingRow icon="help-circle" label="Help & Support" onPress={() => {}} />
         <SettingRow icon="file-text" label="Terms of Service" onPress={() => {}} />
         <SettingRow icon="shield" label="Privacy Policy" onPress={() => {}} isLast />
@@ -175,8 +199,8 @@ export default function SettingsScreen() {
       {/* Data */}
       <Text style={styles.sectionLabel}>Data & Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <SettingRow icon="download" label="Export My Data" onPress={() => {}} />
-        <Pressable style={[styles.row]}>
+        <SettingRow icon="download" label="Export My Data" onPress={() => requireAccount('/portfolio')} />
+        <Pressable style={[styles.row]} onPress={() => requireAccount()}>
           <View style={[styles.rowIcon, { backgroundColor: `${C.destructive}22` }]}>
             <Feather name="trash-2" size={16} color={C.destructive} />
           </View>
@@ -243,4 +267,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 32,
   },
+  accountPrompt: { marginTop: 22, padding: 18, borderRadius: 16, backgroundColor: `${C.primary}12`, borderWidth: 1, borderColor: `${C.primary}33` },
+  accountPromptIcon: { width: 36, height: 36, borderRadius: 11, backgroundColor: `${C.primary}22`, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  accountPromptTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground, marginBottom: 6 },
+  accountPromptBody: { fontSize: 13, lineHeight: 19, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 16 },
+  accountSignIn: { alignItems: 'center', paddingTop: 16 },
+  accountSignInText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
 });

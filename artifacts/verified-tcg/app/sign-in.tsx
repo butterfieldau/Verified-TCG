@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Input } from '@/components/ui/Input';
@@ -22,6 +22,7 @@ const C = colors.dark;
 
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
+  const { next } = useLocalSearchParams<{ next?: string }>();
   const { signIn, signInWithProvider } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,7 +42,7 @@ export default function SignInScreen() {
     try {
       await signIn(email, password);
       await AsyncStorage.setItem('hasOnboarded', 'true');
-      router.replace('/(tabs)');
+      router.replace((next as string | undefined) ?? '/(tabs)');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed. Please try again.');
     } finally {
@@ -56,7 +57,7 @@ export default function SignInScreen() {
       const signedIn = await signInWithProvider(provider);
       if (!signedIn) return;
       await AsyncStorage.setItem('hasOnboarded', 'true');
-      router.replace('/(tabs)');
+      router.replace((next as string | undefined) ?? '/(tabs)');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Social sign in failed. Please try again.');
     } finally {

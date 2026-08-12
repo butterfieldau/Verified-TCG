@@ -42,6 +42,7 @@ import {
   signInWithPassword,
   signInWithOAuth,
   signOut as authSignOut,
+  updateUserMetadata,
   type OAuthProvider,
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
@@ -92,6 +93,7 @@ interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
+  updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => Promise<void>;
   addToCollection: (item: CollectionItem) => void;
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
@@ -403,6 +405,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
   }, []);
 
+  const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
+    if (!user) throw new Error('Create an account to edit your profile.');
+    await updateUserMetadata({
+      display_name: patch.displayName.trim(),
+      username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
+      bio: patch.bio?.trim() ?? '',
+      location: patch.location?.trim() ?? '',
+    });
+    setUser(current => current ? { ...current, ...patch } : current);
+  }, [user]);
+
   const addToCollection = useCallback((item: CollectionItem) => {
     setCollection(prev => [...prev, item]);
   }, []);
@@ -647,7 +660,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, activeAlertCount,
-        signIn, signInWithProvider, signOut,
+        signIn, signInWithProvider, signOut, updateProfile,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,

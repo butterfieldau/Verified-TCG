@@ -119,6 +119,19 @@ export async function requestPasswordReset(email: string): Promise<void> {
   if (!response.ok) return parseError(response);
 }
 
+export async function updateUserMetadata(data: Record<string, string>): Promise<void> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You need an account to edit your profile.');
+  const response = await request('/auth/v1/user', {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ data: { ...(session.user.user_metadata ?? {}), ...data } }),
+  });
+  if (!response.ok) return parseError(response);
+  session.user = await response.json() as AuthSession['user'];
+  await persist(session);
+}
+
 export async function signInWithOAuth(provider: OAuthProvider): Promise<AuthSession | null> {
   assertConfigured();
   const redirectTo = getRedirectUrl();
