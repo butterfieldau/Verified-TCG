@@ -688,18 +688,18 @@ const styles = StyleSheet.create({
   qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
 
-  // Tab bar
-  tabBar: { borderBottomWidth: 1, height: 42, flexShrink: 0 },
+  // Tab bar — height must equal tab item height (paddingTop + text + paddingBottom + border) + own border
+  tabBar: { borderBottomWidth: 1, height: 29, flexShrink: 0 },
   tabBarContent: { paddingHorizontal: 16 },
   tabItem: {
-    paddingHorizontal: 14, paddingVertical: 10,
+    paddingHorizontal: 14, paddingTop: 10, paddingBottom: 0,
     borderBottomWidth: 2, borderBottomColor: 'transparent',
   },
   tabItemText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
 
   // Tab content
   tabContent: { flex: 1 },
-  tabContentInner: { paddingHorizontal: 16, paddingTop: 12 },
+  tabContentInner: { paddingHorizontal: 16, paddingTop: 10 },
   cardList: { gap: 10 },
 
   // Match cards
