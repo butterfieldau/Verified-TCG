@@ -28,6 +28,8 @@ export const ANNUAL_SAVING_PERCENT = 25; // Marketing figure; actual math ≈ 26
 export const FREE_SCAN_LIMIT = 30;
 /** Fraction of quota consumed at which the scan limit banner appears. */
 export const SCAN_LIMIT_BANNER_THRESHOLD = 0.8;
+/** Maximum number of active price alerts for Free tier. */
+export const FREE_ALERT_LIMIT = 5;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 

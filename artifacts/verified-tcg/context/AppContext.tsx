@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
   WatchlistItem,
+  PriceAlertType,
   PortfolioRange,
   TCGId,
   CollectionFilters,
@@ -36,7 +37,7 @@ import {
 } from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
-import { FREE_SCAN_LIMIT } from '@/services/subscription';
+import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 
 interface AppState {
@@ -53,6 +54,8 @@ interface AppState {
   isPriceRefreshing: boolean;
   notifications: Notification[];
   unreadNotificationCount: number;
+  /** Number of watchlist items with priceAlertEnabled === true. */
+  activeAlertCount: number;
   // ── Subscription ──────────────────────────────────────────────────────────
   subscriptionTier: SubscriptionTier;
   scansUsed: number;
@@ -67,7 +70,7 @@ interface AppActions {
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
-  updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>) => void;
+  updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>) => void;
   setPortfolioRange: (range: PortfolioRange) => void;
   setCollectionFilters: (filters: Partial<CollectionFilters>) => void;
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
@@ -338,13 +341,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateWatchlistItem = useCallback((
     id: string,
-    patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
+    patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>,
   ) => {
+    // Enforce FREE_ALERT_LIMIT at the state layer so no caller can bypass the cap.
+    // Use watchlistRef (always current) so the cap decision and server-mirror
+    // decision are made together — either both happen or neither does.
+    if (patch.priceAlertEnabled === true && subscriptionTier === 'free') {
+      const current = watchlistRef.current;
+      const item = current.find(i => i.id === id);
+      if (item && !item.priceAlertEnabled) {
+        const activeCount = current.filter(
+          i => i.priceAlertEnabled && !!i.targetPrice,
+        ).length;
+        if (activeCount >= FREE_ALERT_LIMIT) {
+          return; // cap reached — drop both local and server update
+        }
+      }
+    }
     // Optimistic local update
     setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
-    // Background mirror to server
+    // Background mirror to server (only reached if the cap check passed)
     updateWishlistItemOnServer(id, patch).catch(() => {});
-  }, []);
+  }, [subscriptionTier]);
 
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
     setCollectionFiltersState(prev => ({ ...prev, ...filters }));
@@ -428,7 +446,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // so we don't create duplicates on every re-render.
   const alertedItemIds = useRef<Set<string>>(new Set());
 
-  // Generate in-app price-alert notifications when an item is alert-enabled and at/below target
+  // Generate in-app price-alert notifications when an alert condition is met.
+  // Supports two alert types:
+  //   'price-drop' (default): fires when price <= targetPrice
+  //   'price-rise': fires when price >= targetPrice
   useEffect(() => {
     if (!watchlistLoaded) return;
 
@@ -438,23 +459,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       let updated = [...prev];
 
       watchlist.forEach(item => {
-        const atTarget =
-          item.priceAlertEnabled &&
-          !!item.targetPrice &&
-          item.card.price.raw <= item.targetPrice;
-
         const notifId = `price-alert-wl-${item.id}`;
 
-        if (atTarget && !alertedItemIds.current.has(item.id)) {
-          // Price is at/below target and alert hasn't fired yet — generate notification
+        // Handle disabled or target-less items first — cleanup must run before returning
+        if (!item.priceAlertEnabled) {
+          // Alert was disabled — remove any generated notification and reset tracker
+          alertedItemIds.current.delete(item.id);
+          updated = updated.filter(n => n.id !== notifId);
+          return;
+        }
+        if (!item.targetPrice) return; // no target → no alert to evaluate
+
+        const price = item.card.price.raw;
+        const target = item.targetPrice;
+        const isPriceRise = item.alertType === 'price-rise';
+
+        // Condition met: price has dropped to/below target (drop) or risen to/above (rise)
+        const conditionMet = isPriceRise ? price >= target : price <= target;
+
+        if (conditionMet && !alertedItemIds.current.has(item.id)) {
+          // Condition met and alert hasn't fired yet — generate notification
           const alreadyExists = updated.some(n => n.id === notifId);
           if (!alreadyExists) {
+            const alertLabel = isPriceRise ? 'risen to or above' : 'dropped to or below';
             updated = [
               {
                 id: notifId,
                 type: 'price_alert',
                 title: `Price Alert — ${item.card.name}`,
-                body: `${item.card.name} (${item.card.setName}) is now $${item.card.price.raw.toLocaleString('en-AU')} AUD — at or below your target of $${item.targetPrice!.toLocaleString('en-AU')} AUD.`,
+                body: `${item.card.name} (${item.card.setName}) is now $${price.toLocaleString('en-AU')} AUD — ${alertLabel} your target of $${target.toLocaleString('en-AU')} AUD.`,
                 isRead: false,
                 time: timeLabel,
                 actionLabel: 'View Card',
@@ -464,12 +497,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ];
           }
           alertedItemIds.current.add(item.id);
-        } else if (!item.priceAlertEnabled) {
-          // Alert was disabled — remove the generated notification and reset tracker
-          alertedItemIds.current.delete(item.id);
-          updated = updated.filter(n => n.id !== notifId);
-        } else if (!atTarget) {
-          // Price has risen above target — reset tracker so alert can fire again on next drop
+        } else if (!conditionMet) {
+          // Condition no longer met — reset tracker so alert fires again when condition returns
           alertedItemIds.current.delete(item.id);
         }
       });
@@ -481,6 +510,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const unreadNotificationCount = useMemo(
     () => notifications.filter(n => !n.isRead).length,
     [notifications],
+  );
+
+  const activeAlertCount = useMemo(
+    () => watchlist.filter(w => w.priceAlertEnabled && !!w.targetPrice).length,
+    [watchlist],
   );
 
   const portfolio = useMemo<PortfolioSummary>(() => {
@@ -517,7 +551,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
-        notifications, unreadNotificationCount,
+        notifications, unreadNotificationCount, activeAlertCount,
         signIn, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,

@@ -2,6 +2,10 @@
  * Wishlist screen — lets collectors search for cards and add them with a
  * desired grade and optional target price. Changes propagate to Trade Match
  * and Event Mode via AppContext.
+ *
+ * Alert gating: Free users can have up to FREE_ALERT_LIMIT active price alerts.
+ * When at the limit the bell toggle shows an inline prompt and the Smart Alerts
+ * entry point shows a lock state with an upgrade CTA.
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -21,6 +25,11 @@ import { useApp } from '@/context/AppContext';
 import { MOCK_CARDS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { WatchlistItem, Card } from '@/types';
+import {
+  canUseUnlimitedAlerts,
+  SUBSCRIPTION_CONFIG,
+  FREE_ALERT_LIMIT,
+} from '@/services/subscription';
 
 const C = colors.dark;
 
@@ -229,16 +238,49 @@ function AddPanel({
   );
 }
 
+// ── Alert limit toast / inline prompt ─────────────────────────────────────────
+
+function AlertLimitPrompt({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <View style={[styles.alertLimitPrompt, { backgroundColor: C.card, borderColor: `${C.warning}44` }]}>
+      <View style={styles.alertLimitPromptHeader}>
+        <View style={[styles.alertLimitIcon, { backgroundColor: `${C.warning}22` }]}>
+          <Feather name="bell-off" size={14} color={C.warning} />
+        </View>
+        <Text style={styles.alertLimitTitle}>Alert limit reached</Text>
+        <Pressable onPress={onDismiss} hitSlop={8}>
+          <Feather name="x" size={16} color={C.mutedForeground} />
+        </Pressable>
+      </View>
+      <Text style={styles.alertLimitBody}>
+        Free accounts can have up to {FREE_ALERT_LIMIT} active price alerts. Upgrade to Pro for
+        unlimited Smart Alerts with advanced alert types.
+      </Text>
+      <Pressable
+        onPress={() => { onDismiss(); router.push('/pro-subscription' as any); }}
+        style={[styles.alertLimitCTA, { backgroundColor: C.primary }]}
+      >
+        <Feather name="zap" size={13} color="#FFF" />
+        <Text style={styles.alertLimitCTAText}>Unlock Unlimited Alerts</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // ── Wishlist entry card ───────────────────────────────────────────────────────
 
 function WishCard({
   item,
   onRemove,
   onToggleAlert,
+  canEnableAlert,
+  onAlertLimitHit,
 }: {
   item: WatchlistItem;
   onRemove: () => void;
   onToggleAlert: () => void;
+  canEnableAlert: boolean;
+  onAlertLimitHit: () => void;
 }) {
   const price = item.card.price.raw;
   const change = item.card.price.change7d ?? 0;
@@ -246,6 +288,15 @@ function WishCard({
   const atTarget = item.targetPrice ? price <= item.targetPrice : false;
   const hasTarget = !!item.targetPrice;
   const alertOn = hasTarget && !!item.priceAlertEnabled;
+
+  function handleBellPress(e: any) {
+    e.stopPropagation?.();
+    if (!alertOn && !canEnableAlert) {
+      onAlertLimitHit();
+      return;
+    }
+    onToggleAlert();
+  }
 
   return (
     <Pressable
@@ -311,16 +362,17 @@ function WishCard({
           {/* Bell toggle — only shown when a target price is set */}
           {hasTarget && (
             <Pressable
-              onPress={e => { e.stopPropagation?.(); onToggleAlert(); }}
+              onPress={handleBellPress}
               style={[
                 styles.alertBtn,
                 alertOn && { backgroundColor: `${C.warning}22` },
+                !alertOn && !canEnableAlert && { opacity: 0.5 },
               ]}
               hitSlop={8}
               accessibilityLabel={alertOn ? 'Disable price alert' : 'Enable price alert'}
             >
               <Feather
-                name={alertOn ? 'bell' : 'bell-off'}
+                name={alertOn ? 'bell' : (!canEnableAlert ? 'lock' : 'bell-off')}
                 size={13}
                 color={alertOn ? C.warning : C.mutedForeground}
               />
@@ -335,15 +387,103 @@ function WishCard({
   );
 }
 
+// ── Smart Alerts entry strip ──────────────────────────────────────────────────
+
+function SmartAlertsStrip({
+  activeAlertCount,
+  isAtLimit,
+  isFree,
+}: {
+  activeAlertCount: number;
+  isAtLimit: boolean;
+  isFree: boolean;
+}) {
+  if (isAtLimit) {
+    return (
+      <Pressable
+        onPress={() => router.push('/smart-alerts' as any)}
+        style={({ pressed }) => [
+          styles.smartAlertsStrip,
+          { backgroundColor: pressed ? C.muted : C.card, borderColor: `${C.primary}33` },
+        ]}
+      >
+        <View style={styles.smartAlertsLeft}>
+          <View style={[styles.smartAlertsIconWrap, { backgroundColor: `${C.primary}22` }]}>
+            <Feather name="lock" size={15} color={C.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.smartAlertsTitle}>Smart Alerts</Text>
+            <Text style={styles.smartAlertsLimit}>
+              You've reached your free alert limit · {FREE_ALERT_LIMIT} / {FREE_ALERT_LIMIT} active
+            </Text>
+            <Text style={[styles.smartAlertsManageHint, { color: C.primary }]}>
+              Tap to manage or disable alerts →
+            </Text>
+          </View>
+        </View>
+        <Pressable
+          onPress={e => { e.stopPropagation?.(); router.push('/pro-subscription' as any); }}
+          style={[styles.smartAlertsCTA, { backgroundColor: C.primary }]}
+        >
+          <Feather name="zap" size={12} color="#FFF" />
+          <Text style={styles.smartAlertsCTAText}>Unlock Unlimited</Text>
+        </Pressable>
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={() => router.push('/smart-alerts' as any)}
+      style={({ pressed }) => [
+        styles.smartAlertsStrip,
+        { backgroundColor: pressed ? C.muted : C.card, borderColor: `${C.primary}22` },
+      ]}
+    >
+      <View style={styles.smartAlertsLeft}>
+        <View style={[styles.smartAlertsIconWrap, { backgroundColor: `${C.primary}22` }]}>
+          <Feather name="bell" size={15} color={C.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <View style={styles.smartAlertsTitleRow}>
+            <Text style={styles.smartAlertsTitle}>Smart Alerts</Text>
+            {!isFree && (
+              <View style={[styles.proBadge, { backgroundColor: C.primary }]}>
+                <Text style={styles.proBadgeText}>PRO</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.smartAlertsSubtitle}>
+            {isFree
+              ? `${activeAlertCount} of ${FREE_ALERT_LIMIT} free alerts used · Tap to manage`
+              : 'Unlimited alerts · price drops, listings & more'}
+          </Text>
+        </View>
+      </View>
+      <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+    </Pressable>
+  );
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
-  const { watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem } = useApp();
+  const {
+    watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem,
+    subscriptionTier, activeAlertCount,
+  } = useApp();
   const [sortBy, setSortBy] = useState<'added' | 'value' | 'change'>('added');
   const [showAddPanel, setShowAddPanel] = useState(false);
+  const [showLimitPrompt, setShowLimitPrompt] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  const isFree = subscriptionTier === 'free';
+  const hasUnlimitedAlerts = canUseUnlimitedAlerts(subscriptionTier);
+  const isAtAlertLimit = isFree && activeAlertCount >= FREE_ALERT_LIMIT;
+  // Free users below limit can still enable; Pro always can
+  const canEnableNewAlert = hasUnlimitedAlerts || activeAlertCount < FREE_ALERT_LIMIT;
 
   const existingCardIds = useMemo(
     () => new Set(watchlist.map(w => w.cardId)),
@@ -407,6 +547,18 @@ export default function WishlistScreen() {
           </Text>
         </View>
 
+        {/* Smart Alerts entry — always visible */}
+        <SmartAlertsStrip
+          activeAlertCount={activeAlertCount}
+          isAtLimit={isAtAlertLimit}
+          isFree={isFree}
+        />
+
+        {/* Alert limit inline prompt */}
+        {showLimitPrompt && (
+          <AlertLimitPrompt onDismiss={() => setShowLimitPrompt(false)} />
+        )}
+
         {watchlist.length === 0 ? (
           // ── Empty state ──────────────────────────────────────────────────
           <View style={styles.emptyContainer}>
@@ -461,8 +613,20 @@ export default function WishlistScreen() {
                 onToggleAlert={() =>
                   updateWatchlistItem(item.id, { priceAlertEnabled: !item.priceAlertEnabled })
                 }
+                canEnableAlert={canEnableNewAlert || !!item.priceAlertEnabled}
+                onAlertLimitHit={() => setShowLimitPrompt(true)}
               />
             ))}
+
+            {/* Free usage footer — shown when Free and has alerts but below limit */}
+            {isFree && activeAlertCount > 0 && !isAtAlertLimit && (
+              <View style={[styles.alertUsageFooter, { backgroundColor: `${C.warning}11`, borderColor: `${C.warning}33` }]}>
+                <Feather name="bell" size={12} color={C.warning} />
+                <Text style={[styles.alertUsageText, { color: C.warning }]}>
+                  {activeAlertCount} of {FREE_ALERT_LIMIT} free alerts used
+                </Text>
+              </View>
+            )}
 
             <Text style={styles.footerNote}>
               Prices are estimated market values. Wishlist data is used locally to power
@@ -523,13 +687,69 @@ const styles = StyleSheet.create({
   hintStrip: {
     flexDirection: 'row', alignItems: 'flex-start',
     gap: 8, borderRadius: 12, borderWidth: 1,
-    padding: 12, marginBottom: 16,
+    padding: 12, marginBottom: 12,
   },
   hintText: {
     flex: 1, fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground, lineHeight: 18,
   },
+
+  // Smart Alerts strip
+  smartAlertsStrip: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: 14, borderWidth: 1,
+    padding: 14, marginBottom: 16, gap: 10,
+  },
+  smartAlertsLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  smartAlertsIconWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  smartAlertsTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  smartAlertsTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  smartAlertsLimit: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground, marginTop: 2 },
+  smartAlertsManageHint: { fontSize: 11, fontFamily: 'Inter_600SemiBold', marginTop: 3 },
+  smartAlertsSubtitle: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  smartAlertsCTA: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
+  },
+  smartAlertsCTAText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#FFF' },
+  proBadge: {
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5,
+  },
+  proBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: '#FFF', letterSpacing: 0.5 },
+
+  // Alert limit inline prompt
+  alertLimitPrompt: {
+    borderRadius: 14, borderWidth: 1,
+    padding: 14, marginBottom: 14, gap: 8,
+  },
+  alertLimitPromptHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  alertLimitIcon: {
+    width: 30, height: 30, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  alertLimitTitle: { flex: 1, fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  alertLimitBody: {
+    fontSize: 13, fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground, lineHeight: 19,
+  },
+  alertLimitCTA: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, height: 44, borderRadius: 12,
+  },
+  alertLimitCTAText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#FFF' },
+
+  // Alert usage footer
+  alertUsageFooter: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: 10, borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 8, marginTop: 4, marginBottom: 4,
+    alignSelf: 'center',
+  },
+  alertUsageText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
   sortRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   sortLabel: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground },

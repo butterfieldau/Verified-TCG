@@ -143,6 +143,9 @@ export interface CollectionItem {
   isForTrade?: boolean;
 }
 
+/** Alert types supported by the current price-monitoring model. */
+export type PriceAlertType = 'price-drop' | 'price-rise';
+
 export interface WatchlistItem {
   id: string;
   cardId: string;
@@ -151,6 +154,8 @@ export interface WatchlistItem {
   targetPrice?: number;
   addedAt: string;
   priceAlertEnabled?: boolean;
+  /** Which condition triggers the alert; defaults to 'price-drop' when omitted. */
+  alertType?: PriceAlertType;
 }
 
 // ── User & Profile ────────────────────────────────────────────────────────────
