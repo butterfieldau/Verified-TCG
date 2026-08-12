@@ -61,6 +61,17 @@ interface AppState {
   scansUsed: number;
   scanLimit: number;
   scanResetDate: Date;
+  // ── Pro Identity ──────────────────────────────────────────────────────────
+  /** ID of the currently selected app icon (see ICON_OPTIONS in pro-identity.tsx). */
+  selectedIcon: string;
+  /** ID of the currently selected profile theme (see PROFILE_THEMES in pro-identity.tsx). */
+  profileTheme: string;
+  /**
+   * Whether the Pro user has claimed their Founding Member badge this session.
+   * Mock state — in production this would be a server-side boolean with a
+   * unique member number assigned from a counter capped at FOUNDING_MEMBER_LIMIT.
+   */
+  foundingMemberClaimed: boolean;
 }
 
 interface AppActions {
@@ -81,6 +92,11 @@ interface AppActions {
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
+  // ── Pro Identity ──────────────────────────────────────────────────────────
+  setSelectedIcon: (icon: string) => void;
+  setProfileTheme: (theme: string) => void;
+  /** Toggle the mock Founding Member claim. Only callable when tier === 'pro'. */
+  claimFoundingMember: () => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -155,6 +171,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+
+  // ── Pro Identity state ─────────────────────────────────────────────────────
+  const [selectedIcon, setSelectedIcon] = useState<string>('original');
+  const [profileTheme, setProfileTheme] = useState<string>('default');
+  /**
+   * Mock Founding Member claim — stored at app-session level in context so it
+   * survives navigation but resets on full app restart (no backend yet).
+   */
+  const [foundingMemberClaimed, setFoundingMemberClaimed] = useState<boolean>(false);
 
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
@@ -384,6 +409,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setSubscriptionTier = useCallback((tier: SubscriptionTier) => {
     setSubscriptionTierState(tier);
+    // On downgrade to Free, reset any Pro-gated identity selections so Free
+    // users cannot continue benefiting from paid customisations they no longer
+    // hold an entitlement for.
+    if (tier === 'free') {
+      setSelectedIcon('original');
+      setProfileTheme('default');
+      setFoundingMemberClaimed(false);
+    }
   }, []);
 
   const incrementScanCount = useCallback(() => {
@@ -560,6 +593,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         markNotificationRead, markAllNotificationsRead,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
         setSubscriptionTier, incrementScanCount,
+        selectedIcon, setSelectedIcon,
+        profileTheme, setProfileTheme,
+        foundingMemberClaimed,
+        claimFoundingMember: () => setFoundingMemberClaimed(true),
       }}
     >
       {children}

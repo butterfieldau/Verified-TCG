@@ -14,6 +14,7 @@ import { useApp } from '@/context/AppContext';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
+import { ProBadge } from '@/components/ui/ProBadge';
 import colors from '@/constants/colors';
 import { TCG_LIST } from '@/types';
 
@@ -44,13 +45,41 @@ const MENU_ITEMS = [
   { icon: 'repeat', label: 'Trade Offers', route: '/trade' },
   { icon: 'shield', label: 'Verification', route: '/verification-info' },
   { icon: 'pie-chart', label: 'Portfolio', route: '/portfolio' },
+  { icon: 'award', label: 'Pro Identity', route: '/pro-identity', proOnly: true },
   { icon: 'settings', label: 'Settings', route: '/settings' },
   { icon: 'help-circle', label: 'Help & Support', route: null },
 ];
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { user, signOut, watchlist } = useApp();
+  const {
+    user, signOut, watchlist,
+    subscriptionTier, profileTheme,
+    selectedIcon, foundingMemberClaimed,
+  } = useApp();
+  const isPro = subscriptionTier === 'pro';
+
+  // Human-readable label for the active in-app icon selection
+  const ICON_LABELS: Record<string, string> = {
+    original: 'Verified Red',
+    black: 'Verified Black',
+    white: 'Verified White',
+    gold: 'Verified Gold',
+    stealth: 'Stealth',
+    event: 'Event Edition',
+    founding: 'Founding Member',
+  };
+
+  // Map profileTheme id → card background colour for the profile header area.
+  // Intentionally kept minimal — the theme tints the profile card, not the whole screen.
+  const THEME_CARD_COLORS: Record<string, string> = {
+    default:         C.card,
+    carbon:          '#1C1C1E',
+    deep_red:        '#1A0000',
+    collector_black: '#000000',
+    chrome:          '#222222',
+  };
+  const profileCardBg = THEME_CARD_COLORS[profileTheme] ?? C.card;
 
   // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
   // adding insets.top on top of that creates a large black gap.
@@ -75,8 +104,8 @@ export default function ProfileScreen() {
         </Pressable>
       </View>
 
-      {/* Profile card */}
-      <View style={[styles.profileCard, { backgroundColor: C.card }]}>
+      {/* Profile card — background tinted by the collector's chosen profile theme */}
+      <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
         <View style={styles.avatarRow}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
@@ -84,11 +113,27 @@ export default function ProfileScreen() {
           <View style={styles.nameBlock}>
             <View style={styles.nameRow}>
               <Text style={styles.displayName}>{user?.displayName}</Text>
+              {/* PRO badge — subscription tier indicator, distinct from Verified Seller/Account identity badges */}
+              {isPro && <ProBadge />}
               {user?.isVerifiedSeller && (
                 <StatusBadge label="Verified Seller" color={C.verifiedBadge} variant="subtle" />
               )}
             </View>
             <Text style={styles.username}>@{user?.username}</Text>
+            {/* Founding Member badge — shown when Pro user has claimed their badge */}
+            {isPro && foundingMemberClaimed && (
+              <View style={styles.foundingRow}>
+                <Feather name="award" size={11} color="#D4AF37" />
+                <Text style={styles.foundingText}>Founding Member #00381</Text>
+              </View>
+            )}
+            {/* Active in-app icon indicator — shows which icon identity is selected */}
+            {isPro && selectedIcon !== 'original' && (
+              <View style={styles.iconRow}>
+                <Feather name="image" size={10} color={C.mutedForeground} />
+                <Text style={styles.iconLabel}>{ICON_LABELS[selectedIcon] ?? selectedIcon} icon</Text>
+              </View>
+            )}
             <Text style={styles.location}>
               <Feather name="map-pin" size={11} color={C.mutedForeground} />{' '}
               {user?.location}
@@ -215,6 +260,10 @@ const styles = StyleSheet.create({
   displayName: { fontSize: 20, fontFamily: 'Inter_700Bold', color: C.foreground },
   username: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   location: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  foundingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  foundingText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#D4AF37' },
+  iconRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  iconLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   bio: {
     fontSize: 13,
     fontFamily: 'Inter_400Regular',

@@ -51,6 +51,7 @@ function RootLayoutNav() {
       <Stack.Screen name="wishlist" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collector/[username]" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="pro-identity" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen
         name="pro-subscription"
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
