@@ -131,7 +131,7 @@ router.post("/collection", async (req: AuthenticatedRequest, res) => {
 router.delete("/collection/:id", async (req: AuthenticatedRequest, res) => {
   await ensureUser(req.user!);
   const removed = await db.delete(collectionItemsTable)
-    .where(and(eq(collectionItemsTable.id, req.params.id), eq(collectionItemsTable.userId, req.user!.id)))
+    .where(and(eq(collectionItemsTable.id, String(req.params.id)), eq(collectionItemsTable.userId, req.user!.id)))
     .returning({ id: collectionItemsTable.id });
   res.json({ ok: true, removed: removed.length });
 });

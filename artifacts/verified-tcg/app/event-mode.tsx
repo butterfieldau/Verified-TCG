@@ -672,15 +672,18 @@ const styles = StyleSheet.create({
   statPillValue: { fontSize: 22, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 26 },
   statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
-  // Quick actions
-  qaStrip: { flexGrow: 0, flexShrink: 0, height: 60 },
-  qaStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
+  // Stat grid (4-column fixed row)
+  statGrid: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
+
+  // Quick actions (2×2 grid)
+  qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
   qaBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    flexGrow: 1, flexBasis: '45%',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11,
   },
-  qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  qaIconWrap: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, flex: 1 },
 
   // Tab bar — flexGrow: 0 is required (mirrors statStrip/qaStrip pattern) to prevent iOS flex expansion
   tabBar: { borderBottomWidth: 1, height: 30, flexGrow: 0, flexShrink: 0 },
