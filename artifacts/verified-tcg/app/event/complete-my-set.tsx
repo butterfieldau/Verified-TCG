@@ -12,6 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_SET_COMPLETION } from '@/services/matching';
+import { useApp } from '@/context/AppContext';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 
 const C = colors.dark;
 const set = MOCK_SET_COMPLETION;
@@ -21,12 +23,146 @@ export default function CompleteMySetScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeFilter, setActiveFilter] = useState<'all' | 'event' | 'market'>('all');
+  const { subscriptionTier } = useApp();
+  const isPro = subscriptionTier === 'pro';
 
   const filteredCards = set.missingCards.filter(c => {
     if (activeFilter === 'event') return c.availableAtEvent;
     if (activeFilter === 'market') return c.availableOnMarket;
     return true;
   });
+
+  const setHero = (
+    <>
+      {/* Set hero */}
+      <View style={[styles.setHero, { backgroundColor: C.card }]}>
+        <View style={[styles.setIconWrap, { backgroundColor: `${set.color}22` }]}>
+          <Feather name="grid" size={24} color={set.color} />
+        </View>
+        <View style={styles.setHeroInfo}>
+          <Text style={styles.setName}>{set.setName}</Text>
+          <Text style={styles.setProgress}>{set.owned} / {set.total} cards</Text>
+        </View>
+        <View style={[styles.pctBadge, { backgroundColor: `${set.color}22` }]}>
+          <Text style={[styles.pctText, { color: set.color }]}>{(progress * 100).toFixed(1)}%</Text>
+        </View>
+      </View>
+
+      {/* Progress bar */}
+      <View style={styles.progressWrap}>
+        <View style={[styles.progressBg, { backgroundColor: C.muted }]}>
+          <View style={[styles.progressFill, { backgroundColor: set.color, width: `${progress * 100}%` as any }]} />
+        </View>
+        <View style={styles.progressLabels}>
+          <Text style={styles.progressLabel}>{set.owned} owned</Text>
+          <Text style={styles.progressLabel}>{set.missingCount} missing</Text>
+        </View>
+      </View>
+    </>
+  );
+
+  const fullContent = (
+    <>
+      {setHero}
+
+      {/* Stats */}
+      <View style={styles.statsRow}>
+        <StatBlock
+          icon="map-pin" value={set.atThisEvent} label="At This Event" color={C.primary}
+          onPress={() => setActiveFilter('event')}
+        />
+        <StatBlock
+          icon="repeat" value={set.tradeMatches} label="Trade Matches" color='#22C55E'
+          onPress={() => router.push('/trade-match' as any)}
+        />
+        <StatBlock
+          icon="shopping-bag" value={set.marketplaceListings} label="Market Listings" color='#F59E0B'
+          onPress={() => setActiveFilter('market')}
+        />
+      </View>
+
+      {/* Find Missing CTA */}
+      <Pressable
+        onPress={() => router.push('/trade-match' as any)}
+        style={[styles.findBtn, { backgroundColor: C.primary }]}
+      >
+        <Feather name="search" size={16} color="#FFF" />
+        <Text style={styles.findBtnText}>Find Missing Cards</Text>
+      </Pressable>
+
+      {/* Missing cards list */}
+      <View style={styles.filterRow}>
+        {(['all', 'event', 'market'] as const).map(f => (
+          <Pressable
+            key={f}
+            onPress={() => setActiveFilter(f)}
+            style={[styles.filterPill, activeFilter === f && { backgroundColor: C.primary }]}
+          >
+            <Text style={[styles.filterText, activeFilter === f && { color: '#FFF' }]}>
+              {f === 'all' ? 'All Missing' : f === 'event' ? 'At Event' : 'Marketplace'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={styles.sectionLabel}>MISSING CARDS ({filteredCards.length})</Text>
+      <View style={{ gap: 10 }}>
+        {filteredCards.map(card => (
+          <View key={card.id} style={[styles.missingCard, { backgroundColor: C.card }]}>
+            <View style={[styles.cardThumb, { backgroundColor: card.color }]}>
+              <Text style={styles.cardInitial}>{card.name[0]}</Text>
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardName}>{card.name}</Text>
+              <Text style={styles.cardMeta}>{card.number} · {card.rarity}</Text>
+              <Text style={styles.cardValue}>${card.estimatedValue.toLocaleString('en-AU')}</Text>
+            </View>
+            <View style={styles.cardBadges}>
+              {card.availableAtEvent && (
+                <View style={[styles.avBadge, { backgroundColor: `${C.primary}22` }]}>
+                  <Feather name="map-pin" size={9} color={C.primary} />
+                  <Text style={[styles.avBadgeText, { color: C.primary }]}>Event</Text>
+                </View>
+              )}
+              {card.availableOnMarket && (
+                <View style={[styles.avBadge, { backgroundColor: `${C.warning}22` }]}>
+                  <Feather name="shopping-bag" size={9} color={C.warning} />
+                  <Text style={[styles.avBadgeText, { color: C.warning }]}>Market</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        ))}
+      </View>
+    </>
+  );
+
+  const previewContent = (
+    <>
+      {setHero}
+      {/* Stats (preview only shows first stat) */}
+      <View style={styles.statsRow}>
+        <StatBlock icon="map-pin" value={set.atThisEvent} label="At This Event" color={C.primary} />
+        <StatBlock icon="repeat" value={set.tradeMatches} label="Trade Matches" color='#22C55E' />
+        <StatBlock icon="shopping-bag" value={set.marketplaceListings} label="Market Listings" color='#F59E0B' />
+      </View>
+      <Text style={styles.sectionLabel}>MISSING CARDS ({set.missingCount})</Text>
+      <View style={{ gap: 10 }}>
+        {set.missingCards.slice(0, 2).map(card => (
+          <View key={card.id} style={[styles.missingCard, { backgroundColor: C.card }]}>
+            <View style={[styles.cardThumb, { backgroundColor: card.color }]}>
+              <Text style={styles.cardInitial}>{card.name[0]}</Text>
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardName}>{card.name}</Text>
+              <Text style={styles.cardMeta}>{card.number} · {card.rarity}</Text>
+              <Text style={styles.cardValue}>${card.estimatedValue.toLocaleString('en-AU')}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </>
+  );
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background }]}>
@@ -39,100 +175,13 @@ export default function CompleteMySetScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Set hero */}
-        <View style={[styles.setHero, { backgroundColor: C.card }]}>
-          <View style={[styles.setIconWrap, { backgroundColor: `${set.color}22` }]}>
-            <Feather name="grid" size={24} color={set.color} />
-          </View>
-          <View style={styles.setHeroInfo}>
-            <Text style={styles.setName}>{set.setName}</Text>
-            <Text style={styles.setProgress}>{set.owned} / {set.total} cards</Text>
-          </View>
-          <View style={[styles.pctBadge, { backgroundColor: `${set.color}22` }]}>
-            <Text style={[styles.pctText, { color: set.color }]}>{(progress * 100).toFixed(1)}%</Text>
-          </View>
-        </View>
-
-        {/* Progress bar */}
-        <View style={styles.progressWrap}>
-          <View style={[styles.progressBg, { backgroundColor: C.muted }]}>
-            <View style={[styles.progressFill, { backgroundColor: set.color, width: `${progress * 100}%` as any }]} />
-          </View>
-          <View style={styles.progressLabels}>
-            <Text style={styles.progressLabel}>{set.owned} owned</Text>
-            <Text style={styles.progressLabel}>{set.missingCount} missing</Text>
-          </View>
-        </View>
-
-        {/* Stats */}
-        <View style={styles.statsRow}>
-          <StatBlock
-            icon="map-pin" value={set.atThisEvent} label="At This Event" color={C.primary}
-            onPress={() => setActiveFilter('event')}
-          />
-          <StatBlock
-            icon="repeat" value={set.tradeMatches} label="Trade Matches" color='#22C55E'
-            onPress={() => router.push('/trade-match' as any)}
-          />
-          <StatBlock
-            icon="shopping-bag" value={set.marketplaceListings} label="Market Listings" color='#F59E0B'
-            onPress={() => setActiveFilter('market')}
-          />
-        </View>
-
-        {/* Find Missing CTA */}
-        <Pressable
-          onPress={() => router.push('/trade-match' as any)}
-          style={[styles.findBtn, { backgroundColor: C.primary }]}
-        >
-          <Feather name="search" size={16} color="#FFF" />
-          <Text style={styles.findBtnText}>Find Missing Cards</Text>
-        </Pressable>
-
-        {/* Missing cards list */}
-        <View style={styles.filterRow}>
-          {(['all', 'event', 'market'] as const).map(f => (
-            <Pressable
-              key={f}
-              onPress={() => setActiveFilter(f)}
-              style={[styles.filterPill, activeFilter === f && { backgroundColor: C.primary }]}
-            >
-              <Text style={[styles.filterText, activeFilter === f && { color: '#FFF' }]}>
-                {f === 'all' ? 'All Missing' : f === 'event' ? 'At Event' : 'Marketplace'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={styles.sectionLabel}>MISSING CARDS ({filteredCards.length})</Text>
-        <View style={{ gap: 10 }}>
-          {filteredCards.map(card => (
-            <View key={card.id} style={[styles.missingCard, { backgroundColor: C.card }]}>
-              <View style={[styles.cardThumb, { backgroundColor: card.color }]}>
-                <Text style={styles.cardInitial}>{card.name[0]}</Text>
-              </View>
-              <View style={styles.cardInfo}>
-                <Text style={styles.cardName}>{card.name}</Text>
-                <Text style={styles.cardMeta}>{card.number} · {card.rarity}</Text>
-                <Text style={styles.cardValue}>${card.estimatedValue.toLocaleString('en-AU')}</Text>
-              </View>
-              <View style={styles.cardBadges}>
-                {card.availableAtEvent && (
-                  <View style={[styles.avBadge, { backgroundColor: `${C.primary}22` }]}>
-                    <Feather name="map-pin" size={9} color={C.primary} />
-                    <Text style={[styles.avBadgeText, { color: C.primary }]}>Event</Text>
-                  </View>
-                )}
-                {card.availableOnMarket && (
-                  <View style={[styles.avBadge, { backgroundColor: `${C.warning}22` }]}>
-                    <Feather name="shopping-bag" size={9} color={C.warning} />
-                    <Text style={[styles.avBadgeText, { color: C.warning }]}>Market</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          ))}
-        </View>
+        <ProFeaturePreview
+          featureTitle="Complete My Set at Event"
+          description="See which missing cards from your sets are available right here at this event, including trade matches and marketplace listings."
+          previewContent={previewContent}
+          lockedContent={fullContent}
+          ctaLabel="Unlock Complete My Set with Pro"
+        />
       </ScrollView>
     </View>
   );

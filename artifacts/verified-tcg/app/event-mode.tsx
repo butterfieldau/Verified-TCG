@@ -13,6 +13,7 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_EVENT } from '@/services/matching';
 import { useApp } from '@/context/AppContext';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 
 const C = colors.dark;
 
@@ -33,12 +34,20 @@ const QUICK_ACTIONS = [
   { icon: 'grid',    label: 'Complete My Set',  route: '/event/complete-my-set'},
 ] as const;
 
+const FREE_MATCH_LIMIT = 3;
+
+// Teaser stats derived deterministically from MOCK_EVENT — stable across re-renders
+const TEASER_COLLECTORS_WITH_WANTS = MOCK_EVENT.stats.collectorsWithYourWants;          // 17
+const TEASER_EXTRA_MATCHES        = MOCK_EVENT.stats.tradeMatches * 2 + 2;              // 14
+const TEASER_WANT_YOURS           = MOCK_EVENT.stats.wantYourCards * 3 - 1;             // 23
+
 export default function EventModeScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [isInEvent, setIsInEvent] = useState(false);
   const [activeTab, setActiveTab] = useState<EventTab>('matches');
-  const { watchlist } = useApp();
+  const { watchlist, subscriptionTier } = useApp();
+  const isPro = subscriptionTier === 'pro';
 
   const wishlistCount = watchlist.length;
   const liveStats = {
@@ -47,6 +56,12 @@ export default function EventModeScreen() {
     wishlistForSale:         Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale         * (wishlistCount / 3))),
     wantYourCards:           MOCK_EVENT.stats.wantYourCards,
   };
+
+  const allMatches = MOCK_EVENT.tradeMatchesAtEvent;
+  const visibleMatches = isPro ? allMatches : allMatches.slice(0, FREE_MATCH_LIMIT);
+  const showProTeaser = !isPro;
+
+  const screenTitle = isPro ? 'Event Mode+' : 'Event Mode';
 
   // ── Entry Screen ─────────────────────────────────────────────────────────────
   if (!isInEvent) {
@@ -57,7 +72,15 @@ export default function EventModeScreen() {
           <Pressable onPress={() => router.back()} style={styles.navBack}>
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
-          <Text style={styles.navTitle}>Event Mode</Text>
+          <View style={styles.navTitleRow}>
+            <Text style={styles.navTitle}>{screenTitle}</Text>
+            {isPro && (
+              <View style={styles.proChip}>
+                <Feather name="zap" size={10} color={C.primaryForeground} />
+                <Text style={styles.proChipText}>PRO</Text>
+              </View>
+            )}
+          </View>
           <View style={{ width: 40 }} />
         </View>
 
@@ -162,7 +185,15 @@ export default function EventModeScreen() {
             <View style={styles.liveDot} />
             <Text style={styles.liveLabel}>LIVE</Text>
           </View>
-          <Text style={styles.dashEventName} numberOfLines={1}>{MOCK_EVENT.name}</Text>
+          <View style={styles.dashTitleRow}>
+            <Text style={styles.dashEventName} numberOfLines={1}>{screenTitle}</Text>
+            {isPro && (
+              <View style={styles.proChip}>
+                <Feather name="zap" size={10} color={C.primaryForeground} />
+                <Text style={styles.proChipText}>PRO</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.dashEventSub}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
         </View>
         <Pressable
@@ -249,7 +280,7 @@ export default function EventModeScreen() {
         {/* MATCHES */}
         {activeTab === 'matches' && (
           <View style={styles.cardList}>
-            {MOCK_EVENT.tradeMatchesAtEvent.map(match => (
+            {visibleMatches.map(match => (
               <Pressable
                 key={match.id}
                 onPress={() => router.push('/trade-match' as any)}
@@ -299,70 +330,175 @@ export default function EventModeScreen() {
                 </View>
               </Pressable>
             ))}
-            <Pressable
-              onPress={() => router.push('/trade-match' as any)}
-              style={[styles.viewAllRow, { borderColor: C.border }]}
-            >
-              <Text style={[styles.viewAllText, { color: C.mutedForeground }]}>View All Trade Matches</Text>
-              <Feather name="arrow-right" size={13} color={C.mutedForeground} />
-            </Pressable>
+
+            {/* Pro teaser card — always shown for Free users */}
+            {showProTeaser && (
+              <View style={[styles.proTeaserCard, { backgroundColor: C.card, borderColor: `${C.primary}44` }]}>
+                <View style={styles.proTeaserHeader}>
+                  <View style={[styles.proTeaserBadge, { backgroundColor: C.primary }]}>
+                    <Feather name="zap" size={11} color={C.primaryForeground} />
+                    <Text style={styles.proTeaserBadgeText}>Event Mode+</Text>
+                  </View>
+                </View>
+
+                <View style={styles.proTeaserStats}>
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>🔥</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>{TEASER_COLLECTORS_WITH_WANTS} collectors</Text>
+                      {' '}here have cards you want
+                    </Text>
+                  </View>
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>🤝</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>+{TEASER_EXTRA_MATCHES} more Trade Matches</Text>
+                      {' '}with Pro
+                    </Text>
+                  </View>
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>👀</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>{TEASER_WANT_YOURS} collectors</Text>
+                      {' '}want your cards
+                    </Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={() => router.push('/pro-subscription' as any)}
+                  style={({ pressed }) => [styles.proTeaserCta, { opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={styles.proTeaserCtaText}>See All Matches → Unlock Event Mode+</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {isPro && (
+              <Pressable
+                onPress={() => router.push('/trade-match' as any)}
+                style={[styles.viewAllRow, { borderColor: C.border }]}
+              >
+                <Text style={[styles.viewAllText, { color: C.mutedForeground }]}>View All Trade Matches</Text>
+                <Feather name="arrow-right" size={13} color={C.mutedForeground} />
+              </Pressable>
+            )}
           </View>
         )}
 
         {/* WISHLIST NEARBY */}
         {activeTab === 'wishlist' && (
-          <View style={styles.cardList}>
-            {MOCK_EVENT.wishlistNearby.map(item => (
-              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                  <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                </View>
-                <View style={styles.listInfo}>
-                  <Text style={styles.listName}>{item.cardName}</Text>
-                  <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                  <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
-                </View>
-                <View style={styles.listRight}>
-                  <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
-                    <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
+          <ProFeaturePreview
+            featureTitle="Wishlist Nearby"
+            description="See which collectors and vendors at this event have your wishlisted cards available right now."
+            previewContent={
+              <View style={styles.cardList}>
+                {MOCK_EVENT.wishlistNearby.slice(0, 2).map(item => (
+                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
+                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
+                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
+                    </View>
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listName}>{item.cardName}</Text>
+                      <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
+                      <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
+                    </View>
+                    <View style={styles.listRight}>
+                      <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
+                        <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
+                      </View>
+                      <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
-                  {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
-                </View>
+                ))}
               </View>
-            ))}
-          </View>
+            }
+            lockedContent={
+              <View style={styles.cardList}>
+                {MOCK_EVENT.wishlistNearby.map(item => (
+                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
+                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
+                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
+                    </View>
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listName}>{item.cardName}</Text>
+                      <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
+                      <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
+                    </View>
+                    <View style={styles.listRight}>
+                      <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
+                        <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
+                      </View>
+                      <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
+                      {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            }
+            ctaLabel="Unlock Wishlist Nearby with Pro"
+          />
         )}
 
         {/* WANT YOUR CARDS */}
         {activeTab === 'want_yours' && (
-          <View style={styles.cardList}>
-            {MOCK_EVENT.wantYourCards.map(item => (
-              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                  <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                </View>
-                <View style={styles.listInfo}>
-                  <Text style={styles.listName}>{item.cardName}</Text>
-                  <Text style={styles.listMeta}>{item.grade}</Text>
-                  <View style={styles.clusterRow}>
-                    {item.collectors.slice(0, 3).map(c => (
-                      <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
-                        <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
+          <ProFeaturePreview
+            featureTitle="People Want Your Cards"
+            description="Discover which collectors at this event are actively looking for cards you own — perfect for trades."
+            previewContent={
+              <View style={styles.cardList}>
+                {MOCK_EVENT.wantYourCards.slice(0, 1).map(item => (
+                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
+                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
+                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
+                    </View>
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listName}>{item.cardName}</Text>
+                      <Text style={styles.listMeta}>{item.grade}</Text>
+                      <View style={styles.clusterRow}>
+                        {item.collectors.slice(0, 2).map(c => (
+                          <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
+                            <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
+                          </View>
+                        ))}
+                        <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
                       </View>
-                    ))}
-                    <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
+                    </View>
                   </View>
-                </View>
-                <Pressable
-                  onPress={() => router.push('/event/have-this' as any)}
-                  style={[styles.haveThisBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
-                >
-                  <Text style={[styles.haveThisBtnText, { color: C.primary }]}>I Have This</Text>
-                </Pressable>
+                ))}
               </View>
-            ))}
-          </View>
+            }
+            lockedContent={
+              <View style={styles.cardList}>
+                {MOCK_EVENT.wantYourCards.map(item => (
+                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
+                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
+                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
+                    </View>
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listName}>{item.cardName}</Text>
+                      <Text style={styles.listMeta}>{item.grade}</Text>
+                      <View style={styles.clusterRow}>
+                        {item.collectors.slice(0, 3).map(c => (
+                          <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
+                            <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
+                          </View>
+                        ))}
+                        <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => router.push('/event/have-this' as any)}
+                      style={[styles.haveThisBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
+                    >
+                      <Text style={[styles.haveThisBtnText, { color: C.primary }]}>I Have This</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            }
+            ctaLabel="Unlock People Want Your Cards with Pro"
+          />
         )}
 
         {/* FOR SALE */}
@@ -391,6 +527,24 @@ export default function EventModeScreen() {
                   <Text style={styles.listPrice}>${item.askingPrice.toLocaleString('en-AU')}</Text>
                   <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
                   {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
+                  {/* Price alert button */}
+                  {isPro ? (
+                    <Pressable
+                      onPress={() => {}}
+                      style={[styles.alertBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
+                    >
+                      <Feather name="bell" size={10} color={C.primary} />
+                      <Text style={[styles.alertBtnText, { color: C.primary }]}>Alert</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      onPress={() => router.push('/pro-subscription' as any)}
+                      style={[styles.alertBtn, { backgroundColor: C.muted, borderColor: C.border }]}
+                    >
+                      <Feather name="lock" size={10} color={C.mutedForeground} />
+                      <Text style={[styles.alertBtnText, { color: C.mutedForeground }]}>Alert</Text>
+                    </Pressable>
+                  )}
                 </View>
               </Pressable>
             ))}
@@ -436,6 +590,7 @@ const styles = StyleSheet.create({
     width: 40, height: 40, borderRadius: 12,
     backgroundColor: C.card, alignItems: 'center', justifyContent: 'center',
   },
+  navTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
 
   enterScroll: { paddingHorizontal: 20, paddingTop: 4, gap: 16 },
@@ -495,6 +650,7 @@ const styles = StyleSheet.create({
   liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.positive },
   liveLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', color: C.positive, letterSpacing: 1.2 },
+  dashTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dashEventName: { fontSize: 18, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
   dashEventSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   leaveBtn: {
@@ -502,6 +658,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
   },
   leaveBtnText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+
+  // Pro chip
+  proChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: C.primary, borderRadius: 6,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  proChipText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.primaryForeground, letterSpacing: 0.5 },
 
   // Stat strip
   statStrip: { flexGrow: 0, flexShrink: 0, height: 94 },
@@ -574,6 +738,32 @@ const styles = StyleSheet.create({
   },
   viewAllText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
 
+  // Pro teaser card
+  proTeaserCard: {
+    borderRadius: 18, borderWidth: 1.5,
+    overflow: 'hidden', marginTop: 2,
+  },
+  proTeaserHeader: {
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12,
+  },
+  proTeaserBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    alignSelf: 'flex-start', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  proTeaserBadgeText: { fontSize: 11, fontFamily: 'Inter_700Bold', color: C.primaryForeground, letterSpacing: 0.3 },
+  proTeaserStats: { paddingHorizontal: 16, gap: 10, paddingBottom: 16 },
+  proTeaserStatRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  proTeaserStatEmoji: { fontSize: 18, width: 26, textAlign: 'center' },
+  proTeaserStatText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  proTeaserStatHighlight: { fontFamily: 'Inter_700Bold', color: C.foreground },
+  proTeaserCta: {
+    margin: 12, marginTop: 0,
+    backgroundColor: C.primary, borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
+  },
+  proTeaserCtaText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.primaryForeground },
+
   // List rows (shared across Wishlist / Want Yours / For Sale / Trending)
   listRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -595,17 +785,27 @@ const styles = StyleSheet.create({
   availTagText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
   boothText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
 
+  // Price alert button
+  alertBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1,
+  },
+  alertBtnText: { fontSize: 9, fontFamily: 'Inter_600SemiBold' },
+
   // Want Yours
   clusterRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   clusterDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   clusterInitial: { fontSize: 8, fontFamily: 'Inter_700Bold', color: '#FFF' },
   clusterCount: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  haveThisBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  haveThisBtn: {
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1,
+  },
   haveThisBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 
   // Trending
-  trendRank: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.mutedForeground, width: 24, textAlign: 'center' },
+  trendRank: { fontSize: 14, fontFamily: 'Rajdhani_700Bold', color: C.mutedForeground, width: 26, textAlign: 'center' },
   watchRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   watchText: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  trendChange: { fontSize: 14, fontFamily: 'Rajdhani_700Bold' },
+  trendChange: { fontSize: 14, fontFamily: 'Inter_700Bold' },
 });

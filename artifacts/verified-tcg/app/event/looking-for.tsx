@@ -13,6 +13,8 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { MOCK_LOOKING_FOR_RESULTS } from '@/services/matching';
 import { getLookingForCards } from '@/services/event';
+import { useApp } from '@/context/AppContext';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 
 const C = colors.dark;
 
@@ -22,6 +24,8 @@ export default function LookingForScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [selectedCard, setSelectedCard] = useState<typeof CARDS_TO_SEARCH[0] | null>(null);
+  const { subscriptionTier } = useApp();
+  const isPro = subscriptionTier === 'pro';
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background }]}>
@@ -38,7 +42,7 @@ export default function LookingForScreen() {
           Select a card from your wishlist to see who has it at this event.
         </Text>
 
-        {/* Card picker */}
+        {/* Card picker — always free */}
         <Text style={styles.sectionLabel}>YOUR WISHLIST</Text>
         <View style={{ gap: 10 }}>
           {CARDS_TO_SEARCH.map(card => (
@@ -65,64 +69,96 @@ export default function LookingForScreen() {
           ))}
         </View>
 
-        {/* Results */}
+        {/* Results — Pro only */}
         {selectedCard && (
-          <View style={{ gap: 12, marginTop: 8 }}>
-            <View style={[styles.resultHeader, { backgroundColor: `${C.positive}18`, borderColor: `${C.positive}44` }]}>
-              <Feather name="map-pin" size={14} color={C.positive} />
-              <Text style={[styles.resultHeaderText, { color: C.positive }]}>
-                {MOCK_LOOKING_FOR_RESULTS.length} available at this event
-              </Text>
-            </View>
-
-            <Text style={styles.sectionLabel}>AVAILABLE NOW</Text>
-            {MOCK_LOOKING_FOR_RESULTS.map(result => (
-              <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
-                <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
-                  <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
+          <ProFeaturePreview
+            featureTitle="I'm Looking For"
+            description="See exactly who at this event has the card you selected, along with their booth location and trade availability."
+            previewContent={
+              <View style={{ gap: 12 }}>
+                <View style={[styles.resultHeader, { backgroundColor: `${C.positive}18`, borderColor: `${C.positive}44` }]}>
+                  <Feather name="map-pin" size={14} color={C.positive} />
+                  <Text style={[styles.resultHeaderText, { color: C.positive }]}>
+                    {MOCK_LOOKING_FOR_RESULTS.length} available at this event
+                  </Text>
                 </View>
-                <View style={styles.resultInfo}>
-                  <View style={styles.resultNameRow}>
-                    <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
-                    {result.isVerified && (
-                      <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
-                        <Feather name="check-circle" size={9} color={C.positive} />
-                        <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.resultMeta}>{result.grade} · ${result.estimatedValue.toLocaleString('en-AU')} est.</Text>
-                  {result.booth && (
-                    <View style={styles.boothRow}>
-                      <Feather name="map-pin" size={10} color={C.primary} />
-                      <Text style={styles.boothText}>{result.booth}</Text>
+                <Text style={styles.sectionLabel}>AVAILABLE NOW</Text>
+                {MOCK_LOOKING_FOR_RESULTS.slice(0, 2).map(result => (
+                  <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
+                    <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
+                      <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
                     </View>
-                  )}
-                </View>
-                <View style={styles.resultRight}>
-                  <View style={[
-                    styles.typePill,
-                    { backgroundColor: result.type === 'for_sale' ? `${C.warning}22` : `${C.positive}22` },
-                  ]}>
-                    <Text style={[
-                      styles.typePillText,
-                      { color: result.type === 'for_sale' ? C.warning : C.positive },
-                    ]}>
-                      {result.type === 'for_sale' ? 'For Sale' : 'For Trade'}
-                    </Text>
+                    <View style={styles.resultInfo}>
+                      <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
+                      <Text style={styles.resultMeta}>{result.grade} · ${result.estimatedValue.toLocaleString('en-AU')} est.</Text>
+                    </View>
+                    <View style={[styles.typePill, { backgroundColor: `${C.positive}22` }]}>
+                      <Text style={[styles.typePillText, { color: C.positive }]}>For Trade</Text>
+                    </View>
                   </View>
-                </View>
+                ))}
               </View>
-            ))}
+            }
+            lockedContent={
+              <View style={{ gap: 12 }}>
+                <View style={[styles.resultHeader, { backgroundColor: `${C.positive}18`, borderColor: `${C.positive}44` }]}>
+                  <Feather name="map-pin" size={14} color={C.positive} />
+                  <Text style={[styles.resultHeaderText, { color: C.positive }]}>
+                    {MOCK_LOOKING_FOR_RESULTS.length} available at this event
+                  </Text>
+                </View>
 
-            <Pressable
-              onPress={() => router.push('/trade-match' as any)}
-              style={[styles.findMatchesBtn, { backgroundColor: C.primary }]}
-            >
-              <Feather name="zap" size={16} color="#FFF" />
-              <Text style={styles.findMatchesBtnText}>Find Trade Matches</Text>
-            </Pressable>
-          </View>
+                <Text style={styles.sectionLabel}>AVAILABLE NOW</Text>
+                {MOCK_LOOKING_FOR_RESULTS.map(result => (
+                  <View key={result.id} style={[styles.resultCard, { backgroundColor: C.card }]}>
+                    <View style={[styles.resultAvatar, { backgroundColor: result.collectorColor }]}>
+                      <Text style={styles.resultAvatarText}>{result.collectorInitials}</Text>
+                    </View>
+                    <View style={styles.resultInfo}>
+                      <View style={styles.resultNameRow}>
+                        <Text style={styles.resultUsername}>@{result.collectorUsername}</Text>
+                        {result.isVerified && (
+                          <View style={[styles.verBadge, { backgroundColor: `${C.positive}22` }]}>
+                            <Feather name="check-circle" size={9} color={C.positive} />
+                            <Text style={[styles.verText, { color: C.positive }]}>Verified</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.resultMeta}>{result.grade} · ${result.estimatedValue.toLocaleString('en-AU')} est.</Text>
+                      {result.booth && (
+                        <View style={styles.boothRow}>
+                          <Feather name="map-pin" size={10} color={C.primary} />
+                          <Text style={styles.boothText}>{result.booth}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.resultRight}>
+                      <View style={[
+                        styles.typePill,
+                        { backgroundColor: result.type === 'for_sale' ? `${C.warning}22` : `${C.positive}22` },
+                      ]}>
+                        <Text style={[
+                          styles.typePillText,
+                          { color: result.type === 'for_sale' ? C.warning : C.positive },
+                        ]}>
+                          {result.type === 'for_sale' ? 'For Sale' : 'For Trade'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+
+                <Pressable
+                  onPress={() => router.push('/trade-match' as any)}
+                  style={[styles.findMatchesBtn, { backgroundColor: C.primary }]}
+                >
+                  <Feather name="zap" size={16} color="#FFF" />
+                  <Text style={styles.findMatchesBtnText}>Find Trade Matches</Text>
+                </Pressable>
+              </View>
+            }
+            ctaLabel="Unlock I'm Looking For with Pro"
+          />
         )}
       </ScrollView>
     </View>
