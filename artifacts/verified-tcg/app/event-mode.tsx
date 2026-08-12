@@ -221,21 +221,24 @@ export default function EventModeScreen() {
       </ScrollView>
 
       {/* ── Section tabs ── */}
-      <View style={[styles.tabBar, { borderBottomColor: C.border }]}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBarContent}>
-          {TABS.map(t => (
-            <Pressable
-              key={t.value}
-              onPress={() => setActiveTab(t.value)}
-              style={[styles.tabItem, activeTab === t.value && { borderBottomColor: C.primary }]}
-            >
-              <Text style={[styles.tabItemText, activeTab === t.value && { color: C.foreground }]}>
-                {t.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.tabBar, { borderBottomColor: C.border }]}
+        contentContainerStyle={styles.tabBarContent}
+      >
+        {TABS.map(t => (
+          <Pressable
+            key={t.value}
+            onPress={() => setActiveTab(t.value)}
+            style={[styles.tabItem, activeTab === t.value && { borderBottomColor: C.primary }]}
+          >
+            <Text style={[styles.tabItemText, activeTab === t.value && { color: C.foreground }]}>
+              {t.label}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
 
       {/* ── Tab content ── */}
       <ScrollView
@@ -501,7 +504,7 @@ const styles = StyleSheet.create({
   leaveBtnText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
   // Stat strip
-  statStrip: { flexGrow: 0 },
+  statStrip: { flexGrow: 0, flexShrink: 0, height: 94 },
   statStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
   statPill: {
     borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10,
@@ -512,7 +515,7 @@ const styles = StyleSheet.create({
   statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
   // Quick actions
-  qaStrip: { flexGrow: 0 },
+  qaStrip: { flexGrow: 0, flexShrink: 0, height: 60 },
   qaStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
   qaBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

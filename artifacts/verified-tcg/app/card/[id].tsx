@@ -33,6 +33,15 @@ import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, CollectionItem, WatchlistItem } from '@/types';
+import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
+import {
+  getMockPricingPlus,
+  TIME_RANGES,
+  GRADERS,
+  type TimeRange,
+  type PricePoint,
+} from '@/services/pricingPlus';
+import { canViewAdvancedPricing } from '@/services/subscription';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -255,6 +264,18 @@ const panelStyles = StyleSheet.create({
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
+
+// Helper — keeps raw stat rows DRY across preview/locked content
+function RAW_STAT_ROWS(p: ReturnType<typeof getMockPricingPlus>) {
+  return [
+    { label: '7-Day Avg',    value: `$${p.rawStats.avg7d.toLocaleString('en-AU')}` },
+    { label: '30-Day Avg',   value: `$${p.rawStats.avg30d.toLocaleString('en-AU')}` },
+    { label: '90-Day Avg',   value: `$${p.rawStats.avg90d.toLocaleString('en-AU')}` },
+    { label: '52-Week High', value: `$${p.rawStats.high52w.toLocaleString('en-AU')}` },
+    { label: '52-Week Low',  value: `$${p.rawStats.low52w.toLocaleString('en-AU')}` },
+    { label: 'Sales Vol.',   value: `${p.rawStats.salesVolume} sold/30d` },
+  ];
+}
 
 /** Card aspect ratio: 2.5 wide × 3.5 tall */
 const CARD_W = W - 40;
@@ -583,13 +604,15 @@ const imgStyles = StyleSheet.create({
 export default function CardDetailScreen() {
   const { id, cardIds } = useLocalSearchParams<{ id: string; cardIds?: string }>();
   const insets = useSafeAreaInsets();
-  const { addToCollection, addToWatchlist, watchlist, collection } = useApp();
+  const { addToCollection, addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
+  const [selectedRange, setSelectedRange] = useState<TimeRange>('30D');
+  const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
   // ── Swipe-between-cards state ────────────────────────────────────────────
   // cardIds is a comma-separated list of card IDs from the filtered/sorted
@@ -660,6 +683,8 @@ export default function CardDetailScreen() {
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
   const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
   const hasPassport = getCardPassport(card.id) !== null;
+  const pricingPlus = getMockPricingPlus(card.id, card.price.raw);
+  const chartData: PricePoint[] = pricingPlus.priceHistory[selectedRange];
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -926,6 +951,227 @@ export default function CardDetailScreen() {
               </Text>
             </View>
           </View>
+        </View>
+
+        {/* ── Pricing+ section ──────────────────────────────────────────── */}
+
+        <View style={styles.pricingPlusHeader}>
+          <Text style={styles.pricingPlusTitle}>Pricing+</Text>
+          {hasAdvancedPricing && (
+            <View style={styles.proBadge}>
+              <Feather name="zap" size={10} color="#FFF" />
+              <Text style={styles.proBadgeText}>PRO</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Time-range selector + extended chart — all gated behind advancedPricing */}
+        <ProFeaturePreview
+          featureTitle="Price History"
+          description="Track this card's price across 30 days, 1 year, and beyond. Unlock full Pricing+ with Pro."
+          ctaLabel="Unlock full price history"
+          previewContent={
+            <View style={[styles.card, { backgroundColor: C.card, marginBottom: 0 }]}>
+              <View style={styles.chartRangeLabel}>
+                <Text style={styles.statLabel}>30D Price History</Text>
+              </View>
+              <View style={styles.chartWrapLg}>
+                <View style={styles.chartLine}>
+                  {pricingPlus.priceHistory['30D'].map((pt, i) => {
+                    const vals = pricingPlus.priceHistory['30D'].map(p => p.value);
+                    const minV = Math.min(...vals);
+                    const maxV = Math.max(...vals);
+                    const r = maxV - minV || 1;
+                    const h = ((pt.value - minV) / r) * 0.7 + 0.12;
+                    return (
+                      <View key={i} style={[styles.chartBar, { height: 52 * h, backgroundColor: `${C.positive}aa` }]} />
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+          }
+          lockedContent={
+            <View>
+              {/* Time-range chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.rangeTabsScroll}
+                contentContainerStyle={styles.rangeTabsContent}
+              >
+                {TIME_RANGES.map(range => {
+                  const isSelected = selectedRange === range;
+                  return (
+                    <Pressable
+                      key={range}
+                      onPress={() => setSelectedRange(range)}
+                      style={[
+                        styles.rangeChip,
+                        isSelected && { backgroundColor: C.primary, borderColor: C.primary },
+                      ]}
+                    >
+                      <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
+                        {range}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Range-matched chart */}
+              <View style={[styles.card, { backgroundColor: C.card, marginBottom: 0 }]}>
+                <View style={styles.chartRangeLabel}>
+                  <Text style={styles.statLabel}>{selectedRange} Price History</Text>
+                  <Text style={[styles.statValue, { color: C.positive, fontSize: 12 }]}>
+                    ${chartData[chartData.length - 1]?.value.toLocaleString('en-AU') ?? '—'}
+                  </Text>
+                </View>
+                <View style={styles.chartWrapLg}>
+                  <View style={styles.chartLine}>
+                    {chartData.map((pt, i) => {
+                      const vals = chartData.map(p => p.value);
+                      const minV = Math.min(...vals);
+                      const maxV = Math.max(...vals);
+                      const r2 = maxV - minV || 1;
+                      const h = ((pt.value - minV) / r2) * 0.7 + 0.12;
+                      const isUp = chartData[chartData.length - 1].value >= chartData[0].value;
+                      return (
+                        <View
+                          key={i}
+                          style={[styles.chartBar, { height: 52 * h, backgroundColor: isUp ? `${C.positive}aa` : `${C.negative}aa` }]}
+                        />
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+            </View>
+          }
+        />
+
+        {/* RAW pricing card */}
+        <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12, marginTop: 12 }]}>
+          <View style={styles.rawHeader}>
+            <View style={styles.rawBadge}>
+              <Text style={styles.rawBadgeText}>RAW</Text>
+            </View>
+            <Text style={styles.sectionTitle}>Market Stats</Text>
+          </View>
+
+          {/* Always-visible: market estimate */}
+          <View style={styles.rawStatRow}>
+            <Text style={styles.rawStatLabel}>Market Estimate</Text>
+            <Text style={styles.rawStatValue}>
+              ${pricingPlus.rawStats.marketEstimate.toLocaleString('en-AU')} AUD
+            </Text>
+          </View>
+
+          {/* Pro-gated stats — preview shows labels with blurred values */}
+          <ProFeaturePreview
+            featureTitle="Advanced Raw Stats"
+            description="7-day, 30-day, 90-day averages, highs, lows and sales volume for serious collectors."
+            ctaLabel="Unlock with Pro"
+            previewContent={
+              <View style={styles.rawGatedPreview}>
+                {RAW_STAT_ROWS(pricingPlus).map(row => (
+                  <View key={row.label} style={styles.rawStatRow}>
+                    <Text style={styles.rawStatLabel}>{row.label}</Text>
+                    <Text style={styles.rawStatValue}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+            }
+            lockedContent={
+              <View>
+                {RAW_STAT_ROWS(pricingPlus).map(row => (
+                  <View key={row.label} style={styles.rawStatRow}>
+                    <Text style={styles.rawStatLabel}>{row.label}</Text>
+                    <Text style={styles.rawStatValue}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+            }
+          />
+        </View>
+
+        {/* GRADED pricing section */}
+        <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12 }]}>
+          <View style={styles.rawHeader}>
+            <View style={[styles.rawBadge, { backgroundColor: `${C.primary}22` }]}>
+              <Text style={[styles.rawBadgeText, { color: C.primary }]}>GRADED</Text>
+            </View>
+            <Text style={styles.sectionTitle}>Graded Prices</Text>
+          </View>
+
+          {hasAdvancedPricing ? (
+            <View>
+              {GRADERS.map(grader => (
+                <View key={grader.key} style={styles.gradedRow}>
+                  <Text style={styles.gradedLabel}>{grader.label}</Text>
+                  <Text style={styles.gradedValue}>
+                    ${pricingPlus.gradedPrices[grader.key].toLocaleString('en-AU')} AUD
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <>
+              {GRADERS.map(grader => (
+                <View key={grader.key} style={styles.gradedRow}>
+                  <Text style={styles.gradedLabel}>{grader.label}</Text>
+                  <View style={styles.gradedBlurred}>
+                    <Text style={styles.gradedBlurText}>••••</Text>
+                    <Feather name="lock" size={12} color={C.mutedForeground} />
+                  </View>
+                </View>
+              ))}
+              <Pressable
+                onPress={() => router.push('/pro-subscription')}
+                style={styles.gradedCta}
+              >
+                <Feather name="zap" size={13} color="#FFF" />
+                <Text style={styles.gradedCtaText}>Unlock graded pricing</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+
+        {/* Recent Sales — full section gated via ProFeaturePreview */}
+        <View style={{ marginBottom: 24 }}>
+          <ProFeaturePreview
+            featureTitle="Recent Sales"
+            description="See what this card actually sold for across eBay, TCGPlayer, Whatnot and more."
+            ctaLabel="Unlock Recent Sales"
+            previewContent={
+              <View style={[styles.card, { backgroundColor: C.card }]}>
+                <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
+                {pricingPlus.recentSales.slice(0, 2).map(sale => (
+                  <View key={sale.id} style={styles.saleRow}>
+                    <View style={styles.saleLeft}>
+                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
+                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
+                    </View>
+                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
+                  </View>
+                ))}
+              </View>
+            }
+            lockedContent={
+              <View style={[styles.card, { backgroundColor: C.card }]}>
+                <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
+                {pricingPlus.recentSales.map(sale => (
+                  <View key={sale.id} style={styles.saleRow}>
+                    <View style={styles.saleLeft}>
+                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
+                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
+                    </View>
+                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
+                  </View>
+                ))}
+              </View>
+            }
+          />
         </View>
 
         {/* Action buttons */}
@@ -1298,4 +1544,168 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
   },
   bannerText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+
+  // ── Pricing+ ──────────────────────────────────────────────────────────
+  pricingPlusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  pricingPlusTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+  },
+  proBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: C.primary,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  proBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFF',
+    letterSpacing: 0.5,
+  },
+  rangeTabsScroll: { marginBottom: 12 },
+  rangeTabsContent: { gap: 6, paddingRight: 4 },
+  rangeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.card,
+  },
+  rangeChipText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  chartRangeLabel: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  chartWrapLg: { height: 52, marginBottom: 8 },
+  rangeFreeNote: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  rawHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  rawBadge: {
+    backgroundColor: `${C.positive}22`,
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  rawBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: C.positive,
+    letterSpacing: 0.5,
+  },
+  rawStatRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.border,
+  },
+  rawStatLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
+  rawStatValue: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  rawGatedPreview: {},
+  gradedRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.border,
+  },
+  gradedLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
+  },
+  gradedValue: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+  },
+  gradedBlurred: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  gradedBlurText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    letterSpacing: 2,
+  },
+  gradedCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: C.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 12,
+  },
+  gradedCtaText: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFF',
+  },
+  saleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.border,
+  },
+  saleLeft: { gap: 2 },
+  saleGrade: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  saleMeta: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
+  salePrice: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: C.positive,
+  },
 });
