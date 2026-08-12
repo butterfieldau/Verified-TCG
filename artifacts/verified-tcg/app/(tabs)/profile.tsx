@@ -50,6 +50,11 @@ const MENU_ITEMS = [
   { icon: 'help-circle', label: 'Help & Support', route: null },
 ];
 
+const PRO_BENEFITS_ITEMS = [
+  { icon: 'gift', label: 'Verified Drops', description: 'Giveaways & exclusive drops', route: '/verified-drops' },
+  { icon: 'star', label: 'Pro Perks', description: 'Partner offers & discounts', route: '/pro-perks' },
+];
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
@@ -182,6 +187,47 @@ export default function ProfileScreen() {
             </Pressable>
           ))}
         </ScrollView>
+      </View>
+
+      {/* Pro Benefits */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Pro Benefits</Text>
+          {!isPro && (
+            <Pressable onPress={() => router.push('/pro-subscription' as any)}>
+              <Text style={styles.seeAll}>Upgrade</Text>
+            </Pressable>
+          )}
+        </View>
+        <View style={[styles.menuCard, { backgroundColor: C.card }]}>
+          {PRO_BENEFITS_ITEMS.map((item, idx) => (
+            <Pressable
+              key={item.label}
+              onPress={() => router.push(item.route as any)}
+              style={({ pressed }) => [
+                styles.menuRow,
+                idx < PRO_BENEFITS_ITEMS.length - 1 ? styles.menuDivider : null,
+                { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
+              ]}
+            >
+              <View style={[styles.menuIcon, { backgroundColor: `${C.primary}22` }]}>
+                <Feather name={item.icon as any} size={16} color={C.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.menuLabel, { color: C.foreground }]}>{item.label}</Text>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 }}>
+                  {item.description}
+                </Text>
+              </View>
+              {!isPro && (
+                <View style={[styles.menuBadge, { backgroundColor: C.primary }]}>
+                  <Text style={styles.menuBadgeText}>PRO</Text>
+                </View>
+              )}
+              <Feather name="chevron-right" size={16} color={C.mutedForeground} style={styles.menuChevron} />
+            </Pressable>
+          ))}
+        </View>
       </View>
 
       {/* Menu */}

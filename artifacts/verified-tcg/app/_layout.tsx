@@ -56,6 +56,8 @@ function RootLayoutNav() {
         name="pro-subscription"
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
       />
+      <Stack.Screen name="verified-drops" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="pro-perks" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }
