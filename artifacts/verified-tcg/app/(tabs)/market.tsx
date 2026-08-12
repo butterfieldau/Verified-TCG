@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -15,6 +16,7 @@ import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { GradeBadge } from '@/components/ui/Badge';
 import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from '@/services/market';
 import { MOCK_LISTINGS } from '@/services/listings';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
 import type { TCGId } from '@/types';
 
@@ -43,7 +45,9 @@ export default function MarketScreen() {
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [activeSort, setActiveSort] = useState('Popularity');
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
+  // adding insets.top on top of that creates a large black gap.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   const filteredMovers =
@@ -164,8 +168,10 @@ export default function MarketScreen() {
                 onPress={() => router.push(`/card/${item.card.id}`)}
               >
                 <Text style={styles.rank}>{idx + 1}</Text>
-                <View style={[styles.rankedThumb, { backgroundColor: item.card.gradientStart }]}>
-                  <Text style={styles.rankedInitial}>{item.card.name[0]}</Text>
+                <View style={[styles.rankedThumb, { backgroundColor: item.card.gradientStart, overflow: 'hidden' }]}>
+                  {item.card.imageUrl
+                    ? <Image source={{ uri: item.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    : <Text style={styles.rankedInitial}>{item.card.name[0]}</Text>}
                 </View>
                 <View style={styles.rankedInfo}>
                   <Text style={styles.rankedName}>{item.card.name}</Text>
@@ -191,8 +197,10 @@ export default function MarketScreen() {
                 style={[styles.saleRow, { backgroundColor: C.card }]}
                 onPress={() => router.push(`/card/${sale.card.id}`)}
               >
-                <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart }]}>
-                  <Text style={styles.saleInitial}>{sale.card.name[0]}</Text>
+                <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart, overflow: 'hidden' }]}>
+                  {sale.card.imageUrl
+                    ? <Image source={{ uri: sale.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    : <Text style={styles.saleInitial}>{sale.card.name[0]}</Text>}
                 </View>
                 <View style={styles.saleInfo}>
                   <Text style={styles.saleName}>{sale.card.name}</Text>
