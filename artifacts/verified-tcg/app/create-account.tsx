@@ -25,6 +25,7 @@ export default function CreateAccountScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -41,16 +42,38 @@ export default function CreateAccountScreen() {
     setError('');
     setLoading(true);
     try {
-      await signUp(email, password, name);
-      // Supabase may require email confirmation. Route through the normal
-      // sign-in flow in either case so AppContext hydrates the new session.
-      router.replace('/sign-in');
+      const session = await signUp(email, password, name);
+      if (session) {
+        // Auto-confirmed — go straight to onboarding
+        router.replace('/onboarding');
+      } else {
+        // Email confirmation required
+        setAwaitingConfirmation(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create your account.');
     } finally {
       setLoading(false);
     }
   };
+
+  if (awaitingConfirmation) {
+    return (
+      <View style={[styles.container, styles.confirmCenter, { paddingTop: topPad }]}>
+        <Feather name="mail" size={48} color={C.primary} />
+        <Text style={[styles.heading, { textAlign: 'center', marginTop: 24 }]}>Check your email</Text>
+        <Text style={[styles.sub, { textAlign: 'center' }]}>
+          We sent a confirmation link to{'\n'}<Text style={{ color: C.foreground }}>{email}</Text>
+          {'\n\n'}Open it to activate your account, then come back to sign in.
+        </Text>
+        <Pressable onPress={() => router.replace('/sign-in')} style={styles.signInRow}>
+          <Text style={styles.signInText}>
+            Already confirmed? <Text style={styles.signInLink}>Sign in</Text>
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -152,6 +175,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   legalLink: { color: C.foreground, fontFamily: 'Inter_500Medium' },
+  confirmCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 },
   signInRow: { alignItems: 'center' },
   signInText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   signInLink: { fontFamily: 'Inter_600SemiBold', color: C.foreground },

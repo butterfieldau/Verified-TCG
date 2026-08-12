@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
 import { restoreSession } from '@/services/auth';
@@ -28,7 +29,8 @@ export default function SplashScreen() {
     const timer = setTimeout(async () => {
       try {
         const session = await restoreSession();
-        if (session) {
+        const onboarded = await AsyncStorage.getItem('hasOnboarded');
+        if (session || onboarded === 'true') {
           router.replace('/(tabs)');
         } else {
           router.replace('/welcome');

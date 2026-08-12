@@ -231,7 +231,7 @@ When connecting real APIs, replace the return value inside each helper — **scr
 ## Prototype Limitations
 
 - **All data is mocked.** No real card database, prices, or user accounts exist.
-- **Auth requires configuration.** Supabase email/password auth is wired, but the public environment variables must be configured before sign-in works.
+- **Auth is pre-authenticated.** `isAuthenticated` starts as `true` in `AppContext`.
 - **Scanner is UI-only.** No real camera permission or card recognition.
 - **Sell/Trade flows are mock.** No real listings or trades are created.
 - **Notifications are static.** No real push notification infrastructure.

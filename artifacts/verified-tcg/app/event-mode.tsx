@@ -678,12 +678,11 @@ const styles = StyleSheet.create({
   // Quick actions (2×2 grid)
   qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
   qaBtn: {
-    flexGrow: 1, flexBasis: '45%',
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
   },
-  qaIconWrap: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
-  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, flex: 1 },
+  qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
 
   // Tab bar — flexGrow: 0 is required (mirrors statStrip/qaStrip pattern) to prevent iOS flex expansion
   tabBar: { borderBottomWidth: 1, height: 30, flexGrow: 0, flexShrink: 0 },

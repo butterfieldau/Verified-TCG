@@ -10,8 +10,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
+import { useApp } from '@/context/AppContext';
+import type { OAuthProvider } from '@/services/auth';
 
 const C = colors.dark;
 
@@ -49,9 +52,17 @@ function SocialButton({
 
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
+  const { signInWithProvider } = useApp();
 
-  const handleSocialAuth = () => {
-    router.push('/sign-in');
+  const handleOAuthAuth = async (provider: OAuthProvider) => {
+    try {
+      const signedIn = await signInWithProvider(provider);
+      if (!signedIn) return;
+      await AsyncStorage.setItem('hasOnboarded', 'true');
+      router.replace('/(tabs)');
+    } catch {
+      router.push('/sign-in');
+    }
   };
 
   const handleSignIn = () => {
@@ -93,19 +104,19 @@ export default function WelcomeScreen() {
           <SocialButton
             icon="globe"
             label="Continue with Google"
-            onPress={handleSocialAuth}
+            onPress={() => handleOAuthAuth('google')}
           />
           <SocialButton
             icon="smartphone"
             label="Continue with Apple"
             dark
-            onPress={handleSocialAuth}
+            onPress={() => handleOAuthAuth('apple')}
           />
           <SocialButton
             icon="twitter"
             label="Continue with X"
             dark
-            onPress={handleSocialAuth}
+            onPress={() => handleOAuthAuth('twitter')}
           />
         </View>
 
@@ -116,6 +127,17 @@ export default function WelcomeScreen() {
             <Text style={styles.signinLink}>Sign in </Text>
           </Text>
           <Feather name="arrow-right" size={13} color={C.foreground} />
+        </Pressable>
+
+        <Pressable
+          onPress={async () => {
+            await AsyncStorage.setItem('hasOnboarded', 'true');
+            router.replace('/(tabs)');
+          }}
+          style={styles.guestRow}
+        >
+          <Text style={styles.guestText}>Continue as guest</Text>
+          <Text style={styles.guestSubtext}>You can create an account later</Text>
         </Pressable>
 
         {/* Legal */}
@@ -221,6 +243,23 @@ const styles = StyleSheet.create({
   signinLink: {
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
+  },
+  guestRow: {
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 20,
+    paddingVertical: 10,
+  },
+  guestText: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  guestSubtext: {
+    marginTop: 5,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
   },
   legal: {
     fontSize: 11,

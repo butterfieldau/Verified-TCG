@@ -10,21 +10,23 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
+import type { OAuthProvider } from '@/services/auth';
 
 const C = colors.dark;
 
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
+  const { signIn, signInWithProvider } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { signIn } = useApp();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -38,9 +40,25 @@ export default function SignInScreen() {
     setLoading(true);
     try {
       await signIn(email, password);
+      await AsyncStorage.setItem('hasOnboarded', 'true');
       router.replace('/(tabs)');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to sign in.');
+      setError(err instanceof Error ? err.message : 'Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOAuthSignIn = async (provider: OAuthProvider) => {
+    setError('');
+    setLoading(true);
+    try {
+      const signedIn = await signInWithProvider(provider);
+      if (!signedIn) return;
+      await AsyncStorage.setItem('hasOnboarded', 'true');
+      router.replace('/(tabs)');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Social sign in failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -106,13 +124,13 @@ export default function SignInScreen() {
 
         <View style={styles.socialRow}>
           {[
-            { icon: 'globe', label: 'Google' },
-            { icon: 'smartphone', label: 'Apple' },
-            { icon: 'twitter', label: 'X' },
+            { icon: 'globe', label: 'Google', provider: 'google' as const },
+            { icon: 'smartphone', label: 'Apple', provider: 'apple' as const },
+            { icon: 'twitter', label: 'X', provider: 'twitter' as const },
           ].map(s => (
             <Pressable
               key={s.label}
-              onPress={() => setError(`${s.label} sign-in is not configured yet.`)}
+              onPress={() => handleOAuthSignIn(s.provider)}
               style={({ pressed }) => [styles.socialBtn, { opacity: pressed ? 0.7 : 1 }]}
             >
               <Feather name={s.icon as any} size={18} color={C.foreground} />
