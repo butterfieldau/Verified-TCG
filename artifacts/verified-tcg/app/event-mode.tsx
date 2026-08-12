@@ -688,8 +688,8 @@ const styles = StyleSheet.create({
   qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
 
-  // Tab bar — height must equal tab item height (paddingTop + text + paddingBottom + border) + own border
-  tabBar: { borderBottomWidth: 1, height: 29, flexShrink: 0 },
+  // Tab bar — flexGrow: 0 is required (mirrors statStrip/qaStrip pattern) to prevent iOS flex expansion
+  tabBar: { borderBottomWidth: 1, height: 30, flexGrow: 0, flexShrink: 0 },
   tabBarContent: { paddingHorizontal: 16 },
   tabItem: {
     paddingHorizontal: 14, paddingTop: 10, paddingBottom: 0,
