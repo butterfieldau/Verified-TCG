@@ -32,6 +32,12 @@ export interface CollectorProfile {
   joinedAt: string;
   isVerifiedSeller: boolean;
   isVerifiedAccount: boolean;
+  /** Subscription tier — used to display the PRO badge on public profiles. */
+  subscriptionTier?: 'free' | 'pro';
+  /** Profile theme id chosen in Pro Identity settings (applied to profile card background). */
+  profileTheme?: string;
+  /** Founding Member number, e.g. '#00381'. Present only for Pro collectors who claimed the badge. */
+  foundingMemberNumber?: string;
   tcgPreferences: string[];
   showCollectionValue: boolean;
   stats: {
@@ -59,6 +65,9 @@ const MOCK_COLLECTORS: Record<string, CollectorProfile> = {
     joinedAt: '2023-06-01',
     isVerifiedSeller: true,
     isVerifiedAccount: true,
+    subscriptionTier: 'pro',
+    profileTheme: 'carbon',
+    foundingMemberNumber: '#00142',
     tcgPreferences: ['pokemon', 'onepiece'],
     showCollectionValue: false,
     stats: {

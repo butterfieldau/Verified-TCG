@@ -77,6 +77,13 @@ export default function CollectionScreen() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
+            onPress={() => router.push('/collection-insights' as any)}
+            style={styles.iconBtn}
+            accessibilityLabel="Collection Insights"
+          >
+            <Feather name="bar-chart-2" size={18} color={C.foreground} />
+          </Pressable>
+          <Pressable
             onPress={() => setViewMode(v => (v === 'grid' ? 'list' : 'grid'))}
             style={styles.iconBtn}
           >

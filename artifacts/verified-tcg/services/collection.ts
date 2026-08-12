@@ -133,3 +133,158 @@ const MOCK_SET_PROGRESS: SetProgress[] = [
 export function getSetProgress(): SetProgress[] {
   return MOCK_SET_PROGRESS;
 }
+
+// ── Collection Insights (Pro analytics) ───────────────────────────────────────
+
+export interface InsightsChartPoint {
+  date: string;   // ISO date label e.g. '2025-01'
+  value: number;  // portfolio value in AUD at that point
+}
+
+export interface InsightsHighlight {
+  label: string;
+  cardName: string;
+  set: string;
+  valueDelta: number;   // absolute AUD change
+  deltaPercent: number; // percent change
+}
+
+export interface InsightsBreakdown {
+  label: string;
+  percent: number;  // 0–100
+  color: string;
+}
+
+export interface CollectionInsights {
+  portfolioValue: number;
+  totalInvested: number;
+  estimatedGain: number;
+  estimatedGainPercent: number;
+  cardCount: number;
+  currency: string;
+  chartData: Record<string, InsightsChartPoint[]>;
+  highlights: {
+    bestPerformer: InsightsHighlight;
+    biggestDecline: InsightsHighlight;
+    mostValuable: InsightsHighlight;
+    fastestGrowing: InsightsHighlight;
+  };
+  breakdown: {
+    rawVsGraded: InsightsBreakdown[];
+    tcgAllocation: InsightsBreakdown[];
+    setAllocation: InsightsBreakdown[];
+    gradingCompany: InsightsBreakdown[];
+  };
+  gains: {
+    realisedGains: number;
+    unrealisedGains: number;
+    avgPurchasePrice: number;
+  };
+}
+
+/** Weekly data points — suitable for 1M (4 pts) and 3M (13 pts) ranges. */
+function makeWeeklyPoints(base: number, weeks: number, trend: number, noise: number): InsightsChartPoint[] {
+  // Reference: 12 Aug 2026
+  const nowMs = new Date(2026, 7, 12).getTime();
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const points: InsightsChartPoint[] = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const d = new Date(nowMs - i * msPerWeek);
+    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const t = (weeks - 1 - i) / Math.max(weeks - 1, 1);
+    const v = base + trend * t + noise * Math.sin(i * 1.7 + 0.4) + noise * 0.4 * Math.sin(i * 3.1);
+    points.push({ date: label, value: Math.round(v) });
+  }
+  return points;
+}
+
+/** Monthly data points — suitable for 6M (6 pts), 1Y (12 pts), and ALL (30 pts) ranges. */
+function makeMonthlyPoints(base: number, months: number, trend: number, noise: number): InsightsChartPoint[] {
+  const now = new Date(2026, 7, 1); // Aug 2026
+  const points: InsightsChartPoint[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const t = (months - 1 - i) / Math.max(months - 1, 1);
+    const v = base + trend * t + noise * Math.sin(i * 1.7 + 0.4) + noise * 0.4 * Math.sin(i * 3.1);
+    points.push({ date: label, value: Math.round(v) });
+  }
+  return points;
+}
+
+export const MOCK_COLLECTION_INSIGHTS: CollectionInsights = {
+  portfolioValue: 24850,
+  totalInvested: 18420,
+  estimatedGain: 6430,
+  estimatedGainPercent: 34.9,
+  cardCount: 10,
+  currency: 'AUD',
+  chartData: {
+    '1M':  makeWeeklyPoints(23200,  4,  1650,  120),  //  4 weekly pts  → spans ~1 month
+    '3M':  makeWeeklyPoints(21800, 13,  3050,  280),  // 13 weekly pts  → spans ~3 months
+    '6M':  makeMonthlyPoints(20400,  6, 4450,  520),  //  6 monthly pts → spans 6 months
+    '1Y':  makeMonthlyPoints(16200, 12, 8650,  800),  // 12 monthly pts → spans 1 year
+    'ALL': makeMonthlyPoints(9800,  30, 15050, 1200), // 30 monthly pts → spans ~2.5 years
+  },
+  highlights: {
+    bestPerformer: {
+      label: 'Best Performer',
+      cardName: 'Umbreon EX (Alt Art)',
+      set: 'Paldean Fates',
+      valueDelta: 1820,
+      deltaPercent: 267,
+    },
+    biggestDecline: {
+      label: 'Biggest Decline',
+      cardName: 'Lugia V (Alt Art)',
+      set: 'Silver Tempest',
+      valueDelta: -420,
+      deltaPercent: -18,
+    },
+    mostValuable: {
+      label: 'Most Valuable',
+      cardName: 'Charizard EX (SAR)',
+      set: 'Obsidian Flames',
+      valueDelta: 980,
+      deltaPercent: 41,
+    },
+    fastestGrowing: {
+      label: 'Fastest Growing',
+      cardName: 'Rayquaza VMAX (Alt Art)',
+      set: 'Evolving Skies',
+      valueDelta: 640,
+      deltaPercent: 88,
+    },
+  },
+  breakdown: {
+    rawVsGraded: [
+      { label: 'Graded', percent: 78, color: '#6366F1' },
+      { label: 'Raw',    percent: 22, color: '#8B5CF6' },
+    ],
+    tcgAllocation: [
+      { label: 'Pokémon',   percent: 72, color: '#FACC15' },
+      { label: 'MTG',       percent: 14, color: '#F97316' },
+      { label: 'One Piece', percent: 14, color: '#22C55E' },
+    ],
+    setAllocation: [
+      { label: 'Paldean Fates',   percent: 38, color: '#6366F1' },
+      { label: 'Obsidian Flames', percent: 28, color: '#F97316' },
+      { label: 'Evolving Skies',  percent: 20, color: '#22C55E' },
+      { label: 'Other',           percent: 14, color: '#888888' },
+    ],
+    gradingCompany: [
+      { label: 'PSA', percent: 55, color: '#EF4444' },
+      { label: 'BGS', percent: 28, color: '#FACC15' },
+      { label: 'CGC', percent: 17, color: '#3B82F6' },
+    ],
+  },
+  gains: {
+    realisedGains: 1240,
+    unrealisedGains: 5190,
+    avgPurchasePrice: 1842,
+  },
+};
+
+export function getCollectionInsights(): CollectionInsights {
+  return MOCK_COLLECTION_INSIGHTS;
+}

@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
   WatchlistItem,
+  PriceAlertType,
   PortfolioRange,
   TCGId,
   CollectionFilters,
@@ -36,7 +37,7 @@ import {
 } from '@/services/pricePersistence';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
-import { FREE_SCAN_LIMIT } from '@/services/subscription';
+import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 
 interface AppState {
@@ -53,11 +54,24 @@ interface AppState {
   isPriceRefreshing: boolean;
   notifications: Notification[];
   unreadNotificationCount: number;
+  /** Number of watchlist items with priceAlertEnabled === true. */
+  activeAlertCount: number;
   // ── Subscription ──────────────────────────────────────────────────────────
   subscriptionTier: SubscriptionTier;
   scansUsed: number;
   scanLimit: number;
   scanResetDate: Date;
+  // ── Pro Identity ──────────────────────────────────────────────────────────
+  /** ID of the currently selected app icon (see ICON_OPTIONS in pro-identity.tsx). */
+  selectedIcon: string;
+  /** ID of the currently selected profile theme (see PROFILE_THEMES in pro-identity.tsx). */
+  profileTheme: string;
+  /**
+   * Whether the Pro user has claimed their Founding Member badge this session.
+   * Mock state — in production this would be a server-side boolean with a
+   * unique member number assigned from a counter capped at FOUNDING_MEMBER_LIMIT.
+   */
+  foundingMemberClaimed: boolean;
 }
 
 interface AppActions {
@@ -67,7 +81,7 @@ interface AppActions {
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
-  updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>) => void;
+  updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>) => void;
   setPortfolioRange: (range: PortfolioRange) => void;
   setCollectionFilters: (filters: Partial<CollectionFilters>) => void;
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
@@ -78,6 +92,11 @@ interface AppActions {
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
+  // ── Pro Identity ──────────────────────────────────────────────────────────
+  setSelectedIcon: (icon: string) => void;
+  setProfileTheme: (theme: string) => void;
+  /** Toggle the mock Founding Member claim. Only callable when tier === 'pro'. */
+  claimFoundingMember: () => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -95,6 +114,7 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+const SCAN_STATE_STORAGE_KEY = '@verified_tcg/scan_state';
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -153,9 +173,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
 
+  // ── Pro Identity state ─────────────────────────────────────────────────────
+  const [selectedIcon, setSelectedIcon] = useState<string>('original');
+  const [profileTheme, setProfileTheme] = useState<string>('default');
+  /**
+   * Mock Founding Member claim — stored at app-session level in context so it
+   * survives navigation but resets on full app restart (no backend yet).
+   */
+  const [foundingMemberClaimed, setFoundingMemberClaimed] = useState<boolean>(false);
+
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
   const [scansUsed, setScansUsed] = useState(0);
+  const [scansLoaded, setScansLoaded] = useState(false);
   const scanLimit = FREE_SCAN_LIMIT;
 
   /**
@@ -193,12 +223,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanResetDate]);
 
-  // Load persisted watchlist and prices from AsyncStorage on mount
+  // Load persisted watchlist, prices, and scan state from AsyncStorage on mount
   useEffect(() => {
     Promise.all([
       AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
       loadPersistedPrices(),
-    ]).then(async ([storedWatchlist, persisted]) => {
+      AsyncStorage.getItem(SCAN_STATE_STORAGE_KEY),
+    ]).then(async ([storedWatchlist, persisted, storedScanState]) => {
       // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
         try {
@@ -250,7 +281,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (persisted.lastUpdated !== null) {
         setPricesLastUpdated(persisted.lastUpdated);
       }
-    }).finally(() => setWatchlistLoaded(true));
+
+      // Restore scan state — keyed by reset date so the monthly rollover in
+      // the quota-period guard (above) automatically resets the count.
+      if (storedScanState !== null) {
+        try {
+          const { scansUsed: savedScans, scanResetDate: savedResetDateISO } = JSON.parse(storedScanState) as {
+            scansUsed: number;
+            scanResetDate: string;
+          };
+          const savedResetDate = new Date(savedResetDateISO);
+          if (!isNaN(savedResetDate.getTime())) {
+            // Restore both values; the existing quota-period guard effect will
+            // detect if savedResetDate is in the past and advance/reset as needed.
+            setScanResetDate(savedResetDate);
+            setScansUsed(savedScans);
+          }
+        } catch {
+          // Corrupted JSON — fall back to defaults silently (0 scans, next month)
+        }
+      }
+    }).finally(() => {
+      setWatchlistLoaded(true);
+      setScansLoaded(true);
+    });
   }, []);
 
   // Persist watchlist to AsyncStorage on every change (after initial load).
@@ -260,6 +314,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const payload: WatchlistPayload = { version: WATCHLIST_SCHEMA_VERSION, items: watchlist };
     AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
   }, [watchlist, watchlistLoaded]);
+
+  // Persist scan state to AsyncStorage on every change (after initial load).
+  // Both values must be written together so the loader can cross-check them.
+  useEffect(() => {
+    if (!scansLoaded) return;
+    AsyncStorage.setItem(
+      SCAN_STATE_STORAGE_KEY,
+      JSON.stringify({ scansUsed, scanResetDate: scanResetDate.toISOString() }),
+    ).catch(() => {});
+  }, [scansUsed, scanResetDate, scansLoaded]);
 
   /**
    * Server sync on initial load.
@@ -338,13 +402,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateWatchlistItem = useCallback((
     id: string,
-    patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
+    patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>,
   ) => {
+    // Enforce FREE_ALERT_LIMIT at the state layer so no caller can bypass the cap.
+    // Use watchlistRef (always current) so the cap decision and server-mirror
+    // decision are made together — either both happen or neither does.
+    if (patch.priceAlertEnabled === true && subscriptionTier === 'free') {
+      const current = watchlistRef.current;
+      const item = current.find(i => i.id === id);
+      if (item && !item.priceAlertEnabled) {
+        const activeCount = current.filter(
+          i => i.priceAlertEnabled && !!i.targetPrice,
+        ).length;
+        if (activeCount >= FREE_ALERT_LIMIT) {
+          return; // cap reached — drop both local and server update
+        }
+      }
+    }
     // Optimistic local update
     setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
-    // Background mirror to server
+    // Background mirror to server (only reached if the cap check passed)
     updateWishlistItemOnServer(id, patch).catch(() => {});
-  }, []);
+  }, [subscriptionTier]);
 
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
     setCollectionFiltersState(prev => ({ ...prev, ...filters }));
@@ -366,6 +445,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setSubscriptionTier = useCallback((tier: SubscriptionTier) => {
     setSubscriptionTierState(tier);
+    // On downgrade to Free, reset any Pro-gated identity selections so Free
+    // users cannot continue benefiting from paid customisations they no longer
+    // hold an entitlement for.
+    if (tier === 'free') {
+      setSelectedIcon('original');
+      setProfileTheme('default');
+      setFoundingMemberClaimed(false);
+    }
   }, []);
 
   const incrementScanCount = useCallback(() => {
@@ -428,7 +515,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // so we don't create duplicates on every re-render.
   const alertedItemIds = useRef<Set<string>>(new Set());
 
-  // Generate in-app price-alert notifications when an item is alert-enabled and at/below target
+  // Generate in-app price-alert notifications when an alert condition is met.
+  // Supports two alert types:
+  //   'price-drop' (default): fires when price <= targetPrice
+  //   'price-rise': fires when price >= targetPrice
   useEffect(() => {
     if (!watchlistLoaded) return;
 
@@ -438,23 +528,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       let updated = [...prev];
 
       watchlist.forEach(item => {
-        const atTarget =
-          item.priceAlertEnabled &&
-          !!item.targetPrice &&
-          item.card.price.raw <= item.targetPrice;
-
         const notifId = `price-alert-wl-${item.id}`;
 
-        if (atTarget && !alertedItemIds.current.has(item.id)) {
-          // Price is at/below target and alert hasn't fired yet — generate notification
+        // Handle disabled or target-less items first — cleanup must run before returning
+        if (!item.priceAlertEnabled) {
+          // Alert was disabled — remove any generated notification and reset tracker
+          alertedItemIds.current.delete(item.id);
+          updated = updated.filter(n => n.id !== notifId);
+          return;
+        }
+        if (!item.targetPrice) return; // no target → no alert to evaluate
+
+        const price = item.card.price.raw;
+        const target = item.targetPrice;
+        const isPriceRise = item.alertType === 'price-rise';
+
+        // Condition met: price has dropped to/below target (drop) or risen to/above (rise)
+        const conditionMet = isPriceRise ? price >= target : price <= target;
+
+        if (conditionMet && !alertedItemIds.current.has(item.id)) {
+          // Condition met and alert hasn't fired yet — generate notification
           const alreadyExists = updated.some(n => n.id === notifId);
           if (!alreadyExists) {
+            const alertLabel = isPriceRise ? 'risen to or above' : 'dropped to or below';
             updated = [
               {
                 id: notifId,
                 type: 'price_alert',
                 title: `Price Alert — ${item.card.name}`,
-                body: `${item.card.name} (${item.card.setName}) is now $${item.card.price.raw.toLocaleString('en-AU')} AUD — at or below your target of $${item.targetPrice!.toLocaleString('en-AU')} AUD.`,
+                body: `${item.card.name} (${item.card.setName}) is now $${price.toLocaleString('en-AU')} AUD — ${alertLabel} your target of $${target.toLocaleString('en-AU')} AUD.`,
                 isRead: false,
                 time: timeLabel,
                 actionLabel: 'View Card',
@@ -464,12 +566,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ];
           }
           alertedItemIds.current.add(item.id);
-        } else if (!item.priceAlertEnabled) {
-          // Alert was disabled — remove the generated notification and reset tracker
-          alertedItemIds.current.delete(item.id);
-          updated = updated.filter(n => n.id !== notifId);
-        } else if (!atTarget) {
-          // Price has risen above target — reset tracker so alert can fire again on next drop
+        } else if (!conditionMet) {
+          // Condition no longer met — reset tracker so alert fires again when condition returns
           alertedItemIds.current.delete(item.id);
         }
       });
@@ -481,6 +579,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const unreadNotificationCount = useMemo(
     () => notifications.filter(n => !n.isRead).length,
     [notifications],
+  );
+
+  const activeAlertCount = useMemo(
+    () => watchlist.filter(w => w.priceAlertEnabled && !!w.targetPrice).length,
+    [watchlist],
   );
 
   const portfolio = useMemo<PortfolioSummary>(() => {
@@ -517,7 +620,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
-        notifications, unreadNotificationCount,
+        notifications, unreadNotificationCount, activeAlertCount,
         signIn, signOut,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
@@ -526,6 +629,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         markNotificationRead, markAllNotificationsRead,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
         setSubscriptionTier, incrementScanCount,
+        selectedIcon, setSelectedIcon,
+        profileTheme, setProfileTheme,
+        foundingMemberClaimed,
+        claimFoundingMember: () => setFoundingMemberClaimed(true),
       }}
     >
       {children}

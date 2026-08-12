@@ -43,6 +43,7 @@ function RootLayoutNav() {
       />
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="portfolio" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="collection-insights" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="verification-info" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="sell" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="trade" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
@@ -50,10 +51,13 @@ function RootLayoutNav() {
       <Stack.Screen name="wishlist" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collector/[username]" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="pro-identity" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen
         name="pro-subscription"
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
       />
+      <Stack.Screen name="verified-drops" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="pro-perks" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }

@@ -14,6 +14,7 @@ import colors from '@/constants/colors';
 import { TCG_LIST } from '@/types';
 import { getCollectionMatch } from '@/services/matching';
 import { getCollectorProfile } from '@/services/collectors';
+import { ProBadge } from '@/components/ui/ProBadge';
 
 const C = colors.dark;
 
@@ -41,6 +42,16 @@ export default function CollectorProfileScreen() {
 
   const joinYear = new Date(collector.joinedAt).getFullYear();
 
+  // Map profileTheme → card background; mirrors the same map in profile.tsx and pro-identity.tsx.
+  const THEME_CARD_COLORS: Record<string, string> = {
+    default:         C.card,
+    carbon:          '#1C1C1E',
+    deep_red:        '#1A0000',
+    collector_black: '#000000',
+    chrome:          '#222222',
+  };
+  const profileCardBg = THEME_CARD_COLORS[collector.profileTheme ?? 'default'] ?? C.card;
+
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: C.background }]}
@@ -58,15 +69,28 @@ export default function CollectorProfileScreen() {
         </Pressable>
       </View>
 
-      {/* Profile card */}
-      <View style={[styles.profileCard, { backgroundColor: C.card }]}>
+      {/* Profile card — background tinted by the collector's chosen Pro profile theme */}
+      <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
         <View style={styles.avatarRow}>
           <View style={[styles.avatar, { backgroundColor: collector.avatarColor }]}>
             <Text style={styles.avatarText}>{collector.initials}</Text>
           </View>
           <View style={styles.nameBlock}>
-            <Text style={styles.displayName}>{collector.displayName}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+              <Text style={styles.displayName}>{collector.displayName}</Text>
+              {/* PRO badge — subscription tier indicator, distinct from Verified Account/Seller identity badges */}
+              {collector.subscriptionTier === 'pro' && <ProBadge />}
+            </View>
             <Text style={styles.username}>@{collector.username}</Text>
+            {/* Founding Member number — shown when collector has claimed badge */}
+            {collector.foundingMemberNumber && (
+              <View style={styles.foundingRow}>
+                <Feather name="award" size={11} color="#D4AF37" />
+                <Text style={styles.foundingText}>
+                  Founding Member {collector.foundingMemberNumber}
+                </Text>
+              </View>
+            )}
             <View style={styles.locationRow}>
               <Feather name="map-pin" size={11} color={C.mutedForeground} />
               <Text style={styles.location}>{collector.location}</Text>
@@ -388,6 +412,8 @@ const styles = StyleSheet.create({
   username: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   location: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  foundingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  foundingText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#D4AF37' },
   badgesRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 },
   badge: {
     flexDirection: 'row',

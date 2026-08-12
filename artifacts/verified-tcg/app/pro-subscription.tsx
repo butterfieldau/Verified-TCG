@@ -158,6 +158,36 @@ export default function ProSubscriptionScreen() {
           </Text>
         </View>
 
+        {/* ── Pro Benefits quick links ── */}
+        <View style={styles.proBenefitsSection}>
+          <Text style={styles.proBenefitsHeading}>What's Included</Text>
+          <Text style={styles.proBenefitsSub}>
+            Explore your Pro membership benefits
+          </Text>
+          <View style={styles.proBenefitsRow}>
+            <Pressable
+              style={({ pressed }) => [styles.proBenefitCard, pressed && { opacity: 0.8 }]}
+              onPress={() => router.push('/verified-drops')}
+            >
+              <View style={styles.proBenefitIcon}>
+                <Feather name="gift" size={20} color={C.primaryForeground} />
+              </View>
+              <Text style={styles.proBenefitLabel}>Verified{'\n'}Drops</Text>
+              <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.proBenefitCard, pressed && { opacity: 0.8 }]}
+              onPress={() => router.push('/pro-perks')}
+            >
+              <View style={styles.proBenefitIcon}>
+                <Feather name="star" size={20} color={C.primaryForeground} />
+              </View>
+              <Text style={styles.proBenefitLabel}>Pro{'\n'}Perks</Text>
+              <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+            </Pressable>
+          </View>
+        </View>
+
         {/* ── Free vs Pro comparison ── */}
         <View style={styles.comparisonSection}>
           <Text style={styles.comparisonHeading}>Free vs Pro</Text>
@@ -590,5 +620,53 @@ const styles = StyleSheet.create({
   },
   cellStringPro: {
     color: C.primary,
+  },
+
+  // Pro Benefits quick links
+  proBenefitsSection: {
+    marginBottom: 32,
+  },
+  proBenefitsHeading: {
+    color: C.foreground,
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginBottom: 4,
+  },
+  proBenefitsSub: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  proBenefitsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  proBenefitCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  proBenefitIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  proBenefitLabel: {
+    flex: 1,
+    color: C.foreground,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 17,
   },
 });
