@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
+import { signUp } from '@/services/auth';
 
 const C = colors.dark;
 
@@ -39,8 +40,16 @@ export default function CreateAccountScreen() {
     }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
-    router.push('/onboarding');
+    try {
+      await signUp(email, password, name);
+      // Supabase may require email confirmation. Route through the normal
+      // sign-in flow in either case so AppContext hydrates the new session.
+      router.replace('/sign-in');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create your account.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

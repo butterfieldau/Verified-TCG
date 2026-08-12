@@ -1,8 +1,12 @@
 modules = ["nodejs-24", "python-base-3.13"]
 
+run = "pnpm run dev"
+
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+build = "pnpm --filter @workspace/api-server run build"
+run = "pnpm run start"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

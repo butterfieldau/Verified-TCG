@@ -50,8 +50,8 @@ function SocialButton({
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
 
-  const handleMockAuth = () => {
-    router.push('/onboarding');
+  const handleSocialAuth = () => {
+    router.push('/sign-in');
   };
 
   const handleSignIn = () => {
@@ -93,19 +93,19 @@ export default function WelcomeScreen() {
           <SocialButton
             icon="globe"
             label="Continue with Google"
-            onPress={handleMockAuth}
+            onPress={handleSocialAuth}
           />
           <SocialButton
             icon="smartphone"
             label="Continue with Apple"
             dark
-            onPress={handleMockAuth}
+            onPress={handleSocialAuth}
           />
           <SocialButton
             icon="twitter"
             label="Continue with X"
             dark
-            onPress={handleMockAuth}
+            onPress={handleSocialAuth}
           />
         </View>
 
