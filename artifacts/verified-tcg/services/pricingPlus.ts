@@ -14,13 +14,12 @@ export const TIME_RANGES: TimeRange[] = ['30D', '1M', '3M', '6M', '1Y', '3Y', '5
 
 /** Graders shown in the GRADED section (configurable array — not a switch) */
 export const GRADERS = [
-  { key: 'psa8',  label: 'PSA 8' },
-  { key: 'psa9',  label: 'PSA 9' },
   { key: 'psa10', label: 'PSA 10' },
-  { key: 'tag10', label: 'TAG 10' },
+  { key: 'psa9',  label: 'PSA 9'  },
+  { key: 'psa8',  label: 'PSA 8'  },
   { key: 'cgc10', label: 'CGC 10' },
   { key: 'bgs95', label: 'BGS 9.5' },
-  { key: 'bgs10', label: 'BGS 10' },
+  { key: 'bgs10', label: 'BGS 10'  },
 ] as const;
 
 export type GraderKey = (typeof GRADERS)[number]['key'];
@@ -142,7 +141,6 @@ export function getMockPricingPlus(cardId: string, basePrice: number): PricingPl
       psa8:  Math.round(b * 1.4),
       psa9:  Math.round(b * 2.1),
       psa10: Math.round(b * 3.6),
-      tag10: Math.round(b * 3.9),
       cgc10: Math.round(b * 3.4),
       bgs95: Math.round(b * 3.0),
       bgs10: Math.round(b * 4.2),
