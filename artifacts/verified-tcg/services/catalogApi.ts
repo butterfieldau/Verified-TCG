@@ -107,7 +107,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${cardNum}.png`
     : undefined;
   const imageUrl = card.image_url
-    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined)
+    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/1000x1000/${card.tcgplayerId}.jpg` : undefined)
     ?? pokemonCdnFallback;
 
   return {

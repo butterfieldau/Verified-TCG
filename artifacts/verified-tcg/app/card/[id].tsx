@@ -419,7 +419,7 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         colors={[gradientStart, gradientEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
       />
 
       {/* Shimmer highlight over gradient — visible while loading or on error */}
@@ -427,7 +427,7 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         colors={['transparent', 'rgba(255,255,255,0.14)', 'transparent']}
         start={{ x: 0.3, y: 0 }}
         end={{ x: 0.7, y: 1 }}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
       />
 
       {showImage ? (
@@ -524,7 +524,6 @@ const imgStyles = StyleSheet.create({
     width: CARD_W,
     height: CARD_H,
     borderRadius: 18,
-    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -536,12 +535,15 @@ const imgStyles = StyleSheet.create({
   imageWrap: {
     width: CARD_W,
     height: CARD_H,
+    borderRadius: 18,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   image: {
     width: CARD_W,
     height: CARD_H,
+    borderRadius: 18,
   },
   spinner: {
     ...StyleSheet.absoluteFillObject,
