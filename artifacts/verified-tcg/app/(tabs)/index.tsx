@@ -19,6 +19,7 @@ import { Logo } from '@/components/Logo';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { useApp } from '@/context/AppContext';
 import { getMarketMovers, getTrendingCards, getRecentlyAddedCards } from '@/services/market';
+import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
@@ -368,7 +369,7 @@ export default function HomeScreen() {
                   <View style={styles.tradeMatchSide}>
                     <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color, overflow: 'hidden' }]}>
                       {match.youWant.imageUrl
-                        ? <Image source={{ uri: match.youWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        ? <Image source={{ uri: resizeTcgPlayerUrl(match.youWant.imageUrl, 437) ?? match.youWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                         : <Text style={styles.tradeMatchInitial}>{match.youWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>YOU WANT</Text>
@@ -383,7 +384,7 @@ export default function HomeScreen() {
                   <View style={styles.tradeMatchSide}>
                     <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color, overflow: 'hidden' }]}>
                       {match.theyWant.imageUrl
-                        ? <Image source={{ uri: match.theyWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        ? <Image source={{ uri: resizeTcgPlayerUrl(match.theyWant.imageUrl, 437) ?? match.theyWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                         : <Text style={styles.tradeMatchInitial}>{match.theyWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>THEY WANT</Text>

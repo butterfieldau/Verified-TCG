@@ -16,6 +16,7 @@ import { Chip } from '@/components/ui/Chip';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { GradeBadge } from '@/components/ui/Badge';
 import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from '@/services/market';
+import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import { MOCK_LISTINGS } from '@/services/listings';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
@@ -183,7 +184,7 @@ export default function MarketScreen() {
                 <Text style={styles.rank}>{idx + 1}</Text>
                 <View style={[styles.rankedThumb, { backgroundColor: item.card.gradientStart, overflow: 'hidden' }]}>
                   {item.card.imageUrl
-                    ? <Image source={{ uri: item.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    ? <Image source={{ uri: resizeTcgPlayerUrl(item.card.imageUrl, 437) ?? item.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                     : <Text style={styles.rankedInitial}>{item.card.name[0]}</Text>}
                 </View>
                 <View style={styles.rankedInfo}>
@@ -212,7 +213,7 @@ export default function MarketScreen() {
               >
                 <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart, overflow: 'hidden' }]}>
                   {sale.card.imageUrl
-                    ? <Image source={{ uri: sale.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    ? <Image source={{ uri: resizeTcgPlayerUrl(sale.card.imageUrl, 437) ?? sale.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                     : <Text style={styles.saleInitial}>{sale.card.name[0]}</Text>}
                 </View>
                 <View style={styles.saleInfo}>

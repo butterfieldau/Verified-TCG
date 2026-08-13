@@ -42,6 +42,29 @@ interface CatalogResponse {
   cached?: boolean;
 }
 
+/**
+ * Build a TCGPlayer CDN image URL for a given product ID and bounding-box size.
+ * Use size=1000 for the detail/full-screen view and size=437 for thumbnails so
+ * list screens don't fetch unnecessarily large images.
+ */
+export function buildTcgPlayerUrl(tcgplayerId: string, size: number = 1000): string {
+  return `https://product-images.tcgplayer.com/fit-in/${size}x${size}/${tcgplayerId}.jpg`;
+}
+
+/**
+ * Rewrite an existing TCGPlayer CDN URL to a different fit-in size.
+ * Non-TCGPlayer URLs (pokemontcg.io, etc.) are returned unchanged — only the
+ * TCGPlayer fit-in path segment is patched.
+ * Returns undefined when the input is undefined.
+ */
+export function resizeTcgPlayerUrl(url: string | undefined, size: number): string | undefined {
+  if (!url) return undefined;
+  return url.replace(
+    /product-images\.tcgplayer\.com\/fit-in\/\d+x\d+\//,
+    `product-images.tcgplayer.com/fit-in/${size}x${size}/`,
+  );
+}
+
 /** Map a JustTCG rarity string to the app's CardRarity union. */
 function mapRarity(rarity: string | undefined): CardRarity {
   if (!rarity) return 'rare';
@@ -107,7 +130,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${cardNum}.png`
     : undefined;
   const imageUrl = card.image_url
-    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/1000x1000/${card.tcgplayerId}.jpg` : undefined)
+    ?? (card.tcgplayerId ? buildTcgPlayerUrl(card.tcgplayerId) : undefined)
     ?? pokemonCdnFallback;
 
   return {

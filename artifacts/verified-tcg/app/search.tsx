@@ -19,7 +19,7 @@ import type { MarketMover } from '@/types';
 import { searchCards, CARD_SETS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
-import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
+import { catalogCardToAppCard, searchCatalog, resizeTcgPlayerUrl, type CatalogCard } from '@/services/catalogApi';
 import { proxyImageUrl } from '@/services/imageProxy';
 
 const C = colors.dark;
@@ -35,7 +35,7 @@ const TRENDING_SEARCHES = ['Umbreon ex', 'Pikachu', 'Charizard', 'Luffy', 'Black
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
-  const imgUri = proxyImageUrl(card.imageUrl);
+  const imgUri = proxyImageUrl(resizeTcgPlayerUrl(card.imageUrl, 437) ?? card.imageUrl);
   const showImage = !!imgUri && !imgError;
 
   return (

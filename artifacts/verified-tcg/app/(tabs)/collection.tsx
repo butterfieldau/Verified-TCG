@@ -21,6 +21,7 @@ import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId } from '@/types';
 import { getSealedProducts, getSetProgress } from '@/services/collection';
+import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 
 const C = colors.dark;
 
@@ -219,7 +220,7 @@ export default function CollectionScreen() {
                   {/* Card artwork on top of gradient */}
                   {!!item.card.imageUrl && (
                     <Image
-                      source={{ uri: item.card.imageUrl }}
+                      source={{ uri: resizeTcgPlayerUrl(item.card.imageUrl, 437) ?? item.card.imageUrl }}
                       style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
                       resizeMode="cover"
                     />

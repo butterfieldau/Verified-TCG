@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GradeBadge } from './Badge';
+import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import type { Card, CollectionItem } from '@/types';
 
 interface CardThumbnailProps {
@@ -27,7 +28,11 @@ export function CardThumbnail({
     ? (card.price.psa10 ?? card.price.raw)
     : card.price.raw;
 
-  const showImage = !!card.imageUrl && !imageError;
+  // Thumbnails are at most 140 px wide — request 437x437 from the CDN instead
+  // of the full 1000x1000 used on the detail screen.  resizeTcgPlayerUrl only
+  // patches TCGPlayer URLs; pokemontcg.io and other hosts are returned as-is.
+  const thumbnailUrl = resizeTcgPlayerUrl(card.imageUrl, 437) ?? card.imageUrl;
+  const showImage = !!thumbnailUrl && !imageError;
 
   return (
     <View style={[styles.card, { width, height }]}>
@@ -50,7 +55,7 @@ export function CardThumbnail({
       {/* Real card artwork */}
       {showImage && (
         <Image
-          source={{ uri: card.imageUrl }}
+          source={{ uri: thumbnailUrl }}
           style={[StyleSheet.absoluteFill, styles.cardImage]}
           resizeMode="cover"
           onLoad={() => setImageLoaded(true)}

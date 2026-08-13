@@ -28,11 +28,21 @@ function isPokemonGame(game: string): boolean {
   return game.toLowerCase().includes("pokemon") || game.toLowerCase().includes("pokémon");
 }
 
+/**
+ * Build a TCGPlayer CDN image URL for a given product ID and pixel size.
+ * The size parameter controls the fit-in bounding box (e.g. 437 for thumbnails,
+ * 1000 for the detail view).  Callers pick the size appropriate for their
+ * context so thumbnail lists don't wastefully fetch full-resolution images.
+ */
+function tcgPlayerUrl(tcgplayerId: string, size: number = 1000): string {
+  return `https://product-images.tcgplayer.com/fit-in/${size}x${size}/${tcgplayerId}.jpg`;
+}
+
 /** Apply image enrichment to a single card record (same priority as list endpoint). */
 function enrichCard(card: Record<string, unknown>): Record<string, unknown> {
   if (card.image_url) return card;
   if (card.tcgplayerId) {
-    return { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/1000x1000/${String(card.tcgplayerId)}.jpg` };
+    return { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
   }
   if (isPokemonGame(String(card.game ?? ""))) {
     const derived = pokemonImageUrl(card.set as string | undefined, card.number as string | undefined);
@@ -136,7 +146,7 @@ router.get("/catalog/cards", async (req, res) => {
       body.data = body.data.map((card) => {
         if (card.image_url) return card; // JustTCG already provided an image
         if (card.tcgplayerId) {
-          return { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/1000x1000/${String(card.tcgplayerId)}.jpg` };
+          return { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
         }
         if (isPokemonGame(String(card.game ?? ""))) {
           const derived = pokemonImageUrl(
@@ -472,7 +482,7 @@ router.get("/catalog/cards/:id", async (req, res) => {
     let card = match;
     if (!card.image_url) {
       if (card.tcgplayerId) {
-        card = { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/1000x1000/${String(card.tcgplayerId)}.jpg` };
+        card = { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
       } else if (isPokemonGame(String(card.game ?? ""))) {
         const derived = pokemonImageUrl(
           card.set as string | undefined,
