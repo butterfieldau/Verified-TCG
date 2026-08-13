@@ -159,8 +159,20 @@ router.get("/catalog/cards/:id", async (req, res) => {
       dragonball: "Dragon Ball Super",
     };
     const game = GAME_MAP[gameWord];
-    // Use all segments after the game word as the search query
-    const searchQuery = parts.slice(1).join(" ").trim();
+
+    // Build a clean search query by stripping trailing rarity/modifier words.
+    // We intentionally keep set-code segments (e.g. "sv3pt5") because removing
+    // them reliably would require knowing all set codes; JustTCG search ignores
+    // unknown terms so they don't hurt results, while card-name terms help.
+    const RARITY_TAIL = new Set([
+      "common", "uncommon", "rare", "holo", "ultra", "secret", "special",
+      "illustration", "hyper", "rainbow", "full", "art",
+    ]);
+    const nameParts = [...parts.slice(1)]; // remove game prefix
+    while (nameParts.length > 0 && RARITY_TAIL.has(nameParts[nameParts.length - 1]!)) {
+      nameParts.pop();
+    }
+    const searchQuery = nameParts.join(" ").trim();
     if (!searchQuery) return res.status(404).json({ error: "Card not found" });
 
     const params = new URLSearchParams({

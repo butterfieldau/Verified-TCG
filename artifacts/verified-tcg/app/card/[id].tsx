@@ -603,7 +603,7 @@ const imgStyles = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
-  const { id, cardIds } = useLocalSearchParams<{ id: string; cardIds?: string }>();
+  const { id, cardIds, catalogJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -615,8 +615,19 @@ export default function CardDetailScreen() {
   const [selectedRange, setSelectedRange] = useState<TimeRange>('30D');
 
   // Catalog API fetch state — populated when the card ID isn't in the local mock store
-  const [catalogCard, setCatalogCard] = useState<Card | null>(null);
-  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? ''));
+  // When navigating from search results, catalogJson carries the full CatalogCard
+  // as a serialised navigation param — parse it immediately so the detail page
+  // renders without any loading state or second API call.
+  const [catalogCard, setCatalogCard] = useState<Card | null>(() => {
+    if (!catalogJson) return null;
+    try {
+      const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
+      return catalogCardToAppCard(parsed);
+    } catch {
+      return null;
+    }
+  });
+  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? '') && !catalogJson);
   const [catalogError, setCatalogError] = useState(false);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
@@ -643,9 +654,11 @@ export default function CardDetailScreen() {
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
   }
 
-  // Fetch card from live catalog when it isn't in the local mock store
+  // Fetch card from live catalog when it isn't in the local mock store and
+  // wasn't passed through navigation params (e.g. opened from collection/wishlist).
   useEffect(() => {
     if (getCardById(id ?? '')) return; // found locally — no fetch needed
+    if (catalogJson) return;           // already initialised from navigation param
     if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
     const controller = new AbortController();
     setCatalogLoading(true);
@@ -659,7 +672,7 @@ export default function CardDetailScreen() {
       })
       .finally(() => setCatalogLoading(false));
     return () => controller.abort();
-  }, [id]);
+  }, [id, catalogJson]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;
