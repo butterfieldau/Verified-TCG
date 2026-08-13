@@ -272,12 +272,22 @@ export default function SearchScreen() {
             )}
           </View>
         )}
-        renderItem={({ item }) => (
-          <CardResultRow
-            card={item}
-            onPress={() => router.push(`/card/${item.id}`)}
-          />
-        )}
+        renderItem={({ item }) => {
+          // Find the original CatalogCard so the detail page receives the full
+          // card data immediately and doesn't need a second API call.
+          const catalogSource = remoteResults.find(r => r.id === item.id);
+          return (
+            <CardResultRow
+              card={item}
+              onPress={() =>
+                router.push({
+                  pathname: `/card/${item.id}` as never,
+                  params: catalogSource ? { catalogJson: JSON.stringify(catalogSource) } : {},
+                })
+              }
+            />
+          );
+        }}
         ListEmptyComponent={() =>
           !isEmpty && category === 'cards' ? (
             <View style={styles.emptyState}>
