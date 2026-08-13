@@ -157,10 +157,77 @@ router.get("/catalog/cards", async (req, res) => {
 });
 
 /**
+ * Walk a globally-sorted list of scored cards and select up to `totalLimit`
+ * entries, capping any single game at `maxPerGame`.  The global sort order is
+ * preserved: the highest-scored card always wins its slot, regardless of game.
+ *
+ * Exported for unit testing.
+ */
+export function capByGameFromSorted<T extends { game: string }>(
+  sorted: T[],
+  maxPerGame: number,
+  totalLimit: number,
+): T[] {
+  const gameCount = new Map<string, number>();
+  const result: T[] = [];
+  for (const item of sorted) {
+    if (result.length >= totalLimit) break;
+    const game = item.game;
+    const count = gameCount.get(game) ?? 0;
+    if (count >= maxPerGame) continue;
+    gameCount.set(game, count + 1);
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * Extract the `data` array from a JustTCG response, returning an empty array
+ * on non-2xx status so partial failures don't abort the whole request.
+ * Tracks whether at least one query succeeded to allow 503 when all fail.
+ *
+ * Exported for unit testing.
+ */
+export function extractData(
+  result: { status: number; body: unknown },
+  anyOk: { value: boolean },
+): Array<Record<string, unknown>> {
+  if (result.status >= 400) return [];
+  anyOk.value = true;
+  return ((result.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+}
+
+/**
+ * Merge multiple raw card arrays into one deduplicated pool (by card ID).
+ * The first occurrence of each ID wins; subsequent duplicates are dropped.
+ *
+ * Exported for unit testing.
+ */
+export function mergePool(
+  ...arrays: Array<Array<Record<string, unknown>>>
+): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  const pool: Array<Record<string, unknown>> = [];
+  for (const arr of arrays) {
+    for (const card of arr) {
+      const id = String(card.id ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      pool.push(card);
+    }
+  }
+  return pool;
+}
+
+/**
  * GET /catalog/market-movers
- * Returns up to 8 cards with the highest absolute 7-day price change.
- * Runs two parallel JustTCG searches (Charizard + Umbreon) to surface
- * high-value, actively-priced cards, then sorts by |priceChange7d|.
+ * Returns up to 8 cards with the highest absolute 7-day price change across
+ * all six supported TCGs (Pokémon, One Piece, MTG, Yu-Gi-Oh!, Disney Lorcana,
+ * Dragon Ball Super). Runs parallel JustTCG queries constrained by explicit
+ * game= filters, merges into one deduplicated pool, sorts globally by
+ * |priceChange7d|, then applies a per-game cap (max 3) to ensure variety.
+ * Global ranking is fully preserved — the highest-change card always wins its
+ * slot regardless of game.
  * Each result includes top-level market_price, price_change_7d, and trend
  * fields so the client doesn't need to dig into variants.
  */
@@ -170,25 +237,35 @@ router.get("/catalog/market-movers", async (_req, res) => {
     const hit = cached(cacheKey);
     if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
 
-    const [r1, r2] = await Promise.all([
-      justTcg("/cards?q=Charizard&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Umbreon&limit=20&include_price_history=false"),
+    // Parallel queries across all six supported TCGs with explicit game= filters
+    const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
+      justTcg("/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
     ]);
 
-    const cards1 = ((r1.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
-    const cards2 = ((r2.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+    // Track whether at least one query succeeded so we can 503 if all fail
+    const anyOk = { value: false };
+    const pool = mergePool(
+      extractData(rPoke1, anyOk),
+      extractData(rPoke2, anyOk),
+      extractData(rOp,    anyOk),
+      extractData(rMtg,   anyOk),
+      extractData(rYgo,   anyOk),
+      extractData(rLor,   anyOk),
+      extractData(rDbs,   anyOk),
+    );
 
-    // Merge and deduplicate by ID
-    const seen = new Set<string>();
-    const merged = [...cards1, ...cards2].filter((c) => {
-      const id = String(c.id ?? "");
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
+    if (!anyOk.value) {
+      return res.status(503).json({ error: "All catalog providers unavailable" });
+    }
 
-    // Enrich images, extract NM price data, filter to priced cards (min $5), sort by |priceChange7d|
-    const enriched = merged
+    // Score and sort globally by |priceChange7d|
+    const scored = pool
       .map(enrichCard)
       .flatMap((card) => {
         const nm = getNmVariant(card.variants);
@@ -196,16 +273,18 @@ router.get("/catalog/market-movers", async (_req, res) => {
         const price = Number(nm.price ?? 0);
         if (price < 5) return [];
         const priceChange7d = Number(nm.priceChange7d ?? 0);
-        return [{ card, price, priceChange7d }];
+        return [{
+          game: String(card.game ?? ""),
+          card: { ...card, market_price: price, price_change_7d: priceChange7d,
+            trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral" },
+          score: Math.abs(priceChange7d),
+        }];
       })
-      .sort((a, b) => Math.abs(b.priceChange7d) - Math.abs(a.priceChange7d))
-      .slice(0, 8)
-      .map(({ card, price, priceChange7d }) => ({
-        ...card,
-        market_price: price,
-        price_change_7d: priceChange7d,
-        trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral",
-      }));
+      .sort((a, b) => b.score - a.score);
+
+    // Apply per-game cap (max 3 of 6 games × 3 = 18 candidates → top 8)
+    // while preserving global ranking order
+    const enriched = capByGameFromSorted(scored, 3, 8).map((s) => s.card);
 
     saveCache(cacheKey, enriched);
     return res.json({ data: enriched, source: "JustTCG", cached: false });
@@ -216,9 +295,11 @@ router.get("/catalog/market-movers", async (_req, res) => {
 
 /**
  * GET /catalog/trending
- * Returns up to 8 actively-traded Pokémon cards, measured by
- * priceChangesCount7d (number of price updates in the past 7 days).
- * High update frequency = high trading activity = trending.
+ * Returns up to 8 actively-traded cards across all six supported TCGs, measured
+ * by priceChangesCount7d (number of price updates in the past 7 days). Runs
+ * parallel queries with explicit game= filters for every supported TCG, merges
+ * into one deduplicated pool, sorts globally by priceChangesCount7d, then
+ * applies a per-game cap (max 3) to ensure variety. Global ranking is preserved.
  */
 router.get("/catalog/trending", async (_req, res) => {
   try {
@@ -226,13 +307,33 @@ router.get("/catalog/trending", async (_req, res) => {
     const hit = cached(cacheKey);
     if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
 
-    const result = await justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false");
-    if (result.status >= 400) return res.status(result.status).json(result.body);
+    // Parallel queries across all six supported TCGs with explicit game= filters
+    const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
+      justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
+    ]);
 
-    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
-    const cards = body?.data ?? [];
+    // Track whether at least one query succeeded so we can 503 if all fail
+    const anyOk = { value: false };
+    const pool = mergePool(
+      extractData(rPoke, anyOk),
+      extractData(rOp,   anyOk),
+      extractData(rMtg,  anyOk),
+      extractData(rYgo,  anyOk),
+      extractData(rLor,  anyOk),
+      extractData(rDbs,  anyOk),
+    );
 
-    const enriched = cards
+    if (!anyOk.value) {
+      return res.status(503).json({ error: "All catalog providers unavailable" });
+    }
+
+    // Score and sort globally by priceChangesCount7d (high update frequency = trending)
+    const scored = pool
       .map(enrichCard)
       .flatMap((card) => {
         const nm = getNmVariant(card.variants);
@@ -240,11 +341,13 @@ router.get("/catalog/trending", async (_req, res) => {
         const price = Number(nm.price ?? 0);
         if (price <= 0) return [];
         const changes7d = Number(nm.priceChangesCount7d ?? 0);
-        return [{ card, changes7d }];
+        return [{ game: String(card.game ?? ""), card, score: changes7d }];
       })
-      .sort((a, b) => b.changes7d - a.changes7d)
-      .slice(0, 8)
-      .map(({ card }) => card);
+      .sort((a, b) => b.score - a.score);
+
+    // Apply per-game cap (max 3 of 6 games × 3 = 18 candidates → top 8)
+    // while preserving global ranking order
+    const enriched = capByGameFromSorted(scored, 3, 8).map((s) => s.card);
 
     saveCache(cacheKey, enriched);
     return res.json({ data: enriched, source: "JustTCG", cached: false });
