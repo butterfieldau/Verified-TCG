@@ -62,6 +62,36 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
       <View style={styles.resultPricing}>
         <Text style={styles.resultPrice}>${card.price.raw.toLocaleString()}</Text>
         <Text style={styles.resultPriceLabel}>Raw</Text>
+        {card.price.change7d !== undefined && (
+          <View style={styles.resultChangeRow}>
+            <Feather
+              name={card.price.change7d >= 0 ? 'arrow-up' : 'arrow-down'}
+              size={9}
+              color={card.price.change7d >= 0 ? '#22C55E' : '#EF4444'}
+            />
+            <Text style={[
+              styles.resultChangeText,
+              { color: card.price.change7d >= 0 ? '#22C55E' : '#EF4444' },
+            ]}>
+              {card.price.change7d >= 0 ? '+' : ''}{card.price.change7d.toFixed(1)}% 7d
+            </Text>
+          </View>
+        )}
+        {card.price.change30d !== undefined && (
+          <View style={styles.resultChangeRow}>
+            <Feather
+              name={card.price.change30d >= 0 ? 'arrow-up' : 'arrow-down'}
+              size={9}
+              color={card.price.change30d >= 0 ? '#22C55E' : '#EF4444'}
+            />
+            <Text style={[
+              styles.resultChangeText,
+              { color: card.price.change30d >= 0 ? '#22C55E' : '#EF4444' },
+            ]}>
+              {card.price.change30d >= 0 ? '+' : ''}{card.price.change30d.toFixed(1)}% 30d
+            </Text>
+          </View>
+        )}
         {card.price.psa10 && (
           <>
             <Text style={[styles.resultPrice, { marginTop: 4 }]}>${card.price.psa10.toLocaleString()}</Text>
@@ -363,6 +393,8 @@ const styles = StyleSheet.create({
   resultPricing: { alignItems: 'flex-end' },
   resultPrice: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
   resultPriceLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  resultChangeRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 3 },
+  resultChangeText: { fontSize: 10, fontFamily: 'Inter_500Medium' },
   noResults: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',

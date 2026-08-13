@@ -903,6 +903,11 @@ export default function CardDetailScreen() {
                   {gain7d >= 0 ? '+' : ''}{gain7d.toFixed(1)}% 7d
                 </Text>
               )}
+              {card.price.change30d !== undefined && (
+                <Text style={[styles.changeBadge, { color: card.price.change30d >= 0 ? C.positive : C.negative }]}>
+                  {card.price.change30d >= 0 ? '+' : ''}{card.price.change30d.toFixed(1)}% 30d
+                </Text>
+              )}
             </View>
           </View>
 

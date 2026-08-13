@@ -110,6 +110,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
       updatedAt,
       change24h: variant?.priceChange24hr ?? undefined,
       change7d: variant?.priceChange7d ?? undefined,
+      change30d: variant?.priceChange30d ?? undefined,
     },
   };
 }
