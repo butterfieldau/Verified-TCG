@@ -95,19 +95,19 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     : 'pokemon';
 
   // Image URL resolution priority:
-  //  1. image_url returned by the API (may already be pokemontcg.io CDN for
-  //     Pokémon cards enriched server-side)
-  //  2. TCGPlayer CDN via the product ID
-  //  3. pokemontcg.io CDN derived from set + number (Pokémon only) — catches
-  //     cases where the server enrichment was skipped (e.g. cache hit from
-  //     before the enrichment was added) or where tcgplayerId is absent
+  //  1. image_url returned by the API — server sets this to TCGPlayer CDN when
+  //     tcgplayerId is present (reliable), or pokemontcg.io as a last resort.
+  //  2. TCGPlayer CDN via tcgplayerId — catches cards that arrived via the
+  //     catalogJson navigation param (bypassing server enrichment).
+  //  3. pokemontcg.io CDN derived from set + number — last resort only; JustTCG
+  //     set codes don't match pokemontcg.io's scheme so these often 404.
   // JustTCG returns numbers like "125/197" — CDN only needs the card number ("125")
   const cardNum = card.number ? card.number.trim().split('/')[0].trim() : '';
   const pokemonCdnFallback = tcg === 'pokemon' && card.set && cardNum
     ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${cardNum}.png`
     : undefined;
   const imageUrl = card.image_url
-    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined)
+    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/1000x1000/${card.tcgplayerId}.jpg` : undefined)
     ?? pokemonCdnFallback;
 
   return {

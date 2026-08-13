@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -18,7 +19,7 @@ import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from 
 import { MOCK_LISTINGS } from '@/services/listings';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
-import type { TCGId } from '@/types';
+import type { MarketMover, TCGId } from '@/types';
 
 const C = colors.dark;
 
@@ -39,8 +40,16 @@ const NEW_RELEASES = getNewReleases();
 
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
-  const movers = getMarketMovers();
+  const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [moversLoading, setMoversLoading] = useState(true);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
+
+  useEffect(() => {
+    getMarketMovers()
+      .then(setMovers)
+      .catch(() => {})
+      .finally(() => setMoversLoading(false));
+  }, []);
   const [mainTab, setMainTab] = useState<MainTab>('market');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [activeSort, setActiveSort] = useState('Popularity');
@@ -131,6 +140,9 @@ export default function MarketScreen() {
                 <Feather name="trending-up" size={12} color={C.positive} />
               </View>
             </View>
+            {moversLoading ? (
+              <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4, marginVertical: 8 }} />
+            ) : (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -140,7 +152,7 @@ export default function MarketScreen() {
                 <Pressable
                   key={m.card.id}
                   style={styles.moverCard}
-                  onPress={() => router.push(`/card/${m.card.id}`)}
+                  onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
                 >
                   <CardThumbnail card={m.card} compact />
                   <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
@@ -154,6 +166,7 @@ export default function MarketScreen() {
                 </Pressable>
               ))}
             </ScrollView>
+            )}
           </View>
 
           {/* Most Watched */}
@@ -165,7 +178,7 @@ export default function MarketScreen() {
               <Pressable
                 key={item.card.id}
                 style={[styles.rankedRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${item.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${item.card.id}` as any, params: { appCardJson: JSON.stringify(item.card) } })}
               >
                 <Text style={styles.rank}>{idx + 1}</Text>
                 <View style={[styles.rankedThumb, { backgroundColor: item.card.gradientStart, overflow: 'hidden' }]}>
@@ -195,7 +208,7 @@ export default function MarketScreen() {
               <Pressable
                 key={i}
                 style={[styles.saleRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${sale.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${sale.card.id}` as any, params: { appCardJson: JSON.stringify(sale.card) } })}
               >
                 <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart, overflow: 'hidden' }]}>
                   {sale.card.imageUrl
@@ -290,7 +303,7 @@ export default function MarketScreen() {
               <Pressable
                 key={listing.id}
                 style={[styles.listingRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${listing.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${listing.card.id}` as any, params: { appCardJson: JSON.stringify(listing.card) } })}
               >
                 <View style={[styles.listingThumb, { backgroundColor: listing.card.gradientStart }]}>
                   <Text style={styles.listingInitial}>{listing.card.name[0]}</Text>

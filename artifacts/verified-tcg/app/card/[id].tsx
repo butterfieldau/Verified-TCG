@@ -419,7 +419,7 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         colors={[gradientStart, gradientEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
       />
 
       {/* Shimmer highlight over gradient — visible while loading or on error */}
@@ -427,7 +427,7 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         colors={['transparent', 'rgba(255,255,255,0.14)', 'transparent']}
         start={{ x: 0.3, y: 0 }}
         end={{ x: 0.7, y: 1 }}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
       />
 
       {showImage ? (
@@ -524,7 +524,6 @@ const imgStyles = StyleSheet.create({
     width: CARD_W,
     height: CARD_H,
     borderRadius: 18,
-    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -536,12 +535,15 @@ const imgStyles = StyleSheet.create({
   imageWrap: {
     width: CARD_W,
     height: CARD_H,
+    borderRadius: 18,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   image: {
     width: CARD_W,
     height: CARD_H,
+    borderRadius: 18,
   },
   spinner: {
     ...StyleSheet.absoluteFillObject,
@@ -603,7 +605,7 @@ const imgStyles = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CardDetailScreen() {
-  const { id, cardIds, catalogJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string }>();
+  const { id, cardIds, catalogJson, appCardJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string; appCardJson?: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
@@ -614,11 +616,15 @@ export default function CardDetailScreen() {
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
   const [selectedRange, setSelectedRange] = useState<TimeRange>('30D');
 
-  // Catalog API fetch state — populated when the card ID isn't in the local mock store
-  // When navigating from search results, catalogJson carries the full CatalogCard
-  // as a serialised navigation param — parse it immediately so the detail page
-  // renders without any loading state or second API call.
+  // Catalog API fetch state — populated when the card ID isn't in the local mock store.
+  // Two inline param strategies:
+  //   catalogJson  — raw CatalogCard JSON (from search results)
+  //   appCardJson  — already-converted Card JSON (from home/market screen taps)
+  // Either bypasses the loading state and avoids a round-trip to the API.
   const [catalogCard, setCatalogCard] = useState<Card | null>(() => {
+    if (appCardJson) {
+      try { return JSON.parse(appCardJson as string) as Card; } catch { /* fall through */ }
+    }
     if (!catalogJson) return null;
     try {
       const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
@@ -627,7 +633,7 @@ export default function CardDetailScreen() {
       return null;
     }
   });
-  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? '') && !catalogJson);
+  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? '') && !catalogJson && !appCardJson);
   const [catalogError, setCatalogError] = useState(false);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
@@ -658,7 +664,8 @@ export default function CardDetailScreen() {
   // wasn't passed through navigation params (e.g. opened from collection/wishlist).
   useEffect(() => {
     if (getCardById(id ?? '')) return; // found locally — no fetch needed
-    if (catalogJson) return;           // already initialised from navigation param
+    if (catalogJson) return;           // already initialised from navigation param (CatalogCard)
+    if (appCardJson) return;           // already initialised from navigation param (Card)
     if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
     const controller = new AbortController();
     setCatalogLoading(true);
@@ -672,7 +679,7 @@ export default function CardDetailScreen() {
       })
       .finally(() => setCatalogLoading(false));
     return () => controller.abort();
-  }, [id, catalogJson]);
+  }, [id, catalogJson, appCardJson]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;

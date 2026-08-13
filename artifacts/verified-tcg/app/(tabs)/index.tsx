@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -17,10 +18,10 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Logo } from '@/components/Logo';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { useApp } from '@/context/AppContext';
-import { getMarketMovers, getTrendingCards } from '@/services/market';
+import { getMarketMovers, getTrendingCards, getRecentlyAddedCards } from '@/services/market';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import colors from '@/constants/colors';
-import type { PortfolioRange } from '@/types';
+import type { Card, MarketMover, PortfolioRange } from '@/types';
 
 // Storage keys
 const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
@@ -46,11 +47,35 @@ function getGreeting() {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
-  const movers = getMarketMovers();
-  const trending = getTrendingCards();
+
+  // Live catalog data for Home screen sections
+  const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [trending, setTrending] = useState<Card[]>([]);
+  const [recentCards, setRecentCards] = useState<Card[]>([]);
+  const [sectionsLoading, setSectionsLoading] = useState(true);
+
+  useEffect(() => {
+    setSectionsLoading(true);
+    Promise.all([
+      getMarketMovers(),
+      getTrendingCards(),
+      getRecentlyAddedCards(),
+    ])
+      .then(([m, t, r]) => {
+        setMovers(m);
+        setTrending(t);
+        setRecentCards(r);
+      })
+      .catch(() => {})
+      .finally(() => setSectionsLoading(false));
+  }, []);
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
+    // Also refresh catalog sections on pull-to-refresh
+    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards()])
+      .then(([m, t, r]) => { setMovers(m); setTrending(t); setRecentCards(r); })
+      .catch(() => {});
   }, [refreshPrices]);
 
   // `null` = not yet read from storage; `false` = visible; `true` = dismissed
@@ -418,67 +443,82 @@ export default function HomeScreen() {
             <Text style={styles.seeAll}>See all</Text>
           </Pressable>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 12, paddingRight: 4 }}
-        >
-          {movers.map(m => (
-            <Pressable
-              key={m.card.id}
-              style={{ gap: 8 }}
-              onPress={() => router.push(`/card/${m.card.id}`)}
-            >
-              <CardThumbnail card={m.card} compact />
-              <View>
-                <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
-                <Text style={styles.moverSet} numberOfLines={1}>{m.card.setName}</Text>
-                <View style={styles.moverPriceRow}>
-                  <Text style={styles.moverPrice}>
-                    ${m.currentPrice.toLocaleString('en-AU')}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.moverChange,
-                      { color: m.trend === 'up' ? C.positive : C.negative },
-                    ]}
-                  >
-                    {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
-                  </Text>
+        {sectionsLoading ? (
+          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+        ) : movers.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 12, paddingRight: 4 }}
+          >
+            {movers.map(m => (
+              <Pressable
+                key={m.card.id}
+                style={{ gap: 8 }}
+                onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
+              >
+                <CardThumbnail card={m.card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{m.card.setName}</Text>
+                  <View style={styles.moverPriceRow}>
+                    <Text style={styles.moverPrice}>
+                      ${m.currentPrice.toLocaleString('en-AU')}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.moverChange,
+                        { color: m.trend === 'up' ? C.positive : m.trend === 'down' ? C.negative : C.mutedForeground },
+                      ]}
+                    >
+                      {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            </Pressable>
-          ))}
-        </ScrollView>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
-      {/* ── Recently Added ── */}
+      {/* ── New Arrivals (catalog recently-added) ── */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recently Added</Text>
-          <Pressable onPress={() => router.push('/(tabs)/collection')}>
-            <Text style={styles.seeAll}>View all</Text>
+          <Text style={styles.sectionTitle}>New Arrivals</Text>
+          <Pressable onPress={() => router.push('/search')}>
+            <Text style={styles.seeAll}>Browse all</Text>
           </Pressable>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 12, paddingRight: 4 }}
-        >
-          {collection.slice(0, 5).map(item => (
-            <Pressable
-              key={item.id}
-              style={{ gap: 8 }}
-              onPress={() => router.push(`/card/${item.card.id}`)}
-            >
-              <CardThumbnail card={item.card} grading={item.grading} compact />
-              <View>
-                <Text style={styles.moverName} numberOfLines={1}>{item.card.name}</Text>
-                <Text style={styles.moverSet}>{item.card.setName}</Text>
-              </View>
-            </Pressable>
-          ))}
-        </ScrollView>
+        {sectionsLoading ? (
+          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+        ) : recentCards.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 12, paddingRight: 4 }}
+          >
+            {recentCards.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <View style={styles.moverPriceRow}>
+                    <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                  </View>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
       {/* ── Trending ── */}
@@ -489,39 +529,45 @@ export default function HomeScreen() {
             <Text style={styles.seeAll}>See all</Text>
           </Pressable>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 12, paddingRight: 4 }}
-        >
-          {trending.map(card => (
-            <Pressable
-              key={card.id}
-              style={{ gap: 8 }}
-              onPress={() => router.push(`/card/${card.id}`)}
-            >
-              <CardThumbnail card={card} compact />
-              <View>
-                <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
-                <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                <View style={styles.moverPriceRow}>
-                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString()}</Text>
-                  {card.price.change7d !== undefined && (
-                    <Text
-                      style={[
-                        styles.moverChange,
-                        { color: (card.price.change7d ?? 0) >= 0 ? C.positive : C.negative },
-                      ]}
-                    >
-                      {(card.price.change7d ?? 0) >= 0 ? '+' : ''}
-                      {card.price.change7d?.toFixed(1)}%
-                    </Text>
-                  )}
+        {sectionsLoading ? (
+          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+        ) : trending.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 12, paddingRight: 4 }}
+          >
+            {trending.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <View style={styles.moverPriceRow}>
+                    <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                    {card.price.change7d !== undefined && (
+                      <Text
+                        style={[
+                          styles.moverChange,
+                          { color: (card.price.change7d ?? 0) >= 0 ? C.positive : C.negative },
+                        ]}
+                      >
+                        {(card.price.change7d ?? 0) >= 0 ? '+' : ''}
+                        {card.price.change7d?.toFixed(1)}%
+                      </Text>
+                    )}
+                  </View>
                 </View>
-              </View>
-            </Pressable>
-          ))}
-        </ScrollView>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </View>
     </ScrollView>
   );
@@ -925,4 +971,10 @@ const styles = StyleSheet.create({
   moverPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   moverPrice: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
   moverChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  emptySection: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    paddingVertical: 8,
+  },
 });
