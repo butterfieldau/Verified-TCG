@@ -28,6 +28,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
+import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
 import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
@@ -612,6 +613,12 @@ export default function CardDetailScreen() {
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
   const [selectedRange, setSelectedRange] = useState<TimeRange>('30D');
+
+  // Catalog API fetch state — populated when the card ID isn't in the local mock store
+  const [catalogCard, setCatalogCard] = useState<Card | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? ''));
+  const [catalogError, setCatalogError] = useState(false);
+
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
   // ── Swipe-between-cards state ────────────────────────────────────────────
@@ -635,6 +642,24 @@ export default function CardDetailScreen() {
     AsyncStorage.setItem(SWIPE_HINT_KEY, '1').catch(() => {});
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
   }
+
+  // Fetch card from live catalog when it isn't in the local mock store
+  useEffect(() => {
+    if (getCardById(id ?? '')) return; // found locally — no fetch needed
+    if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
+    const controller = new AbortController();
+    setCatalogLoading(true);
+    fetchCatalogCard(id, controller.signal)
+      .then((data) => {
+        if (data) setCatalogCard(catalogCardToAppCard(data));
+        else setCatalogError(true);
+      })
+      .catch((err: unknown) => {
+        if ((err as Error)?.name !== 'AbortError') setCatalogError(true);
+      })
+      .finally(() => setCatalogLoading(false));
+    return () => controller.abort();
+  }, [id]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;
@@ -679,10 +704,49 @@ export default function CardDetailScreen() {
       }
     });
 
-  const card = getCardById(id ?? '') ?? getCardById('charizard-ex-ob')!;
+  // Resolve card: prefer local mock (instant), fall back to catalog API result.
+  // Use a separate rawCard for the null-guard so TypeScript narrows 'card' to
+  // type Card after the guards — closures below then capture Card, not Card|null.
+  const localCard = getCardById(id ?? '');
+  const rawCard = localCard ?? catalogCard;
+  const isCatalogCard = !localCard;
+
+  // ── Loading / error guards (all hooks already called above) ──────────────
+  if (!rawCard && catalogLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: C.background, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={C.primary} />
+        <Text style={{ color: C.mutedForeground, marginTop: 14, fontFamily: 'Inter_400Regular', fontSize: 14 }}>
+          Loading card…
+        </Text>
+      </View>
+    );
+  }
+  if (!rawCard) {
+    return (
+      <View style={{ flex: 1, backgroundColor: C.background, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Feather name="alert-circle" size={44} color={C.mutedForeground} />
+        <Text style={{ color: C.foreground, marginTop: 16, fontFamily: 'Inter_700Bold', fontSize: 18 }}>Card not found</Text>
+        <Text style={{ color: C.mutedForeground, marginTop: 8, fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center' }}>
+          This card couldn't be loaded. Try searching again.
+        </Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 24, backgroundColor: C.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}>
+          <Text style={{ color: '#FFF', fontFamily: 'Inter_700Bold', fontSize: 15 }}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
+  const card = rawCard;
+
   const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
-  const allListings = cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2);
-  const hasPassport = getCardPassport(card.id) !== null;
+  // For live catalog cards, don't substitute random mock listings from other cards
+  const allListings = isCatalogCard
+    ? []
+    : (cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2));
+  // Passport records only exist for local mock cards
+  const hasPassport = !isCatalogCard && getCardPassport(card.id) !== null;
   const pricingPlus = getMockPricingPlus(card.id, card.price.raw);
   const chartData: PricePoint[] = pricingPlus.priceHistory[selectedRange];
 
@@ -1228,42 +1292,51 @@ export default function CardDetailScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Cards For Sale</Text>
-            <Text style={styles.sectionCount}>{allListings.length} listing{allListings.length !== 1 ? 's' : ''}</Text>
+            {allListings.length > 0 && (
+              <Text style={styles.sectionCount}>{allListings.length} listing{allListings.length !== 1 ? 's' : ''}</Text>
+            )}
           </View>
-          {allListings.map(listing => (
-            <Pressable key={listing.id} style={[styles.listingRow, { backgroundColor: C.card }]}>
-              <View style={styles.listingLeft}>
-                <Text style={styles.listingSellerName}>{listing.sellerName}</Text>
-                <View style={styles.listingMeta}>
-                  {listing.grading && (
-                    <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
-                  )}
-                  {listing.isVerifiedSeller && (
-                    <View style={styles.verifiedTag}>
-                      <Feather name="shield" size={11} color={C.positive} />
-                      <Text style={[styles.verifiedTagText, { color: C.positive }]}>Verified</Text>
-                    </View>
-                  )}
-                  {listing.sellerRating && (
-                    <View style={styles.ratingRow}>
-                      <Feather name="star" size={11} color="#F59E0B" />
-                      <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
-                    </View>
-                  )}
+          {allListings.length === 0 ? (
+            <View style={[styles.emptyListings, { backgroundColor: C.card }]}>
+              <Feather name="shopping-bag" size={28} color={C.mutedForeground} />
+              <Text style={styles.emptyListingsText}>No marketplace listings yet</Text>
+            </View>
+          ) : (
+            allListings.map(listing => (
+              <Pressable key={listing.id} style={[styles.listingRow, { backgroundColor: C.card }]}>
+                <View style={styles.listingLeft}>
+                  <Text style={styles.listingSellerName}>{listing.sellerName}</Text>
+                  <View style={styles.listingMeta}>
+                    {listing.grading && (
+                      <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
+                    )}
+                    {listing.isVerifiedSeller && (
+                      <View style={styles.verifiedTag}>
+                        <Feather name="shield" size={11} color={C.positive} />
+                        <Text style={[styles.verifiedTagText, { color: C.positive }]}>Verified</Text>
+                      </View>
+                    )}
+                    {listing.sellerRating && (
+                      <View style={styles.ratingRow}>
+                        <Feather name="star" size={11} color="#F59E0B" />
+                        <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.listingWatchers}>
+                    {listing.watchCount} watching · {listing.views} views
+                  </Text>
                 </View>
-                <Text style={styles.listingWatchers}>
-                  {listing.watchCount} watching · {listing.views} views
-                </Text>
-              </View>
-              <View style={styles.listingRight}>
-                <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
-                <Text style={styles.listingCurrency}>AUD</Text>
-                <Pressable style={styles.buyBtn}>
-                  <Text style={styles.buyBtnText}>Buy</Text>
-                </Pressable>
-              </View>
-            </Pressable>
-          ))}
+                <View style={styles.listingRight}>
+                  <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
+                  <Text style={styles.listingCurrency}>AUD</Text>
+                  <Pressable style={styles.buyBtn}>
+                    <Text style={styles.buyBtnText}>Buy</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            ))
+          )}
         </View>
       </ScrollView>
 
@@ -1712,5 +1785,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_700Bold',
     color: C.positive,
+  },
+  emptyListings: {
+    borderRadius: 14,
+    padding: 28,
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyListingsText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
   },
 });

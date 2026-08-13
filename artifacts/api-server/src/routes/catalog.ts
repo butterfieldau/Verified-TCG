@@ -18,7 +18,8 @@ function pokemonImageUrl(set: string | undefined, number: string | undefined): s
   if (!set || !number) return undefined;
   // Normalise: lower-case, strip whitespace
   const setId = set.trim().toLowerCase();
-  const num = number.trim();
+  // JustTCG returns numbers like "125/197" — the CDN only needs the card number ("125")
+  const num = number.trim().split('/')[0].trim();
   if (!setId || !num) return undefined;
   return `https://images.pokemontcg.io/${setId}/${num}.png`;
 }
@@ -121,6 +122,33 @@ router.get("/catalog/cards", async (req, res) => {
 
     saveCache(cacheKey, body);
     return res.json({ ...((body as object) ?? {}), source: "JustTCG", cached: false });
+  } catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+  }
+});
+
+router.get("/catalog/cards/:id", async (req, res) => {
+  try {
+    const cardId = String(req.params.id);
+    const cacheKey = `card:${cardId}`;
+    const hit = cached(cacheKey);
+    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
+
+    const result = await justTcg(`/cards/${encodeURIComponent(cardId)}`);
+    if (result.status >= 400) return res.status(result.status).json(result.body);
+
+    // Enrich with image URL when missing
+    let card = result.body as Record<string, unknown>;
+    if (!card.image_url && isPokemonGame(String(card.game ?? ""))) {
+      const derived = pokemonImageUrl(
+        card.set as string | undefined,
+        card.number as string | undefined,
+      );
+      if (derived) card = { ...card, image_url: derived };
+    }
+
+    saveCache(cacheKey, card);
+    return res.json({ data: card, source: "JustTCG", cached: false });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
