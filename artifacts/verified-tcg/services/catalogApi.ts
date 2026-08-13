@@ -78,10 +78,19 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     : game.includes('dragon') ? 'dragonball'
     : 'pokemon';
 
-  // JustTCG doesn't always return image_url — fall back to TCGPlayer CDN via
-  // the product ID when available.
+  // Image URL resolution priority:
+  //  1. image_url returned by the API (may already be pokemontcg.io CDN for
+  //     Pokémon cards enriched server-side)
+  //  2. TCGPlayer CDN via the product ID
+  //  3. pokemontcg.io CDN derived from set + number (Pokémon only) — catches
+  //     cases where the server enrichment was skipped (e.g. cache hit from
+  //     before the enrichment was added) or where tcgplayerId is absent
+  const pokemonCdnFallback = tcg === 'pokemon' && card.set && card.number
+    ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${card.number.trim()}.png`
+    : undefined;
   const imageUrl = card.image_url
-    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined);
+    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined)
+    ?? pokemonCdnFallback;
 
   return {
     id: card.id,

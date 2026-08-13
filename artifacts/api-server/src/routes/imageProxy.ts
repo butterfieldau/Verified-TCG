@@ -4,6 +4,7 @@ const router: IRouter = Router();
 
 const ALLOWED_HOSTS = new Set([
   "images.pokemontcg.io",
+  "product-images.tcgplayer.com",
   "en.onepiece-cardgame.com",
   "cards.scryfall.io",
 ]);

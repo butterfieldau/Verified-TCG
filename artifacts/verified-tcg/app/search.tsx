@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   FlatList,
+  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,6 +19,7 @@ import { searchCards, CARD_SETS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
 import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
+import { proxyImageUrl } from '@/services/imageProxy';
 
 const C = colors.dark;
 
@@ -31,10 +33,23 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
 const TRENDING_SEARCHES = ['Umbreon ex', 'Pikachu', 'Charizard', 'Luffy', 'Black Lotus'];
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
+  const [imgError, setImgError] = useState(false);
+  const imgUri = proxyImageUrl(card.imageUrl);
+  const showImage = !!imgUri && !imgError;
+
   return (
     <Pressable style={[styles.resultRow, { backgroundColor: C.card }]} onPress={onPress}>
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
-        <Text style={styles.resultInitial}>{card.name[0]}</Text>
+        {showImage ? (
+          <Image
+            source={{ uri: imgUri }}
+            style={styles.resultThumbImage}
+            resizeMode="cover"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <Text style={styles.resultInitial}>{card.name[0]}</Text>
+        )}
       </View>
       <View style={styles.resultInfo}>
         <View style={styles.resultNameRow}>
@@ -313,6 +328,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  resultThumbImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 8,
   },
   resultInitial: { fontSize: 24, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
   setIcon: {
