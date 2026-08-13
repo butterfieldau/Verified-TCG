@@ -56,6 +56,22 @@ function mapRarity(rarity: string | undefined): CardRarity {
   return 'rare';
 }
 
+/**
+ * Fetch a single card by its JustTCG ID (e.g. "pokemon-arceus-charizard-holo-rare").
+ * Returns null when the card is not found or the API is unreachable.
+ */
+export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promise<CatalogCard | null> {
+  if (!API_BASE || API_BASE === '/api') return null;
+  try {
+    const response = await fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(id)}`, { signal });
+    if (!response.ok) return null;
+    const body = await response.json().catch(() => null);
+    return (body?.data ?? null) as CatalogCard | null;
+  } catch {
+    return null;
+  }
+}
+
 export async function searchCatalog(query: string, signal?: AbortSignal): Promise<CatalogResponse> {
   if (!API_BASE || API_BASE === '/api') throw new Error('The catalog API is not configured for this build.');
   const params = new URLSearchParams({ q: query, limit: '20' });
@@ -85,8 +101,10 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
   //  3. pokemontcg.io CDN derived from set + number (Pokémon only) — catches
   //     cases where the server enrichment was skipped (e.g. cache hit from
   //     before the enrichment was added) or where tcgplayerId is absent
-  const pokemonCdnFallback = tcg === 'pokemon' && card.set && card.number
-    ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${card.number.trim()}.png`
+  // JustTCG returns numbers like "125/197" — CDN only needs the card number ("125")
+  const cardNum = card.number ? card.number.trim().split('/')[0].trim() : '';
+  const pokemonCdnFallback = tcg === 'pokemon' && card.set && cardNum
+    ? `https://images.pokemontcg.io/${card.set.trim().toLowerCase()}/${cardNum}.png`
     : undefined;
   const imageUrl = card.image_url
     ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined)

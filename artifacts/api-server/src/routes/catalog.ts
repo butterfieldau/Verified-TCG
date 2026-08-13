@@ -18,7 +18,8 @@ function pokemonImageUrl(set: string | undefined, number: string | undefined): s
   if (!set || !number) return undefined;
   // Normalise: lower-case, strip whitespace
   const setId = set.trim().toLowerCase();
-  const num = number.trim();
+  // JustTCG returns numbers like "125/197" — the CDN only needs the card number ("125")
+  const num = number.trim().split('/')[0].trim();
   if (!setId || !num) return undefined;
   return `https://images.pokemontcg.io/${setId}/${num}.png`;
 }
@@ -121,6 +122,73 @@ router.get("/catalog/cards", async (req, res) => {
 
     saveCache(cacheKey, body);
     return res.json({ ...((body as object) ?? {}), source: "JustTCG", cached: false });
+  } catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+  }
+});
+
+/**
+ * Single-card lookup by JustTCG ID (e.g. "pokemon-arceus-charizard-holo-rare").
+ *
+ * JustTCG has no dedicated "GET /cards/:id" endpoint — it requires at least one
+ * filter (game or set).  We work around this by:
+ *  1. Parsing the card ID to extract a game hint and a search query.
+ *  2. Searching with those terms (up to 50 results).
+ *  3. Filtering the response to the exact ID match.
+ *
+ * Results are cached for CACHE_TTL_MS like any other catalog response.
+ */
+router.get("/catalog/cards/:id", async (req, res) => {
+  try {
+    const cardId = String(req.params.id);
+    const cacheKey = `card:${cardId}`;
+    const hit = cached(cacheKey);
+    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
+
+    // --- Parse the ID to build a targeted search ----------------------------
+    // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}"
+    // e.g. "pokemon-arceus-charizard-holo-rare"
+    const parts = cardId.split("-");
+    const gameWord = (parts[0] ?? "").toLowerCase();
+    const GAME_MAP: Record<string, string> = {
+      pokemon: "Pokemon",
+      magic: "Magic: The Gathering",
+      yugioh: "Yu-Gi-Oh!",
+      lorcana: "Disney Lorcana",
+      onepiece: "One Piece",
+      dragonball: "Dragon Ball Super",
+    };
+    const game = GAME_MAP[gameWord];
+    // Use all segments after the game word as the search query
+    const searchQuery = parts.slice(1).join(" ").trim();
+    if (!searchQuery) return res.status(404).json({ error: "Card not found" });
+
+    const params = new URLSearchParams({
+      q: searchQuery,
+      limit: "20",
+      include_price_history: "false",
+    });
+    if (game) params.set("game", game);
+
+    const result = await justTcg(`/cards?${params.toString()}`);
+    if (result.status >= 400) return res.status(result.status).json(result.body);
+
+    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+    const match = body?.data?.find((c) => c.id === cardId) ?? null;
+    if (!match) return res.status(404).json({ error: "Card not found" });
+
+    // Enrich with image URL when missing
+    let card = match;
+    if (!card.image_url && isPokemonGame(String(card.game ?? ""))) {
+      const derived = pokemonImageUrl(
+        card.set as string | undefined,
+        card.number as string | undefined,
+      );
+      if (derived) card = { ...card, image_url: derived };
+    }
+
+    saveCache(cacheKey, card);
+    return res.json({ data: card, source: "JustTCG", cached: false });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
