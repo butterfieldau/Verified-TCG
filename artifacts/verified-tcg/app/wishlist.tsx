@@ -283,8 +283,8 @@ function WishCard({
   onAlertLimitHit: () => void;
 }) {
   const price = item.card.price.raw;
-  const change = item.card.price.change7d ?? 0;
-  const isUp = change >= 0;
+  const change7d = item.card.price.change7d;
+  const isUp = (change7d ?? 0) >= 0;
   const atTarget = item.targetPrice ? price <= item.targetPrice : false;
   const hasTarget = !!item.targetPrice;
   const alertOn = hasTarget && !!item.priceAlertEnabled;
@@ -345,19 +345,21 @@ function WishCard({
       {/* Pricing + actions */}
       <View style={styles.wishPricing}>
         <Text style={styles.wishPrice}>${price.toLocaleString('en-AU')}</Text>
-        <View style={[
-          styles.changePill,
-          { backgroundColor: isUp ? `${C.positive}22` : `${C.negative}22` },
-        ]}>
-          <Feather
-            name={isUp ? 'trending-up' : 'trending-down'}
-            size={11}
-            color={isUp ? C.positive : C.negative}
-          />
-          <Text style={[styles.changeText, { color: isUp ? C.positive : C.negative }]}>
-            {isUp ? '+' : ''}{change.toFixed(1)}%
-          </Text>
-        </View>
+        {change7d !== undefined && (
+          <View style={[
+            styles.changePill,
+            { backgroundColor: isUp ? `${C.positive}22` : `${C.negative}22` },
+          ]}>
+            <Feather
+              name={isUp ? 'arrow-up' : 'arrow-down'}
+              size={11}
+              color={isUp ? C.positive : C.negative}
+            />
+            <Text style={[styles.changeText, { color: isUp ? C.positive : C.negative }]}>
+              {isUp ? '+' : ''}{change7d.toFixed(1)}% 7d
+            </Text>
+          </View>
+        )}
         <View style={styles.cardActions}>
           {/* Bell toggle — only shown when a target price is set */}
           {hasTarget && (
