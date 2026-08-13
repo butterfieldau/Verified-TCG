@@ -103,12 +103,21 @@ router.get("/catalog/cards", async (req, res) => {
     const result = await justTcg(`/cards?${params.toString()}`);
     if (result.status >= 400) return res.status(result.status).json(result.body);
 
-    // Enrich cards that are missing an image_url with a pokemontcg.io CDN URL
-    // (for Pokémon cards) or leave them for the client's TCGPlayer fallback.
+    // Enrich cards that are missing an image_url.
+    // Priority:
+    //  1. image_url already provided by JustTCG — keep as-is.
+    //  2. TCGPlayer CDN via tcgplayerId — stable numeric product ID, always
+    //     resolves to the correct card image regardless of set-code mapping.
+    //  3. pokemontcg.io CDN derived from set + number — last resort only, since
+    //     JustTCG set codes (e.g. "me-ascended-heroes-pokemon") do NOT match
+    //     the pokemontcg.io set-code scheme and these URLs frequently 404.
     const body = result.body as { data?: Array<Record<string, unknown>> } | null;
     if (body && Array.isArray(body.data)) {
       body.data = body.data.map((card) => {
-        if (card.image_url) return card; // already has an image — nothing to do
+        if (card.image_url) return card; // JustTCG already provided an image
+        if (card.tcgplayerId) {
+          return { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/437x437/${String(card.tcgplayerId)}.jpg` };
+        }
         if (isPokemonGame(String(card.game ?? ""))) {
           const derived = pokemonImageUrl(
             card.set as string | undefined,
@@ -189,14 +198,19 @@ router.get("/catalog/cards/:id", async (req, res) => {
     const match = body?.data?.find((c) => c.id === cardId) ?? null;
     if (!match) return res.status(404).json({ error: "Card not found" });
 
-    // Enrich with image URL when missing
+    // Enrich with image URL using the same priority as the list endpoint:
+    // TCGPlayer CDN (tcgplayerId) first, pokemontcg.io CDN as a last resort.
     let card = match;
-    if (!card.image_url && isPokemonGame(String(card.game ?? ""))) {
-      const derived = pokemonImageUrl(
-        card.set as string | undefined,
-        card.number as string | undefined,
-      );
-      if (derived) card = { ...card, image_url: derived };
+    if (!card.image_url) {
+      if (card.tcgplayerId) {
+        card = { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/437x437/${String(card.tcgplayerId)}.jpg` };
+      } else if (isPokemonGame(String(card.game ?? ""))) {
+        const derived = pokemonImageUrl(
+          card.set as string | undefined,
+          card.number as string | undefined,
+        );
+        if (derived) card = { ...card, image_url: derived };
+      }
     }
 
     saveCache(cacheKey, card);
