@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   liveSource: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.positive, marginBottom: 10 },
-  liveError: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 10 },
+  liveError: { fontSize: 12, fontFamily: 'Inter_500Medium', color: '#E6A817', marginBottom: 10 },
   emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   emptyBody: {

@@ -1,6 +1,10 @@
-import type { Card } from '@/types';
+import type { Card, CardRarity } from '@/types';
 
-const API_BASE = `${(process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '')}/api`;
+// Use an explicit override first, then fall back to the dev-domain that the
+// Expo start script already injects as EXPO_PUBLIC_DOMAIN.
+const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
+const API_BASE = `${explicitBase || domainBase}/api`;
 
 export interface CatalogVariant {
   id: string;
@@ -10,6 +14,8 @@ export interface CatalogVariant {
   language?: string;
   price?: number | null;
   priceChange24hr?: number | null;
+  priceChange7d?: number | null;
+  priceChange30d?: number | null;
   lastUpdated?: number;
   markets?: Array<{ region: string; currency: string; price?: number | null; updated_at?: number }>;
 }
@@ -24,6 +30,8 @@ export interface CatalogCard {
   number?: string;
   rarity?: string;
   image_url?: string;
+  /** TCGPlayer product ID — used to construct a card image URL when image_url is absent */
+  tcgplayerId?: string | null;
   variants: CatalogVariant[];
 }
 
@@ -32,6 +40,20 @@ interface CatalogResponse {
   meta?: { total?: number; limit?: number; offset?: number; hasMore?: boolean };
   source?: string;
   cached?: boolean;
+}
+
+/** Map a JustTCG rarity string to the app's CardRarity union. */
+function mapRarity(rarity: string | undefined): CardRarity {
+  if (!rarity) return 'rare';
+  const r = rarity.toLowerCase();
+  if (r.includes('hyper')) return 'hyper_rare';
+  if (r.includes('special illustration') || r === 'sir') return 'special_illustration';
+  if (r.includes('secret')) return 'secret_rare';
+  if (r.includes('ultra') || r.includes('vstar') || r.includes('v star')) return 'ultra_rare';
+  if (r.includes('holo')) return 'holo_rare';
+  if (r.includes('uncommon')) return 'uncommon';
+  if (r.includes('common')) return 'common';
+  return 'rare';
 }
 
 export async function searchCatalog(query: string, signal?: AbortSignal): Promise<CatalogResponse> {
@@ -44,11 +66,23 @@ export async function searchCatalog(query: string, signal?: AbortSignal): Promis
 }
 
 export function catalogCardToAppCard(card: CatalogCard): Card {
+  // Prefer Near Mint, fall back to first variant
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
   const price = variant?.price ?? 0;
   const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : new Date().toISOString();
   const game = card.game.toLowerCase();
-  const tcg = game.includes('magic') ? 'magic' : game.includes('one piece') ? 'onepiece' : game.includes('yugioh') || game.includes('yu-gi') ? 'yugioh' : game.includes('lorcana') ? 'lorcana' : game.includes('dragon') ? 'dragonball' : 'pokemon';
+  const tcg = game.includes('magic') ? 'magic'
+    : game.includes('one piece') ? 'onepiece'
+    : game.includes('yugioh') || game.includes('yu-gi') ? 'yugioh'
+    : game.includes('lorcana') ? 'lorcana'
+    : game.includes('dragon') ? 'dragonball'
+    : 'pokemon';
+
+  // JustTCG doesn't always return image_url — fall back to TCGPlayer CDN via
+  // the product ID when available.
+  const imageUrl = card.image_url
+    ?? (card.tcgplayerId ? `https://product-images.tcgplayer.com/fit-in/437x437/${card.tcgplayerId}.jpg` : undefined);
+
   return {
     id: card.id,
     name: card.name,
@@ -56,11 +90,17 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     setName: card.set_name ?? card.set ?? 'Unknown set',
     tcg,
     number: card.number ?? '',
-    rarity: 'rare',
+    rarity: mapRarity(card.rarity),
     year: new Date(updatedAt).getFullYear(),
-    imageUrl: card.image_url,
+    imageUrl,
     gradientStart: '#202020',
     gradientEnd: '#090909',
-    price: { raw: price, currency: 'AUD', updatedAt, change24h: variant?.priceChange24hr ?? undefined },
+    price: {
+      raw: price,
+      currency: 'AUD',
+      updatedAt,
+      change24h: variant?.priceChange24hr ?? undefined,
+      change7d: variant?.priceChange7d ?? undefined,
+    },
   };
 }
