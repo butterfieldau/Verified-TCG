@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   FlatList,
   Image,
@@ -15,6 +15,7 @@ import { Feather } from '@expo/vector-icons';
 import { VerificationBadge } from '@/components/ui/Badge';
 import { Chip } from '@/components/ui/Chip';
 import { getMarketMovers } from '@/services/market';
+import type { MarketMover } from '@/types';
 import { searchCards, CARD_SETS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
@@ -111,6 +112,7 @@ export default function SearchScreen() {
   const [remoteResults, setRemoteResults] = useState<CatalogCard[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState('');
+  const [trendingMovers, setTrendingMovers] = useState<MarketMover[]>([]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -120,9 +122,13 @@ export default function SearchScreen() {
   const setResults = query.trim().length > 0
     ? CARD_SETS.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))
     : [];
-  const trendingMovers = getMarketMovers();
 
   const isEmpty = query.trim().length === 0;
+
+  // Load trending cards once (used in empty/idle state)
+  useEffect(() => {
+    getMarketMovers().then(setTrendingMovers).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();

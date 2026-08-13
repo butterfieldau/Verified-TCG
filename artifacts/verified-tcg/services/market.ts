@@ -1,40 +1,80 @@
-import type { MarketMover, PortfolioDataPoint, PortfolioRange } from '@/types';
+import type { Card, MarketMover, PriceRecord, PortfolioDataPoint, PortfolioRange } from '@/types';
+import { catalogCardToAppCard } from './catalogApi';
+import type { CatalogCard } from './catalogApi';
 import { MOCK_CARDS } from './cards';
 
-export const MARKET_MOVERS: MarketMover[] = [
-  {
-    card: MOCK_CARDS[1], // Umbreon ex
-    currentPrice: 1450, priceChange: 112.8, priceChangePercent: 8.4,
-    trend: 'up', volume: 127,
-  },
-  {
-    card: MOCK_CARDS[0], // Charizard ex
-    currentPrice: 580, priceChange: 13.6, priceChangePercent: 2.4,
-    trend: 'up', volume: 245,
-  },
-  {
-    card: MOCK_CARDS[8], // Luffy
-    currentPrice: 320, priceChange: 15.9, priceChangePercent: 5.2,
-    trend: 'up', volume: 89,
-  },
-  {
-    card: MOCK_CARDS[3], // Rayquaza VMAX
-    currentPrice: 890, priceChange: -38.8, priceChangePercent: -4.3,
-    trend: 'down', volume: 56,
-  },
-  {
-    card: MOCK_CARDS[4], // Lugia V
-    currentPrice: 680, priceChange: 21.4, priceChangePercent: 3.2,
-    trend: 'up', volume: 94,
-  },
-  {
-    card: MOCK_CARDS[2], // Pikachu ex
-    currentPrice: 340, priceChange: -4.1, priceChangePercent: -1.2,
-    trend: 'down', volume: 312,
-  },
-];
+// Resolve the API base URL the same way catalogApi.ts does.
+const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
+const API_BASE = `${explicitBase || domainBase}/api`;
 
-// Generate realistic chart data for portfolio
+// ── Server response shapes ────────────────────────────────────────────────────
+
+interface MarketMoverServerCard extends CatalogCard {
+  market_price: number;
+  price_change_7d: number;
+  trend: 'up' | 'down' | 'neutral';
+}
+
+// ── Live API functions ────────────────────────────────────────────────────────
+
+/**
+ * Fetches the top market movers from the API server.
+ * Cards are sorted server-side by absolute 7-day price change.
+ * Returns an empty array on error so callers can show a graceful fallback.
+ */
+export async function getMarketMovers(): Promise<MarketMover[]> {
+  if (!API_BASE || API_BASE === '/api') return [];
+  try {
+    const res = await fetch(`${API_BASE}/catalog/market-movers`);
+    if (!res.ok) return [];
+    const body = await res.json();
+    return (body.data as MarketMoverServerCard[]).map((card) => ({
+      card: catalogCardToAppCard(card),
+      currentPrice: card.market_price,
+      priceChange: (card.market_price * card.price_change_7d) / 100,
+      priceChangePercent: card.price_change_7d,
+      trend: card.trend,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches trending cards — sorted by trading activity (price update frequency).
+ * Returns an empty array on error.
+ */
+export async function getTrendingCards(): Promise<Card[]> {
+  if (!API_BASE || API_BASE === '/api') return [];
+  try {
+    const res = await fetch(`${API_BASE}/catalog/trending`);
+    if (!res.ok) return [];
+    const body = await res.json();
+    return (body.data as CatalogCard[]).map(catalogCardToAppCard);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches recently-added catalog cards — high-value cards from current sets.
+ * Returns an empty array on error.
+ */
+export async function getRecentlyAddedCards(): Promise<Card[]> {
+  if (!API_BASE || API_BASE === '/api') return [];
+  try {
+    const res = await fetch(`${API_BASE}/catalog/recently-added`);
+    if (!res.ok) return [];
+    const body = await res.json();
+    return (body.data as CatalogCard[]).map(catalogCardToAppCard);
+  } catch {
+    return [];
+  }
+}
+
+// ── Portfolio chart data (still generated locally — collection-owned) ─────────
+
 function generateChartData(
   baseValue: number,
   days: number,
@@ -43,7 +83,6 @@ function generateChartData(
   const data: PortfolioDataPoint[] = [];
   let value = baseValue;
   const now = Date.now();
-  // Deterministic-ish using index-based pseudo-randomness
   for (let i = days; i >= 0; i--) {
     const date = new Date(now - i * 24 * 60 * 60 * 1000);
     const seed = (days - i + 17) * 9301 + 49297;
@@ -63,15 +102,36 @@ export const PORTFOLIO_CHART_DATA: Record<PortfolioRange, PortfolioDataPoint[]> 
   'ALL': generateChartData(8500,  730, 0.040),
 };
 
-export function getMarketMovers(): MarketMover[] {
-  return MARKET_MOVERS;
+// ── Price refresh (still simulated — real price refresh is task #20 scope) ────
+
+export function simulateRefreshedPrice(cardId: string, current: PriceRecord): PriceRecord {
+  const timeBucket = Math.floor(Date.now() / 60000);
+  const cardSeed = cardId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const raw01 = ((timeBucket * 9301 + cardSeed * 49297) % 233280) / 233280;
+  const variation = 1 + (raw01 - 0.5) * 0.06;
+
+  function vary(v: number | undefined): number | undefined {
+    return v !== undefined ? Math.round(v * variation * 100) / 100 : undefined;
+  }
+
+  return {
+    ...current,
+    raw:   Math.round(current.raw * variation * 100) / 100,
+    psa9:  vary(current.psa9),
+    psa10: vary(current.psa10),
+    bgs9:  vary(current.bgs9),
+    bgs95: vary(current.bgs95),
+    cgc9:  vary(current.cgc9),
+    cgc10: vary(current.cgc10),
+    updatedAt: new Date().toISOString().split('T')[0],
+  };
 }
 
-export function getTrendingCards() {
-  return MOCK_CARDS.slice(0, 5);
+export async function fetchRefreshedPrices(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 1200));
 }
 
-// ── Most watched ──────────────────────────────────────────────────────────────
+// ── Market tab mock data (out of scope for task #20 replacement) ──────────────
 
 export interface WatchedEntry {
   card: typeof MOCK_CARDS[number];
@@ -88,8 +148,6 @@ const MOCK_MOST_WATCHED: WatchedEntry[] = [
 export function getMostWatched(): WatchedEntry[] {
   return MOCK_MOST_WATCHED;
 }
-
-// ── Recent sales ──────────────────────────────────────────────────────────────
 
 export interface RecentSale {
   card: typeof MOCK_CARDS[number];
@@ -109,8 +167,6 @@ export function getRecentSales(): RecentSale[] {
   return MOCK_RECENT_SALES;
 }
 
-// ── New releases ──────────────────────────────────────────────────────────────
-
 export interface SetRelease {
   id: string;
   name: string;
@@ -128,42 +184,4 @@ const MOCK_NEW_RELEASES: SetRelease[] = [
 
 export function getNewReleases(): SetRelease[] {
   return MOCK_NEW_RELEASES;
-}
-
-// ── Price refresh simulation ──────────────────────────────────────────────────
-
-import type { PriceRecord } from '@/types';
-
-/**
- * Simulates a market price refresh for a single card by applying a small
- * realistic variation (±3%) seeded on the current minute so repeated calls
- * within the same minute are stable, but a new pull-to-refresh a minute later
- * yields a visibly different result.
- */
-export function simulateRefreshedPrice(cardId: string, current: PriceRecord): PriceRecord {
-  const timeBucket = Math.floor(Date.now() / 60000); // changes every minute
-  const cardSeed = cardId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const raw01 = ((timeBucket * 9301 + cardSeed * 49297) % 233280) / 233280; // 0..1
-  const variation = 1 + (raw01 - 0.5) * 0.06; // ±3%
-
-  function vary(v: number | undefined): number | undefined {
-    return v !== undefined ? Math.round(v * variation * 100) / 100 : undefined;
-  }
-
-  return {
-    ...current,
-    raw:   Math.round(current.raw * variation * 100) / 100,
-    psa9:  vary(current.psa9),
-    psa10: vary(current.psa10),
-    bgs9:  vary(current.bgs9),
-    bgs95: vary(current.bgs95),
-    cgc9:  vary(current.cgc9),
-    cgc10: vary(current.cgc10),
-    updatedAt: new Date().toISOString().split('T')[0],
-  };
-}
-
-/** Simulates a short async delay for the refresh network call. */
-export async function fetchRefreshedPrices(): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, 1200));
 }

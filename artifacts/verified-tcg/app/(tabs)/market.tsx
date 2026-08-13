@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -18,7 +19,7 @@ import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from 
 import { MOCK_LISTINGS } from '@/services/listings';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
-import type { TCGId } from '@/types';
+import type { MarketMover, TCGId } from '@/types';
 
 const C = colors.dark;
 
@@ -39,8 +40,16 @@ const NEW_RELEASES = getNewReleases();
 
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
-  const movers = getMarketMovers();
+  const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [moversLoading, setMoversLoading] = useState(true);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
+
+  useEffect(() => {
+    getMarketMovers()
+      .then(setMovers)
+      .catch(() => {})
+      .finally(() => setMoversLoading(false));
+  }, []);
   const [mainTab, setMainTab] = useState<MainTab>('market');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [activeSort, setActiveSort] = useState('Popularity');
@@ -131,6 +140,9 @@ export default function MarketScreen() {
                 <Feather name="trending-up" size={12} color={C.positive} />
               </View>
             </View>
+            {moversLoading ? (
+              <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4, marginVertical: 8 }} />
+            ) : (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -154,6 +166,7 @@ export default function MarketScreen() {
                 </Pressable>
               ))}
             </ScrollView>
+            )}
           </View>
 
           {/* Most Watched */}

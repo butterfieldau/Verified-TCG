@@ -28,6 +28,26 @@ function isPokemonGame(game: string): boolean {
   return game.toLowerCase().includes("pokemon") || game.toLowerCase().includes("pokémon");
 }
 
+/** Apply image enrichment to a single card record (same priority as list endpoint). */
+function enrichCard(card: Record<string, unknown>): Record<string, unknown> {
+  if (card.image_url) return card;
+  if (card.tcgplayerId) {
+    return { ...card, image_url: `https://product-images.tcgplayer.com/fit-in/437x437/${String(card.tcgplayerId)}.jpg` };
+  }
+  if (isPokemonGame(String(card.game ?? ""))) {
+    const derived = pokemonImageUrl(card.set as string | undefined, card.number as string | undefined);
+    if (derived) return { ...card, image_url: derived };
+  }
+  return card;
+}
+
+/** Return the Near Mint variant, or the first variant as fallback. */
+function getNmVariant(variants: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(variants) || variants.length === 0) return null;
+  const arr = variants as Array<Record<string, unknown>>;
+  return arr.find((v) => v.condition === "Near Mint") ?? arr[0]!;
+}
+
 type CacheEntry = { expiresAt: number; body: unknown };
 const cache = new Map<string, CacheEntry>();
 
@@ -131,6 +151,152 @@ router.get("/catalog/cards", async (req, res) => {
 
     saveCache(cacheKey, body);
     return res.json({ ...((body as object) ?? {}), source: "JustTCG", cached: false });
+  } catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+  }
+});
+
+/**
+ * GET /catalog/market-movers
+ * Returns up to 8 cards with the highest absolute 7-day price change.
+ * Runs two parallel JustTCG searches (Charizard + Umbreon) to surface
+ * high-value, actively-priced cards, then sorts by |priceChange7d|.
+ * Each result includes top-level market_price, price_change_7d, and trend
+ * fields so the client doesn't need to dig into variants.
+ */
+router.get("/catalog/market-movers", async (_req, res) => {
+  try {
+    const cacheKey = "market-movers";
+    const hit = cached(cacheKey);
+    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
+
+    const [r1, r2] = await Promise.all([
+      justTcg("/cards?q=Charizard&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Umbreon&limit=20&include_price_history=false"),
+    ]);
+
+    const cards1 = ((r1.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+    const cards2 = ((r2.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+
+    // Merge and deduplicate by ID
+    const seen = new Set<string>();
+    const merged = [...cards1, ...cards2].filter((c) => {
+      const id = String(c.id ?? "");
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+
+    // Enrich images, extract NM price data, filter to priced cards (min $5), sort by |priceChange7d|
+    const enriched = merged
+      .map(enrichCard)
+      .flatMap((card) => {
+        const nm = getNmVariant(card.variants);
+        if (!nm) return [];
+        const price = Number(nm.price ?? 0);
+        if (price < 5) return [];
+        const priceChange7d = Number(nm.priceChange7d ?? 0);
+        return [{ card, price, priceChange7d }];
+      })
+      .sort((a, b) => Math.abs(b.priceChange7d) - Math.abs(a.priceChange7d))
+      .slice(0, 8)
+      .map(({ card, price, priceChange7d }) => ({
+        ...card,
+        market_price: price,
+        price_change_7d: priceChange7d,
+        trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral",
+      }));
+
+    saveCache(cacheKey, enriched);
+    return res.json({ data: enriched, source: "JustTCG", cached: false });
+  } catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+  }
+});
+
+/**
+ * GET /catalog/trending
+ * Returns up to 8 actively-traded Pokémon cards, measured by
+ * priceChangesCount7d (number of price updates in the past 7 days).
+ * High update frequency = high trading activity = trending.
+ */
+router.get("/catalog/trending", async (_req, res) => {
+  try {
+    const cacheKey = "trending";
+    const hit = cached(cacheKey);
+    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
+
+    const result = await justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false");
+    if (result.status >= 400) return res.status(result.status).json(result.body);
+
+    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+    const cards = body?.data ?? [];
+
+    const enriched = cards
+      .map(enrichCard)
+      .flatMap((card) => {
+        const nm = getNmVariant(card.variants);
+        if (!nm) return [];
+        const price = Number(nm.price ?? 0);
+        if (price <= 0) return [];
+        const changes7d = Number(nm.priceChangesCount7d ?? 0);
+        return [{ card, changes7d }];
+      })
+      .sort((a, b) => b.changes7d - a.changes7d)
+      .slice(0, 8)
+      .map(({ card }) => card);
+
+    saveCache(cacheKey, enriched);
+    return res.json({ data: enriched, source: "JustTCG", cached: false });
+  } catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+  }
+});
+
+/**
+ * GET /catalog/recently-added
+ * Returns up to 8 cards representing new catalog additions.
+ * Queries Pikachu (broad set coverage across all Pokémon eras) sorted by
+ * price descending — surfaces high-value, collector-relevant releases.
+ * A separate query for non-Pokémon TCGs is merged in for variety.
+ */
+router.get("/catalog/recently-added", async (_req, res) => {
+  try {
+    const cacheKey = "recently-added";
+    const hit = cached(cacheKey);
+    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
+
+    const [r1, r2] = await Promise.all([
+      justTcg("/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false"),
+      justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
+    ]);
+
+    const cards1 = ((r1.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+    const cards2 = ((r2.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+
+    const seen = new Set<string>();
+    const merged = [...cards1, ...cards2].filter((c) => {
+      const id = String(c.id ?? "");
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+
+    const enriched = merged
+      .map(enrichCard)
+      .flatMap((card) => {
+        const nm = getNmVariant(card.variants);
+        if (!nm) return [];
+        const price = Number(nm.price ?? 0);
+        if (price <= 0) return [];
+        return [{ card, price }];
+      })
+      .sort((a, b) => b.price - a.price)
+      .slice(0, 8)
+      .map(({ card }) => card);
+
+    saveCache(cacheKey, enriched);
+    return res.json({ data: enriched, source: "JustTCG", cached: false });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
