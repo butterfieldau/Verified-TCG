@@ -11,8 +11,9 @@
 
 import { Platform } from 'react-native';
 
-const API_BASE =
-  (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '') + '/api';
+const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
+const API_BASE = `${explicitBase || domainBase}/api`;
 
 /**
  * Returns a proxied URL on web, or the original CDN URL on native.

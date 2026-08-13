@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   FlatList,
+  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,6 +19,7 @@ import { searchCards, CARD_SETS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
 import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
+import { proxyImageUrl } from '@/services/imageProxy';
 
 const C = colors.dark;
 
@@ -31,10 +33,23 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
 const TRENDING_SEARCHES = ['Umbreon ex', 'Pikachu', 'Charizard', 'Luffy', 'Black Lotus'];
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
+  const [imgError, setImgError] = useState(false);
+  const imgUri = proxyImageUrl(card.imageUrl);
+  const showImage = !!imgUri && !imgError;
+
   return (
     <Pressable style={[styles.resultRow, { backgroundColor: C.card }]} onPress={onPress}>
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
-        <Text style={styles.resultInitial}>{card.name[0]}</Text>
+        {showImage ? (
+          <Image
+            source={{ uri: imgUri }}
+            style={styles.resultThumbImage}
+            resizeMode="cover"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <Text style={styles.resultInitial}>{card.name[0]}</Text>
+        )}
       </View>
       <View style={styles.resultInfo}>
         <View style={styles.resultNameRow}>
@@ -47,6 +62,36 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
       <View style={styles.resultPricing}>
         <Text style={styles.resultPrice}>${card.price.raw.toLocaleString()}</Text>
         <Text style={styles.resultPriceLabel}>Raw</Text>
+        {card.price.change7d !== undefined && (
+          <View style={styles.resultChangeRow}>
+            <Feather
+              name={card.price.change7d >= 0 ? 'arrow-up' : 'arrow-down'}
+              size={9}
+              color={card.price.change7d >= 0 ? '#22C55E' : '#EF4444'}
+            />
+            <Text style={[
+              styles.resultChangeText,
+              { color: card.price.change7d >= 0 ? '#22C55E' : '#EF4444' },
+            ]}>
+              {card.price.change7d >= 0 ? '+' : ''}{card.price.change7d.toFixed(1)}% 7d
+            </Text>
+          </View>
+        )}
+        {card.price.change30d !== undefined && (
+          <View style={styles.resultChangeRow}>
+            <Feather
+              name={card.price.change30d >= 0 ? 'arrow-up' : 'arrow-down'}
+              size={9}
+              color={card.price.change30d >= 0 ? '#22C55E' : '#EF4444'}
+            />
+            <Text style={[
+              styles.resultChangeText,
+              { color: card.price.change30d >= 0 ? '#22C55E' : '#EF4444' },
+            ]}>
+              {card.price.change30d >= 0 ? '+' : ''}{card.price.change30d.toFixed(1)}% 30d
+            </Text>
+          </View>
+        )}
         {card.price.psa10 && (
           <>
             <Text style={[styles.resultPrice, { marginTop: 4 }]}>${card.price.psa10.toLocaleString()}</Text>
@@ -314,6 +359,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  resultThumbImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 8,
+  },
   resultInitial: { fontSize: 24, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
   setIcon: {
     width: 50,
@@ -340,6 +393,8 @@ const styles = StyleSheet.create({
   resultPricing: { alignItems: 'flex-end' },
   resultPrice: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
   resultPriceLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  resultChangeRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 3 },
+  resultChangeText: { fontSize: 10, fontFamily: 'Inter_500Medium' },
   noResults: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
@@ -348,7 +403,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   liveSource: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.positive, marginBottom: 10 },
-  liveError: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 10 },
+  liveError: { fontSize: 12, fontFamily: 'Inter_500Medium', color: '#E6A817', marginBottom: 10 },
   emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   emptyBody: {

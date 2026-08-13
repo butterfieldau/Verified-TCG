@@ -4,6 +4,29 @@ const router = Router();
 const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * For Pokémon cards that JustTCG doesn't supply an image URL for, we can
+ * derive one from the pokemontcg.io CDN — the URL structure is predictable:
+ *   https://images.pokemontcg.io/{setId}/{number}.png
+ *
+ * JustTCG set codes for Pokémon follow the official set-code convention that
+ * pokemontcg.io also uses (e.g. "sv3", "swsh1", "base1"), so the mapping is
+ * direct.  If the set/number combo doesn't exist on that CDN the image
+ * request will simply 404 and the app's letter-initial fallback fires.
+ */
+function pokemonImageUrl(set: string | undefined, number: string | undefined): string | undefined {
+  if (!set || !number) return undefined;
+  // Normalise: lower-case, strip whitespace
+  const setId = set.trim().toLowerCase();
+  const num = number.trim();
+  if (!setId || !num) return undefined;
+  return `https://images.pokemontcg.io/${setId}/${num}.png`;
+}
+
+function isPokemonGame(game: string): boolean {
+  return game.toLowerCase().includes("pokemon") || game.toLowerCase().includes("pokémon");
+}
+
 type CacheEntry = { expiresAt: number; body: unknown };
 const cache = new Map<string, CacheEntry>();
 
@@ -78,8 +101,26 @@ router.get("/catalog/cards", async (req, res) => {
 
     const result = await justTcg(`/cards?${params.toString()}`);
     if (result.status >= 400) return res.status(result.status).json(result.body);
-    saveCache(cacheKey, result.body);
-    return res.json({ ...((result.body as object) ?? {}), source: "JustTCG", cached: false });
+
+    // Enrich cards that are missing an image_url with a pokemontcg.io CDN URL
+    // (for Pokémon cards) or leave them for the client's TCGPlayer fallback.
+    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+    if (body && Array.isArray(body.data)) {
+      body.data = body.data.map((card) => {
+        if (card.image_url) return card; // already has an image — nothing to do
+        if (isPokemonGame(String(card.game ?? ""))) {
+          const derived = pokemonImageUrl(
+            card.set as string | undefined,
+            card.number as string | undefined,
+          );
+          if (derived) return { ...card, image_url: derived };
+        }
+        return card;
+      });
+    }
+
+    saveCache(cacheKey, body);
+    return res.json({ ...((body as object) ?? {}), source: "JustTCG", cached: false });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }

@@ -42,7 +42,7 @@ export default function SignInScreen() {
     try {
       await signIn(email, password);
       await AsyncStorage.setItem('hasOnboarded', 'true');
-      router.replace((next as string | undefined) ?? '/(tabs)');
+      router.replace(((next as string | undefined) ?? '/(tabs)') as never);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed. Please try again.');
     } finally {
@@ -57,7 +57,7 @@ export default function SignInScreen() {
       const signedIn = await signInWithProvider(provider);
       if (!signedIn) return;
       await AsyncStorage.setItem('hasOnboarded', 'true');
-      router.replace((next as string | undefined) ?? '/(tabs)');
+      router.replace(((next as string | undefined) ?? '/(tabs)') as never);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Social sign in failed. Please try again.');
     } finally {
