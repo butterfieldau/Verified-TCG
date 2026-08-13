@@ -109,8 +109,10 @@ const GAME_KEYWORDS: Record<string, string> = {
 };
 
 function buildQuery(name: string, setName: string, game: string, grade: string): string {
+  // Quote the card name for exact match; leave set as plain keywords so minor
+  // title variations (e.g. omitted "Pokémon") still return results.
   const gkw = GAME_KEYWORDS[game] ?? "";
-  return `"${name}" "${setName}" ${grade}${gkw ? ` ${gkw}` : ""}`;
+  return `"${name}" ${setName} ${grade}${gkw ? ` ${gkw}` : ""}`;
 }
 
 interface GradeSpec { key: string; ebayTerms: string }
