@@ -35,6 +35,11 @@ import {
   saveRefreshedPrices,
   applyPersistedCollectionPrices,
 } from '@/services/pricePersistence';
+import {
+  loadPersistedAlerts,
+  saveAlertState,
+  mergeAlertSources,
+} from '@/services/alertsStore';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 import {
@@ -245,13 +250,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanResetDate]);
 
-  // Load persisted watchlist, prices, and scan state from AsyncStorage on mount
+  // Load persisted watchlist, prices, scan state, and alerts from AsyncStorage on mount
   useEffect(() => {
     Promise.all([
       AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
       loadPersistedPrices(),
       loadScanState(),
-    ]).then(async ([storedWatchlist, persisted, storedScanState]) => {
+      loadPersistedAlerts(),
+    ]).then(async ([storedWatchlist, persisted, storedScanState, persistedAlerts]) => {
       // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
         try {
@@ -312,6 +318,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setScanResetDate(storedScanState.scanResetDate);
         setScansUsed(storedScanState.scansUsed);
       }
+
+      // Union-merge alerts from the dedicated store (@verified_tcg/alerts) with
+      // the already-loaded watchlist.  mergeAlertSources takes the UNION of both
+      // sources — an alert is enabled if EITHER the watchlist payload OR the
+      // dedicated store says so.  This prevents either store from silently
+      // disabling a valid alert that the other store still knows about.
+      // After merging, flush the union back to the dedicated store so both
+      // sources stay in sync for the next restart.
+      setWatchlist(prev => {
+        const merged = mergeAlertSources(prev, persistedAlerts);
+        // Flush union back to the dedicated store (fire-and-forget; errors swallowed)
+        saveAlertState(merged).catch(() => {});
+        return merged;
+      });
     }).finally(() => {
       setWatchlistLoaded(true);
       setScansLoaded(true);
@@ -324,6 +344,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!watchlistLoaded) return;
     const payload: WatchlistPayload = { version: WATCHLIST_SCHEMA_VERSION, items: watchlist };
     AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
+  }, [watchlist, watchlistLoaded]);
+
+  // Atomically mirror the complete alert state to the dedicated alerts store
+  // (@verified_tcg/alerts) on every watchlist change (after initial load).
+  // Writing the full derived state from the in-memory watchlist avoids
+  // read-modify-write races — the watchlist is the single source of truth
+  // and this effect just keeps the dedicated store in sync.
+  useEffect(() => {
+    if (!watchlistLoaded) return;
+    saveAlertState(watchlist).catch(() => {});
   }, [watchlist, watchlistLoaded]);
 
   // Persist scan state to AsyncStorage on every change (after initial load).
@@ -437,6 +467,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Background mirror — DELETE records a server tombstone so future syncs
     // from stale clients cannot resurrect the item.
     removeWishlistItemFromServer(id).catch(() => {});
+    // Alert store is kept in sync by the watchlist-change useEffect below —
+    // no separate per-item delete needed here.
   }, []);
 
   const updateWatchlistItem = useCallback((
@@ -462,6 +494,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWatchlist(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
     // Background mirror to server (only reached if the cap check passed)
     updateWishlistItemOnServer(id, patch).catch(() => {});
+    // Alert store is kept in sync by the watchlist-change useEffect below —
+    // no separate per-item read-modify-write needed here.
   }, [subscriptionTier]);
 
   const setCollectionFilters = useCallback((filters: Partial<CollectionFilters>) => {
