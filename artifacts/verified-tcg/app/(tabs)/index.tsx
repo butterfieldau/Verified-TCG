@@ -31,6 +31,14 @@ const TRADE_MATCHES_DISMISSED_KEY = '@verified_tcg/trade_matches_dismissed_count
 const C = colors.dark;
 const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
 
+type TcgFilter = 'all' | 'pokemon' | 'onepiece' | 'magic';
+const TCG_FILTERS: { id: TcgFilter; label: string }[] = [
+  { id: 'all',      label: 'All' },
+  { id: 'pokemon',  label: 'Pokémon' },
+  { id: 'onepiece', label: 'One Piece' },
+  { id: 'magic',    label: 'MTG' },
+];
+
 const QUICK_ACTIONS: { icon: string; label: string; action: string }[] = [
   { icon: 'camera', label: 'Scan', action: 'scan' },
   { icon: 'plus-circle', label: 'Add Card', action: 'add-card' },
@@ -48,6 +56,9 @@ function getGreeting() {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
+
+  // TCG filter for Market Movers + Trending
+  const [tcgFilter, setTcgFilter] = useState<TcgFilter>('all');
 
   // Live catalog data for Home screen sections
   const [movers, setMovers] = useState<MarketMover[]>([]);
@@ -436,6 +447,37 @@ export default function HomeScreen() {
         ))}
       </View>
 
+      {/* ── TCG Filter Pills ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tcgFilterRow}
+        style={{ marginBottom: 16 }}
+      >
+        {TCG_FILTERS.map(f => (
+          <Pressable
+            key={f.id}
+            onPress={() => setTcgFilter(f.id)}
+            style={[
+              styles.tcgFilterPill,
+              {
+                backgroundColor: tcgFilter === f.id ? C.primary : C.card,
+                borderColor: tcgFilter === f.id ? C.primary : C.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.tcgFilterPillText,
+                { color: tcgFilter === f.id ? '#FFFFFF' : C.mutedForeground },
+              ]}
+            >
+              {f.label}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
       {/* ── Market Movers ── */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
@@ -446,7 +488,7 @@ export default function HomeScreen() {
         </View>
         {sectionsLoading ? (
           <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
-        ) : movers.length === 0 ? (
+        ) : movers.filter(m => tcgFilter === 'all' || m.card.tcg === tcgFilter).length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
           <ScrollView
@@ -454,7 +496,7 @@ export default function HomeScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 12, paddingRight: 4 }}
           >
-            {movers.map(m => (
+            {movers.filter(m => tcgFilter === 'all' || m.card.tcg === tcgFilter).map(m => (
               <Pressable
                 key={m.card.id}
                 style={{ gap: 8 }}
@@ -532,7 +574,7 @@ export default function HomeScreen() {
         </View>
         {sectionsLoading ? (
           <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
-        ) : trending.length === 0 ? (
+        ) : trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
           <ScrollView
@@ -540,7 +582,7 @@ export default function HomeScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 12, paddingRight: 4 }}
           >
-            {trending.map(card => (
+            {trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).map(card => (
               <Pressable
                 key={card.id}
                 style={{ gap: 8 }}
@@ -977,5 +1019,22 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
     paddingVertical: 8,
+  },
+
+  // ── TCG Filter Pills ──
+  tcgFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 4,
+  },
+  tcgFilterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  tcgFilterPillText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
   },
 });
