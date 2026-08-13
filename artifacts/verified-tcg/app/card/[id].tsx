@@ -29,6 +29,7 @@ import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
+import { fetchGradedPrices } from '@/services/gradedPricing';
 import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
@@ -635,6 +636,8 @@ export default function CardDetailScreen() {
   });
   const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? '') && !catalogJson && !appCardJson);
   const [catalogError, setCatalogError] = useState(false);
+  const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
+  const [gradedLoading, setGradedLoading] = useState(false);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -696,6 +699,28 @@ export default function CardDetailScreen() {
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch real graded prices from eBay sold listings (via API server)
+  useEffect(() => {
+    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    if (!resolvedCard) return;
+    const controller = new AbortController();
+    setGradedLoading(true);
+    setLiveGradedPrices({});
+    fetchGradedPrices(
+      resolvedCard.id,
+      resolvedCard.name,
+      resolvedCard.setName,
+      resolvedCard.tcg,
+      controller.signal,
+    )
+      .then(prices => setLiveGradedPrices(prices))
+      .catch(() => {})
+      .finally(() => setGradedLoading(false));
+    return () => controller.abort();
+  // re-fetch when the card identity changes (navigation between cards)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, catalogCard?.id]);
 
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
 
@@ -773,7 +798,18 @@ export default function CardDetailScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  const activePrice = getTabPrice(card, priceTab);
+  // Prefer real eBay-sourced prices; fall back to card.price fields for Raw/tab display
+  function effectiveTabPrice(tab: PriceTab): number | undefined {
+    switch (tab) {
+      case 'Raw':     return card.price.raw;
+      case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
+      case 'PSA 10':  return liveGradedPrices['psa10'] ?? card.price.psa10;
+      case 'CGC 10':  return liveGradedPrices['cgc10'] ?? card.price.cgc10;
+      case 'BGS 9.5': return liveGradedPrices['bgs95'] ?? card.price.bgs95;
+      default:        return card.price.raw;
+    }
+  }
+  const activePrice = effectiveTabPrice(priceTab);
 
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
@@ -947,7 +983,7 @@ export default function CardDetailScreen() {
           contentContainerStyle={styles.priceTabsContent}
         >
           {PRICE_TABS.map(t => {
-            const price = getTabPrice(card, t);
+            const price = effectiveTabPrice(t);
             if (!price) return null;
             return (
               <Pressable
@@ -1195,14 +1231,25 @@ export default function CardDetailScreen() {
 
           {hasAdvancedPricing ? (
             <View>
-              {GRADERS.map(grader => (
-                <View key={grader.key} style={styles.gradedRow}>
-                  <Text style={styles.gradedLabel}>{grader.label}</Text>
-                  <Text style={styles.gradedValue}>
-                    ${pricingPlus.gradedPrices[grader.key].toLocaleString('en-AU')} AUD
-                  </Text>
-                </View>
-              ))}
+              {gradedLoading ? (
+                <ActivityIndicator
+                  color={C.primary}
+                  style={{ marginVertical: 14, alignSelf: 'center' }}
+                />
+              ) : Object.keys(liveGradedPrices).length === 0 ? (
+                <Text style={[styles.gradedLabel, { textAlign: 'center', paddingVertical: 12, color: C.mutedForeground }]}>
+                  Graded price data unavailable
+                </Text>
+              ) : (
+                GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => (
+                  <View key={grader.key} style={styles.gradedRow}>
+                    <Text style={styles.gradedLabel}>{grader.label}</Text>
+                    <Text style={styles.gradedValue}>
+                      ${(liveGradedPrices[grader.key]!).toLocaleString('en-AU')} AUD
+                    </Text>
+                  </View>
+                ))
+              )}
             </View>
           ) : (
             <>
