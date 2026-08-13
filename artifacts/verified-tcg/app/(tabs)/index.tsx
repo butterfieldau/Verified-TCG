@@ -457,7 +457,7 @@ export default function HomeScreen() {
               <Pressable
                 key={m.card.id}
                 style={{ gap: 8 }}
-                onPress={() => router.push(`/card/${m.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
               >
                 <CardThumbnail card={m.card} compact />
                 <View>
@@ -505,7 +505,7 @@ export default function HomeScreen() {
               <Pressable
                 key={card.id}
                 style={{ gap: 8 }}
-                onPress={() => router.push(`/card/${card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
               >
                 <CardThumbnail card={card} compact />
                 <View>
@@ -543,7 +543,7 @@ export default function HomeScreen() {
               <Pressable
                 key={card.id}
                 style={{ gap: 8 }}
-                onPress={() => router.push(`/card/${card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
               >
                 <CardThumbnail card={card} compact />
                 <View>

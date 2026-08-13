@@ -152,7 +152,7 @@ export default function MarketScreen() {
                 <Pressable
                   key={m.card.id}
                   style={styles.moverCard}
-                  onPress={() => router.push(`/card/${m.card.id}`)}
+                  onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
                 >
                   <CardThumbnail card={m.card} compact />
                   <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
@@ -178,7 +178,7 @@ export default function MarketScreen() {
               <Pressable
                 key={item.card.id}
                 style={[styles.rankedRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${item.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${item.card.id}` as any, params: { appCardJson: JSON.stringify(item.card) } })}
               >
                 <Text style={styles.rank}>{idx + 1}</Text>
                 <View style={[styles.rankedThumb, { backgroundColor: item.card.gradientStart, overflow: 'hidden' }]}>
@@ -208,7 +208,7 @@ export default function MarketScreen() {
               <Pressable
                 key={i}
                 style={[styles.saleRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${sale.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${sale.card.id}` as any, params: { appCardJson: JSON.stringify(sale.card) } })}
               >
                 <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart, overflow: 'hidden' }]}>
                   {sale.card.imageUrl
@@ -303,7 +303,7 @@ export default function MarketScreen() {
               <Pressable
                 key={listing.id}
                 style={[styles.listingRow, { backgroundColor: C.card }]}
-                onPress={() => router.push(`/card/${listing.card.id}`)}
+                onPress={() => router.push({ pathname: `/card/${listing.card.id}` as any, params: { appCardJson: JSON.stringify(listing.card) } })}
               >
                 <View style={[styles.listingThumb, { backgroundColor: listing.card.gradientStart }]}>
                   <Text style={styles.listingInitial}>{listing.card.name[0]}</Text>
