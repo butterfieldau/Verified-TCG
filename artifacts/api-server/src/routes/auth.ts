@@ -37,7 +37,7 @@ function refreshTokenExpiry(): Date {
 }
 
 function sessionResponse(
-  user: { id: string; email: string; displayName: string; username: string; bio: string; location: string },
+  user: { id: string; email: string; displayName: string; username: string; bio: string; location: string; subscriptionTier: string; isFoundingMember: boolean },
   accessToken: string,
   refreshToken: string,
 ) {
@@ -55,6 +55,8 @@ function sessionResponse(
         username: user.username,
         bio: user.bio,
         location: user.location,
+        subscription_tier: user.subscriptionTier,
+        is_founding_member: user.isFoundingMember,
       },
     },
   };
@@ -233,6 +235,8 @@ router.get("/auth/user", async (req, res) => {
       username: user.username,
       bio: user.bio,
       location: user.location,
+      subscription_tier: user.subscriptionTier,
+      is_founding_member: user.isFoundingMember,
     },
   });
 });
@@ -291,6 +295,8 @@ router.put("/auth/user", async (req, res) => {
       username: updated.username,
       bio: updated.bio,
       location: updated.location,
+      subscription_tier: updated.subscriptionTier,
+      is_founding_member: updated.isFoundingMember,
     },
   });
 });

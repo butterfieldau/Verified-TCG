@@ -488,6 +488,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!session) return;
       setUser(userFromSession(session));
       setIsAuthenticated(true);
+
+      // Restore subscription tier from the cached session metadata.
+      // The session is refreshed from the server whenever the access token
+      // expires, so this value stays up-to-date across restarts.
+      const meta = session.user.user_metadata ?? {};
+      if (meta.subscription_tier === 'pro') {
+        setSubscriptionTierState('pro');
+      }
+      if (meta.is_founding_member === true) {
+        setFoundingMemberClaimed(true);
+      }
+
       loadCollection();
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -513,6 +525,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const session = await signInWithPassword(email, password);
     setUser(userFromSession(session));
     setIsAuthenticated(true);
+
+    // Restore subscription tier from the sign-in response
+    const meta = session.user.user_metadata ?? {};
+    if (meta.subscription_tier === 'pro') {
+      setSubscriptionTierState('pro');
+    } else {
+      setSubscriptionTierState('free');
+    }
+    if (meta.is_founding_member === true) {
+      setFoundingMemberClaimed(true);
+    }
 
     // Load real collection from server
     loadCollection();

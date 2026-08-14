@@ -16,7 +16,10 @@ export interface AuthSession {
   user: {
     id: string;
     email?: string;
-    user_metadata?: Record<string, unknown>;
+    user_metadata?: Record<string, unknown> & {
+      subscription_tier?: string;
+      is_founding_member?: boolean;
+    };
   };
 }
 
@@ -214,4 +217,46 @@ export async function deleteAccount(password: string): Promise<void> {
 export async function getAccessToken(): Promise<string | null> {
   const session = await restoreSession();
   return session?.access_token ?? null;
+}
+
+/**
+ * Upgrade the authenticated user's subscription to Pro.
+ *
+ * Calls POST /api/subscription/upgrade on the server which sets
+ * subscription_tier = 'pro' in the database.  Also updates the cached
+ * session in AsyncStorage so subsequent restoreSession() calls return the
+ * new tier without needing an extra round-trip.
+ *
+ * In production this would be triggered after a successful payment
+ * webhook rather than called directly from the client.
+ *
+ * @returns The updated subscription_tier and is_founding_member values.
+ */
+export async function upgradeToPro(): Promise<{ subscription_tier: string; is_founding_member: boolean }> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You must be signed in to upgrade.');
+
+  const response = await request('/api/subscription/upgrade', {
+    method: 'POST',
+    accessToken: session.access_token,
+  });
+  if (!response.ok) return parseError(response);
+
+  const result = (await response.json()) as { subscription_tier: string; is_founding_member: boolean };
+
+  // Update the cached session so the new tier is available on next restore
+  const updatedSession: AuthSession = {
+    ...session,
+    user: {
+      ...session.user,
+      user_metadata: {
+        ...(session.user.user_metadata ?? {}),
+        subscription_tier: result.subscription_tier,
+        is_founding_member: result.is_founding_member,
+      },
+    },
+  };
+  await persist(updatedSession);
+
+  return result;
 }

@@ -1,22 +1,35 @@
 /**
- * Schema readiness check — verifies required tables exist before the server
- * accepts any traffic. Throws with a clear message if a table is missing so
- * the process exits with a non-zero code instead of serving 500s.
+ * Schema readiness check and forward migrations.
  *
- * Migrations are NOT applied here. Apply them as a separate step before
- * deploying by running:
+ * On startup this module:
+ *   1. Verifies that all required base tables exist (hard fail if missing).
+ *   2. Applies additive, idempotent column migrations using
+ *      `ALTER TABLE … ADD COLUMN IF NOT EXISTS` so new columns are always
+ *      present regardless of when the database was first provisioned.
  *
- *   pnpm --filter @workspace/db run push
- *
- * or generate + apply a versioned migration:
- *
- *   cd lib/db && npx drizzle-kit generate && npx drizzle-kit migrate
+ * Adding a new column:
+ *   - Add an `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to
+ *     COLUMN_MIGRATIONS below.
+ *   - Also update lib/db/src/schema/<table>.ts with the matching Drizzle
+ *     column definition and run `pnpm --filter @workspace/db run push` to
+ *     sync a fresh development database.
  */
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
 
 const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
+
+/**
+ * Idempotent column-level migrations.  Each entry is a raw SQL string that
+ * adds a column only when it does not already exist, so running this on an
+ * already-migrated database is always safe.
+ */
+const COLUMN_MIGRATIONS: string[] = [
+  // Added: subscription tier and founding-member flag for Pro persistence
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
+];
 
 export async function runMigrations(): Promise<void> {
   logger.info("Verifying database schema");
@@ -39,4 +52,11 @@ export async function runMigrations(): Promise<void> {
   }
 
   logger.info({ tables: [...found] }, "Database schema verified");
+
+  // Apply forward column migrations
+  for (const statement of COLUMN_MIGRATIONS) {
+    await db.execute(sql.raw(statement));
+  }
+
+  logger.info({ count: COLUMN_MIGRATIONS.length }, "Column migrations applied");
 }

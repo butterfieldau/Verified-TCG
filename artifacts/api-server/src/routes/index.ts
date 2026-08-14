@@ -9,6 +9,7 @@ import gradedPricesRouter from "./gradedPrices";
 import ebayAccountDeletionRouter from "./ebayAccountDeletion";
 import collectionRouter from "./collection";
 import supportRouter from "./support";
+import subscriptionRouter from "./subscription";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(gradedPricesRouter);
 router.use(ebayAccountDeletionRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
+router.use(subscriptionRouter);
 
 export default router;
