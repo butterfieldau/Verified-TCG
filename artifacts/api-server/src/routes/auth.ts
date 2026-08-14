@@ -62,6 +62,7 @@ function userToMetadata(user: UserRow) {
     show_wishlist: user.showWishlist,
     show_for_trade: user.showForTrade,
     show_for_sale: user.showForSale,
+    preferred_tcgs: user.preferredTcgs ?? null,
   };
 }
 
@@ -284,6 +285,7 @@ router.put("/auth/user", async (req, res) => {
       show_wishlist?: boolean;
       show_for_trade?: boolean;
       show_for_sale?: boolean;
+      preferred_tcgs?: string | null;
     };
   };
 
@@ -306,6 +308,7 @@ router.put("/auth/user", async (req, res) => {
   if (data.show_wishlist !== undefined) patch.showWishlist = data.show_wishlist;
   if (data.show_for_trade !== undefined) patch.showForTrade = data.show_for_trade;
   if (data.show_for_sale !== undefined) patch.showForSale = data.show_for_sale;
+  if ("preferred_tcgs" in data) patch.preferredTcgs = data.preferred_tcgs ?? null;
 
   const [updated] = await db
     .update(usersTable)

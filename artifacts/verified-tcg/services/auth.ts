@@ -217,6 +217,9 @@ export const ALL_STORAGE_KEYS = [
   // Home-screen dismissal banners
   '@verified_tcg/event_banner_dismissed_event_id',
   '@verified_tcg/trade_matches_dismissed_count',
+  // Onboarding TCG game selections (must be cleared on sign-out so the
+  // next account holder's choices are not mistakenly pushed to the server)
+  '@verified_tcg/preferred_tcgs',
 ] as const;
 
 export async function signOut(): Promise<void> {

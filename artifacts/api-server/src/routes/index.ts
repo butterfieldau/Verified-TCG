@@ -18,6 +18,7 @@ import collectorsRouter from "./collectors";
 import communityRouter from "./community";
 import exportRouter from "./export";
 import blockReportRouter from "./block-report";
+import activityRouter from "./activity";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(collectorsRouter);
 router.use(communityRouter);
 router.use(exportRouter);
 router.use(blockReportRouter);
+router.use(activityRouter);
 
 export default router;

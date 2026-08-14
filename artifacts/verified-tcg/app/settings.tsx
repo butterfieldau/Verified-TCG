@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
@@ -263,6 +265,26 @@ export default function SettingsScreen() {
         <SettingRow icon="user" label="Edit Profile" onPress={() => requireAccount('/edit-profile')} />
         <SettingRow icon="credit-card" label="Payment Methods" onPress={() => requireAccount('/pro-subscription')} />
         <SettingRow icon="help-circle" label="Help & Support" onPress={() => router.push('/help-support' as any)} />
+        <SettingRow
+          icon="refresh-cw"
+          label="Replay Feature Tour"
+          onPress={() => {
+            Alert.alert(
+              'Restart Intro Tour',
+              'This will restart the onboarding tour next time you open the app.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Restart Tour',
+                  onPress: async () => {
+                    await AsyncStorage.removeItem('hasOnboarded');
+                    router.replace('/onboarding');
+                  },
+                },
+              ],
+            );
+          }}
+        />
         <SettingRow icon="info" label="About Verified TCG" onPress={() => router.push('/about' as any)} />
         <SettingRow icon="file-text" label="Terms of Service" onPress={() => router.push('/terms' as any)} />
         <SettingRow icon="shield" label="Privacy Policy" onPress={() => router.push('/privacy-policy' as any)} isLast />

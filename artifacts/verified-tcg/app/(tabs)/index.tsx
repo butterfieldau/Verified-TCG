@@ -21,6 +21,7 @@ import { useApp } from '@/context/AppContext';
 import { getMarketMovers, getTrendingCards, getRecentlyAddedCards } from '@/services/market';
 import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
+import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
 
@@ -55,7 +56,7 @@ function getGreeting() {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
+  const { user, isAuthenticated, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
 
   // TCG filter for Market Movers + Trending
   const [tcgFilter, setTcgFilter] = useState<TcgFilter>('all');
@@ -66,27 +67,34 @@ export default function HomeScreen() {
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [sectionsLoading, setSectionsLoading] = useState(true);
 
+  // Recent activity — real server data for signed-in users
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+
   useEffect(() => {
     setSectionsLoading(true);
+    setActivityLoading(true);
     Promise.all([
       getMarketMovers(),
       getTrendingCards(),
       getRecentlyAddedCards(),
+      fetchRecentActivity(10),
     ])
-      .then(([m, t, r]) => {
+      .then(([m, t, r, a]) => {
         setMovers(m);
         setTrending(t);
         setRecentCards(r);
+        setActivity(a);
       })
       .catch(() => {})
-      .finally(() => setSectionsLoading(false));
+      .finally(() => { setSectionsLoading(false); setActivityLoading(false); });
   }, []);
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    // Also refresh catalog sections on pull-to-refresh
-    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards()])
-      .then(([m, t, r]) => { setMovers(m); setTrending(t); setRecentCards(r); })
+    // Also refresh catalog sections and activity on pull-to-refresh
+    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards(), fetchRecentActivity(10)])
+      .then(([m, t, r, a]) => { setMovers(m); setTrending(t); setRecentCards(r); setActivity(a); })
       .catch(() => {});
   }, [refreshPrices]);
 
@@ -612,6 +620,49 @@ export default function HomeScreen() {
           </ScrollView>
         )}
       </View>
+
+      {/* ── Recent Activity (signed-in users only) ── */}
+      {isAuthenticated && (activityLoading || activity.length > 0) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Activity</Text>
+          </View>
+          {activityLoading ? (
+            <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+          ) : (
+            <View style={[styles.activityCard, { backgroundColor: C.card }]}>
+              {activity.map((item, idx) => (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.activityRow,
+                    idx < activity.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.border },
+                  ]}
+                >
+                  <View style={[styles.activityDot, { backgroundColor: `${C.primary}22` }]}>
+                    <Feather
+                      name={
+                        item.type === 'card_added' ? 'plus-circle' :
+                        item.type === 'card_removed' ? 'minus-circle' :
+                        item.type === 'wishlist_added' ? 'heart' :
+                        item.type === 'wishlist_removed' ? 'heart' :
+                        item.type === 'price_alert_fired' ? 'bell' :
+                        'edit-2'
+                      }
+                      size={14}
+                      color={C.primary}
+                    />
+                  </View>
+                  <View style={styles.activityContent}>
+                    <Text style={styles.activityDesc} numberOfLines={1}>{item.description}</Text>
+                    <Text style={styles.activityTime}>{item.timeAgo}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -1019,6 +1070,38 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
     paddingVertical: 8,
+  },
+
+  // ── Recent Activity ──
+  activityCard: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 12,
+  },
+  activityDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityContent: { flex: 1 },
+  activityDesc: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
+    marginBottom: 2,
+  },
+  activityTime: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
   },
 
   // ── TCG Filter Pills ──

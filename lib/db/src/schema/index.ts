@@ -13,3 +13,4 @@ export * from "./follows";
 export * from "./posts";
 export * from "./user-blocks";
 export * from "./user-reports";
+export * from "./activity-log";

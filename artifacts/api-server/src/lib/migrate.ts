@@ -32,6 +32,8 @@ const COLUMN_MIGRATIONS: string[] = [
   // Added: soft-delete support for wishlist items so deletions are durable across restarts
   // (NULL = active, non-NULL = tombstone; sync endpoint respects this column)
   `ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+  // Added: TCG game preferences selected during onboarding, stored comma-separated
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_tcgs TEXT`,
 ];
 
 /**
@@ -154,6 +156,28 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Index on notifications for efficient per-user reads (newest unread first)
   `CREATE INDEX IF NOT EXISTS notifications_user_read_created_idx
      ON notifications (user_id, is_read, created_at DESC)`,
+  // Added: enum type for activity_log event_type column.
+  // DO block swallows "already exists" so this is safe on re-runs.
+  `DO $$ BEGIN
+     CREATE TYPE activity_event_type AS ENUM (
+       'card_added', 'card_removed', 'wishlist_added', 'wishlist_removed',
+       'price_alert_fired', 'collection_updated'
+     );
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END $$`,
+  // Added: per-user activity log for the Home screen "Recent Activity" feed.
+  `CREATE TABLE IF NOT EXISTS activity_log (
+     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     event_type activity_event_type NOT NULL,
+     entity_id TEXT,
+     entity_name TEXT,
+     metadata JSONB,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   )`,
+  // Index for fast per-user activity reads (newest first)
+  `CREATE INDEX IF NOT EXISTS activity_log_user_created_at_idx
+     ON activity_log (user_id, created_at DESC)`,
   // Added: user_blocks — symmetric block relationships between collectors.
   `CREATE TABLE IF NOT EXISTS user_blocks (
     blocker_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

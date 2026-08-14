@@ -15,6 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { Button } from '@/components/ui/Button';
 import colors from '@/constants/colors';
+import { savePreferredTcgs } from '@/services/tcgPreferences';
 
 const C = colors.dark;
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -147,10 +148,21 @@ export default function OnboardingScreen() {
     }
   };
 
+  const handleSkip = async () => {
+    // Mark onboarded so this screen never shows again
+    try {
+      await AsyncStorage.setItem('hasOnboarded', 'true');
+      // Save whichever TCGs are currently selected (default selection counts)
+      await savePreferredTcgs(selectedGames);
+    } catch {}
+    router.replace('/(tabs)');
+  };
+
   const handleGetStarted = async () => {
     setLoading(true);
     try {
       await AsyncStorage.setItem('hasOnboarded', 'true');
+      await savePreferredTcgs(selectedGames);
     } catch {}
     router.replace('/(tabs)');
   };
@@ -198,7 +210,7 @@ export default function OnboardingScreen() {
             <Button fullWidth onPress={handleNext} size="lg">
               Next
             </Button>
-            <Pressable onPress={() => setStep(2)} style={styles.skipBtn}>
+            <Pressable onPress={handleSkip} style={styles.skipBtn}>
               <Text style={styles.skipText}>Skip for now</Text>
             </Pressable>
           </>

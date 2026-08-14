@@ -51,6 +51,7 @@ import {
   configureForegroundNotifications,
   requestAndRegisterPushToken,
 } from '@/services/pushRegistration';
+import { syncPreferredTcgsAfterSignIn } from '@/services/tcgPreferences';
 import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
@@ -626,6 +627,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }).catch(() => {});
       }
 
+      // Sync TCG preferences bidirectionally: push local if present, else hydrate
+      // from server. Passes the server value so a reinstall/new-device case works.
+      syncPreferredTcgsAfterSignIn(
+        session.access_token,
+        typeof meta.preferred_tcgs === 'string' ? meta.preferred_tcgs : null,
+      );
+
       // Restore active event participation so Trade Match and Event Mode reflect
       // real data immediately without requiring navigation to Event Mode first.
       fetchMyActiveParticipation().then(p => {
@@ -691,6 +699,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (typeof count === 'number') setScansUsed(count);
       }).catch(() => {});
     }
+
+    // Sync TCG preferences bidirectionally: push local if present, else hydrate
+    // from server. Passes the server value so a reinstall/new-device case works.
+    syncPreferredTcgsAfterSignIn(
+      session.access_token,
+      typeof meta.preferred_tcgs === 'string' ? meta.preferred_tcgs : null,
+    );
   }, [loadCollection, loadNotifications]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
@@ -702,6 +717,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadCollection();
     loadNotifications();
     requestAndRegisterPushToken();
+    // Sync TCG preferences bidirectionally after OAuth sign-in
+    const oauthMeta = session.user.user_metadata ?? {};
+    syncPreferredTcgsAfterSignIn(
+      session.access_token,
+      typeof oauthMeta.preferred_tcgs === 'string' ? oauthMeta.preferred_tcgs : null,
+    );
     return true;
   }, [loadCollection, loadNotifications]);
 
