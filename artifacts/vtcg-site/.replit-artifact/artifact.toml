@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/vtcg-site/"
+title = "Verified TCG — Website"
+description = "Public marketing website for Verified TCG. Includes a landing page showcasing the app's features (card scanning, portfolio tracking, market data, trade matching, graded pricing) and a full privacy policy page. Pulls live Market Movers and Trending data from the shared API server."
+version = "1.0.0"
+id = "artifacts/vtcg-site"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/vtcg-site/" ]
+localPort = 22130
+
+[services.development]
+run = "pnpm --filter @workspace/vtcg-site run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/vtcg-site", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/vtcg-site/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22130"
+BASE_PATH = "/vtcg-site/"

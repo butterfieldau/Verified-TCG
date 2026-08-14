@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/vtcg-web/"
+title = "Verified TCG — Web App"
+description = "Full web dashboard for Verified TCG collectors. Mirrors the mobile app features — portfolio value, collection tracking, live market data (Market Movers, Trending), graded card pricing, card search, and profile — all connected to the same API server used by the mobile app."
+version = "1.0.0"
+id = "artifacts/vtcg-web"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/vtcg-web/" ]
+localPort = 19370
+
+[services.development]
+run = "pnpm --filter @workspace/vtcg-web run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/vtcg-web", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/vtcg-web/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19370"
+BASE_PATH = "/vtcg-web/"

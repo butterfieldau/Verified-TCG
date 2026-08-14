@@ -62,8 +62,18 @@ export default function ProfileScreen() {
     user, isAuthenticated, signOut, watchlist, collection, portfolio,
     subscriptionTier, profileTheme,
     selectedIcon, foundingMemberClaimed,
+    scansUsed, scanLimit, scanResetDate,
   } = useApp();
   const isPro = subscriptionTier === 'pro';
+
+  // Format reset date as "1 Sep", "12 Oct", etc.
+  const scanResetLabel = scanResetDate.toLocaleDateString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+  });
+  const scansRemaining = Math.max(0, scanLimit - scansUsed);
+  const scansExhausted = scansRemaining === 0;
+  const scansLow = scansRemaining <= 3 && !scansExhausted;
 
   // Human-readable label for the active in-app icon selection
   const ICON_LABELS: Record<string, string> = {
@@ -214,6 +224,48 @@ export default function ProfileScreen() {
           )}
         </View>
         <View style={[styles.menuCard, { backgroundColor: C.card }]}>
+          {/* Scan quota row — Free users only */}
+          {!isPro && (
+            <Pressable
+              onPress={() => router.push('/pro-subscription' as any)}
+              style={({ pressed }) => [
+                styles.menuRow,
+                styles.menuDivider,
+                { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
+              ]}
+            >
+              <View style={[styles.menuIcon, {
+                backgroundColor: scansExhausted
+                  ? 'rgba(239,68,68,0.12)'
+                  : scansLow
+                  ? 'rgba(245,158,11,0.12)'
+                  : C.muted,
+              }]}>
+                <Feather
+                  name="camera"
+                  size={16}
+                  color={scansExhausted ? C.destructive : scansLow ? C.warning : C.foreground}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[
+                  styles.menuLabel,
+                  scansExhausted && { color: C.destructive },
+                  scansLow && !scansExhausted && { color: C.warning },
+                ]}>
+                  {scansExhausted
+                    ? 'No scans left this month'
+                    : `Scans: ${scansUsed} / ${scanLimit} used`}
+                </Text>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 }}>
+                  {scansExhausted
+                    ? `Resets ${scanResetLabel} · Upgrade for unlimited`
+                    : `${scansRemaining} remaining · resets ${scanResetLabel}`}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.mutedForeground} style={styles.menuChevron} />
+            </Pressable>
+          )}
           {PRO_BENEFITS_ITEMS.map((item, idx) => (
             <Pressable
               key={item.label}
