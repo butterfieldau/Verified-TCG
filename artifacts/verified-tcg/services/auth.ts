@@ -89,12 +89,19 @@ export async function signUp(
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
-  // Password reset via email is not yet supported — the server returns 200
-  // with a friendly message regardless of whether the account exists.
-  await request('/api/auth/recover', {
+  const response = await request('/api/auth/recover', {
     method: 'POST',
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   });
+  if (!response.ok) return parseError(response);
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  const response = await request('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!response.ok) return parseError(response);
 }
 
 export async function updateUserMetadata(data: Record<string, string>): Promise<void> {

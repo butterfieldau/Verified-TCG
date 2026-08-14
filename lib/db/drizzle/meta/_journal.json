@@ -8,6 +8,13 @@
       "when": 1786715435253,
       "tag": "0000_parallel_inhumans",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786717620505,
+      "tag": "0001_happy_zombie",
+      "breakpoints": true
     }
   ]
 }

@@ -16,7 +16,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
 
-const REQUIRED_TABLES = ["users", "user_sessions", "collection_items"] as const;
+const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens"] as const;
 
 export async function runMigrations(): Promise<void> {
   logger.info("Verifying database schema");
