@@ -53,6 +53,27 @@ import {
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
+
+// API base for server-side quota sync — same pattern as other service files
+const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+
+/**
+ * Fetch the authoritative scan count for the current period from the server.
+ * Fire-and-forget — call it after sign-in / session restore so the local
+ * counter cannot drift from the server-side truth.
+ */
+async function fetchServerScanCount(accessToken: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${_SCAN_API_BASE}/api/scan/usage`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { scansUsed?: number };
+    return typeof body.scansUsed === 'number' ? body.scansUsed : null;
+  } catch {
+    return null;
+  }
+}
 import {
   SCAN_STATE_STORAGE_KEY,
   nextMonthFirstDay,
@@ -118,6 +139,13 @@ interface AppActions {
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
+  /**
+   * Sync the scan count with an authoritative server value.
+   * Called after recognition (success or charged failure) to replace the
+   * locally-incremented count with the count returned by the server, so
+   * device-switch, reinstall, and charged-failure cases stay accurate.
+   */
+  syncScanCount: (serverCount: number) => void;
   /** Reset scansUsed to 0 (also available to DEV panel for quick testing). */
   resetScanCount: () => void;
   /**
@@ -484,7 +512,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Restore session on mount (handles app restarts and token refresh)
   useEffect(() => {
-    restoreSession().then(session => {
+    restoreSession().then(async session => {
       if (!session) return;
       setUser(userFromSession(session));
       setIsAuthenticated(true);
@@ -493,14 +521,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // The session is refreshed from the server whenever the access token
       // expires, so this value stays up-to-date across restarts.
       const meta = session.user.user_metadata ?? {};
-      if (meta.subscription_tier === 'pro') {
-        setSubscriptionTierState('pro');
-      }
-      if (meta.is_founding_member === true) {
-        setFoundingMemberClaimed(true);
-      }
+      const restoredTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+      if (restoredTier === 'pro') setSubscriptionTierState('pro');
+      if (meta.is_founding_member === true) setFoundingMemberClaimed(true);
 
       loadCollection();
+
+      // Hydrate scan count from server so the gate is accurate across
+      // reinstalls, device switches, and charged-failure scenarios.
+      // Only free-tier users have a meaningful quota to enforce.
+      if (restoredTier === 'free') {
+        fetchServerScanCount(session.access_token).then(count => {
+          if (typeof count === 'number') setScansUsed(count);
+        }).catch(() => {});
+      }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -547,6 +581,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
       return snapshot;
     });
+
+    // Hydrate server-authoritative scan count for free users
+    const signedInTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+    if (signedInTier === 'free') {
+      fetchServerScanCount(session.access_token).then(count => {
+        if (typeof count === 'number') setScansUsed(count);
+      }).catch(() => {});
+    }
   }, [loadCollection]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
@@ -734,6 +776,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /**
+   * Sync the local scan counter with an authoritative server value.
+   * Always prefers the server count so device-switch, reinstall, and
+   * charged-failure scenarios stay accurate.  Clamps to [0, FREE_SCAN_LIMIT]
+   * for safety.
+   */
+  const syncScanCount = useCallback((serverCount: number) => {
+    setScansUsed(Math.max(0, Math.min(serverCount, FREE_SCAN_LIMIT)));
+  }, []);
+
   /** Reset scansUsed to 0, regardless of tier (DEV panel convenience). */
   const resetScanCount = useCallback(() => {
     setScansUsed(0);
@@ -912,7 +964,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshPrices,
         markNotificationRead, markAllNotificationsRead,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
-        setSubscriptionTier, incrementScanCount, resetScanCount, devSetScansUsed,
+        setSubscriptionTier, incrementScanCount, syncScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,
         profileTheme, setProfileTheme,
         foundingMemberClaimed,

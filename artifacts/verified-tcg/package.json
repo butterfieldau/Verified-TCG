@@ -76,6 +76,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
-    "@expo-google-fonts/rajdhani": "^0.4.1"
+    "@expo-google-fonts/rajdhani": "^0.4.1",
+    "expo-camera": "^17.0.10"
   }
 }

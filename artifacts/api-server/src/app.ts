@@ -26,8 +26,11 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Scan endpoint accepts base64-encoded card images; allow up to 12 MB.
+// All other endpoints keep the tighter default via the second parser.
+app.use("/api/scan", express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "100kb" }));
+app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 
 app.use("/api", router);
 

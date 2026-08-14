@@ -10,6 +10,7 @@ import ebayAccountDeletionRouter from "./ebayAccountDeletion";
 import collectionRouter from "./collection";
 import supportRouter from "./support";
 import subscriptionRouter from "./subscription";
+import scanRouter from "./scan";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(ebayAccountDeletionRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
 router.use(subscriptionRouter);
+router.use(scanRouter);
 
 export default router;
