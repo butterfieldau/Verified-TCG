@@ -6,6 +6,7 @@ import { Resend } from "resend";
 import { db } from "@workspace/db";
 import { usersTable, userSessionsTable, passwordResetTokensTable } from "@workspace/db";
 import { eq, and, gt, sql } from "drizzle-orm";
+import { clearUserWishlists } from "./wishlist.js";
 
 const router = Router();
 
@@ -491,6 +492,52 @@ router.post("/auth/reset-password", async (req, res) => {
   }
 
   return res.json({ message: "Password updated successfully." });
+});
+
+// ── DELETE /api/auth/account ─────────────────────────────────────────────────
+
+router.delete("/auth/account", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Authorization header required" });
+  }
+
+  let payload: { sub: string };
+  try {
+    payload = jwt.verify(authHeader.slice(7), JWT_SECRET as string) as { sub: string };
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token. Please sign in again." });
+  }
+
+  const { password } = req.body as { password?: string };
+  if (!password) {
+    return res.status(400).json({ message: "password is required to confirm account deletion" });
+  }
+
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, payload.sub))
+    .limit(1);
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ message: "Incorrect password. Please try again." });
+  }
+
+  // Clear in-memory wishlist data and block any still-valid access tokens
+  // for this user before the DB row is removed, so no window exists where
+  // a JWT can access data belonging to a just-deleted account.
+  clearUserWishlists(user.id);
+
+  // Delete user row — sessions and password reset tokens cascade via FK constraints
+  await db.delete(usersTable).where(eq(usersTable.id, user.id));
+
+  return res.status(204).send();
 });
 
 export default router;

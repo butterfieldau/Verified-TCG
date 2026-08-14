@@ -200,7 +200,13 @@ export default function SettingsScreen() {
       <Text style={styles.sectionLabel}>Data & Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
         <SettingRow icon="download" label="Export My Data" onPress={() => requireAccount('/portfolio')} />
-        <Pressable style={[styles.row]} onPress={() => requireAccount()}>
+        <Pressable
+          style={[styles.row]}
+          onPress={() => {
+            if (!isAuthenticated) { router.push('/create-account'); return; }
+            router.push('/delete-account' as any);
+          }}
+        >
           <View style={[styles.rowIcon, { backgroundColor: `${C.destructive}22` }]}>
             <Feather name="trash-2" size={16} color={C.destructive} />
           </View>

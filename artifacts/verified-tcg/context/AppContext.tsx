@@ -47,6 +47,7 @@ import {
   signInWithPassword,
   signInWithOAuth,
   signOut as authSignOut,
+  deleteAccount as authDeleteAccount,
   updateUserMetadata,
   type OAuthProvider,
 } from '@/services/auth';
@@ -100,6 +101,7 @@ interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
+  deleteAccount: (password: string) => Promise<void>;
   updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => Promise<void>;
   addToCollection: (item: CollectionItem) => void;
   removeFromCollection: (id: string) => void;
@@ -155,14 +157,22 @@ const WATCHLIST_SCHEMA_VERSION = 1;
 
 function userFromSession(session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }): User {
   const email = session.user.email ?? '';
-  const displayName = typeof session.user.user_metadata?.display_name === 'string'
-    ? session.user.user_metadata.display_name
+  const meta = session.user.user_metadata ?? {};
+  const displayName = typeof meta.display_name === 'string' && meta.display_name
+    ? meta.display_name
     : (email || 'Collector');
+  const username = typeof meta.username === 'string' && meta.username
+    ? meta.username
+    : (email.split('@')[0] || 'collector');
+  const bio = typeof meta.bio === 'string' ? meta.bio : undefined;
+  const location = typeof meta.location === 'string' ? meta.location : undefined;
   return {
     id: session.user.id,
     email,
     displayName,
-    username: email.split('@')[0] || 'collector',
+    username,
+    bio,
+    location,
     joinedAt: new Date().toISOString(),
     tcgPreferences: MOCK_USER.tcgPreferences,
     stats: MOCK_USER.stats,
@@ -525,13 +535,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(() => {
+    // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
+    // Reset all in-memory state so the next user starts completely fresh
     setUser(null);
     setIsAuthenticated(false);
     setCollection([]);
-    // Clear the local wishlist so the next collector starts with a fresh list
-    // rather than seeing the previous user's cards.
     setWatchlist([]);
+    setNotifications(getNotifications);
+    setSubscriptionTierState('free');
+    setScansUsed(0);
+    setScanResetDate(nextMonthFirstDay(new Date()));
+    setSelectedIcon('original');
+    setProfileTheme('default');
+    setFoundingMemberClaimed(false);
+    setPricesLastUpdated(null);
+  }, []);
+
+  const deleteAccount = useCallback(async (password: string) => {
+    await authDeleteAccount(password);
+    // Reset all in-memory state after successful deletion
+    setUser(null);
+    setIsAuthenticated(false);
+    setCollection([]);
+    setWatchlist([]);
+    setNotifications(getNotifications);
+    setSubscriptionTierState('free');
+    setScansUsed(0);
+    setScanResetDate(nextMonthFirstDay(new Date()));
+    setSelectedIcon('original');
+    setProfileTheme('default');
+    setFoundingMemberClaimed(false);
+    setPricesLastUpdated(null);
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
@@ -847,7 +882,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, activeAlertCount,
-        signIn, signInWithProvider, signOut, updateProfile,
+        signIn, signInWithProvider, signOut, deleteAccount, updateProfile,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,

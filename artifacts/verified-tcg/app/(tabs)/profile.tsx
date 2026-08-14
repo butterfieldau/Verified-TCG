@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -332,7 +333,20 @@ export default function ProfileScreen() {
 
       {isAuthenticated ? (
         <Pressable
-          onPress={() => { signOut(); router.replace('/welcome'); }}
+          onPress={() => {
+            Alert.alert(
+              'Sign Out',
+              'Are you sure you want to sign out?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Sign Out',
+                  style: 'destructive',
+                  onPress: () => { signOut(); router.replace('/welcome'); },
+                },
+              ],
+            );
+          }}
           style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: `${C.destructive}44` }]}
         >
           <Feather name="log-out" size={16} color={C.destructive} />

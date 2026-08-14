@@ -1,34 +1,10 @@
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 import { db } from "@workspace/db";
 import { collectionItemsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import type { Request, Response, NextFunction } from "express";
+import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
-
-const JWT_SECRET = process.env.SESSION_SECRET;
-if (!JWT_SECRET) throw new Error("SESSION_SECRET must be set");
-
-// ── Auth middleware ───────────────────────────────────────────────────────────
-
-interface AuthRequest extends Request {
-  userId?: string;
-}
-
-function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Authorization header required" });
-  }
-  try {
-    const payload = jwt.verify(authHeader.slice(7), JWT_SECRET as string) as { sub: string };
-    req.userId = payload.sub;
-    return next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token" });
-  }
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +28,7 @@ function rowToItem(row: typeof collectionItemsTable.$inferSelect) {
 
 // ── GET /api/collection ───────────────────────────────────────────────────────
 
-router.get("/collection", requireAuth, async (req: AuthRequest, res) => {
+router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
   const rows = await db
     .select()
     .from(collectionItemsTable)
@@ -64,7 +40,7 @@ router.get("/collection", requireAuth, async (req: AuthRequest, res) => {
 
 // ── GET /api/collection/summary ───────────────────────────────────────────────
 
-router.get("/collection/summary", requireAuth, async (req: AuthRequest, res) => {
+router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, res) => {
   const rows = await db
     .select()
     .from(collectionItemsTable)
@@ -184,7 +160,7 @@ function validatePatchBody(body: Record<string, unknown>): string | null {
 
 // ── POST /api/collection ──────────────────────────────────────────────────────
 
-router.post("/collection", requireAuth, async (req: AuthRequest, res) => {
+router.post("/collection", requireActiveUser, async (req: AuthRequest, res) => {
   const body = req.body as Record<string, unknown>;
 
   const validationError = validatePostBody(body);
@@ -218,7 +194,7 @@ router.post("/collection", requireAuth, async (req: AuthRequest, res) => {
 
 // ── PATCH /api/collection/:id ─────────────────────────────────────────────────
 
-router.patch("/collection/:id", requireAuth, async (req: AuthRequest, res) => {
+router.patch("/collection/:id", requireActiveUser, async (req: AuthRequest, res) => {
   const id = String(req.params["id"] ?? "");
   if (!id) return res.status(400).json({ message: "id is required" });
 
@@ -266,7 +242,7 @@ router.patch("/collection/:id", requireAuth, async (req: AuthRequest, res) => {
 
 // ── DELETE /api/collection/:id ────────────────────────────────────────────────
 
-router.delete("/collection/:id", requireAuth, async (req: AuthRequest, res) => {
+router.delete("/collection/:id", requireActiveUser, async (req: AuthRequest, res) => {
   const id = String(req.params["id"] ?? "");
   if (!id) return res.status(400).json({ message: "id is required" });
 
