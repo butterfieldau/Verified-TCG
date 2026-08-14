@@ -19,8 +19,9 @@ import {
   collectionItemsTable,
   wishlistItemsTable,
   usersTable,
+  userBlocksTable,
 } from "@workspace/db";
-import { eq, and, isNull, inArray, ne, sql } from "drizzle-orm";
+import { eq, and, isNull, inArray, notInArray, ne, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
@@ -325,7 +326,24 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
     return res.json({ matches: [], matchCount: 0, isProRequired: false });
   }
 
-  const otherUserIds = otherParticipants.map((p) => p.userId);
+  const otherUserIdsRaw = otherParticipants.map((p) => p.userId);
+
+  // Filter out blocked users (bidirectional) from potential matches
+  const [blockedByMe, blockedMe] = await Promise.all([
+    db.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
+      .where(eq(userBlocksTable.blockerUserId, userId)),
+    db.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
+      .where(eq(userBlocksTable.blockedUserId, userId)),
+  ]);
+  const blockedIdsSet = new Set([
+    ...blockedByMe.map((r) => r.id),
+    ...blockedMe.map((r) => r.id),
+  ]);
+  const otherUserIds = otherUserIdsRaw.filter((id) => !blockedIdsSet.has(id));
+
+  if (!otherUserIds.length) {
+    return res.json({ matches: [], matchCount: 0, isProRequired: false });
+  }
 
   // 5. Batch-load other participants' for-trade items and wishlists
   const otherForTrade = await db

@@ -28,12 +28,14 @@ import {
   postCommentsTable,
   followsTable,
   usersTable,
+  userBlocksTable,
 } from "@workspace/db";
 import {
   and,
   desc,
   eq,
   inArray,
+  notInArray,
   sql,
 } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
@@ -61,7 +63,21 @@ communityRouter.get(
       const followedIds = followed.map((r) => r.followeeId);
 
       // Include own posts in the feed too
-      const feedUserIds = [...new Set([...followedIds, userId])];
+      const feedUserIdsRaw = [...new Set([...followedIds, userId])];
+
+      // Bidirectional block exclusion — remove any blocked/blocking users from the feed
+      // (own userId is never in blocks so always stays)
+      const [blockedByMe, blockedMe] = await Promise.all([
+        db.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockerUserId, userId)),
+        db.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockedUserId, userId)),
+      ]);
+      const blockedIdsSet = new Set([
+        ...blockedByMe.map((r) => r.id),
+        ...blockedMe.map((r) => r.id),
+      ]);
+      const feedUserIds = feedUserIdsRaw.filter((id) => !blockedIdsSet.has(id));
 
       if (feedUserIds.length === 0) {
         res.json({ feed: [], page, hasMore: false });

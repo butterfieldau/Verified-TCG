@@ -237,6 +237,11 @@ export default function SettingsScreen() {
           label="Show For-Sale Cards"
           value={privacy.showForSale}
           onChange={v => updatePrivacyPref('showForSale', v)}
+        />
+        <SettingRow
+          icon="user-x"
+          label="Blocked Users"
+          onPress={() => requireAccount('/blocked-users')}
           isLast
         />
       </View>
@@ -266,7 +271,8 @@ export default function SettingsScreen() {
       {/* Data */}
       <Text style={styles.sectionLabel}>Data & Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <SettingRow icon="download" label="Export My Data" onPress={() => requireAccount('/portfolio')} />
+        <SettingRow icon="list" label="Export Collection (CSV)" onPress={() => requireAccount('/export-collection')} />
+        <SettingRow icon="download" label="Export Account Data" onPress={() => requireAccount('/export-account')} />
         <Pressable
           style={[styles.row]}
           onPress={() => {

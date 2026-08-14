@@ -11,3 +11,5 @@ export * from "./notifications";
 export * from "./push-tokens";
 export * from "./follows";
 export * from "./posts";
+export * from "./user-blocks";
+export * from "./user-reports";

@@ -239,6 +239,56 @@ export async function searchCollectors(q: string): Promise<PublicCollector[]> {
   return data.collectors;
 }
 
+// ── Block / report ────────────────────────────────────────────────────────────
+
+export interface BlockedUser {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  blockedAt: string;
+}
+
+export async function blockCollector(username: string): Promise<void> {
+  const res = await authedFetch(`/api/collectors/${encodeURIComponent(username)}/block`, {
+    method: 'POST',
+  });
+  await checkOk(res);
+}
+
+export async function unblockCollector(username: string): Promise<void> {
+  const res = await authedFetch(`/api/collectors/${encodeURIComponent(username)}/block`, {
+    method: 'DELETE',
+  });
+  await checkOk(res);
+}
+
+export async function getBlockedUsers(): Promise<BlockedUser[]> {
+  const res = await authedFetch('/api/me/blocked-users');
+  await checkOk(res);
+  const data = await res.json() as { blocked: BlockedUser[] };
+  return data.blocked;
+}
+
+export type ReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'fraud'
+  | 'inappropriate'
+  | 'other';
+
+export async function reportCollector(
+  username: string,
+  reason: string,
+  note?: string,
+): Promise<void> {
+  const res = await authedFetch(`/api/collectors/${encodeURIComponent(username)}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, note: note || undefined }),
+  });
+  await checkOk(res);
+}
+
 // ── Time formatting helper ─────────────────────────────────────────────────────
 
 export function formatRelativeTime(iso: string): string {

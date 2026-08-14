@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -118,9 +119,26 @@ export default function ProfileScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Profile</Text>
-        <Pressable onPress={() => router.push('/edit-profile' as any)} style={styles.editBtn}>
-          <Feather name="edit-2" size={17} color={C.foreground} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {isAuthenticated && user?.username && (
+            <Pressable
+              onPress={() => {
+                const url = `https://verifiedtcg.com/c/${user.username}`;
+                Share.share({
+                  title: `${user.displayName ?? user.username}'s Verified TCG Profile`,
+                  message: `Check out my Verified TCG profile!\n${url}`,
+                  url,
+                }).catch(() => {});
+              }}
+              style={styles.editBtn}
+            >
+              <Feather name="share-2" size={17} color={C.foreground} />
+            </Pressable>
+          )}
+          <Pressable onPress={() => router.push('/edit-profile' as any)} style={styles.editBtn}>
+            <Feather name="edit-2" size={17} color={C.foreground} />
+          </Pressable>
+        </View>
       </View>
 
       {!isAuthenticated && (

@@ -12,6 +12,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -532,6 +533,25 @@ export default function WishlistScreen() {
               <Text style={[styles.alertCountText, { color: C.warning }]}>{alertCount}</Text>
             </View>
           )}
+          {watchlist.length > 0 && (
+            <Pressable
+              onPress={() => {
+                const lines = watchlist.map(
+                  (w, i) =>
+                    `${i + 1}. ${w.card.name}${w.desiredGrade ? ` (${w.desiredGrade})` : ''}${
+                      w.targetPrice ? ` — target $${w.targetPrice.toLocaleString()} AUD` : ''
+                    }`,
+                );
+                Share.share({
+                  title: 'My Verified TCG Wishlist',
+                  message: `My Verified TCG Wishlist:\n\n${lines.join('\n')}`,
+                }).catch(() => {});
+              }}
+              style={styles.shareBtn}
+            >
+              <Feather name="share-2" size={18} color={C.foreground} />
+            </Pressable>
+          )}
           <Pressable
             onPress={() => setShowAddPanel(true)}
             style={[styles.addBtn, { backgroundColor: C.primary }]}
@@ -681,6 +701,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
   },
   alertCountText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  shareBtn: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center', justifyContent: 'center',
+  },
   addBtn: {
     width: 40, height: 40, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',

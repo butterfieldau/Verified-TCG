@@ -154,6 +154,22 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Index on notifications for efficient per-user reads (newest unread first)
   `CREATE INDEX IF NOT EXISTS notifications_user_read_created_idx
      ON notifications (user_id, is_read, created_at DESC)`,
+  // Added: user_blocks — symmetric block relationships between collectors.
+  `CREATE TABLE IF NOT EXISTS user_blocks (
+    blocker_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT user_blocks_unique_pair UNIQUE (blocker_user_id, blocked_user_id)
+  )`,
+  // Added: user_reports — collector report submissions (admin review is out-of-band).
+  `CREATE TABLE IF NOT EXISTS user_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reported_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
   // Seed initial events if the table is empty
   `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
    SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()

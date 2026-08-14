@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -1008,7 +1009,17 @@ export default function CardDetailScreen() {
             >
               <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
             </Pressable>
-            <Pressable style={styles.navBtn}>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => {
+                const url = `https://verifiedtcg.com/cards/${card.id}`;
+                Share.share({
+                  title: `${card.name} — Verified TCG`,
+                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: $${card.price.raw.toLocaleString('en-AU')} AUD\n${url}`,
+                  url,
+                }).catch(() => {});
+              }}
+            >
               <Feather name="share-2" size={20} color={C.foreground} />
             </Pressable>
           </View>
