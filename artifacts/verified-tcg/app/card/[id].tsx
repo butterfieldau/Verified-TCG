@@ -4,6 +4,7 @@ import {
   Dimensions,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -12,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,16 +40,119 @@ import type { Card, CollectionItem, WatchlistItem } from '@/types';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import {
   getMockPricingPlus,
-  TIME_RANGES,
   GRADERS,
-  type TimeRange,
   type PricePoint,
 } from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
+import {
+  fetchPriceHistory,
+  triggerPriceSnapshot,
+  buildEbaySearchUrl,
+  formatUpdatedAt,
+  type PricePeriod,
+  type PricePoint as HistoryPoint,
+} from '@/services/priceHistory';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
 ];
+
+// ── Chart period selector ─────────────────────────────────────────────────────
+
+const CHART_PERIODS: PricePeriod[] = ['7D', '30D', '90D', '1Y', 'All'];
+const FREE_PERIOD: PricePeriod = '7D';
+
+/** Map PriceTab label → grade key used by the price-history API */
+function gradeKeyFromTab(tab: PriceTab): string {
+  switch (tab) {
+    case 'PSA 9':   return 'psa9';
+    case 'PSA 10':  return 'psa10';
+    case 'CGC 10':  return 'cgc10';
+    case 'BGS 9.5': return 'bgs95';
+    default:        return 'raw';
+  }
+}
+
+// ── SVG Line Chart ────────────────────────────────────────────────────────────
+
+interface PriceLineChartProps {
+  points: HistoryPoint[];
+  width: number;
+  height: number;
+  loading?: boolean;
+}
+
+function PriceLineChart({ points, width, height, loading }: PriceLineChartProps) {
+  if (loading) {
+    return (
+      <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="small" color={colors.dark.primary} />
+      </View>
+    );
+  }
+  if (points.length < 2) {
+    return (
+      <View style={{ width, height, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <Feather name="bar-chart-2" size={28} color="rgba(255,255,255,0.2)" />
+        <Text style={{
+          fontSize: 12, fontFamily: 'Inter_400Regular',
+          color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 18,
+        }}>
+          Price history not yet available{'\n'}for this card
+        </Text>
+      </View>
+    );
+  }
+
+  const PAD = { top: 6, right: 2, bottom: 6, left: 2 };
+  const chartW = width - PAD.left - PAD.right;
+  const chartH = height - PAD.top - PAD.bottom;
+
+  const prices = points.map(p => p.price);
+  const minP   = Math.min(...prices);
+  const maxP   = Math.max(...prices);
+  const range  = maxP - minP || 1;
+
+  const toX = (i: number) => PAD.left + (i / (points.length - 1)) * chartW;
+  const toY = (p: number) => PAD.top + ((maxP - p) / range) * chartH;
+
+  const coords = points.map((pt, i) => ({ x: toX(i), y: toY(pt.price) }));
+
+  // Smooth cubic bezier path
+  function makePath(pts: { x: number; y: number }[]): string {
+    if (pts.length < 2) return '';
+    let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1]!;
+      const curr = pts[i]!;
+      const cpx  = (prev.x + curr.x) / 2;
+      d += ` C ${cpx} ${prev.y}, ${cpx} ${curr.y}, ${curr.x} ${curr.y}`;
+    }
+    return d;
+  }
+
+  const linePath = makePath(coords);
+  const bottom   = PAD.top + chartH;
+  const firstX   = coords[0]!.x;
+  const lastX    = coords[coords.length - 1]!.x;
+  const areaPath = `${linePath} L ${lastX} ${bottom} L ${firstX} ${bottom} Z`;
+
+  const isUp     = prices[prices.length - 1]! >= prices[0]!;
+  const lineColor = isUp ? '#22c55e' : '#ef4444';
+
+  return (
+    <Svg width={width} height={height}>
+      <Defs>
+        <SvgLinearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor={lineColor} stopOpacity={0.28} />
+          <Stop offset="1" stopColor={lineColor} stopOpacity={0.0} />
+        </SvgLinearGradient>
+      </Defs>
+      <Path d={areaPath} fill="url(#chartFill)" />
+      <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
 
 // ─── Inline Wishlist Panel ────────────────────────────────────────────────────
 
@@ -615,7 +720,10 @@ export default function CardDetailScreen() {
   const [showAddedBanner, setShowAddedBanner] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
-  const [selectedRange, setSelectedRange] = useState<TimeRange>('30D');
+  const [selectedPeriod, setSelectedPeriod] = useState<PricePeriod>('7D');
+  const [priceHistory, setPriceHistory] = useState<HistoryPoint[]>([]);
+  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
+  const [priceHistoryUpdatedAt, setPriceHistoryUpdatedAt] = useState<string | null>(null);
 
   // Catalog API fetch state — populated when the card ID isn't in the local mock store.
   // Two inline param strategies:
@@ -722,6 +830,32 @@ export default function CardDetailScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, catalogCard?.id]);
 
+  // Fetch price history when grade tab or period changes
+  useEffect(() => {
+    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    if (!resolvedCard) return;
+    const controller = new AbortController();
+    setPriceHistoryLoading(true);
+    setPriceHistory([]);
+    fetchPriceHistory(resolvedCard.id, gradeKeyFromTab(priceTab), selectedPeriod, controller.signal)
+      .then(result => {
+        setPriceHistory(result.points);
+        setPriceHistoryUpdatedAt(result.updatedAt);
+      })
+      .catch(() => {})
+      .finally(() => setPriceHistoryLoading(false));
+    return () => controller.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, catalogCard?.id, priceTab, selectedPeriod]);
+
+  // Trigger a background price snapshot on first card view so history accumulates
+  useEffect(() => {
+    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    if (!resolvedCard) return;
+    triggerPriceSnapshot(resolvedCard.id, resolvedCard.name, resolvedCard.setName, resolvedCard.tcg);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, catalogCard?.id]);
+
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
 
   function goToPrev() {
@@ -793,7 +927,6 @@ export default function CardDetailScreen() {
   // Passport records only exist for local mock cards
   const hasPassport = !isCatalogCard && getCardPassport(card.id) !== null;
   const pricingPlus = getMockPricingPlus(card.id, card.price.raw);
-  const chartData: PricePoint[] = pricingPlus.priceHistory[selectedRange];
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -1003,11 +1136,12 @@ export default function CardDetailScreen() {
           })}
         </ScrollView>
 
-        {/* Market value card */}
+        {/* ── Price History Chart ──────────────────────────────────────── */}
         <View style={[styles.card, { backgroundColor: C.card }]}>
+          {/* Header row */}
           <View style={styles.marketHeader}>
             <View>
-              <Text style={styles.marketLabel}>Market Value</Text>
+              <Text style={styles.marketLabel}>Market Value · {priceTab}</Text>
               <Text style={styles.marketValue}>
                 ${activePrice?.toLocaleString('en-AU', { minimumFractionDigits: 2 }) ?? '—'} AUD
               </Text>
@@ -1023,157 +1157,74 @@ export default function CardDetailScreen() {
                   {gain7d >= 0 ? '+' : ''}{gain7d.toFixed(1)}% 7d
                 </Text>
               )}
-              {card.price.change30d !== undefined && (
-                <Text style={[styles.changeBadge, { color: card.price.change30d >= 0 ? C.positive : C.negative }]}>
-                  {card.price.change30d >= 0 ? '+' : ''}{card.price.change30d.toFixed(1)}% 30d
-                </Text>
-              )}
             </View>
           </View>
 
-          {/* Bar chart */}
-          <View style={styles.chartWrap}>
-            <View style={styles.chartLine}>
-              {Array.from({ length: 20 }, (_, i) => {
-                const noise = Math.sin(i * 0.8 + 1.5) * 0.3 + Math.sin(i * 0.3) * 0.5 + i / 20;
-                const h = Math.max(12 + noise * 30, 4);
-                return (
-                  <View
-                    key={i}
-                    style={[
-                      styles.chartBar,
-                      {
-                        height: h,
-                        backgroundColor: (gain7d ?? 0) >= 0 ? `${C.positive}99` : `${C.negative}99`,
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Raw</Text>
-              <Text style={styles.statValue}>${card.price.raw.toLocaleString()}</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>PSA 10</Text>
-              <Text style={styles.statValue}>
-                {card.price.psa10 ? `$${card.price.psa10.toLocaleString()}` : '—'}
-              </Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>30d Change</Text>
-              <Text style={[
-                styles.statValue,
-                { color: (card.price.change30d ?? 0) >= 0 ? C.positive : C.negative },
-              ]}>
-                {card.price.change30d !== undefined
-                  ? `${card.price.change30d >= 0 ? '+' : ''}${card.price.change30d.toFixed(1)}%`
-                  : '—'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ── Pricing+ section ──────────────────────────────────────────── */}
-
-        <View style={styles.pricingPlusHeader}>
-          <Text style={styles.pricingPlusTitle}>Pricing+</Text>
-          {hasAdvancedPricing && (
-            <View style={styles.proBadge}>
-              <Feather name="zap" size={10} color="#FFF" />
-              <Text style={styles.proBadgeText}>PRO</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Time-range selector + extended chart — all gated behind advancedPricing */}
-        <ProFeaturePreview
-          featureTitle="Price History"
-          description="Track this card's price across 30 days, 1 year, and beyond. Unlock full Pricing+ with Pro."
-          ctaLabel="Unlock full price history"
-          previewContent={
-            <View style={[styles.card, { backgroundColor: C.card, marginBottom: 0 }]}>
-              <View style={styles.chartRangeLabel}>
-                <Text style={styles.statLabel}>30D Price History</Text>
-              </View>
-              <View style={styles.chartWrapLg}>
-                <View style={styles.chartLine}>
-                  {pricingPlus.priceHistory['30D'].map((pt, i) => {
-                    const vals = pricingPlus.priceHistory['30D'].map(p => p.value);
-                    const minV = Math.min(...vals);
-                    const maxV = Math.max(...vals);
-                    const r = maxV - minV || 1;
-                    const h = ((pt.value - minV) / r) * 0.7 + 0.12;
-                    return (
-                      <View key={i} style={[styles.chartBar, { height: 52 * h, backgroundColor: `${C.positive}aa` }]} />
-                    );
-                  })}
-                </View>
-              </View>
-            </View>
-          }
-          lockedContent={
-            <View>
-              {/* Time-range chips */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.rangeTabsScroll}
-                contentContainerStyle={styles.rangeTabsContent}
-              >
-                {TIME_RANGES.map(range => {
-                  const isSelected = selectedRange === range;
-                  return (
-                    <Pressable
-                      key={range}
-                      onPress={() => setSelectedRange(range)}
-                      style={[
-                        styles.rangeChip,
-                        isSelected && { backgroundColor: C.primary, borderColor: C.primary },
-                      ]}
-                    >
-                      <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
-                        {range}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Range-matched chart */}
-              <View style={[styles.card, { backgroundColor: C.card, marginBottom: 0 }]}>
-                <View style={styles.chartRangeLabel}>
-                  <Text style={styles.statLabel}>{selectedRange} Price History</Text>
-                  <Text style={[styles.statValue, { color: C.positive, fontSize: 12 }]}>
-                    ${chartData[chartData.length - 1]?.value.toLocaleString('en-AU') ?? '—'}
+          {/* Period selector */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.rangeTabsScroll}
+            contentContainerStyle={[styles.rangeTabsContent, { marginTop: 12, marginBottom: 4 }]}
+          >
+            {CHART_PERIODS.map(period => {
+              const isFree     = period === FREE_PERIOD;
+              const isSelected = selectedPeriod === period;
+              const locked     = !isFree && !hasAdvancedPricing;
+              return (
+                <Pressable
+                  key={period}
+                  onPress={() => {
+                    if (locked) { router.push('/pro-subscription'); return; }
+                    setSelectedPeriod(period);
+                  }}
+                  style={[
+                    styles.rangeChip,
+                    isSelected && { backgroundColor: C.primary, borderColor: C.primary },
+                  ]}
+                >
+                  {locked && <Feather name="lock" size={9} color={C.mutedForeground} style={{ marginRight: 3 }} />}
+                  <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
+                    {period}
                   </Text>
-                </View>
-                <View style={styles.chartWrapLg}>
-                  <View style={styles.chartLine}>
-                    {chartData.map((pt, i) => {
-                      const vals = chartData.map(p => p.value);
-                      const minV = Math.min(...vals);
-                      const maxV = Math.max(...vals);
-                      const r2 = maxV - minV || 1;
-                      const h = ((pt.value - minV) / r2) * 0.7 + 0.12;
-                      const isUp = chartData[chartData.length - 1].value >= chartData[0].value;
-                      return (
-                        <View
-                          key={i}
-                          style={[styles.chartBar, { height: 52 * h, backgroundColor: isUp ? `${C.positive}aa` : `${C.negative}aa` }]}
-                        />
-                      );
-                    })}
-                  </View>
-                </View>
-              </View>
-            </View>
-          }
-        />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* SVG line chart */}
+          <View style={styles.chartAreaWrap}>
+            <PriceLineChart
+              points={priceHistory}
+              width={W - 40 - 36}
+              height={120}
+              loading={priceHistoryLoading}
+            />
+          </View>
+
+          {/* Source footer */}
+          <View style={styles.chartFooter}>
+            <Feather name="info" size={10} color={C.mutedForeground} />
+            <Text style={styles.chartFooterText}>
+              Prices from eBay sold listings
+              {priceHistoryUpdatedAt
+                ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
+                : ''}
+            </Text>
+          </View>
+        </View>
+
+        {/* ── View Listings on eBay ────────────────────────────────────── */}
+        <Pressable
+          onPress={() => {
+            const url = buildEbaySearchUrl(card.name, card.setName, priceTab);
+            Linking.openURL(url).catch(() => {});
+          }}
+          style={styles.ebayBtn}
+        >
+          <Feather name="external-link" size={14} color="#FFF" />
+          <Text style={styles.ebayBtnText}>View Listings on eBay</Text>
+        </Pressable>
 
         {/* RAW pricing card */}
         <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12, marginTop: 12 }]}>
@@ -1241,14 +1292,29 @@ export default function CardDetailScreen() {
                   Graded price data unavailable
                 </Text>
               ) : (
-                GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => (
-                  <View key={grader.key} style={styles.gradedRow}>
-                    <Text style={styles.gradedLabel}>{grader.label}</Text>
-                    <Text style={styles.gradedValue}>
-                      ${(liveGradedPrices[grader.key]!).toLocaleString('en-AU')} AUD
-                    </Text>
-                  </View>
-                ))
+                GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => {
+                  // Map grader key to price tab so tapping a grader row switches the chart
+                  const tabMap: Record<string, PriceTab> = {
+                    psa9: 'PSA 9', psa10: 'PSA 10', cgc10: 'CGC 10', bgs95: 'BGS 9.5',
+                  };
+                  const tab = tabMap[grader.key];
+                  const isActive = tab && priceTab === tab;
+                  return (
+                    <Pressable
+                      key={grader.key}
+                      onPress={() => tab && setPriceTab(tab)}
+                      style={[styles.gradedRow, isActive && { backgroundColor: `${C.primary}12`, borderRadius: 8, marginHorizontal: -4, paddingHorizontal: 4 }]}
+                    >
+                      <Text style={[styles.gradedLabel, isActive && { color: C.primary }]}>{grader.label}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.gradedValue, isActive && { color: C.primary }]}>
+                          ${(liveGradedPrices[grader.key]!).toLocaleString('en-AU')} AUD
+                        </Text>
+                        {tab && <Feather name="bar-chart-2" size={12} color={isActive ? C.primary : C.mutedForeground} />}
+                      </View>
+                    </Pressable>
+                  );
+                })
               )}
             </View>
           ) : (
@@ -1863,5 +1929,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
+  },
+
+  // ── Price history chart ───────────────────────────────────────────────
+  chartAreaWrap: {
+    marginTop: 12,
+    marginBottom: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  chartFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  chartFooterText: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    flex: 1,
+  },
+
+  // ── eBay listing button ───────────────────────────────────────────────
+  ebayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#E53238', // eBay red
+    marginBottom: 16,
+  },
+  ebayBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFF',
   },
 });

@@ -47,6 +47,16 @@ const TABLE_MIGRATIONS: string[] = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT scan_usage_user_period_uniq UNIQUE (user_id, period_start)
   )`,
+  // Added: periodic price snapshots for the price history chart feature.
+  `CREATE TABLE IF NOT EXISTS price_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'AUD',
+    source TEXT NOT NULL DEFAULT 'ebay_sold',
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**
@@ -63,6 +73,9 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   EXCEPTION WHEN duplicate_table THEN NULL;
             WHEN duplicate_object THEN NULL;
   END $$`,
+  // Add index on price_snapshots for efficient card+grade+time queries
+  `CREATE INDEX IF NOT EXISTS price_snapshots_card_grade_idx
+     ON price_snapshots (card_id, grade_key, recorded_at)`,
 ];
 
 export async function runMigrations(): Promise<void> {
