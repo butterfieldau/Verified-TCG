@@ -1,0 +1,1 @@
+- [Auth Architecture](auth-architecture.md) — Custom JWT auth on Replit Postgres; no Supabase. bcryptjs + SESSION_SECRET. See file for endpoint list and OAuth status.
