@@ -12,6 +12,7 @@ import supportRouter from "./support";
 import subscriptionRouter from "./subscription";
 import scanRouter from "./scan";
 import priceHistoryRouter from "./priceHistory";
+import eventsRouter from "./events";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(supportRouter);
 router.use(subscriptionRouter);
 router.use(scanRouter);
 router.use(priceHistoryRouter);
+router.use(eventsRouter);
 
 export default router;

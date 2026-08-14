@@ -29,6 +29,9 @@ const COLUMN_MIGRATIONS: string[] = [
   // Added: subscription tier and founding-member flag for Pro persistence
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
+  // Added: soft-delete support for wishlist items so deletions are durable across restarts
+  // (NULL = active, non-NULL = tombstone; sync endpoint respects this column)
+  `ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
 ];
 
 /**
@@ -57,6 +60,39 @@ const TABLE_MIGRATIONS: string[] = [
     source TEXT NOT NULL DEFAULT 'ebay_sold',
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  // Added: persistent wishlist storage for trade matching and cross-device sync.
+  `CREATE TABLE IF NOT EXISTS wishlist_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    card_data JSONB NOT NULL,
+    desired_grade TEXT,
+    target_price_cents INTEGER,
+    price_alert_enabled BOOLEAN NOT NULL DEFAULT false,
+    added_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: TCG events (conventions, meetups) that collectors can join.
+  `CREATE TABLE IF NOT EXISTS events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    city TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: tracks which users are participating in which events.
+  `CREATE TABLE IF NOT EXISTS event_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    left_at TIMESTAMPTZ,
+    is_visible BOOLEAN NOT NULL DEFAULT true
+  )`,
 ];
 
 /**
@@ -76,6 +112,35 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Add index on price_snapshots for efficient card+grade+time queries
   `CREATE INDEX IF NOT EXISTS price_snapshots_card_grade_idx
      ON price_snapshots (card_id, grade_key, recorded_at)`,
+  // Index on event_participants for efficient (event_id, user_id) lookups
+  `CREATE INDEX IF NOT EXISTS event_participants_event_user_idx
+     ON event_participants (event_id, user_id)`,
+  // Unique constraint on event_participants so each user has exactly one row per event.
+  // Prevents concurrent joins from creating duplicate active-participation rows.
+  // Uses DO $$ to swallow "already exists" rather than failing on already-migrated DBs.
+  `DO $$ BEGIN
+     ALTER TABLE event_participants
+       ADD CONSTRAINT event_participants_event_user_uniq UNIQUE (event_id, user_id);
+   EXCEPTION WHEN duplicate_table THEN NULL;
+             WHEN duplicate_object THEN NULL;
+   END $$`,
+  // Unique constraint on wishlist_items (user_id, item_id) to enable upsert semantics.
+  `DO $$ BEGIN
+     ALTER TABLE wishlist_items
+       ADD CONSTRAINT wishlist_items_user_item_uniq UNIQUE (user_id, item_id);
+   EXCEPTION WHEN duplicate_table THEN NULL;
+             WHEN duplicate_object THEN NULL;
+   END $$`,
+  // Seed initial events if the table is empty
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events LIMIT 1)`,
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'Melbourne TCG Fest', 'Melbourne Convention Centre', 'Melbourne, VIC', 'Sep 20–21, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Melbourne TCG Fest')`,
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'Brisbane Card Expo', 'Brisbane Convention Centre', 'Brisbane, QLD', 'Oct 5, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Brisbane Card Expo')`,
 ];
 
 export async function runMigrations(): Promise<void> {

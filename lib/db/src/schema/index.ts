@@ -5,3 +5,5 @@ export * from "./password-reset-tokens";
 export * from "./contact-submissions";
 export * from "./scan-usage";
 export * from "./price-snapshots";
+export * from "./wishlist";
+export * from "./events";

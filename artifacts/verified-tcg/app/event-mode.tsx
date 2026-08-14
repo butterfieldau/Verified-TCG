@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -14,6 +16,15 @@ import colors from '@/constants/colors';
 import { MOCK_EVENT } from '@/services/matching';
 import { useApp } from '@/context/AppContext';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
+import {
+  fetchActiveEvents,
+  joinEvent,
+  leaveEvent,
+  fetchMyParticipation,
+  fetchTradeMatches,
+  type EventSummary,
+  type TradeMatchResult,
+} from '@/services/eventsApi';
 
 const C = colors.dark;
 
@@ -36,32 +47,134 @@ const QUICK_ACTIONS = [
 
 const FREE_MATCH_LIMIT = 3;
 
-// Teaser stats derived deterministically from MOCK_EVENT — stable across re-renders
-const TEASER_COLLECTORS_WITH_WANTS = MOCK_EVENT.stats.collectorsWithYourWants;          // 17
-const TEASER_EXTRA_MATCHES        = MOCK_EVENT.stats.tradeMatches * 2 + 2;              // 14
-const TEASER_WANT_YOURS           = MOCK_EVENT.stats.wantYourCards * 3 - 1;             // 23
+// Teaser stats derived deterministically from MOCK_EVENT
+const TEASER_COLLECTORS_WITH_WANTS = MOCK_EVENT.stats.collectorsWithYourWants;
+const TEASER_EXTRA_MATCHES        = MOCK_EVENT.stats.tradeMatches * 2 + 2;
+const TEASER_WANT_YOURS           = MOCK_EVENT.stats.wantYourCards * 3 - 1;
 
 export default function EventModeScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const [isInEvent, setIsInEvent] = useState(false);
-  const [activeTab, setActiveTab] = useState<EventTab>('matches');
-  const { watchlist, subscriptionTier } = useApp();
+  const { watchlist, subscriptionTier, isAuthenticated, setCurrentEventId } = useApp();
   const isPro = subscriptionTier === 'pro';
 
+  // ── State ─────────────────────────────────────────────────────────────────
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
+  const [isInEvent, setIsInEvent] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<EventTab>('matches');
+  const [tradeMatches, setTradeMatches] = useState<TradeMatchResult[]>([]);
+  const [matchCount, setMatchCount] = useState(0);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+
   const wishlistCount = watchlist.length;
+
+  // ── Load active events ────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchActiveEvents()
+      .then(list => {
+        setEvents(list);
+        if (list.length > 0) setSelectedEvent(list[0]);
+      })
+      .catch(() => {
+        // Fall back to mock event details for display
+        setSelectedEvent({
+          id: MOCK_EVENT.id,
+          name: MOCK_EVENT.name,
+          venue: MOCK_EVENT.venue,
+          city: MOCK_EVENT.city,
+          eventDate: MOCK_EVENT.dates,
+          isActive: true,
+          participantCount: MOCK_EVENT.collectorsPresent,
+        });
+      })
+      .finally(() => setEventsLoading(false));
+  }, []);
+
+  // ── Check existing participation when event selected ──────────────────────
+  useEffect(() => {
+    if (!selectedEvent || !isAuthenticated) return;
+    fetchMyParticipation(selectedEvent.id)
+      .then(({ isParticipating }) => {
+        if (isParticipating) setIsInEvent(true);
+      })
+      .catch(() => {});
+  }, [selectedEvent, isAuthenticated]);
+
+  // ── Load trade matches when entering event ────────────────────────────────
+  const loadTradeMatches = useCallback(async (eventId: string) => {
+    if (!isAuthenticated) return;
+    setMatchesLoading(true);
+    try {
+      const result = await fetchTradeMatches(eventId);
+      setMatchCount(result.matchCount);
+      setTradeMatches(result.matches);
+    } catch {
+      // API error — keep empty matches
+    } finally {
+      setMatchesLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (isInEvent && selectedEvent) {
+      loadTradeMatches(selectedEvent.id);
+    }
+  }, [isInEvent, selectedEvent, loadTradeMatches]);
+
+  // ── Join / Leave handlers ─────────────────────────────────────────────────
+  const handleEnterEvent = useCallback(async () => {
+    if (!selectedEvent) return;
+    if (!isAuthenticated) {
+      Alert.alert('Sign In Required', 'Please sign in to join an event.');
+      return;
+    }
+    setIsJoining(true);
+    try {
+      await joinEvent(selectedEvent.id);
+      setIsInEvent(true);
+      if (setCurrentEventId) setCurrentEventId(selectedEvent.id);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to join event';
+      Alert.alert('Join Failed', msg);
+    } finally {
+      setIsJoining(false);
+    }
+  }, [selectedEvent, isAuthenticated, setCurrentEventId]);
+
+  const handleLeaveEvent = useCallback(async () => {
+    if (!selectedEvent) return;
+    setIsLeaving(true);
+    try {
+      await leaveEvent(selectedEvent.id);
+      setIsInEvent(false);
+      setTradeMatches([]);
+      setMatchCount(0);
+      if (setCurrentEventId) setCurrentEventId(null);
+    } catch {
+      // If leave fails, still clear local state
+      setIsInEvent(false);
+      if (setCurrentEventId) setCurrentEventId(null);
+    } finally {
+      setIsLeaving(false);
+    }
+  }, [selectedEvent, setCurrentEventId]);
+
   const liveStats = {
     collectorsWithYourWants: Math.max(0, Math.round(MOCK_EVENT.stats.collectorsWithYourWants * (wishlistCount / 3))),
-    tradeMatches:            Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches            * (wishlistCount / 3))),
-    wishlistForSale:         Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale         * (wishlistCount / 3))),
+    tradeMatches:            isInEvent ? matchCount : Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches * (wishlistCount / 3))),
+    wishlistForSale:         Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale * (wishlistCount / 3))),
     wantYourCards:           MOCK_EVENT.stats.wantYourCards,
   };
 
-  const allMatches = MOCK_EVENT.tradeMatchesAtEvent;
-  const visibleMatches = isPro ? allMatches : allMatches.slice(0, FREE_MATCH_LIMIT);
-  const showProTeaser = !isPro;
-
+  const participantCount = selectedEvent?.participantCount ?? MOCK_EVENT.collectorsPresent;
   const screenTitle = isPro ? 'Event Mode+' : 'Event Mode';
+
+  const visibleMatches = isPro ? tradeMatches : tradeMatches.slice(0, FREE_MATCH_LIMIT);
+  const showProTeaser = !isPro;
 
   // ── Entry Screen ─────────────────────────────────────────────────────────────
   if (!isInEvent) {
@@ -88,83 +201,127 @@ export default function EventModeScreen() {
           contentContainerStyle={[styles.enterScroll, { paddingBottom: Math.max(insets.bottom, 24) + 16 }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero card */}
-          <View style={[styles.heroCard, { backgroundColor: C.card }]}>
-            <View style={styles.heroBadgeRow}>
-              <View style={[styles.heroBadge, { backgroundColor: `${C.primary}22` }]}>
-                <View style={styles.livePulse} />
-                <Text style={[styles.heroBadgeText, { color: C.primary }]}>LIVE EVENT DETECTED</Text>
+          {eventsLoading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={C.primary} />
+              <Text style={styles.loadingText}>Finding nearby events…</Text>
+            </View>
+          ) : selectedEvent ? (
+            <>
+              {/* Hero card */}
+              <View style={[styles.heroCard, { backgroundColor: C.card }]}>
+                <View style={styles.heroBadgeRow}>
+                  <View style={[styles.heroBadge, { backgroundColor: `${C.primary}22` }]}>
+                    <View style={styles.livePulse} />
+                    <Text style={[styles.heroBadgeText, { color: C.primary }]}>LIVE EVENT DETECTED</Text>
+                  </View>
+                </View>
+                <Text style={styles.heroName}>{selectedEvent.name}</Text>
+                <Text style={styles.heroVenue}>{selectedEvent.venue}</Text>
+                <Text style={styles.heroCity}>{selectedEvent.city} · {selectedEvent.eventDate}</Text>
+                <View style={[styles.heroDivider, { backgroundColor: C.border }]} />
+                <View style={styles.heroMeta}>
+                  <Feather name="users" size={13} color={C.mutedForeground} />
+                  <Text style={styles.heroMetaText}>{participantCount} collectors registered</Text>
+                </View>
               </View>
-            </View>
-            <Text style={styles.heroName}>{MOCK_EVENT.name}</Text>
-            <Text style={styles.heroVenue}>{MOCK_EVENT.venue}</Text>
-            <Text style={styles.heroCity}>{MOCK_EVENT.city} · {MOCK_EVENT.dates}</Text>
-            <View style={[styles.heroDivider, { backgroundColor: C.border }]} />
-            <View style={styles.heroMeta}>
-              <Feather name="users" size={13} color={C.mutedForeground} />
-              <Text style={styles.heroMetaText}>{MOCK_EVENT.collectorsPresent} collectors registered</Text>
-            </View>
-          </View>
 
-          {/* Stats preview */}
-          <Text style={styles.sectionLabel}>What's waiting for you</Text>
-          {wishlistCount === 0 && (
-            <Pressable
-              onPress={() => router.push('/wishlist' as any)}
-              style={[styles.nudge, { backgroundColor: `${C.primary}12`, borderColor: `${C.primary}33` }]}
-            >
-              <Feather name="heart" size={14} color={C.primary} />
-              <Text style={[styles.nudgeText, { color: C.primary }]}>
-                Add cards to your wishlist to see personalised event stats
-              </Text>
-              <Feather name="chevron-right" size={14} color={C.primary} />
-            </Pressable>
+              {/* Event selector — show if multiple events available */}
+              {events.length > 1 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.eventPickerScroll}>
+                  {events.map(ev => (
+                    <Pressable
+                      key={ev.id}
+                      onPress={() => setSelectedEvent(ev)}
+                      style={[
+                        styles.eventChip,
+                        { backgroundColor: C.card, borderColor: selectedEvent?.id === ev.id ? C.primary : 'transparent' },
+                      ]}
+                    >
+                      <Text style={[styles.eventChipText, { color: selectedEvent?.id === ev.id ? C.primary : C.foreground }]}>
+                        {ev.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+
+              {/* Stats preview */}
+              <Text style={styles.sectionLabel}>What's waiting for you</Text>
+              {wishlistCount === 0 && (
+                <Pressable
+                  onPress={() => router.push('/wishlist' as any)}
+                  style={[styles.nudge, { backgroundColor: `${C.primary}12`, borderColor: `${C.primary}33` }]}
+                >
+                  <Feather name="heart" size={14} color={C.primary} />
+                  <Text style={[styles.nudgeText, { color: C.primary }]}>
+                    Add cards to your wishlist to see personalised event stats
+                  </Text>
+                  <Feather name="chevron-right" size={14} color={C.primary} />
+                </Pressable>
+              )}
+
+              <View style={styles.statsGrid}>
+                {[
+                  { icon: 'heart' as const,        value: liveStats.collectorsWithYourWants, label: 'Have your wants',     color: C.primary   },
+                  { icon: 'repeat' as const,       value: liveStats.tradeMatches,            label: 'Trade matches',       color: '#22C55E'   },
+                  { icon: 'tag' as const,          value: liveStats.wishlistForSale,         label: 'Wishlist for sale',   color: '#F59E0B'   },
+                  { icon: 'eye' as const,          value: liveStats.wantYourCards,           label: 'Want your cards',     color: '#3B82F6'   },
+                ].map(s => (
+                  <View key={s.icon} style={[styles.statCard, { backgroundColor: C.card }]}>
+                    <View style={[styles.statIconWrap, { backgroundColor: `${s.color}18` }]}>
+                      <Feather name={s.icon} size={16} color={s.color} />
+                    </View>
+                    <Text style={styles.statCardValue}>{s.value}</Text>
+                    <Text style={styles.statCardLabel}>{s.label}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Feature list */}
+              <View style={[styles.featureCard, { backgroundColor: C.card }]}>
+                <Text style={styles.featureHeading}>Event Mode unlocks</Text>
+                {([
+                  { icon: 'map-pin',      text: "See who's at the event with cards you want"      },
+                  { icon: 'repeat',       text: 'Find trade matches on the floor in real time'    },
+                  { icon: 'shopping-bag', text: 'Browse vendor inventory and listings'            },
+                  { icon: 'list',         text: 'Post to the Wanted Board for collectors to see'  },
+                  { icon: 'check-square', text: 'Track set completion with on-site availability'  },
+                ] as const).map((f, i) => (
+                  <View key={i} style={styles.featureRow}>
+                    <View style={[styles.featureIconWrap, { backgroundColor: `${C.primary}18` }]}>
+                      <Feather name={f.icon} size={14} color={C.primary} />
+                    </View>
+                    <Text style={styles.featureText}>{f.text}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={[styles.heroCard, { backgroundColor: C.card }]}>
+              <Feather name="calendar" size={32} color={C.mutedForeground} />
+              <Text style={[styles.heroName, { marginTop: 12 }]}>No Active Events</Text>
+              <Text style={styles.heroVenue}>Check back soon for upcoming TCG events near you.</Text>
+            </View>
           )}
 
-          <View style={styles.statsGrid}>
-            {[
-              { icon: 'heart' as const,        value: liveStats.collectorsWithYourWants, label: 'Have your wants',     color: C.primary   },
-              { icon: 'repeat' as const,       value: liveStats.tradeMatches,            label: 'Trade matches',       color: '#22C55E'   },
-              { icon: 'tag' as const,          value: liveStats.wishlistForSale,         label: 'Wishlist for sale',   color: '#F59E0B'   },
-              { icon: 'eye' as const,          value: liveStats.wantYourCards,           label: 'Want your cards',     color: '#3B82F6'   },
-            ].map(s => (
-              <View key={s.icon} style={[styles.statCard, { backgroundColor: C.card }]}>
-                <View style={[styles.statIconWrap, { backgroundColor: `${s.color}18` }]}>
-                  <Feather name={s.icon} size={16} color={s.color} />
-                </View>
-                <Text style={styles.statCardValue}>{s.value}</Text>
-                <Text style={styles.statCardLabel}>{s.label}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Feature list */}
-          <View style={[styles.featureCard, { backgroundColor: C.card }]}>
-            <Text style={styles.featureHeading}>Event Mode unlocks</Text>
-            {([
-              { icon: 'map-pin',      text: "See who's at the event with cards you want"      },
-              { icon: 'repeat',       text: 'Find trade matches on the floor in real time'    },
-              { icon: 'shopping-bag', text: 'Browse vendor inventory and listings'            },
-              { icon: 'list',         text: 'Post to the Wanted Board for collectors to see'  },
-              { icon: 'check-square', text: 'Track set completion with on-site availability'  },
-            ] as const).map((f, i) => (
-              <View key={i} style={styles.featureRow}>
-                <View style={[styles.featureIconWrap, { backgroundColor: `${C.primary}18` }]}>
-                  <Feather name={f.icon} size={14} color={C.primary} />
-                </View>
-                <Text style={styles.featureText}>{f.text}</Text>
-              </View>
-            ))}
-          </View>
-
           {/* CTA */}
-          <Pressable
-            onPress={() => setIsInEvent(true)}
-            style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.85 : 1 }]}
-          >
-            <Feather name="zap" size={18} color="#FFF" />
-            <Text style={styles.ctaText}>Enter Event Mode</Text>
-          </Pressable>
+          {selectedEvent && (
+            <Pressable
+              onPress={handleEnterEvent}
+              disabled={isJoining || eventsLoading}
+              style={({ pressed }) => [styles.cta, { opacity: pressed || isJoining ? 0.85 : 1 }]}
+            >
+              {isJoining ? (
+                <ActivityIndicator color="#FFF" size="small" />
+              ) : (
+                <Feather name="zap" size={18} color="#FFF" />
+              )}
+              <Text style={styles.ctaText}>
+                {isJoining ? 'Joining…' : 'Enter Event Mode'}
+              </Text>
+            </Pressable>
+          )}
 
           <Text style={styles.disclaimer}>
             Event Mode uses your wishlist and collection data to surface relevant matches. No GPS is used.
@@ -194,13 +351,18 @@ export default function EventModeScreen() {
               </View>
             )}
           </View>
-          <Text style={styles.dashEventSub}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
+          <Text style={styles.dashEventSub}>{selectedEvent?.venue ?? MOCK_EVENT.venue} · {selectedEvent?.eventDate ?? MOCK_EVENT.dates}</Text>
         </View>
         <Pressable
-          onPress={() => setIsInEvent(false)}
+          onPress={handleLeaveEvent}
+          disabled={isLeaving}
           style={[styles.leaveBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
         >
-          <Feather name="log-out" size={13} color={C.primary} />
+          {isLeaving ? (
+            <ActivityIndicator size="small" color={C.primary} />
+          ) : (
+            <Feather name="log-out" size={13} color={C.primary} />
+          )}
           <Text style={[styles.leaveBtnText, { color: C.primary }]}>Leave</Text>
         </Pressable>
       </View>
@@ -274,59 +436,142 @@ export default function EventModeScreen() {
         {/* MATCHES */}
         {activeTab === 'matches' && (
           <View style={styles.cardList}>
-            {visibleMatches.map(match => (
-              <Pressable
-                key={match.id}
-                onPress={() => router.push('/trade-match' as any)}
-                style={[styles.matchCard, { backgroundColor: C.card }]}
-              >
-                <View style={styles.matchHeader}>
-                  <View style={[styles.matchBadge, { backgroundColor: '#22C55E18' }]}>
-                    <View style={[styles.matchDot, { backgroundColor: '#22C55E' }]} />
-                    <Text style={[styles.matchBadgeText, { color: '#22C55E' }]}>{match.matchPercent}% Match</Text>
-                  </View>
-                  <Text style={styles.atEventTag}>AT THIS EVENT</Text>
-                </View>
-
-                <View style={styles.matchTrades}>
-                  <View style={styles.matchSide}>
-                    <View style={[styles.matchThumb, { backgroundColor: match.youWant.color }]} />
-                    <View style={styles.matchSideInfo}>
-                      <Text style={styles.matchSideLabel}>YOU WANT</Text>
-                      <Text style={styles.matchSideName} numberOfLines={1}>{match.youWant.name}</Text>
-                      <Text style={styles.matchSideMeta}>{match.youWant.grade} · ${match.youWant.value.toLocaleString()}</Text>
+            {matchesLoading ? (
+              <View style={styles.loadingWrap}>
+                <ActivityIndicator color={C.primary} />
+                <Text style={styles.loadingText}>Finding trade matches…</Text>
+              </View>
+            ) : visibleMatches.length > 0 ? (
+              visibleMatches.map(match => (
+                <Pressable
+                  key={match.participantUserId}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/event/event-profile' as any,
+                      params: {
+                        userId: match.participantUserId,
+                        displayName: match.displayName,
+                        username: match.username,
+                        matchScore: String(match.matchScore),
+                        theyHave: JSON.stringify(match.theyHave),
+                        youHave: JSON.stringify(match.youHave),
+                      },
+                    })
+                  }
+                  style={[styles.matchCard, { backgroundColor: C.card }]}
+                >
+                  <View style={styles.matchHeader}>
+                    <View style={[styles.matchBadge, { backgroundColor: '#22C55E18' }]}>
+                      <View style={[styles.matchDot, { backgroundColor: '#22C55E' }]} />
+                      {isPro ? (
+                        <Text style={[styles.matchBadgeText, { color: '#22C55E' }]}>{match.matchScore}% Match</Text>
+                      ) : (
+                        <Text style={[styles.matchBadgeText, { color: '#22C55E' }]}>Trade Match</Text>
+                      )}
                     </View>
+                    <Text style={styles.atEventTag}>AT THIS EVENT</Text>
                   </View>
-                  <View style={[styles.matchSwapIcon, { backgroundColor: C.background }]}>
-                    <Feather name="repeat" size={12} color={C.mutedForeground} />
-                  </View>
-                  <View style={[styles.matchSide, styles.matchSideRight]}>
-                    <View style={styles.matchSideInfo}>
-                      <Text style={[styles.matchSideLabel, { textAlign: 'right' }]}>THEY WANT</Text>
-                      <Text style={[styles.matchSideName, { textAlign: 'right' }]} numberOfLines={1}>{match.theyWant.name}</Text>
-                      <Text style={[styles.matchSideMeta, { textAlign: 'right' }]}>{match.theyWant.grade} · ${match.theyWant.value.toLocaleString()}</Text>
+
+                  <View style={styles.matchTrades}>
+                    {match.theyHave[0] && (
+                      <View style={styles.matchSide}>
+                        <View style={[styles.matchThumb, { backgroundColor: '#3B82F6' }]} />
+                        <View style={styles.matchSideInfo}>
+                          <Text style={styles.matchSideLabel}>YOU WANT</Text>
+                          <Text style={styles.matchSideName} numberOfLines={1}>{match.theyHave[0].name}</Text>
+                          <Text style={styles.matchSideMeta}>{match.theyHave[0].grade}</Text>
+                        </View>
+                      </View>
+                    )}
+                    <View style={[styles.matchSwapIcon, { backgroundColor: C.background }]}>
+                      <Feather name="repeat" size={12} color={C.mutedForeground} />
                     </View>
-                    <View style={[styles.matchThumb, { backgroundColor: match.theyWant.color }]} />
+                    {match.youHave[0] && (
+                      <View style={[styles.matchSide, styles.matchSideRight]}>
+                        <View style={styles.matchSideInfo}>
+                          <Text style={[styles.matchSideLabel, { textAlign: 'right' }]}>THEY WANT</Text>
+                          <Text style={[styles.matchSideName, { textAlign: 'right' }]} numberOfLines={1}>{match.youHave[0].name}</Text>
+                          <Text style={[styles.matchSideMeta, { textAlign: 'right' }]}>{match.youHave[0].grade}</Text>
+                        </View>
+                        <View style={[styles.matchThumb, { backgroundColor: '#22C55E' }]} />
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={[styles.matchFooter, { borderTopColor: C.border }]}>
+                    <View style={[styles.matchAvatar, { backgroundColor: C.primary }]}>
+                      <Text style={styles.matchAvatarText}>{match.displayName.substring(0, 2).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.matchUsername}>@{match.username}</Text>
+                    <View style={{ flex: 1 }} />
+                    <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+                  </View>
+                </Pressable>
+              ))
+            ) : (
+              <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+                <Feather name="repeat" size={28} color={C.mutedForeground} />
+                <Text style={styles.emptyStateTitle}>No Trade Matches Yet</Text>
+                <Text style={styles.emptyStateBody}>
+                  {wishlistCount === 0
+                    ? 'Add cards to your wishlist and mark collection cards as For Trade to find matches.'
+                    : 'No other participants have matching cards yet. Check back as more collectors join.'}
+                </Text>
+                {wishlistCount === 0 && (
+                  <Pressable
+                    onPress={() => router.push('/wishlist' as any)}
+                    style={[styles.emptyStateCta, { backgroundColor: C.primary }]}
+                  >
+                    <Text style={styles.emptyStateCtaText}>Build Wishlist</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+
+            {/* Pro teaser card — always shown for Free users when there are hidden matches */}
+            {showProTeaser && matchCount > FREE_MATCH_LIMIT && (
+              <View style={[styles.proTeaserCard, { backgroundColor: C.card, borderColor: `${C.primary}44` }]}>
+                <View style={styles.proTeaserHeader}>
+                  <View style={[styles.proTeaserBadge, { backgroundColor: C.primary }]}>
+                    <Feather name="zap" size={11} color={C.primaryForeground} />
+                    <Text style={styles.proTeaserBadgeText}>Event Mode+</Text>
                   </View>
                 </View>
 
-                <View style={[styles.matchFooter, { borderTopColor: C.border }]}>
-                  <View style={[styles.matchAvatar, { backgroundColor: match.collector.avatarColor }]}>
-                    <Text style={styles.matchAvatarText}>{match.collector.initials}</Text>
+                <View style={styles.proTeaserStats}>
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>🔥</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>{TEASER_COLLECTORS_WITH_WANTS} collectors</Text>
+                      {' '}here have cards you want
+                    </Text>
                   </View>
-                  <Text style={styles.matchUsername}>@{match.collector.username}</Text>
-                  {match.collector.isVerified && (
-                    <Feather name="check-circle" size={11} color={C.positive} />
-                  )}
-                  <View style={{ flex: 1 }} />
-                  <Text style={styles.matchLocation}>{match.collector.location}</Text>
-                  <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>🤝</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>+{matchCount - FREE_MATCH_LIMIT} more Trade Matches</Text>
+                      {' '}with Pro
+                    </Text>
+                  </View>
+                  <View style={styles.proTeaserStatRow}>
+                    <Text style={styles.proTeaserStatEmoji}>👀</Text>
+                    <Text style={styles.proTeaserStatText}>
+                      <Text style={styles.proTeaserStatHighlight}>{TEASER_WANT_YOURS} collectors</Text>
+                      {' '}want your cards
+                    </Text>
+                  </View>
                 </View>
-              </Pressable>
-            ))}
 
-            {/* Pro teaser card — always shown for Free users */}
-            {showProTeaser && (
+                <Pressable
+                  onPress={() => router.push('/pro-subscription' as any)}
+                  style={({ pressed }) => [styles.proTeaserCta, { opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={styles.proTeaserCtaText}>See All Matches → Unlock Event Mode+</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {showProTeaser && matchCount === 0 && (
               <View style={[styles.proTeaserCard, { backgroundColor: C.card, borderColor: `${C.primary}44` }]}>
                 <View style={styles.proTeaserHeader}>
                   <View style={[styles.proTeaserBadge, { backgroundColor: C.primary }]}>
@@ -350,13 +595,6 @@ export default function EventModeScreen() {
                       {' '}with Pro
                     </Text>
                   </View>
-                  <View style={styles.proTeaserStatRow}>
-                    <Text style={styles.proTeaserStatEmoji}>👀</Text>
-                    <Text style={styles.proTeaserStatText}>
-                      <Text style={styles.proTeaserStatHighlight}>{TEASER_WANT_YOURS} collectors</Text>
-                      {' '}want your cards
-                    </Text>
-                  </View>
                 </View>
 
                 <Pressable
@@ -368,7 +606,7 @@ export default function EventModeScreen() {
               </View>
             )}
 
-            {isPro && (
+            {isPro && matchCount > 0 && (
               <Pressable
                 onPress={() => router.push('/trade-match' as any)}
                 style={[styles.viewAllRow, { borderColor: C.border }]}
@@ -521,7 +759,6 @@ export default function EventModeScreen() {
                   <Text style={styles.listPrice}>${item.askingPrice.toLocaleString('en-AU')}</Text>
                   <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
                   {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
-                  {/* Price alert button */}
                   {isPro ? (
                     <Pressable
                       onPress={() => {}}
@@ -599,209 +836,196 @@ const styles = StyleSheet.create({
   heroBadgeText: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1.2 },
   heroName: { fontSize: 24, fontFamily: 'Rajdhani_700Bold', color: C.foreground, textAlign: 'center', letterSpacing: -0.3 },
   heroVenue: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
-  heroCity: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, textAlign: 'center' },
+  heroCity: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   heroDivider: { width: '100%', height: 1, marginVertical: 4 },
   heroMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  heroMetaText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  heroMetaText: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
 
-  sectionLabel: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  eventPickerScroll: { flexGrow: 0 },
+  eventChip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8,
+    borderWidth: 1.5,
+  },
+  eventChipText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+
+  sectionLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase' },
 
   nudge: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, borderWidth: 1, padding: 12,
+    padding: 12, borderRadius: 12, borderWidth: 1,
   },
-  nudgeText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold', lineHeight: 18 },
+  nudgeText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular' },
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  statCard: { width: '47%', borderRadius: 16, padding: 16, alignItems: 'center', gap: 6 },
+  statCard: {
+    flex: 1, minWidth: '45%', borderRadius: 14, padding: 14,
+    alignItems: 'center', gap: 6,
+  },
   statIconWrap: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  statCardValue: { fontSize: 30, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 34 },
-  statCardLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  statCardValue: { fontSize: 24, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
+  statCardLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
-  featureCard: { borderRadius: 16, padding: 18, gap: 14 },
-  featureHeading: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  featureIconWrap: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  featureText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, lineHeight: 18 },
+  featureCard: { borderRadius: 16, padding: 16, gap: 12 },
+  featureHeading: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground, marginBottom: 4 },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  featureIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  featureText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
 
   cta: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, height: 56, borderRadius: 16, backgroundColor: C.primary,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: C.primary, borderRadius: 16, paddingVertical: 16,
   },
-  ctaText: { fontSize: 17, fontFamily: 'Inter_700Bold', color: '#FFF' },
+  ctaText: { fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFF' },
 
-  disclaimer: {
-    fontSize: 11, fontFamily: 'Inter_400Regular',
-    color: `${C.mutedForeground}66`, textAlign: 'center', lineHeight: 17,
+  disclaimer: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+
+  loadingWrap: { alignItems: 'center', gap: 10, paddingVertical: 32 },
+  loadingText: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
+  proChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: C.primary, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8,
   },
+  proChipText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.primaryForeground, letterSpacing: 0.5 },
 
-  // ── Active dashboard ──────────────────────────────────────────────────────────
+  // ── Dashboard ────────────────────────────────────────────────────────────────
   dashHeader: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12,
   },
-  dashHeaderLeft: { flex: 1, gap: 2, marginRight: 12 },
-  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.positive },
-  liveLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', color: C.positive, letterSpacing: 1.2 },
-  dashTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dashEventName: { fontSize: 18, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
-  dashEventSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  dashHeaderLeft: { flex: 1, gap: 2 },
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E' },
+  liveLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', color: '#22C55E', letterSpacing: 1.2 },
+  dashTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dashEventName: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
+  dashEventSub: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
   leaveBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1,
   },
   leaveBtnText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
-  // Pro chip
-  proChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: C.primary, borderRadius: 6,
-    paddingHorizontal: 7, paddingVertical: 3,
-  },
-  proChipText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.primaryForeground, letterSpacing: 0.5 },
-
-  // Stat strip
-  statStrip: { flexGrow: 0, flexShrink: 0, height: 94 },
-  statStripContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 12 },
+  statGrid: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 10 },
   statPill: {
-    borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10,
-    alignItems: 'center', gap: 2, minWidth: 80,
+    flex: 1, borderRadius: 12, paddingVertical: 8, alignItems: 'center', gap: 2,
   },
   statPillEmoji: { fontSize: 16 },
-  statPillValue: { fontSize: 22, fontFamily: 'Rajdhani_700Bold', color: C.foreground, lineHeight: 26 },
+  statPillValue: { fontSize: 16, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
   statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
-  // Stat grid (4-column fixed row)
-  statGrid: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
+  qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, gap: 8, marginBottom: 2 },
+  qaBtn: { width: '47%', borderRadius: 14, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  qaIconWrap: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  qaLabel: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.foreground, flex: 1 },
 
-  // Quick actions (2×2 grid)
-  qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
-  qaBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
-  },
-  qaIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  qaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  tabBar: { borderBottomWidth: 1, maxHeight: 42 },
+  tabBarContent: { paddingHorizontal: 16, gap: 4 },
+  tabItem: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabItemText: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
 
-  // Tab bar — flexGrow: 0 is required (mirrors statStrip/qaStrip pattern) to prevent iOS flex expansion
-  tabBar: { borderBottomWidth: 1, height: 30, flexGrow: 0, flexShrink: 0 },
-  tabBarContent: { paddingHorizontal: 16 },
-  tabItem: {
-    paddingHorizontal: 14, paddingTop: 10, paddingBottom: 0,
-    borderBottomWidth: 2, borderBottomColor: 'transparent',
-  },
-  tabItemText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-
-  // Tab content
   tabContent: { flex: 1 },
-  tabContentInner: { paddingHorizontal: 16, paddingTop: 10 },
+  tabContentInner: { padding: 14, gap: 10 },
+
   cardList: { gap: 10 },
 
   // Match cards
   matchCard: { borderRadius: 16, padding: 14, gap: 12 },
   matchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  matchBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
-  },
-  matchDot: { width: 5, height: 5, borderRadius: 3 },
-  matchBadgeText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
-  atEventTag: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1 },
+  matchBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
+  matchDot: { width: 5, height: 5, borderRadius: 2.5 },
+  matchBadgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  atEventTag: { fontSize: 10, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+
   matchTrades: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   matchSide: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  matchSideRight: { justifyContent: 'flex-end' },
-  matchThumb: { width: 34, height: 48, borderRadius: 6, flexShrink: 0 },
-  matchSideInfo: { flex: 1 },
-  matchSideLabel: { fontSize: 8, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 1, marginBottom: 2 },
-  matchSideName: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  matchSideMeta: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
-  matchSwapIcon: {
-    width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
-  },
-  matchFooter: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingTop: 10, borderTopWidth: 1,
-  },
+  matchSideRight: { flexDirection: 'row-reverse' },
+  matchThumb: { width: 36, height: 36, borderRadius: 8 },
+  matchSideInfo: { flex: 1, gap: 2 },
+  matchSideLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', color: C.mutedForeground, letterSpacing: 0.6 },
+  matchSideName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  matchSideMeta: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  matchSwapIcon: { width: 24, height: 24, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+
+  matchFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 10, borderTopWidth: 1 },
   matchAvatar: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   matchAvatarText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: '#FFF' },
-  matchUsername: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  matchLocation: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  matchUsername: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  matchLocation: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
 
-  viewAllRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, borderRadius: 12, paddingVertical: 12, borderWidth: 1, marginTop: 2,
-  },
-  viewAllText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-
-  // Pro teaser card
+  // Pro teaser
   proTeaserCard: {
-    borderRadius: 18, borderWidth: 1.5,
-    overflow: 'hidden', marginTop: 2,
+    borderRadius: 18, padding: 18, borderWidth: 1.5, gap: 14,
   },
-  proTeaserHeader: {
-    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12,
-  },
+  proTeaserHeader: { flexDirection: 'row', alignItems: 'center' },
   proTeaserBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    alignSelf: 'flex-start', borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 5,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
   },
-  proTeaserBadgeText: { fontSize: 11, fontFamily: 'Inter_700Bold', color: C.primaryForeground, letterSpacing: 0.3 },
-  proTeaserStats: { paddingHorizontal: 16, gap: 10, paddingBottom: 16 },
+  proTeaserBadgeText: { fontSize: 11, fontFamily: 'Inter_700Bold', color: '#FFF' },
+  proTeaserStats: { gap: 8 },
   proTeaserStatRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  proTeaserStatEmoji: { fontSize: 18, width: 26, textAlign: 'center' },
+  proTeaserStatEmoji: { fontSize: 18 },
   proTeaserStatText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   proTeaserStatHighlight: { fontFamily: 'Inter_700Bold', color: C.foreground },
   proTeaserCta: {
-    margin: 12, marginTop: 0,
-    backgroundColor: C.primary, borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center',
+    backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center',
   },
-  proTeaserCtaText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.primaryForeground },
+  proTeaserCtaText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFF' },
 
-  // List rows (shared across Wishlist / Want Yours / For Sale / Trending)
-  listRow: {
-    flexDirection: 'row', alignItems: 'center',
-    borderRadius: 14, padding: 12, gap: 12,
+  viewAllRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 14, borderRadius: 12, borderWidth: 1,
   },
-  listThumb: {
-    width: 44, height: 62, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  listInitial: { fontSize: 20, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
-  listInfo: { flex: 1, gap: 3 },
+  viewAllText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+
+  // List rows
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 12 },
+  listThumb: { width: 40, height: 40, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  listInitial: { fontSize: 16, fontFamily: 'Rajdhani_700Bold', color: '#FFF' },
+  listInfo: { flex: 1, gap: 2 },
   listName: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   listMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  listValue: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
+  listValue: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.positive },
   listRight: { alignItems: 'flex-end', gap: 4 },
-  listPrice: { fontSize: 15, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
-  listSeller: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  listPrice: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
+  listSeller: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
   availTag: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
   availTagText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
-  boothText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
 
-  // Price alert button
   alertBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1,
   },
-  alertBtnText: { fontSize: 9, fontFamily: 'Inter_600SemiBold' },
+  alertBtnText: { fontSize: 10, fontFamily: 'Inter_500Medium' },
 
-  // Want Yours
-  clusterRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  boothText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
+
+  clusterRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   clusterDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   clusterInitial: { fontSize: 8, fontFamily: 'Inter_700Bold', color: '#FFF' },
-  clusterCount: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  clusterCount: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
   haveThisBtn: {
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1,
   },
   haveThisBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 
-  // Trending
-  trendRank: { fontSize: 14, fontFamily: 'Rajdhani_700Bold', color: C.mutedForeground, width: 26, textAlign: 'center' },
-  watchRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  watchText: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  trendChange: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  trendRank: { fontSize: 14, fontFamily: 'Rajdhani_700Bold', color: C.mutedForeground, width: 28 },
+  trendChange: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  watchRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  watchText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
+  // Empty state
+  emptyState: {
+    borderRadius: 18, padding: 24, alignItems: 'center', gap: 10,
+  },
+  emptyStateTitle: { fontSize: 16, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
+  emptyStateBody: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  emptyStateCta: {
+    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, marginTop: 4,
+  },
+  emptyStateCtaText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFF' },
 });

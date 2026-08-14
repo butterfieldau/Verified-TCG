@@ -42,6 +42,7 @@ import {
 } from '@/services/alertsStore';
 import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
+import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
   signInWithPassword,
@@ -116,6 +117,9 @@ interface AppState {
    * unique member number assigned from a counter capped at FOUNDING_MEMBER_LIMIT.
    */
   foundingMemberClaimed: boolean;
+  // ── Event Mode ─────────────────────────────────────────────────────────────
+  /** ID of the event the collector is currently participating in, or null. */
+  currentEventId: string | null;
 }
 
 interface AppActions {
@@ -158,6 +162,9 @@ interface AppActions {
   setProfileTheme: (theme: string) => void;
   /** Toggle the mock Founding Member claim. Only callable when tier === 'pro'. */
   claimFoundingMember: () => void;
+  // ── Event Mode ─────────────────────────────────────────────────────────────
+  /** Set or clear the currently active event ID. */
+  setCurrentEventId: (id: string | null) => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -266,6 +273,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * survives navigation but resets on full app restart (no backend yet).
    */
   const [foundingMemberClaimed, setFoundingMemberClaimed] = useState<boolean>(false);
+
+  // ── Event Mode state ───────────────────────────────────────────────────────
+  const [currentEventId, setCurrentEventId] = useState<string | null>(null);
 
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
@@ -535,6 +545,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (typeof count === 'number') setScansUsed(count);
         }).catch(() => {});
       }
+
+      // Restore active event participation so Trade Match and Event Mode reflect
+      // real data immediately without requiring navigation to Event Mode first.
+      fetchMyActiveParticipation().then(p => {
+        if (p.eventId) setCurrentEventId(p.eventId);
+      }).catch(() => {});
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -615,6 +631,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfileTheme('default');
     setFoundingMemberClaimed(false);
     setPricesLastUpdated(null);
+    setCurrentEventId(null);
   }, []);
 
   const deleteAccount = useCallback(async (password: string) => {
@@ -632,6 +649,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfileTheme('default');
     setFoundingMemberClaimed(false);
     setPricesLastUpdated(null);
+    setCurrentEventId(null);
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
@@ -969,6 +987,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         profileTheme, setProfileTheme,
         foundingMemberClaimed,
         claimFoundingMember: () => setFoundingMemberClaimed(true),
+        currentEventId, setCurrentEventId,
       }}
     >
       {children}
