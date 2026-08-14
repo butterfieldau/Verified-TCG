@@ -40,8 +40,17 @@ import {
   saveAlertState,
   mergeAlertSources,
 } from '@/services/alertsStore';
-import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
+import {
+  fetchNotifications,
+  fetchUnreadCount,
+  markNotificationReadOnServer,
+  markAllNotificationsReadOnServer,
+} from '@/services/notifications';
+import {
+  configureForegroundNotifications,
+  requestAndRegisterPushToken,
+} from '@/services/pushRegistration';
 import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
@@ -98,7 +107,10 @@ interface AppState {
   pricesLastUpdated: Date | null;
   isPriceRefreshing: boolean;
   notifications: Notification[];
+  /** Server-authoritative unread count — accurate even beyond the first loaded page. */
   unreadNotificationCount: number;
+  /** True when more notifications exist on the server beyond the first page. */
+  notificationsHasMore: boolean;
   /** Number of watchlist items with priceAlertEnabled === true. */
   activeAlertCount: number;
   // ── Subscription ──────────────────────────────────────────────────────────
@@ -138,8 +150,10 @@ interface AppActions {
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
   setActiveTCG: (tcg: TCGId | null) => void;
   refreshPrices: () => Promise<void>;
-  markNotificationRead: (id: string) => void;
+  markNotificationRead: (id: string, currentlyRead?: boolean) => void;
   markAllNotificationsRead: () => void;
+  /** Pull fresh notifications from the server (call on pull-to-refresh). */
+  refreshNotifications: () => Promise<void>;
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
@@ -251,6 +265,10 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Configure how in-app notifications are displayed while the app is open.
+  // Called once on mount — safe to call on all platforms.
+  useEffect(() => { configureForegroundNotifications(); }, []);
+
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
@@ -263,7 +281,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [serverUnreadCount, setServerUnreadCount] = useState(0);
+  const [notificationsHasMore, setNotificationsHasMore] = useState(false);
 
   // ── Pro Identity state ─────────────────────────────────────────────────────
   const [selectedIcon, setSelectedIcon] = useState<string>('original');
@@ -520,6 +540,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // ── Notifications ───────────────────────────────────────────────────────────
+
+  /**
+   * Load the first page of server notifications and merge with any
+   * locally-generated client notifications (price alerts with temp IDs).
+   * Silently no-ops when the user is not authenticated.
+   */
+  const loadNotifications = useCallback(async () => {
+    try {
+      // Fetch first page of server notifications AND the authoritative unread count
+      // in parallel so the badge is always accurate (even beyond the first page).
+      const [page, unread] = await Promise.all([
+        fetchNotifications(1, 20),
+        fetchUnreadCount(),
+      ]);
+      setNotifications(prev => {
+        // Keep any client-generated entries (temp IDs prefixed 'price-alert-wl-')
+        const local = prev.filter(n => n.id.startsWith('price-alert-wl-'));
+        // Merge: local first (most recent), then server (dedup by id)
+        const serverIds = new Set(page.notifications.map(n => n.id));
+        const dedupedLocal = local.filter(n => !serverIds.has(n.id));
+        return [...dedupedLocal, ...page.notifications];
+      });
+      // Store server count only — local price-alert count is derived separately
+      // via useMemo to avoid stale closure issues (no notifications in deps).
+      setServerUnreadCount(unread);
+      setNotificationsHasMore(page.hasMore);
+    } catch {
+      // Network unavailable — keep current state
+    }
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    await loadNotifications();
+  }, [loadNotifications]);
+
   // Restore session on mount (handles app restarts and token refresh)
   useEffect(() => {
     restoreSession().then(async session => {
@@ -536,6 +592,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (meta.is_founding_member === true) setFoundingMemberClaimed(true);
 
       loadCollection();
+      loadNotifications();
+
+      // NOTE: Push token registration is NOT triggered on cold session restore.
+      // It runs only after an explicit sign-in (see signIn callback) so the
+      // OS permission prompt appears contextually — not on every app launch.
 
       // Hydrate scan count from server so the gate is accurate across
       // reinstalls, device switches, and charged-failure scenarios.
@@ -555,8 +616,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh collection when the app comes back to the foreground so changes
-  // made on another device or session are reflected without requiring a sign-out.
+  // Refresh collection and unread notification count when the app comes back
+  // to the foreground so changes made on another device are reflected.
   const isAuthenticatedRef = useRef(false);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
 
@@ -564,6 +625,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'active' && isAuthenticatedRef.current) {
         loadCollection();
+        // Refresh notifications on app focus so new server-side alerts appear
+        loadNotifications();
       }
     };
     const subscription = RNAppState.addEventListener('change', handleAppStateChange);
@@ -587,8 +650,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setFoundingMemberClaimed(true);
     }
 
-    // Load real collection from server
+    // Load real collection and notifications from server
     loadCollection();
+    loadNotifications();
+
+    // Request push token after a fresh sign-in (contextual, not cold-launch)
+    requestAndRegisterPushToken();
 
     // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
@@ -605,15 +672,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (typeof count === 'number') setScansUsed(count);
       }).catch(() => {});
     }
-  }, [loadCollection]);
+  }, [loadCollection, loadNotifications]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     const session = await signInWithOAuth(provider);
     if (!session) return false;
     setUser(userFromSession(session));
     setIsAuthenticated(true);
+    // Run the same post-sign-in initialization as email/password sign-in
+    loadCollection();
+    loadNotifications();
+    requestAndRegisterPushToken();
     return true;
-  }, []);
+  }, [loadCollection, loadNotifications]);
 
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
@@ -623,7 +694,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
     setCollection([]);
     setWatchlist([]);
-    setNotifications(getNotifications);
+    setNotifications([]);
+    setServerUnreadCount(0);
+    setNotificationsHasMore(false);
     setSubscriptionTierState('free');
     setScansUsed(0);
     setScanResetDate(nextMonthFirstDay(new Date()));
@@ -641,7 +714,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
     setCollection([]);
     setWatchlist([]);
-    setNotifications(getNotifications);
+    setNotifications([]);
+    setServerUnreadCount(0);
+    setNotificationsHasMore(false);
     setSubscriptionTierState('free');
     setScansUsed(0);
     setScanResetDate(nextMonthFirstDay(new Date()));
@@ -761,12 +836,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
-  const markNotificationRead = useCallback((id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  const markNotificationRead = useCallback((id: string, currentlyRead = false) => {
+    // Optimistic local update — mark in context notifications array (page 1)
+    setNotifications(prev => {
+      const target = prev.find(n => n.id === id);
+      // For page-1 notifications we have the live isRead state from context.
+      // For page-2+ notifications (stored in extraNotifications in the screen)
+      // the caller passes `currentlyRead` so we know not to double-decrement.
+      const wasRead = target ? target.isRead : currentlyRead;
+      if (!wasRead && !id.startsWith('price-alert-wl-')) {
+        setServerUnreadCount(c => Math.max(0, c - 1));
+      }
+      return prev.map(n => n.id === id ? { ...n, isRead: true } : n);
+    });
+    // Persist to server for real notification rows (fire-and-forget)
+    if (!id.startsWith('price-alert-wl-')) {
+      markNotificationReadOnServer(id);
+    }
   }, []);
 
   const markAllNotificationsRead = useCallback(() => {
+    // Optimistic local update — zero out the server-backed badge count
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setServerUnreadCount(0);
+    // Persist to server (fire-and-forget)
+    markAllNotificationsReadOnServer();
   }, []);
 
   // ── Subscription actions ───────────────────────────────────────────────────
@@ -916,6 +1010,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
               },
               ...updated,
             ];
+            // localUnreadCount (derived via useMemo from notifications) will
+            // automatically pick this up — no manual counter update needed.
           }
           alertedItemIds.current.add(item.id);
         } else if (!conditionMet) {
@@ -928,10 +1024,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [watchlist, watchlistLoaded]);
 
-  const unreadNotificationCount = useMemo(
-    () => notifications.filter(n => !n.isRead).length,
+  // Local unread count — client-generated price-alert-wl-* entries only.
+  // Derived fresh from state every render, no stale-closure risk.
+  const localUnreadCount = useMemo(
+    () => notifications.filter(n => n.id.startsWith('price-alert-wl-') && !n.isRead).length,
     [notifications],
   );
+
+  // Combined badge: server count (authoritative, covers all pages) +
+  // in-memory local price-alert entries not yet persisted to the server.
+  const unreadNotificationCount = serverUnreadCount + localUnreadCount;
 
   const activeAlertCount = useMemo(
     () => watchlist.filter(w => w.priceAlertEnabled && !!w.targetPrice).length,
@@ -974,13 +1076,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collection, collectionLoading, refreshCollection: loadCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
-        notifications, unreadNotificationCount, activeAlertCount,
+        notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,
         signIn, signInWithProvider, signOut, deleteAccount, updateProfile,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
-        markNotificationRead, markAllNotificationsRead,
+        markNotificationRead, markAllNotificationsRead, refreshNotifications,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
         setSubscriptionTier, incrementScanCount, syncScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,

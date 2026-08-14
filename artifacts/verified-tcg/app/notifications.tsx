@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,54 +15,141 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
 import type { NotifType } from '@/services/notifications';
+import { fetchNotifications } from '@/services/notifications';
+import type { Notification } from '@/services/notifications';
 
 const C = colors.dark;
 
-function notifIcon(type: NotifType): { name: keyof typeof Feather.glyphMap; color: string; bg: string } {
+// All types that can appear from the server + client-generated aliases
+type FilterType = NotifType | 'all';
+
+function notifIcon(type: string): { name: keyof typeof Feather.glyphMap; color: string; bg: string } {
   switch (type) {
     case 'price_alert':  return { name: 'trending-up', color: C.positive,  bg: `${C.positive}22` };
+    case 'trade_match':  return { name: 'repeat',       color: C.warning,   bg: `${C.warning}22` };
+    case 'follower':     return { name: 'user-plus',    color: '#3B82F6',   bg: '#3B82F622' };
+    case 'community':   return { name: 'heart',         color: C.primary,   bg: `${C.primary}22` };
+    case 'system':       return { name: 'info',          color: C.mutedForeground, bg: C.muted };
+    // Legacy client-generated types (graceful fallback)
     case 'trade_offer':  return { name: 'repeat',       color: C.warning,   bg: `${C.warning}22` };
     case 'watchlist':    return { name: 'eye',           color: '#3B82F6',   bg: '#3B82F622' };
     case 'market':       return { name: 'bar-chart-2',  color: C.mutedForeground, bg: C.muted };
     case 'verification': return { name: 'shield',        color: C.positive,  bg: `${C.positive}22` };
-    case 'system':       return { name: 'info',          color: C.mutedForeground, bg: C.muted };
+    default:             return { name: 'bell',          color: C.mutedForeground, bg: C.muted };
   }
 }
 
+const FILTERS: { label: string; value: FilterType }[] = [
+  { label: 'All',      value: 'all' },
+  { label: 'Prices',   value: 'price_alert' },
+  { label: 'Trades',   value: 'trade_match' },
+  { label: 'Followers',value: 'follower' },
+  { label: 'Community',value: 'community' },
+  { label: 'System',   value: 'system' },
+];
+
 export default function NotificationsScreen() {
   const insets = useSafeAreaInsets();
-  const { notifications, unreadNotificationCount, markNotificationRead, markAllNotificationsRead } = useApp();
-  const [filter, setFilter] = useState<NotifType | 'all'>('all');
+  const {
+    notifications,
+    unreadNotificationCount,
+    notificationsHasMore: initialHasMore,
+    markNotificationRead,
+    markAllNotificationsRead,
+    refreshNotifications,
+    isAuthenticated,
+  } = useApp();
+
+  const [filter, setFilter] = useState<FilterType>('all');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [extraNotifications, setExtraNotifications] = useState<Notification[]>([]);
+
+  // Sync hasMore when context updates (e.g. after first-page load completes)
+  React.useEffect(() => {
+    setHasMore(initialHasMore);
+  }, [initialHasMore]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const unreadCount = unreadNotificationCount;
+
+  // Merge base notifications (from context) + extra pages loaded locally
+  const allNotifications = React.useMemo(() => {
+    const ids = new Set(notifications.map(n => n.id));
+    const deduped = extraNotifications.filter(n => !ids.has(n.id));
+    return [...notifications, ...deduped];
+  }, [notifications, extraNotifications]);
 
   const filtered = filter === 'all'
-    ? notifications
-    : notifications.filter(n => n.type === filter);
+    ? allNotifications
+    : allNotifications.filter(n => n.type === filter);
 
-  function markAllRead() {
+  const unreadCount = unreadNotificationCount;
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    setExtraNotifications([]);
+    setPage(1);
+    setHasMore(false);
+    await refreshNotifications();
+    setIsRefreshing(false);
+  }, [refreshNotifications]);
+
+  // When context marks all read, also clear extraNotifications unread state
+  const handleMarkAllRead = useCallback(() => {
     markAllNotificationsRead();
-  }
+    setExtraNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  }, [markAllNotificationsRead]);
 
-  function markRead(id: string) {
-    markNotificationRead(id);
-  }
+  const handleLoadMore = useCallback(async () => {
+    if (isLoadingMore || !isAuthenticated) return;
+    setIsLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const result = await fetchNotifications(nextPage, 20);
+      if (result.notifications.length > 0) {
+        setExtraNotifications(prev => [...prev, ...result.notifications]);
+        setPage(nextPage);
+        setHasMore(result.hasMore);
+      } else {
+        setHasMore(false);
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, page, isAuthenticated]);
 
-  const FILTERS: { label: string; value: NotifType | 'all' }[] = [
-    { label: 'All', value: 'all' },
-    { label: 'Price', value: 'price_alert' },
-    { label: 'Trades', value: 'trade_offer' },
-    { label: 'Watchlist', value: 'watchlist' },
-    { label: 'Market', value: 'market' },
-    { label: 'Verified', value: 'verification' },
-  ];
+  function handleTap(notif: Notification) {
+    // Pass notif.isRead so markNotificationRead correctly decrements
+    // serverUnreadCount even for page-2+ entries not in context.notifications.
+    markNotificationRead(notif.id, notif.isRead);
+    // Also mark read in extraNotifications (pages 2+) which live in local state
+    if (!notif.isRead) {
+      setExtraNotifications(prev =>
+        prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n),
+      );
+    }
+    if (notif.route) {
+      router.push(notif.route as Parameters<typeof router.push>[0]);
+    }
+  }
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: 40 }]}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={C.primary}
+          colors={[C.primary]}
+        />
+      }
     >
       {/* Header */}
       <View style={styles.header}>
@@ -76,7 +165,7 @@ export default function NotificationsScreen() {
           )}
         </View>
         {unreadCount > 0 && (
-          <Pressable onPress={markAllRead}>
+          <Pressable onPress={handleMarkAllRead}>
             <Text style={styles.markAllText}>Mark all read</Text>
           </Pressable>
         )}
@@ -106,15 +195,28 @@ export default function NotificationsScreen() {
         ))}
       </ScrollView>
 
+      {/* Not signed in */}
+      {!isAuthenticated && (
+        <View style={styles.emptyContainer}>
+          <View style={[styles.emptyIcon, { backgroundColor: C.card }]}>
+            <Feather name="lock" size={36} color={C.mutedForeground} />
+          </View>
+          <Text style={styles.emptyTitle}>Sign in to see notifications</Text>
+          <Text style={styles.emptyBody}>
+            Create an account or sign in to receive price alerts, trade matches, and more.
+          </Text>
+        </View>
+      )}
+
       {/* Empty state */}
-      {filtered.length === 0 && (
+      {isAuthenticated && filtered.length === 0 && !isRefreshing && (
         <View style={styles.emptyContainer}>
           <View style={[styles.emptyIcon, { backgroundColor: C.card }]}>
             <Feather name="bell-off" size={36} color={C.mutedForeground} />
           </View>
           <Text style={styles.emptyTitle}>No notifications</Text>
           <Text style={styles.emptyBody}>
-            You're all caught up. Notifications will appear here when there are price alerts, trade offers, and market updates.
+            You're all caught up. Notifications will appear here for price alerts, trade matches, and account updates.
           </Text>
         </View>
       )}
@@ -127,12 +229,7 @@ export default function NotificationsScreen() {
             return (
               <Pressable
                 key={notif.id}
-                onPress={() => {
-                  markRead(notif.id);
-                  if (notif.route) {
-                    router.push(notif.route as Parameters<typeof router.push>[0]);
-                  }
-                }}
+                onPress={() => handleTap(notif)}
                 style={({ pressed }) => [
                   styles.notifCard,
                   {
@@ -171,10 +268,18 @@ export default function NotificationsScreen() {
         </View>
       )}
 
-      {filtered.length > 0 && (
-        <Text style={styles.footerNote}>
-          Price alerts and trade notifications require backend integration. Currently showing prototype data.
-        </Text>
+      {/* Load more */}
+      {filtered.length > 0 && (hasMore || isLoadingMore) && (
+        <Pressable
+          onPress={handleLoadMore}
+          disabled={isLoadingMore}
+          style={[styles.loadMoreBtn, { backgroundColor: C.card }]}
+        >
+          {isLoadingMore
+            ? <ActivityIndicator size="small" color={C.primary} />
+            : <Text style={[styles.loadMoreText, { color: C.primary }]}>Load more</Text>
+          }
+        </Pressable>
       )}
     </ScrollView>
   );
@@ -262,12 +367,12 @@ const styles = StyleSheet.create({
   notifFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   notifTime: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}88` },
   notifAction: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
-  footerNote: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: `${C.mutedForeground}66`,
-    textAlign: 'center',
-    marginTop: 16,
-    lineHeight: 18,
+  loadMoreBtn: {
+    marginTop: 12,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  loadMoreText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
 });

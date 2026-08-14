@@ -6,9 +6,11 @@
  */
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { priceSnapshotsTable } from "@workspace/db";
-import { and, asc, eq, gte, sql } from "drizzle-orm";
+import { priceSnapshotsTable, wishlistItemsTable } from "@workspace/db";
+import { and, asc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { createNotification } from "./notifications.js";
+import { notificationsTable } from "@workspace/db";
 
 const router = Router();
 
@@ -322,6 +324,92 @@ router.post("/catalog/cards/:id/snapshot-prices", async (req, res) => {
 
     if (inserts.length > 0) {
       await db.insert(priceSnapshotsTable).values(inserts);
+
+      // ── Price-alert trigger ────────────────────────────────────────────────
+      // After recording fresh prices, check if any users have a price alert
+      // for this card and create a durable notification row for them.
+      // Only the "raw" (ungraded) price is used for alert matching, consistent
+      // with how the client evaluates alert conditions.
+      const rawInsert = inserts.find(i => i.gradeKey === "raw");
+      if (rawInsert) {
+        const newPriceCents = rawInsert.priceCents;
+
+        // Find all active wishlist items for this card with price alerts enabled
+        const alertItems = await db
+          .select({
+            userId: wishlistItemsTable.userId,
+            itemId: wishlistItemsTable.itemId,
+            cardData: wishlistItemsTable.cardData,
+            targetPrice: wishlistItemsTable.targetPrice,
+          })
+          .from(wishlistItemsTable)
+          .where(
+            and(
+              eq(wishlistItemsTable.cardId, cardId),
+              eq(wishlistItemsTable.priceAlertEnabled, true),
+              isNull(wishlistItemsTable.deletedAt),
+            ),
+          );
+
+        // Deduplicate: suppress a new alert if one was already created within
+        // the past 24 hours for the same (user, card) pair. This prevents
+        // notification spam when the card stays at or below its target across
+        // multiple consecutive snapshots (strict 24-hour throttle per user+card).
+        const dedupWindowMs = 24 * 60 * 60 * 1000;
+        const dedupCutoff = new Date(Date.now() - dedupWindowMs);
+
+        for (const item of alertItems) {
+          if (item.targetPrice == null) continue;
+
+          // Price-drop alert: fire when current price ≤ target
+          const conditionMet = newPriceCents <= item.targetPrice;
+          if (!conditionMet) continue;
+
+          // Check for a recent existing alert for this user+card to avoid spam
+          const recentAlert = await db
+            .select({ id: notificationsTable.id })
+            .from(notificationsTable)
+            .where(
+              and(
+                eq(notificationsTable.userId, item.userId),
+                eq(notificationsTable.type, "price_alert"),
+                // metadata->>'cardId' = :cardId
+                sql`${notificationsTable.metadata}->>'cardId' = ${cardId}`,
+                gt(notificationsTable.createdAt, dedupCutoff),
+              ),
+            )
+            .limit(1);
+
+          if (recentAlert.length > 0) continue; // already notified recently
+
+          const card = item.cardData as { name?: string; setName?: string };
+          const cardName = card?.name ?? cardId;
+          const setName = card?.setName ?? "";
+          const priceAud = (newPriceCents / 100).toLocaleString("en-AU", {
+            style: "currency",
+            currency: "AUD",
+          });
+          const targetAud = (item.targetPrice / 100).toLocaleString("en-AU", {
+            style: "currency",
+            currency: "AUD",
+          });
+
+          await createNotification({
+            userId: item.userId,
+            type: "price_alert",
+            title: `Price Alert — ${cardName}`,
+            body: `${cardName}${setName ? ` (${setName})` : ""} has dropped to ${priceAud} — at or below your target of ${targetAud}.`,
+            metadata: {
+              cardId,
+              cardName,
+              currentPriceCents: newPriceCents,
+              targetPriceCents: item.targetPrice,
+            },
+          }).catch((err: unknown) => {
+            logger.error({ err, cardId, userId: item.userId }, "Failed to create price-alert notification");
+          });
+        }
+      }
     }
   })()
     .catch((err: unknown) => {

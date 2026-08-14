@@ -13,6 +13,7 @@ import subscriptionRouter from "./subscription";
 import scanRouter from "./scan";
 import priceHistoryRouter from "./priceHistory";
 import eventsRouter from "./events";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -30,5 +31,6 @@ router.use(subscriptionRouter);
 router.use(scanRouter);
 router.use(priceHistoryRouter);
 router.use(eventsRouter);
+router.use(notificationsRouter);
 
 export default router;

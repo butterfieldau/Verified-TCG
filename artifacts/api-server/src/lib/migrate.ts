@@ -93,6 +93,26 @@ const TABLE_MIGRATIONS: string[] = [
     left_at TIMESTAMPTZ,
     is_visible BOOLEAN NOT NULL DEFAULT true
   )`,
+  // Added: per-user in-app notification store (price alerts, trade matches, etc.)
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(30) NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: Expo push notification tokens, one row per device per user.
+  `CREATE TABLE IF NOT EXISTS push_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT push_tokens_token_uniq UNIQUE (token)
+  )`,
 ];
 
 /**
@@ -131,6 +151,9 @@ const CONSTRAINT_MIGRATIONS: string[] = [
    EXCEPTION WHEN duplicate_table THEN NULL;
              WHEN duplicate_object THEN NULL;
    END $$`,
+  // Index on notifications for efficient per-user reads (newest unread first)
+  `CREATE INDEX IF NOT EXISTS notifications_user_read_created_idx
+     ON notifications (user_id, is_read, created_at DESC)`,
   // Seed initial events if the table is empty
   `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
    SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()
