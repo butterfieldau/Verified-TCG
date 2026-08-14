@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -138,9 +139,13 @@ export default function ProfileScreen() {
       {/* Profile card — background tinted by the collector's chosen profile theme */}
       <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
         <View style={styles.avatarRow}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
-          </View>
+          {user?.avatarUrl ? (
+            <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
+            </View>
+          )}
           <View style={styles.nameBlock}>
             <View style={styles.nameRow}>
                 <Text style={styles.displayName}>{user?.displayName ?? 'Guest Collector'}</Text>
@@ -407,6 +412,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarImage: { width: 64, height: 64, borderRadius: 32 },
   avatarText: { fontSize: 26, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   nameBlock: { flex: 1, gap: 4 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },

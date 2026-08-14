@@ -2,11 +2,14 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { Resend } from "resend";
 import { db } from "@workspace/db";
 import { usersTable, userSessionsTable, passwordResetTokensTable } from "@workspace/db";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { clearUserWishlists } from "./wishlist.js";
+import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
 
@@ -15,6 +18,11 @@ if (!JWT_SECRET) throw new Error("SESSION_SECRET must be set");
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL_DAYS = 30;
+
+// ── Avatar upload directory ───────────────────────────────────────────────────
+
+const AVATAR_DIR = path.join(process.cwd(), "uploads", "avatars");
+try { fs.mkdirSync(AVATAR_DIR, { recursive: true }); } catch { /* already exists */ }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,8 +44,29 @@ function refreshTokenExpiry(): Date {
   return d;
 }
 
+type UserRow = typeof usersTable.$inferSelect;
+
+function userToMetadata(user: UserRow) {
+  return {
+    display_name: user.displayName,
+    username: user.username,
+    bio: user.bio,
+    location: user.location,
+    subscription_tier: user.subscriptionTier,
+    is_founding_member: user.isFoundingMember,
+    avatar_url: user.avatarUrl ?? null,
+    favourite_tcg: user.favouriteTcg ?? null,
+    collector_since: user.collectorSince ?? null,
+    profile_public: user.profilePublic,
+    show_collection: user.showCollection,
+    show_wishlist: user.showWishlist,
+    show_for_trade: user.showForTrade,
+    show_for_sale: user.showForSale,
+  };
+}
+
 function sessionResponse(
-  user: { id: string; email: string; displayName: string; username: string; bio: string; location: string; subscriptionTier: string; isFoundingMember: boolean },
+  user: UserRow,
   accessToken: string,
   refreshToken: string,
 ) {
@@ -50,14 +79,7 @@ function sessionResponse(
     user: {
       id: user.id,
       email: user.email,
-      user_metadata: {
-        display_name: user.displayName,
-        username: user.username,
-        bio: user.bio,
-        location: user.location,
-        subscription_tier: user.subscriptionTier,
-        is_founding_member: user.isFoundingMember,
-      },
+      user_metadata: userToMetadata(user),
     },
   };
 }
@@ -230,14 +252,7 @@ router.get("/auth/user", async (req, res) => {
   return res.json({
     id: user.id,
     email: user.email,
-    user_metadata: {
-      display_name: user.displayName,
-      username: user.username,
-      bio: user.bio,
-      location: user.location,
-      subscription_tier: user.subscriptionTier,
-      is_founding_member: user.isFoundingMember,
-    },
+    user_metadata: userToMetadata(user),
   });
 });
 
@@ -262,6 +277,13 @@ router.put("/auth/user", async (req, res) => {
       username?: string;
       bio?: string;
       location?: string;
+      favourite_tcg?: string | null;
+      collector_since?: string | null;
+      profile_public?: boolean;
+      show_collection?: boolean;
+      show_wishlist?: boolean;
+      show_for_trade?: boolean;
+      show_for_sale?: boolean;
     };
   };
 
@@ -276,6 +298,14 @@ router.put("/auth/user", async (req, res) => {
   if (data.username !== undefined) patch.username = data.username.trim().replace(/^@+/, "").toLowerCase();
   if (data.bio !== undefined) patch.bio = data.bio.trim();
   if (data.location !== undefined) patch.location = data.location.trim();
+  // Use explicit null to write SQL NULL — undefined is skipped by Drizzle
+  if ("favourite_tcg" in data) patch.favouriteTcg = data.favourite_tcg ?? null;
+  if ("collector_since" in data) patch.collectorSince = data.collector_since ?? null;
+  if (data.profile_public !== undefined) patch.profilePublic = data.profile_public;
+  if (data.show_collection !== undefined) patch.showCollection = data.show_collection;
+  if (data.show_wishlist !== undefined) patch.showWishlist = data.show_wishlist;
+  if (data.show_for_trade !== undefined) patch.showForTrade = data.show_for_trade;
+  if (data.show_for_sale !== undefined) patch.showForSale = data.show_for_sale;
 
   const [updated] = await db
     .update(usersTable)
@@ -290,24 +320,162 @@ router.put("/auth/user", async (req, res) => {
   return res.json({
     id: updated.id,
     email: updated.email,
-    user_metadata: {
-      display_name: updated.displayName,
-      username: updated.username,
-      bio: updated.bio,
-      location: updated.location,
-      subscription_tier: updated.subscriptionTier,
-      is_founding_member: updated.isFoundingMember,
-    },
+    user_metadata: userToMetadata(updated),
   });
 });
 
-// ── Recovery rate limiting ────────────────────────────────────────────────────
-// Protects /api/auth/recover from abuse: limits both per-IP and per-email so
-// an attacker cannot flood a target's inbox or continuously invalidate tokens.
+// ── POST /api/auth/change-password ───────────────────────────────────────────
 
-const RECOVER_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const RECOVER_MAX_PER_IP = 5;                   // per IP per window
-const RECOVER_MAX_PER_EMAIL = 3;                // per normalised email per window
+router.post("/auth/change-password", requireActiveUser, async (req: AuthRequest, res) => {
+  const { currentPassword, newPassword } = req.body as {
+    currentPassword?: string;
+    newPassword?: string;
+  };
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ message: "currentPassword and newPassword are required" });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: "New password must be at least 8 characters" });
+  }
+
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, req.userId!))
+    .limit(1);
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!valid) {
+    return res.status(400).json({ message: "Current password is incorrect" });
+  }
+
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ message: "New password must be different from your current password" });
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+
+  await db
+    .update(usersTable)
+    .set({ passwordHash: newHash, updatedAt: new Date() })
+    .where(eq(usersTable.id, req.userId!));
+
+  // Invalidate all sessions so all other devices are signed out
+  await db
+    .delete(userSessionsTable)
+    .where(eq(userSessionsTable.userId, req.userId!));
+
+  return res.json({ message: "Password updated successfully" });
+});
+
+// ── POST /api/auth/avatar ────────────────────────────────────────────────────
+// Accepts a base64-encoded image in the JSON body (up to 5 MB after encoding).
+// Returns the full URL to the stored avatar.
+
+router.post("/auth/avatar", requireActiveUser, async (req: AuthRequest, res) => {
+  const { base64, mimeType } = req.body as {
+    base64?: string;
+    mimeType?: string;
+  };
+
+  if (!base64) {
+    return res.status(400).json({ message: "base64 image data is required" });
+  }
+
+  const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+  const mime = mimeType ?? "image/jpeg";
+  if (!allowedTypes.includes(mime)) {
+    return res.status(400).json({ message: "Only JPEG, PNG, and WebP images are supported" });
+  }
+
+  // Validate approximate size (base64 is ~4/3 of binary size)
+  const approxBytes = (base64.length * 3) / 4;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ message: "Image must be under 5 MB" });
+  }
+
+  let imageBuffer: Buffer;
+  try {
+    imageBuffer = Buffer.from(base64, "base64");
+  } catch {
+    return res.status(400).json({ message: "Invalid base64 data" });
+  }
+
+  const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
+  const filename = `${req.userId!}-${Date.now()}.${ext}`;
+  const filePath = path.join(AVATAR_DIR, filename);
+
+  try {
+    fs.writeFileSync(filePath, imageBuffer);
+  } catch (err) {
+    console.error("[avatar] Failed to write file:", err);
+    return res.status(500).json({ message: "Failed to save avatar" });
+  }
+
+  // Construct the URL using the request's host so it works across environments
+  const protocol = req.headers["x-forwarded-proto"] ?? req.protocol ?? "https";
+  const host = req.headers["x-forwarded-host"] ?? req.get("host") ?? "";
+  const avatarUrl = `${protocol}://${host}/api/auth/avatar/${filename}`;
+
+  // Save URL to the user record (also delete old avatar file if it was ours)
+  const [oldUser] = await db
+    .select({ avatarUrl: usersTable.avatarUrl })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.userId!))
+    .limit(1);
+
+  if (oldUser?.avatarUrl) {
+    try {
+      const oldFilename = oldUser.avatarUrl.split("/").pop();
+      if (oldFilename) {
+        const oldPath = path.join(AVATAR_DIR, oldFilename);
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+    } catch { /* ignore cleanup errors */ }
+  }
+
+  await db
+    .update(usersTable)
+    .set({ avatarUrl, updatedAt: new Date() })
+    .where(eq(usersTable.id, req.userId!));
+
+  return res.json({ avatar_url: avatarUrl });
+});
+
+// ── GET /api/auth/avatar/:filename ───────────────────────────────────────────
+// Serve uploaded avatar images.
+
+router.get("/auth/avatar/:filename", (req, res) => {
+  const filename = path.basename(req.params["filename"] ?? "");
+  if (!filename) return res.status(400).json({ message: "Invalid filename" });
+
+  const filePath = path.join(AVATAR_DIR, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ message: "Avatar not found" });
+  }
+
+  // Determine content type from extension
+  const ext = path.extname(filename).toLowerCase();
+  const contentType =
+    ext === ".png" ? "image/png" :
+    ext === ".webp" ? "image/webp" :
+    "image/jpeg";
+
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return res.sendFile(filePath);
+});
+
+// ── Recovery rate limiting ────────────────────────────────────────────────────
+
+const RECOVER_RATE_WINDOW_MS = 15 * 60 * 1000;
+const RECOVER_MAX_PER_IP = 5;
+const RECOVER_MAX_PER_EMAIL = 3;
 
 type RateBucket = { count: number; windowStart: number };
 const recoverIpBuckets = new Map<string, RateBucket>();
@@ -318,9 +486,9 @@ function checkRecoverRateLimit(key: string, store: Map<string, RateBucket>, max:
   const bucket = store.get(key);
   if (!bucket || now - bucket.windowStart > RECOVER_RATE_WINDOW_MS) {
     store.set(key, { count: 1, windowStart: now });
-    return false; // not limited
+    return false;
   }
-  if (bucket.count >= max) return true; // limited
+  if (bucket.count >= max) return true;
   bucket.count++;
   return false;
 }
@@ -348,7 +516,6 @@ async function sendPasswordResetEmail(toEmail: string, plainToken: string): Prom
   const deepLink = `${APP_SCHEME}://reset-password?token=${plainToken}`;
 
   if (!resend) {
-    // No mail service — log that email cannot be sent but never log the token
     console.warn("[password-reset] RESEND_API_KEY not set; reset email not delivered.");
     return;
   }
@@ -378,7 +545,6 @@ async function sendPasswordResetEmail(toEmail: string, plainToken: string): Prom
   });
 
   if (error) {
-    // Log the error detail (no tokens in scope here) and re-throw for the caller
     console.error("[password-reset] Resend delivery error:", error.name, error.message);
     throw new Error("Failed to send reset email.");
   }
@@ -394,12 +560,9 @@ router.post("/auth/recover", async (req, res) => {
 
   const normEmail = email.trim().toLowerCase();
 
-  // Always respond with the same message to avoid user enumeration
   const genericOk = () =>
     res.json({ message: "If an account with that email exists, a reset link will be sent shortly." });
 
-  // Rate limit by IP then by normalised email — return generic 200 so the
-  // response is indistinguishable from a legitimate request (no enumeration).
   const clientIp = (req.ip ?? req.socket.remoteAddress ?? "unknown");
   if (
     checkRecoverRateLimit(clientIp, recoverIpBuckets, RECOVER_MAX_PER_IP) ||
@@ -416,12 +579,10 @@ router.post("/auth/recover", async (req, res) => {
 
   if (!user) return genericOk();
 
-  // Invalidate any existing unused tokens for this user
   await db
     .delete(passwordResetTokensTable)
     .where(eq(passwordResetTokensTable.userId, user.id));
 
-  // Generate a new token
   const plainToken = crypto.randomBytes(32).toString("hex");
   const tokenHash = crypto.createHash("sha256").update(plainToken).digest("hex");
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
@@ -435,11 +596,9 @@ router.post("/auth/recover", async (req, res) => {
   try {
     await sendPasswordResetEmail(user.email, plainToken);
   } catch (err) {
-    // Log internally but never expose whether delivery succeeded — prevents enumeration
     console.error("[password-reset] email delivery failed:", (err as Error).message);
   }
 
-  // Always return the generic message regardless of delivery outcome
   return genericOk();
 });
 
@@ -459,14 +618,9 @@ router.post("/auth/reset-password", async (req, res) => {
   }
 
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-  const now = new Date();
 
-  // Hash the password before entering the transaction (bcrypt is slow; avoid holding a connection)
   const passwordHash = await bcrypt.hash(newPassword, 12);
 
-  // Atomically consume the token: the conditional UPDATE is the gating check.
-  // If a concurrent request races to use the same token, only one UPDATE will
-  // affect a row — the other will see rowCount=0 and be rejected.
   const consumed = await db.transaction(async (tx) => {
     const result = await tx.execute(sql`
       UPDATE password_reset_tokens
@@ -502,48 +656,30 @@ router.post("/auth/reset-password", async (req, res) => {
 
 // ── DELETE /api/auth/account ─────────────────────────────────────────────────
 
-router.delete("/auth/account", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Authorization header required" });
-  }
-
-  let payload: { sub: string };
-  try {
-    payload = jwt.verify(authHeader.slice(7), JWT_SECRET as string) as { sub: string };
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token. Please sign in again." });
-  }
-
+router.delete("/auth/account", requireActiveUser, async (req: AuthRequest, res) => {
   const { password } = req.body as { password?: string };
   if (!password) {
-    return res.status(400).json({ message: "password is required to confirm account deletion" });
+    return res.status(400).json({ message: "password is required" });
   }
 
   const [user] = await db
     .select()
     .from(usersTable)
-    .where(eq(usersTable.id, payload.sub))
+    .where(eq(usersTable.id, req.userId!))
     .limit(1);
 
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
+  if (!user) return res.status(404).json({ message: "User not found" });
 
   const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) {
-    return res.status(401).json({ message: "Incorrect password. Please try again." });
-  }
+  if (!valid) return res.status(401).json({ message: "Incorrect password" });
 
-  // Clear in-memory wishlist data and block any still-valid access tokens
-  // for this user before the DB row is removed, so no window exists where
-  // a JWT can access data belonging to a just-deleted account.
-  clearUserWishlists(user.id);
+  // Clear wishlist data before deleting user
+  await clearUserWishlists(req.userId!);
 
-  // Delete user row — sessions and password reset tokens cascade via FK constraints
-  await db.delete(usersTable).where(eq(usersTable.id, user.id));
+  await db.delete(userSessionsTable).where(eq(userSessionsTable.userId, req.userId!));
+  await db.delete(usersTable).where(eq(usersTable.id, req.userId!));
 
-  return res.status(204).send();
+  return res.json({ message: "Account deleted" });
 });
 
 export default router;

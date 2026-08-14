@@ -27,8 +27,10 @@ app.use(
 );
 app.use(cors());
 // Scan endpoint accepts base64-encoded card images; allow up to 12 MB.
+// Avatar upload endpoint accepts base64 images up to 8 MB.
 // All other endpoints keep the tighter default via the second parser.
 app.use("/api/scan", express.json({ limit: "12mb" }));
+app.use("/api/auth/avatar", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "100kb" }));
 app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 

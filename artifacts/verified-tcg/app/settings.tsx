@@ -247,7 +247,7 @@ export default function SettingsScreen() {
         <SettingRow
           icon="key"
           label="Change Password"
-          onPress={() => requireAccount('/forgot-password')}
+          onPress={() => requireAccount('/change-password')}
           isLast
         />
       </View>

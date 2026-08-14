@@ -49,12 +49,16 @@ collectorsRouter.get("/collectors/search", async (req, res) => {
         subscriptionTier: usersTable.subscriptionTier,
         isFoundingMember: usersTable.isFoundingMember,
         createdAt: usersTable.createdAt,
+        profilePublic: usersTable.profilePublic,
       })
       .from(usersTable)
       .where(
-        or(
-          ilike(usersTable.username, pattern),
-          ilike(usersTable.displayName, pattern),
+        and(
+          eq(usersTable.profilePublic, true),
+          or(
+            ilike(usersTable.username, pattern),
+            ilike(usersTable.displayName, pattern),
+          ),
         ),
       )
       .orderBy(usersTable.displayName)
@@ -103,23 +107,23 @@ collectorsRouter.get(
         .from(postsTable)
         .where(eq(postsTable.userId, collector.id));
 
-      // Is the requester following this collector? (optional auth)
+      // Decode the bearer token once — used for both follow-check and ownership check
+      let requesterId: string | null = null;
       let isFollowing = false;
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
-        // Best-effort: try to get userId from token without failing request
         try {
           const jwt = await import("jsonwebtoken");
           const secret = process.env.SESSION_SECRET!;
-          const payload = jwt.default.verify(authHeader.slice(7), secret) as {
-            sub: string;
-          };
+          const payload = jwt.default.verify(authHeader.slice(7), secret) as { sub: string };
+          requesterId = payload.sub;
+
           const [followRow] = await db
             .select({ followerId: followsTable.followerId })
             .from(followsTable)
             .where(
               and(
-                eq(followsTable.followerId, payload.sub),
+                eq(followsTable.followerId, requesterId),
                 eq(followsTable.followeeId, collector.id),
               ),
             )
@@ -130,8 +134,27 @@ collectorsRouter.get(
         }
       }
 
+      const profile = rowToPublicProfile(collector);
+      const isOwner = requesterId === collector.id;
+
+      // Private profiles are only visible to the owner
+      if (!profile.profilePublic && !isOwner) {
+        res.json({
+          id: profile.id,
+          username: profile.username,
+          displayName: profile.displayName,
+          initials: profile.initials,
+          subscriptionTier: profile.subscriptionTier,
+          isFoundingMember: profile.isFoundingMember,
+          joinedAt: profile.joinedAt,
+          profilePublic: false,
+          isPrivate: true,
+        });
+        return;
+      }
+
       res.json({
-        ...rowToPublicProfile(collector),
+        ...profile,
         followerCount: Number(followerCountRow?.count ?? 0),
         followingCount: Number(followingCountRow?.count ?? 0),
         postCount: Number(postCountRow?.count ?? 0),
@@ -176,10 +199,14 @@ collectorsRouter.get(
           subscriptionTier: usersTable.subscriptionTier,
           isFoundingMember: usersTable.isFoundingMember,
           createdAt: usersTable.createdAt,
+          profilePublic: usersTable.profilePublic,
         })
         .from(followsTable)
         .innerJoin(usersTable, eq(followsTable.followerId, usersTable.id))
-        .where(eq(followsTable.followeeId, collector.id))
+        .where(and(
+          eq(followsTable.followeeId, collector.id),
+          eq(usersTable.profilePublic, true),
+        ))
         .orderBy(desc(followsTable.createdAt))
         .limit(limit)
         .offset(offset);
@@ -187,7 +214,11 @@ collectorsRouter.get(
       const [totalRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(followsTable)
-        .where(eq(followsTable.followeeId, collector.id));
+        .innerJoin(usersTable, eq(followsTable.followerId, usersTable.id))
+        .where(and(
+          eq(followsTable.followeeId, collector.id),
+          eq(usersTable.profilePublic, true),
+        ));
 
       const total = Number(totalRow?.count ?? 0);
       res.json({
@@ -235,10 +266,14 @@ collectorsRouter.get(
           subscriptionTier: usersTable.subscriptionTier,
           isFoundingMember: usersTable.isFoundingMember,
           createdAt: usersTable.createdAt,
+          profilePublic: usersTable.profilePublic,
         })
         .from(followsTable)
         .innerJoin(usersTable, eq(followsTable.followeeId, usersTable.id))
-        .where(eq(followsTable.followerId, collector.id))
+        .where(and(
+          eq(followsTable.followerId, collector.id),
+          eq(usersTable.profilePublic, true),
+        ))
         .orderBy(desc(followsTable.createdAt))
         .limit(limit)
         .offset(offset);
@@ -246,7 +281,11 @@ collectorsRouter.get(
       const [totalRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(followsTable)
-        .where(eq(followsTable.followerId, collector.id));
+        .innerJoin(usersTable, eq(followsTable.followeeId, usersTable.id))
+        .where(and(
+          eq(followsTable.followerId, collector.id),
+          eq(usersTable.profilePublic, true),
+        ));
 
       const total = Number(totalRow?.count ?? 0);
       res.json({
@@ -361,6 +400,14 @@ function rowToPublicProfile(row: {
   subscriptionTier: string;
   isFoundingMember: boolean;
   createdAt: Date;
+  avatarUrl?: string | null;
+  favouriteTcg?: string | null;
+  collectorSince?: string | null;
+  profilePublic?: boolean;
+  showCollection?: boolean;
+  showWishlist?: boolean;
+  showForTrade?: boolean;
+  showForSale?: boolean;
 }) {
   return {
     id: row.id,
@@ -372,6 +419,14 @@ function rowToPublicProfile(row: {
     subscriptionTier: row.subscriptionTier,
     isFoundingMember: row.isFoundingMember,
     joinedAt: row.createdAt.toISOString(),
+    avatarUrl: row.avatarUrl ?? null,
+    favouriteTcg: row.favouriteTcg ?? null,
+    collectorSince: row.collectorSince ?? null,
+    profilePublic: row.profilePublic ?? true,
+    showCollection: row.showCollection ?? true,
+    showWishlist: row.showWishlist ?? true,
+    showForTrade: row.showForTrade ?? true,
+    showForSale: row.showForSale ?? true,
   };
 }
 
