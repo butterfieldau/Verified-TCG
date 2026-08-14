@@ -529,6 +529,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setIsAuthenticated(false);
     setCollection([]);
+    // Clear the local wishlist so the next collector starts with a fresh list
+    // rather than seeing the previous user's cards.
+    setWatchlist([]);
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {

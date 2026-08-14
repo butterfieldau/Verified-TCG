@@ -1,26 +1,23 @@
 /**
- * Wishlist routes — single-tenant prototype.
+ * Wishlist routes — per-user, JWT-authenticated.
  *
- * This server backs the wishlist for one collector (the single mock user whose
- * identity is fixed on the server).  There are no credentials, tokens, or
- * user-supplied identity headers — the server owns the user identity entirely.
+ * Every request must include a valid Bearer token in the Authorization header.
+ * The user ID is extracted from the JWT's `sub` claim (never from request body
+ * or query params) so each collector sees only their own data.
  *
- * This is explicitly a prototype for demonstrating the cross-device sync
- * pattern described in Task #40.  A production implementation would integrate
- * a real authentication system (e.g. Clerk) and per-user database rows.
- *
- * Storage: in-memory Map.  Data resets on server restart; the mobile client
- * treats AsyncStorage as the authoritative local cache and re-syncs on every
- * app launch, so the server quickly recovers the latest state.
+ * Storage: in-memory Map keyed by user ID.  Data resets on server restart; the
+ * mobile client treats AsyncStorage as the authoritative local cache and
+ * re-syncs on every app launch, so the server quickly recovers the latest state.
  * Task #55 tracks migrating to PostgreSQL.
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
+import jwt from "jsonwebtoken";
 
 const wishlistRouter = Router();
 
-/** Fixed user for this single-tenant prototype.  Never derived from requests. */
-const SINGLE_USER_ID = "usr-001";
+const JWT_SECRET = process.env.SESSION_SECRET;
+if (!JWT_SECRET) throw new Error("SESSION_SECRET must be set");
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,21 +63,51 @@ const store = new Map<string, WishlistItem[]>();
  */
 const tombstones = new Map<string, Set<string>>();
 
+// ── Auth middleware ───────────────────────────────────────────────────────────
+
+/**
+ * Extracts and verifies the Bearer token from the Authorization header.
+ * Returns the user ID (`sub` claim) on success, or sends a 401 and returns null.
+ */
+function requireAuth(req: Request, res: Response): string | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Authorization header with Bearer token required" });
+    return null;
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET as string) as { sub: string };
+    if (!payload.sub) {
+      res.status(401).json({ error: "Invalid token: missing sub claim" });
+      return null;
+    }
+    return payload.sub;
+  } catch {
+    res.status(401).json({ error: "Invalid or expired token" });
+    return null;
+  }
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
  * GET /api/wishlist
- * Returns the current wishlist.
+ * Returns the current wishlist for the authenticated collector.
  */
-wishlistRouter.get("/wishlist", (_req, res) => {
-  const items = store.get(SINGLE_USER_ID) ?? [];
+wishlistRouter.get("/wishlist", (req, res) => {
+  const userId = requireAuth(req, res);
+  if (!userId) return;
+
+  const items = store.get(userId) ?? [];
   res.json({ items });
 });
 
 /**
  * POST /api/wishlist/sync
  *
- * Merges the client's items into the server state:
+ * Merges the client's items into the server state for the authenticated collector:
  *   - Client items replace matching server items (client has fresher field values)
  *   - Server-only items are preserved (items added from other devices)
  *   - Tombstoned IDs are stripped from the client list before merging, so a
@@ -90,6 +117,9 @@ wishlistRouter.get("/wishlist", (_req, res) => {
  * Body: { items: WishlistItem[] }
  */
 wishlistRouter.post("/wishlist/sync", (req, res) => {
+  const userId = requireAuth(req, res);
+  if (!userId) return;
+
   const { items: clientItems } = req.body as { items: WishlistItem[] };
 
   if (!Array.isArray(clientItems)) {
@@ -97,8 +127,8 @@ wishlistRouter.post("/wishlist/sync", (req, res) => {
     return;
   }
 
-  const serverItems = store.get(SINGLE_USER_ID) ?? [];
-  const userTombstones = tombstones.get(SINGLE_USER_ID) ?? new Set<string>();
+  const serverItems = store.get(userId) ?? [];
+  const userTombstones = tombstones.get(userId) ?? new Set<string>();
 
   // Strip tombstoned IDs from the incoming client list
   const liveClientItems = clientItems.filter((i) => !userTombstones.has(i.id));
@@ -121,7 +151,7 @@ wishlistRouter.post("/wishlist/sync", (req, res) => {
     }
   }
 
-  store.set(SINGLE_USER_ID, merged);
+  store.set(userId, merged);
   res.json({ ok: true, items: merged, count: merged.length });
 });
 
@@ -132,6 +162,9 @@ wishlistRouter.post("/wishlist/sync", (req, res) => {
  * Body: WishlistItem
  */
 wishlistRouter.post("/wishlist", (req, res) => {
+  const userId = requireAuth(req, res);
+  if (!userId) return;
+
   const item = req.body as WishlistItem;
 
   if (!item?.id || !item?.cardId) {
@@ -140,31 +173,34 @@ wishlistRouter.post("/wishlist", (req, res) => {
   }
 
   // Clear tombstone — the collector is intentionally re-adding this item
-  const userTombstones = tombstones.get(SINGLE_USER_ID);
+  const userTombstones = tombstones.get(userId);
   if (userTombstones?.has(item.id)) {
     userTombstones.delete(item.id);
   }
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
+  const existing = store.get(userId) ?? [];
   const updated = existing.some((i) => i.id === item.id)
     ? existing.map((i) => (i.id === item.id ? item : i))
     : [...existing, item];
-  store.set(SINGLE_USER_ID, updated);
+  store.set(userId, updated);
   res.status(201).json({ ok: true, item });
 });
 
 /**
  * PATCH /api/wishlist/:id
- * Updates fields on a single item.
+ * Updates fields on a single item for the authenticated collector.
  * Body: Partial<{ desiredGrade, targetPrice, priceAlertEnabled }>
  */
 wishlistRouter.patch("/wishlist/:id", (req, res) => {
+  const userId = requireAuth(req, res);
+  if (!userId) return;
+
   const { id } = req.params;
   const patch = req.body as Partial<
     Pick<WishlistItem, "desiredGrade" | "targetPrice" | "priceAlertEnabled">
   >;
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
+  const existing = store.get(userId) ?? [];
   const item = existing.find((i) => i.id === id);
   if (!item) {
     res.status(404).json({ error: "Item not found" });
@@ -172,26 +208,29 @@ wishlistRouter.patch("/wishlist/:id", (req, res) => {
   }
 
   const updated = existing.map((i) => (i.id === id ? { ...i, ...patch } : i));
-  store.set(SINGLE_USER_ID, updated);
+  store.set(userId, updated);
   res.json({ ok: true, item: updated.find((i) => i.id === id) });
 });
 
 /**
  * DELETE /api/wishlist/:id
- * Removes a single item and records a tombstone so subsequent syncs from
- * stale clients cannot resurrect it.
+ * Removes a single item for the authenticated collector and records a tombstone
+ * so subsequent syncs from stale clients cannot resurrect it.
  */
 wishlistRouter.delete("/wishlist/:id", (req, res) => {
+  const userId = requireAuth(req, res);
+  if (!userId) return;
+
   const { id } = req.params;
 
   // Record tombstone
-  const userTombstones = tombstones.get(SINGLE_USER_ID) ?? new Set<string>();
+  const userTombstones = tombstones.get(userId) ?? new Set<string>();
   userTombstones.add(id);
-  tombstones.set(SINGLE_USER_ID, userTombstones);
+  tombstones.set(userId, userTombstones);
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
+  const existing = store.get(userId) ?? [];
   const filtered = existing.filter((i) => i.id !== id);
-  store.set(SINGLE_USER_ID, filtered);
+  store.set(userId, filtered);
   res.json({ ok: true, removed: existing.length - filtered.length });
 });
 
