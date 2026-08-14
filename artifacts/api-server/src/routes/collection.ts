@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { collectionItemsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity } from "./activity.js";
 
@@ -30,6 +30,42 @@ function rowToItem(row: typeof collectionItemsTable.$inferSelect) {
 // ── GET /api/collection ───────────────────────────────────────────────────────
 
 router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
+  const pageParam = req.query["page"];
+  const limitParam = req.query["limit"];
+
+  // Paginated mode when either param is provided
+  const isPaginated = pageParam !== undefined || limitParam !== undefined;
+
+  if (isPaginated) {
+    const limit = Math.min(Math.max(parseInt(String(limitParam ?? "20"), 10) || 20, 1), 100);
+    const page = Math.max(parseInt(String(pageParam ?? "1"), 10) || 1, 1);
+    const offset = (page - 1) * limit;
+
+    const [countResult, rows] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(collectionItemsTable)
+        .where(eq(collectionItemsTable.userId, req.userId!)),
+      db
+        .select()
+        .from(collectionItemsTable)
+        .where(eq(collectionItemsTable.userId, req.userId!))
+        .orderBy(collectionItemsTable.createdAt)
+        .limit(limit)
+        .offset(offset),
+    ]);
+
+    const total = countResult[0]?.count ?? 0;
+    return res.json({
+      items: rows.map(rowToItem),
+      total,
+      page,
+      limit,
+      hasMore: offset + limit < total,
+    });
+  }
+
+  // Non-paginated (backward-compatible) — return full list as array
   const rows = await db
     .select()
     .from(collectionItemsTable)

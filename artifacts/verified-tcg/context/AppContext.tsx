@@ -163,6 +163,8 @@ interface AppActions {
   markAllNotificationsRead: () => void;
   /** Pull fresh notifications from the server (call on pull-to-refresh). */
   refreshNotifications: () => Promise<void>;
+  /** Re-sync wishlist with the server (call on pull-to-refresh). */
+  refreshWishlist: () => Promise<void>;
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
@@ -205,6 +207,7 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+const COLLECTION_CACHE_KEY = '@verified_tcg/collection_cache';
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -524,10 +527,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadCollection = useCallback(async () => {
     const gen = ++loadGeneration.current; // capture before first await
     setCollectionLoading(true);
+
+    // Show cached collection immediately so the screen isn't blank while fetching
+    try {
+      const cached = await AsyncStorage.getItem(COLLECTION_CACHE_KEY);
+      if (cached && gen === loadGeneration.current) {
+        const { items } = JSON.parse(cached) as { items: CollectionItem[]; timestamp: string };
+        if (Array.isArray(items) && items.length > 0) {
+          setCollection(items);
+        }
+      }
+    } catch { /* ignore cache read errors */ }
+
     try {
       const serverItems = await fetchCollection();
       // If a newer loadCollection started after this one, discard this result.
       if (gen !== loadGeneration.current) return;
+
+      // Persist the fresh list so the next cold launch has it immediately
+      AsyncStorage.setItem(
+        COLLECTION_CACHE_KEY,
+        JSON.stringify({ items: serverItems, timestamp: new Date().toISOString() }),
+      ).catch(() => {});
 
       setCollection(prev => {
         // 1. Exclude server items that have been optimistically deleted but
@@ -553,7 +574,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return [...filteredServer, ...stillPending];
       });
     } catch {
-      // Network error or unauthenticated — keep current local state
+      // Network error or unauthenticated — keep current local state (or cached data shown above)
     } finally {
       // Only the latest generation clears the loading flag.
       if (gen === loadGeneration.current) setCollectionLoading(false);
@@ -729,6 +750,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
+    // Clear collection cache so the next user doesn't see stale data
+    AsyncStorage.removeItem(COLLECTION_CACHE_KEY).catch(() => {});
     // Reset all in-memory state so the next user starts completely fresh
     setUser(null);
     setIsAuthenticated(false);
@@ -1156,6 +1179,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
         markNotificationRead, markAllNotificationsRead, refreshNotifications,
+        refreshWishlist: async () => {
+          const canonical = await syncWishlistToServer(watchlist);
+          setWatchlist(canonical);
+        },
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
         setSubscriptionTier, incrementScanCount, syncScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,

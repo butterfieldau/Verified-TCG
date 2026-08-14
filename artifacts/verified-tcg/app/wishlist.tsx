@@ -7,10 +7,11 @@
  * When at the limit the bell toggle shows an inline prompt and the Smart Alerts
  * entry point shows a lock state with an upgrade CTA.
  */
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Share,
   StyleSheet,
@@ -474,13 +475,26 @@ export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
   const {
     watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem,
-    subscriptionTier, activeAlertCount,
+    subscriptionTier, activeAlertCount, refreshWishlist,
   } = useApp();
   const [sortBy, setSortBy] = useState<'added' | 'value' | 'change'>('added');
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [showLimitPrompt, setShowLimitPrompt] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  // Pull-to-refresh: re-sync wishlist with the server so any changes made on
+  // another device (or by a price alert) are reflected immediately.
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshWishlist();
+    } catch {
+      // Network unavailable — stay with cached wishlist
+    }
+    setIsRefreshing(false);
+  }, [refreshWishlist]);
 
   const isFree = subscriptionTier === 'free';
   const hasUnlimitedAlerts = canUseUnlimitedAlerts(subscriptionTier);
@@ -517,6 +531,14 @@ export default function WishlistScreen() {
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={C.primary}
+            colors={[C.primary]}
+          />
+        }
       >
         {/* Header */}
         <View style={styles.header}>

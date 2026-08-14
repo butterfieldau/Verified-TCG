@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import { Feather } from '@expo/vector-icons';
 import { Chip } from '@/components/ui/Chip';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { GradeBadge } from '@/components/ui/Badge';
+import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { getMarketMovers, getMostWatched, getRecentSales, getNewReleases } from '@/services/market';
 import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import { MOCK_LISTINGS } from '@/services/listings';
@@ -43,22 +45,36 @@ export default function MarketScreen() {
   const insets = useSafeAreaInsets();
   const [movers, setMovers] = useState<MarketMover[]>([]);
   const [moversLoading, setMoversLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
-
-  useEffect(() => {
-    getMarketMovers()
-      .then(setMovers)
-      .catch(() => {})
-      .finally(() => setMoversLoading(false));
-  }, []);
   const [mainTab, setMainTab] = useState<MainTab>('market');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [activeSort, setActiveSort] = useState('Popularity');
 
-  // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
-  // adding insets.top on top of that creates a large black gap.
   const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
+
+  const loadMovers = useCallback(async () => {
+    setMoversLoading(true);
+    try {
+      const data = await getMarketMovers();
+      setMovers(data);
+    } catch {
+      // silently keep previous data
+    } finally {
+      setMoversLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadMovers();
+  }, [loadMovers]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await loadMovers();
+    setIsRefreshing(false);
+  }, [loadMovers]);
 
   const filteredMovers =
     activeTCG === 'all' ? movers : movers.filter(m => m.card.tcg === activeTCG);
@@ -84,6 +100,14 @@ export default function MarketScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: tabH + 24 }]}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={C.primary}
+          colors={[C.primary]}
+        />
+      }
     >
       {/* Header */}
       <View style={styles.header}>
@@ -142,31 +166,40 @@ export default function MarketScreen() {
               </View>
             </View>
             {moversLoading ? (
-              <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4, marginVertical: 8 }} />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 14, paddingRight: 4 }}
+              >
+                {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+              </ScrollView>
             ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 14, paddingRight: 4 }}
-            >
-              {filteredMovers.map(m => (
-                <Pressable
-                  key={m.card.id}
-                  style={styles.moverCard}
-                  onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
-                >
-                  <CardThumbnail card={m.card} compact />
-                  <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
-                  <Text style={styles.moverSet} numberOfLines={1}>{m.card.setName}</Text>
-                  <View style={styles.moverBottom}>
-                    <Text style={styles.moverPrice}>${m.currentPrice.toLocaleString()}</Text>
-                    <Text style={[styles.moverPct, { color: m.trend === 'up' ? C.positive : C.negative }]}>
-                      {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
-            </ScrollView>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 14, paddingRight: 4 }}
+              >
+                {filteredMovers.map(m => (
+                  <Pressable
+                    key={m.card.id}
+                    style={styles.moverCard}
+                    onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
+                  >
+                    <CardThumbnail card={m.card} compact />
+                    <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
+                    <Text style={styles.moverSet} numberOfLines={1}>{m.card.setName}</Text>
+                    <View style={styles.moverBottom}>
+                      <Text style={styles.moverPrice}>${m.currentPrice.toLocaleString()}</Text>
+                      <Text style={[styles.moverPct, { color: m.trend === 'up' ? C.positive : C.negative }]}>
+                        {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+                {filteredMovers.length === 0 && (
+                  <Text style={styles.noData}>No movers for this filter</Text>
+                )}
+              </ScrollView>
             )}
           </View>
 
@@ -204,53 +237,44 @@ export default function MarketScreen() {
 
           {/* Recent Sales */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Recent Sales</Text>
-            {RECENT_SALES.map((sale, i) => (
-              <Pressable
-                key={i}
-                style={[styles.saleRow, { backgroundColor: C.card }]}
-                onPress={() => router.push({ pathname: `/card/${sale.card.id}` as any, params: { appCardJson: JSON.stringify(sale.card) } })}
-              >
-                <View style={[styles.saleThumb, { backgroundColor: sale.card.gradientStart, overflow: 'hidden' }]}>
-                  {sale.card.imageUrl
-                    ? <Image source={{ uri: resizeTcgPlayerUrl(sale.card.imageUrl, 437) ?? sale.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                    : <Text style={styles.saleInitial}>{sale.card.name[0]}</Text>}
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Recent Sales</Text>
+            </View>
+            {RECENT_SALES.map(sale => (
+              <View key={`${sale.card.id}-${sale.soldAt}`} style={[styles.saleRow, { backgroundColor: C.card }]}>
+                <View style={[styles.rankedThumb, { backgroundColor: sale.card.gradientStart }]}>
+                  <Text style={styles.rankedInitial}>{sale.card.name[0]}</Text>
                 </View>
-                <View style={styles.saleInfo}>
-                  <Text style={styles.saleName}>{sale.card.name}</Text>
-                  <Text style={styles.saleSet}>{sale.card.setName}</Text>
-                  {sale.grade && <Text style={styles.saleGrade}>{sale.grade}</Text>}
+                <View style={styles.rankedInfo}>
+                  <Text style={styles.rankedName}>{sale.card.name}</Text>
+                  <Text style={styles.rankedSet}>{sale.card.setName}</Text>
+                  <Text style={[styles.saleDate, { color: C.mutedForeground }]}>{sale.soldAt}</Text>
                 </View>
-                <View style={styles.saleRight}>
-                  <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString()}</Text>
-                  <Text style={styles.saleTime}>{sale.soldAt}</Text>
+                <View style={styles.rankedRight}>
+                  <Text style={styles.rankedPrice}>${sale.soldPrice.toLocaleString()}</Text>
+                  <Text style={[styles.saleGrade, { color: C.mutedForeground }]}>{sale.grade}</Text>
                 </View>
-              </Pressable>
+              </View>
             ))}
           </View>
 
           {/* New Releases */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>New Releases</Text>
-            {NEW_RELEASES.map(rel => (
-              <View key={rel.id} style={[styles.releaseCard, { backgroundColor: C.card }]}>
-                <View style={styles.releaseHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.releaseName}>{rel.name}</Text>
-                    <Text style={styles.releaseMeta}>
-                      {rel.tcg} · {rel.cards} cards · {rel.releaseDate}
-                    </Text>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>New Releases</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+              {NEW_RELEASES.map(r => (
+                <View key={r.id} style={[styles.releaseCard, { backgroundColor: C.card }]}>
+                  <View style={[styles.releaseIcon, { backgroundColor: C.muted }]}>
+                    <Feather name="package" size={22} color={C.primary} />
                   </View>
-                  <View style={[styles.newTag, { backgroundColor: `${C.primary}22` }]}>
-                    <Text style={[styles.newTagText, { color: C.primary }]}>New</Text>
-                  </View>
+                  <Text style={styles.releaseName} numberOfLines={2}>{r.name}</Text>
+                  <Text style={styles.releaseTcg}>{r.tcg}</Text>
+                  <Text style={[styles.releaseDate, { color: C.mutedForeground }]}>{r.releaseDate}</Text>
                 </View>
-                <View style={styles.releaseHighlight}>
-                  <Feather name="star" size={12} color="#F59E0B" />
-                  <Text style={styles.releaseHighlightText}>Chase: {rel.highlight}</Text>
-                </View>
-              </View>
-            ))}
+              ))}
+            </ScrollView>
           </View>
         </View>
       )}
@@ -258,96 +282,75 @@ export default function MarketScreen() {
       {/* ── MARKETPLACE TAB ── */}
       {mainTab === 'marketplace' && (
         <View>
-          {/* Filters */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 16 }}
-            contentContainerStyle={{ gap: 8, alignItems: 'center' }}
-          >
+          {/* Filters row */}
+          <View style={styles.filterRow}>
             <Pressable
               onPress={() => setVerifiedOnly(v => !v)}
               style={[
                 styles.filterChip,
-                verifiedOnly && { backgroundColor: `${C.positive}22`, borderColor: C.positive },
+                { backgroundColor: verifiedOnly ? C.primary : C.card, borderColor: verifiedOnly ? C.primary : C.border },
               ]}
             >
-              <Feather name="shield" size={13} color={verifiedOnly ? C.positive : C.mutedForeground} />
-              <Text style={[styles.filterChipText, verifiedOnly && { color: C.positive }]}>
-                Verified Only
-              </Text>
+              <Feather name="shield" size={12} color={verifiedOnly ? '#FFF' : C.mutedForeground} />
+              <Text style={[styles.filterChipText, { color: verifiedOnly ? '#FFF' : C.mutedForeground }]}>Verified</Text>
             </Pressable>
-            {SORT_OPTIONS.map(s => (
-              <Pressable
-                key={s}
-                onPress={() => setActiveSort(s)}
-                style={[
-                  styles.filterChip,
-                  activeSort === s && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
-                ]}
-              >
-                <Text style={[styles.filterChipText, activeSort === s && { color: C.primary }]}>
-                  {s}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {SORT_OPTIONS.map(s => (
+                <Pressable
+                  key={s}
+                  onPress={() => setActiveSort(s)}
+                  style={[
+                    styles.filterChip,
+                    { backgroundColor: activeSort === s ? C.primary : C.card, borderColor: activeSort === s ? C.primary : C.border },
+                  ]}
+                >
+                  <Text style={[styles.filterChipText, { color: activeSort === s ? '#FFF' : C.mutedForeground }]}>{s}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
 
-          {/* Listing count */}
-          <Text style={styles.listingCount}>
-            {filteredListings.length} listing{filteredListings.length !== 1 ? 's' : ''}
-          </Text>
-
-          {/* Listings */}
-          {filteredListings.length > 0 ? (
-            filteredListings.map(listing => (
-              <Pressable
-                key={listing.id}
-                style={[styles.listingRow, { backgroundColor: C.card }]}
-                onPress={() => router.push({ pathname: `/card/${listing.card.id}` as any, params: { appCardJson: JSON.stringify(listing.card) } })}
-              >
-                <View style={[styles.listingThumb, { backgroundColor: listing.card.gradientStart }]}>
-                  <Text style={styles.listingInitial}>{listing.card.name[0]}</Text>
-                </View>
-                <View style={styles.listingMid}>
-                  <Text style={styles.listingName} numberOfLines={1}>
-                    {listing.card.name}
-                  </Text>
-                  <Text style={styles.listingSet}>{listing.card.setName}</Text>
-                  {listing.grading && (
-                    <View style={styles.gradeWrap}>
-                      <GradeBadge
-                        grade={listing.grading.grade}
-                        company={listing.grading.company}
-                        size="sm"
-                      />
-                    </View>
+          {filteredListings.map(listing => (
+            <Pressable
+              key={listing.id}
+              style={[styles.listingRow, { backgroundColor: C.card }]}
+              onPress={() => router.push({ pathname: `/card/${listing.card.id}` as any, params: { appCardJson: JSON.stringify(listing.card) } })}
+            >
+              <View style={[styles.listingThumb, { backgroundColor: listing.card.gradientStart }]}>
+                {listing.card.imageUrl
+                  ? <Image source={{ uri: resizeTcgPlayerUrl(listing.card.imageUrl, 437) ?? listing.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                  : <Text style={styles.rankedInitial}>{listing.card.name[0]}</Text>}
+              </View>
+              <View style={styles.listingInfo}>
+                <View style={styles.listingNameRow}>
+                  <Text style={styles.listingName} numberOfLines={1}>{listing.card.name}</Text>
+                  {listing.isVerifiedSeller && (
+                    <Feather name="shield" size={13} color={C.positive} />
                   )}
-                  <View style={styles.sellerRow}>
-                    <Text style={styles.sellerName}>{listing.sellerName}</Text>
-                    {listing.isVerifiedSeller && (
-                      <View style={styles.verifiedPill}>
-                        <Feather name="shield" size={10} color={C.positive} />
-                        <Text style={[styles.verifiedPillText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                  </View>
                 </View>
-                <View style={styles.listingRight}>
-                  <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString()}</Text>
-                  <Text style={styles.listingCurrency}>AUD</Text>
-                  <View style={styles.watchRow}>
-                    <Feather name="eye" size={11} color={C.mutedForeground} />
-                    <Text style={styles.watchText}>{listing.watchCount}</Text>
-                  </View>
-                </View>
-              </Pressable>
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Feather name="package" size={40} color={C.muted} />
-              <Text style={styles.emptyTitle}>No listings found</Text>
-              <Text style={styles.emptyBody}>Try removing filters or switching TCG</Text>
+                <Text style={styles.listingSet}>{listing.card.setName} · {listing.condition}</Text>
+                {listing.grading && (
+                  <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
+                )}
+                <Text style={[styles.listingMeta, { color: C.mutedForeground }]}>
+                  {listing.watchCount} watching · {listing.listedAt}
+                </Text>
+              </View>
+              <View style={styles.listingPricing}>
+                <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString()}</Text>
+                <Text style={[styles.listingPriceLabel, { color: C.mutedForeground }]}>AUD</Text>
+                <Pressable style={[styles.buyBtn, { backgroundColor: `${C.primary}22` }]}>
+                  <Text style={[styles.buyBtnText, { color: C.primary }]}>Buy</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          ))}
+
+          {filteredListings.length === 0 && (
+            <View style={styles.emptySection}>
+              <Feather name="shopping-bag" size={36} color={C.muted} />
+              <Text style={styles.emptyTitle}>No listings</Text>
+              <Text style={styles.emptyBody}>Try a different filter or check back later.</Text>
             </View>
           )}
         </View>
@@ -359,18 +362,8 @@ export default function MarketScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: 20 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-  },
-  title: {
-    fontSize: 28,
-    fontFamily: 'Rajdhani_700Bold',
-    color: C.foreground,
-    letterSpacing: -0.3,
-  },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  title: { fontSize: 28, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.3 },
   sub: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
   searchBtn: {
     width: 42,
@@ -380,118 +373,123 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mainTabs: { flexDirection: 'row', borderRadius: 14, padding: 4, marginBottom: 16 },
-  mainTab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  mainTabText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-  chips: { marginBottom: 24 },
-  section: { marginBottom: 28 },
-  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
-  sectionTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground, marginBottom: 14 },
-  badge: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
+  mainTabs: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 16,
   },
-  moverCard: { width: 118, gap: 6 },
-  moverName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  moverSet: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  moverBottom: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  moverPrice: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
+  mainTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  mainTabText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
+  chips: { marginBottom: 20 },
+  section: { marginBottom: 24 },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+  sectionTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
+  badge: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  moverCard: { width: 110 },
+  moverName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, marginTop: 8 },
+  moverSet: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  moverBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  moverPrice: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.foreground },
   moverPct: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  noData: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, paddingVertical: 20 },
   rankedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
     gap: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
   },
-  rank: {
-    fontSize: 16,
-    fontFamily: 'Inter_700Bold',
-    color: C.mutedForeground,
-    width: 20,
-    textAlign: 'center',
+  rank: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.mutedForeground, width: 20, textAlign: 'center' },
+  rankedThumb: {
+    width: 44,
+    height: 60,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  rankedThumb: { width: 48, height: 68, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  rankedInitial: { fontSize: 22, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
-  rankedInfo: { flex: 1, gap: 3 },
+  rankedInitial: { fontSize: 20, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
+  rankedInfo: { flex: 1 },
   rankedName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  rankedSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  rankedRight: { alignItems: 'flex-end', gap: 4 },
+  rankedSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  rankedRight: { alignItems: 'flex-end' },
   rankedPrice: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
-  watcherRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  watcherRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   watcherText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   saleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
     gap: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
   },
-  saleThumb: { width: 44, height: 62, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  saleInitial: { fontSize: 20, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
-  saleInfo: { flex: 1, gap: 3 },
-  saleName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  saleSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  saleGrade: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.primary },
-  saleRight: { alignItems: 'flex-end', gap: 3 },
-  salePrice: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  saleTime: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  releaseCard: { borderRadius: 14, padding: 16, marginBottom: 10 },
-  releaseHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
-  releaseName: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
-  releaseMeta: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 3 },
-  newTag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  newTagText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
-  releaseHighlight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  releaseHighlightText: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  saleDate: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 3 },
+  saleGrade: { fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 3 },
+  releaseCard: {
+    width: 130,
+    borderRadius: 14,
+    padding: 14,
+    gap: 8,
+  },
+  releaseIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  releaseName: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  releaseTcg: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  releaseDate: { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: C.border,
-    backgroundColor: C.card,
   },
-  filterChipText: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  listingCount: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: C.mutedForeground,
-    marginBottom: 12,
-  },
+  filterChipText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   listingRow: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
     borderRadius: 14,
     padding: 14,
     marginBottom: 10,
-    gap: 12,
-    alignItems: 'center',
   },
-  listingThumb: { width: 50, height: 70, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  listingInitial: { fontSize: 22, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
-  listingMid: { flex: 1, gap: 3 },
-  listingName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  listingThumb: {
+    width: 52,
+    height: 72,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  listingInfo: { flex: 1, gap: 4 },
+  listingNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  listingName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground, flex: 1 },
   listingSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  gradeWrap: { marginTop: 2 },
-  sellerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
-  sellerName: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  verifiedPill: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  verifiedPillText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
-  listingRight: { alignItems: 'flex-end', gap: 2 },
-  listingPrice: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground },
-  listingCurrency: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  watchRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
-  watchText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
-  emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  emptyBody: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  listingMeta: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  listingPricing: { alignItems: 'flex-end', gap: 4 },
+  listingPrice: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
+  listingPriceLabel: { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  buyBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 2,
+  },
+  buyBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  emptySection: { alignItems: 'center', paddingVertical: 40, gap: 12 },
+  emptyTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  emptyBody: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 });

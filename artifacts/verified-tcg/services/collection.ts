@@ -51,6 +51,26 @@ export async function fetchCollection(): Promise<CollectionItem[]> {
   return res.json() as Promise<CollectionItem[]>;
 }
 
+export interface PaginatedCollection {
+  items: CollectionItem[];
+  total: number;
+  page: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+/** Fetch a paginated page of collection items. */
+export async function fetchCollectionPage(
+  page: number,
+  limit: number = 20,
+): Promise<PaginatedCollection> {
+  const headers = await authHeaders();
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  const res = await fetch(`${API_BASE}/api/collection?${params}`, { headers });
+  if (!res.ok) throw new Error(`Failed to load collection (${res.status})`);
+  return res.json() as Promise<PaginatedCollection>;
+}
+
 /** Add a card to the server collection. Returns the persisted item (server-assigned id). */
 export async function addCollectionItem(
   item: CollectionItem,

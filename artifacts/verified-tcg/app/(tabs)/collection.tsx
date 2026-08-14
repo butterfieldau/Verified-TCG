@@ -1,14 +1,17 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,15 +19,18 @@ import { Feather } from '@expo/vector-icons';
 import { GradeBadge } from '@/components/ui/Badge';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { CollectionListSkeleton } from '@/components/ui/SkeletonLoader';
 import { useApp } from '@/context/AppContext';
+import { useNetwork } from '@/context/NetworkContext';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
-import type { TCGId } from '@/types';
+import type { TCGId, CollectionItem } from '@/types';
 import { getSealedProducts, getSetProgress } from '@/services/collection';
 import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 
 const C = colors.dark;
+const PAGE_SIZE = 20;
 
 type CollectionTab = 'cards' | 'sealed' | 'sets' | 'graded';
 
@@ -47,29 +53,420 @@ const SET_PROGRESS = getSetProgress();
 
 export default function CollectionScreen() {
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  // Use AppContext's collection as the single source of truth.
+  // AppContext caches the collection in AsyncStorage so it's available offline.
   const { collection, collectionLoading, refreshCollection, portfolio } = useApp();
-  const [collectionTab, setCollectionTab] = useState<CollectionTab>('cards');
+  const { isConnected } = useNetwork();
 
-  // Refresh collection every time this tab comes into focus so edits made
-  // elsewhere (other devices, other sessions) are surfaced without sign-out.
+  const [collectionTab, setCollectionTab] = useState<CollectionTab>('cards');
+  const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
+
+  // Client-side windowing: show first `displayCount` of the fully-filtered list.
+  // This is correct for both offline (cache) and online (live) data, and
+  // filters work on the complete collection — not just the current page.
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
+  const TAB_H = Platform.OS === 'web' ? 84 : 74;
+
+  // Apply tab and TCG filters on the full in-memory collection
+  const filteredItems = useMemo<CollectionItem[]>(() => {
+    const isGraded = collectionTab === 'graded';
+    return collection.filter(i => {
+      const tcgMatch = activeTCG === 'all' || i.card.tcg === activeTCG;
+      const gradedMatch = !isGraded || !!i.grading;
+      return tcgMatch && gradedMatch;
+    });
+  }, [collection, collectionTab, activeTCG]);
+
+  // Windowed slice shown in the list; load-more just extends this window
+  const visibleItems = useMemo(
+    () => filteredItems.slice(0, displayCount),
+    [filteredItems, displayCount],
+  );
+
+  const hasMore = displayCount < filteredItems.length;
+
+  // True only on the very first load when we have no data at all yet
+  const initialLoading = collectionLoading && collection.length === 0;
+
+  // Reset window when tab or TCG filter changes
+  const onTabOrFilterChange = useCallback(() => {
+    setDisplayCount(PAGE_SIZE);
+  }, []);
+
+  // Trigger a server refresh on focus (keeps portfolio in sync, populates cache)
   useFocusEffect(
     useCallback(() => {
       refreshCollection();
     }, [refreshCollection]),
   );
-  const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
-  // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
-  // adding insets.top on top of that creates a large black gap.
-  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
-  const TAB_H = Platform.OS === 'web' ? 84 : 74;
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
+    await refreshCollection();
+    setIsRefreshing(false);
+  }, [refreshCollection]);
 
-  const baseFiltered =
-    activeTCG === 'all' ? collection : collection.filter(i => i.card.tcg === activeTCG);
+  const handleLoadMore = useCallback(() => {
+    if (!hasMore || collectionLoading) return;
+    setDisplayCount(prev => prev + PAGE_SIZE);
+  }, [hasMore, collectionLoading]);
 
-  const filteredCards =
-    collectionTab === 'graded' ? baseFiltered.filter(i => !!i.grading) : baseFiltered;
+  // ── Header (shared across all tabs) ──────────────────────────────────────
+
+  function renderHeader() {
+    return (
+      <View style={{ paddingHorizontal: 20 }}>
+        {/* Offline indicator */}
+        {!isConnected && collection.length > 0 && (
+          <View style={[styles.offlineNote, { backgroundColor: `${C.warning}18` }]}>
+            <Feather name="cloud-off" size={12} color={C.warning} />
+            <Text style={[styles.offlineNoteText, { color: C.warning }]}>
+              Offline — showing cached collection
+            </Text>
+          </View>
+        )}
+
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.title}>Collection</Text>
+            <Text style={styles.sub}>
+              {filteredItems.length} {filteredItems.length === 1 ? 'card' : 'cards'} · ${portfolio.totalValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })} AUD
+            </Text>
+          </View>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => router.push('/collection-insights' as any)}
+              style={styles.iconBtn}
+              accessibilityLabel="Collection Insights"
+            >
+              <Feather name="bar-chart-2" size={18} color={C.foreground} />
+            </Pressable>
+            <Pressable
+              onPress={() => setViewMode(v => (v === 'grid' ? 'list' : 'grid'))}
+              style={styles.iconBtn}
+            >
+              <Feather name={viewMode === 'grid' ? 'list' : 'grid'} size={18} color={C.foreground} />
+            </Pressable>
+            <Pressable style={styles.iconBtn} onPress={() => router.push('/add-card')}>
+              <Feather name="plus" size={18} color={C.foreground} />
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Portfolio value strip */}
+        <View style={[styles.valueStrip, { backgroundColor: C.card }]}>
+          <View>
+            <Text style={styles.valueLabel}>Total Value</Text>
+            <Text style={styles.valueAmount}>
+              ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+            </Text>
+          </View>
+          <View style={styles.gainBadge}>
+            <Text style={[styles.gainText, { color: portfolio.totalGain >= 0 ? C.positive : C.negative }]}>
+              {portfolio.totalGain >= 0 ? '+' : ''}{portfolio.totalGainPercent.toFixed(1)}%
+            </Text>
+          </View>
+        </View>
+
+        {/* Collection type tabs */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={[styles.typeTabsRow, { borderBottomColor: C.border }]}
+        >
+          {COLLECTION_TABS.map(t => (
+            <Pressable
+              key={t.value}
+              onPress={() => { setCollectionTab(t.value); onTabOrFilterChange(); }}
+              style={[
+                styles.typeTab,
+                collectionTab === t.value && { borderBottomColor: C.primary },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.typeTabText,
+                  collectionTab === t.value && { color: C.foreground },
+                ]}
+              >
+                {t.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* TCG chips (cards + graded tabs) */}
+        {(collectionTab === 'cards' || collectionTab === 'graded') && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+            {TCG_CHIPS.map(t => (
+              <Pressable
+                key={t.value}
+                onPress={() => { setActiveTCG(t.value); onTabOrFilterChange(); }}
+                style={[
+                  styles.chip,
+                  activeTCG === t.value && { backgroundColor: C.primary, borderColor: C.primary },
+                ]}
+              >
+                <Text
+                  style={[styles.chipText, activeTCG === t.value && { color: '#FFFFFF' }]}
+                >
+                  {t.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* Skeleton while loading the very first time (no cached data yet) */}
+        {initialLoading && (
+          <View style={{ paddingVertical: 8 }}>
+            <CollectionListSkeleton count={6} />
+          </View>
+        )}
+
+        {/* Offline + no cache yet */}
+        {!isConnected && collection.length === 0 && !collectionLoading && (
+          <View style={styles.errorBox}>
+            <Feather name="wifi-off" size={20} color={C.negative} />
+            <Text style={styles.errorText}>
+              No cached data available. Connect to the internet to load your collection.
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ── Card list item (list mode) ────────────────────────────────────────────
+
+  function renderCardRow(item: CollectionItem) {
+    return (
+      <Pressable
+        key={item.id}
+        style={[styles.itemRow, { backgroundColor: C.card, marginHorizontal: 20 }]}
+        onPress={() => {
+          const ids = filteredItems.map(i => i.card.id).join(',');
+          router.push(`/card/${item.card.id}?cardIds=${ids}`);
+        }}
+      >
+        <View style={styles.cardPlaceholder}>
+          <LinearGradient
+            colors={[item.card.gradientStart, item.card.gradientEnd]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+          />
+          {!!item.card.imageUrl && (
+            <Image
+              source={{ uri: resizeTcgPlayerUrl(item.card.imageUrl, 437) ?? item.card.imageUrl }}
+              style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+              resizeMode="cover"
+            />
+          )}
+          {item.grading && (
+            <View style={styles.cardGrade}>
+              <GradeBadge grade={item.grading.grade} company={item.grading.company} size="sm" />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={1}>{item.card.name}</Text>
+          <Text style={styles.itemSet} numberOfLines={1}>{item.card.setName}</Text>
+          <Text style={styles.itemNumber}>{item.card.number}</Text>
+          <View style={styles.itemTags}>
+            <View style={[styles.tag, { backgroundColor: C.muted }]}>
+              <Text style={styles.tagText}>
+                {item.grading
+                  ? `${item.grading.company} ${item.grading.grade}`
+                  : CONDITION_LABELS[item.condition]}
+              </Text>
+            </View>
+            {item.isForSale && (
+              <View style={[styles.tag, { backgroundColor: `${C.primary}22` }]}>
+                <Text style={[styles.tagText, { color: C.primary }]}>For Sale</Text>
+              </View>
+            )}
+            {item.isForTrade && (
+              <View style={[styles.tag, { backgroundColor: `${C.warning}22` }]}>
+                <Text style={[styles.tagText, { color: C.warning }]}>Trade</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.itemPricing}>
+          <Text style={styles.itemCurrentValue}>
+            ${(item.grading?.grade === 10
+              ? item.card.price.psa10 ?? item.card.price.raw
+              : item.card.price.raw
+            ).toLocaleString('en-AU')}
+          </Text>
+          <Text style={styles.itemCost}>Cost ${item.acquiredPrice.toLocaleString('en-AU')}</Text>
+          {item.card.price.change7d !== undefined && (
+            <Text
+              style={[
+                styles.itemChange,
+                { color: (item.card.price.change7d ?? 0) >= 0 ? C.positive : C.negative },
+              ]}
+            >
+              {(item.card.price.change7d ?? 0) >= 0 ? '+' : ''}
+              {item.card.price.change7d?.toFixed(1)}% 7d
+            </Text>
+          )}
+        </View>
+      </Pressable>
+    );
+  }
+
+  // ── Card grid item ────────────────────────────────────────────────────────
+
+  const gridItemWidth = (screenWidth - 40 - 12) / 2; // 20px padding each side + 12px gap
+
+  function renderCardGrid(item: CollectionItem) {
+    return (
+      <Pressable
+        style={[styles.gridItem, { width: gridItemWidth }]}
+        onPress={() => {
+          const ids = filteredItems.map(i => i.card.id).join(',');
+          router.push(`/card/${item.card.id}?cardIds=${ids}`);
+        }}
+      >
+        <CardThumbnail card={item.card} grading={item.grading} />
+        <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
+        <Text style={styles.gridPrice}>
+          ${(item.grading?.grade === 10
+            ? item.card.price.psa10 ?? item.card.price.raw
+            : item.card.price.raw
+          ).toLocaleString('en-AU')}
+        </Text>
+      </Pressable>
+    );
+  }
+
+  // ── Cards / Graded tab — FlashList ────────────────────────────────────────
+
+  if (collectionTab === 'cards' || collectionTab === 'graded') {
+    return (
+      <View style={[styles.screen, { backgroundColor: C.background }]}>
+        {viewMode === 'grid' ? (
+          <FlashList
+            data={visibleItems}
+            numColumns={2}
+            keyExtractor={item => item.id}
+            renderItem={({ item }) => (
+              <View style={{ paddingLeft: 20, paddingBottom: 12 }}>
+                {renderCardGrid(item)}
+              </View>
+            )}
+            ListHeaderComponent={() => (
+              <>
+                {renderHeader()}
+                <View style={{ height: 8 }} />
+              </>
+            )}
+            ListEmptyComponent={() =>
+              !initialLoading ? (
+                <View style={{ paddingHorizontal: 20 }}>
+                  <EmptyState
+                    icon="layers"
+                    title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
+                    description={
+                      collectionTab === 'graded'
+                        ? 'Add graded cards to see them here'
+                        : 'Scan your first card or search the database to start building your collection'
+                    }
+                    actionLabel="Add Card"
+                    onAction={() => router.push('/add-card')}
+                  />
+                </View>
+              ) : null
+            }
+            ListFooterComponent={() => (
+              <View style={{ paddingBottom: TAB_H + 24, paddingTop: 12, alignItems: 'center' }}>
+                {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
+                {!hasMore && visibleItems.length > 0 && (
+                  <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
+                )}
+              </View>
+            )}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handleRefresh}
+                tintColor={C.primary}
+                colors={[C.primary]}
+              />
+            }
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.3}
+            contentContainerStyle={{ paddingTop: topPad + 8 }}
+          />
+        ) : (
+          <FlashList
+            data={visibleItems}
+            keyExtractor={item => item.id}
+            renderItem={({ item }) => (
+              <View style={{ marginBottom: 10 }}>
+                {renderCardRow(item)}
+              </View>
+            )}
+            ListHeaderComponent={() => (
+              <>
+                {renderHeader()}
+                <View style={{ height: 8 }} />
+              </>
+            )}
+            ListEmptyComponent={() =>
+              !initialLoading ? (
+                <View style={{ paddingHorizontal: 20 }}>
+                  <EmptyState
+                    icon="layers"
+                    title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
+                    description={
+                      collectionTab === 'graded'
+                        ? 'Add graded cards to see them here'
+                        : 'Scan your first card or search the database to start building your collection'
+                    }
+                    actionLabel="Add Card"
+                    onAction={() => router.push('/add-card')}
+                  />
+                </View>
+              ) : null
+            }
+            ListFooterComponent={() => (
+              <View style={{ paddingBottom: TAB_H + 24, paddingTop: 12, alignItems: 'center' }}>
+                {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
+                {!hasMore && visibleItems.length > 0 && (
+                  <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
+                )}
+              </View>
+            )}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handleRefresh}
+                tintColor={C.primary}
+                colors={[C.primary]}
+              />
+            }
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.3}
+            contentContainerStyle={{ paddingTop: topPad + 8 }}
+          />
+        )}
+      </View>
+    );
+  }
+
+  // ── Sealed / Sets tabs — ScrollView ───────────────────────────────────────
 
   return (
     <ScrollView
@@ -77,27 +474,14 @@ export default function CollectionScreen() {
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
     >
-      {/* Header */}
+      {/* Shared header (without skeleton / error for static tabs) */}
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Collection</Text>
-          <Text style={styles.sub}>
-            {collection.length} cards · ${portfolio.totalValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })} AUD
-          </Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable
-            onPress={() => router.push('/collection-insights' as any)}
-            style={styles.iconBtn}
-            accessibilityLabel="Collection Insights"
-          >
+          <Pressable onPress={() => router.push('/collection-insights' as any)} style={styles.iconBtn}>
             <Feather name="bar-chart-2" size={18} color={C.foreground} />
-          </Pressable>
-          <Pressable
-            onPress={() => setViewMode(v => (v === 'grid' ? 'list' : 'grid'))}
-            style={styles.iconBtn}
-          >
-            <Feather name={viewMode === 'grid' ? 'list' : 'grid'} size={18} color={C.foreground} />
           </Pressable>
           <Pressable style={styles.iconBtn} onPress={() => router.push('/add-card')}>
             <Feather name="plus" size={18} color={C.foreground} />
@@ -129,7 +513,7 @@ export default function CollectionScreen() {
         {COLLECTION_TABS.map(t => (
           <Pressable
             key={t.value}
-            onPress={() => setCollectionTab(t.value)}
+            onPress={() => { setCollectionTab(t.value); onTabOrFilterChange(); }}
             style={[
               styles.typeTab,
               collectionTab === t.value && { borderBottomColor: C.primary },
@@ -146,163 +530,6 @@ export default function CollectionScreen() {
           </Pressable>
         ))}
       </ScrollView>
-
-      {/* TCG chips (cards + graded tabs) */}
-      {(collectionTab === 'cards' || collectionTab === 'graded') && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-          {TCG_CHIPS.map(t => (
-            <Pressable
-              key={t.value}
-              onPress={() => setActiveTCG(t.value)}
-              style={[
-                styles.chip,
-                activeTCG === t.value && { backgroundColor: C.primary, borderColor: C.primary },
-              ]}
-            >
-              <Text
-                style={[styles.chipText, activeTCG === t.value && { color: '#FFFFFF' }]}
-              >
-                {t.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
-      {/* ── CARDS / GRADED ── */}
-      {(collectionTab === 'cards' || collectionTab === 'graded') && (
-        <View>
-          {collectionLoading && (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator color={C.primary} size="large" />
-              <Text style={styles.loadingText}>Loading your collection…</Text>
-            </View>
-          )}
-          {!collectionLoading && filteredCards.length === 0 && (
-            <EmptyState
-              icon="layers"
-              title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
-              description={
-                collectionTab === 'graded'
-                  ? 'Add graded cards to see them here'
-                  : 'Scan your first card or search the database to start building your collection'
-              }
-              actionLabel="Add Card"
-              onAction={() => router.push('/add-card')}
-            />
-          )}
-
-          {viewMode === 'grid' ? (
-            <View style={styles.grid}>
-              {filteredCards.map(item => (
-                <Pressable
-                  key={item.id}
-                  style={styles.gridItem}
-                  onPress={() => {
-                    const ids = filteredCards.map(i => i.card.id).join(',');
-                    router.push(`/card/${item.card.id}?cardIds=${ids}`);
-                  }}
-                >
-                  <CardThumbnail card={item.card} grading={item.grading} />
-                  <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
-                  <Text style={styles.gridPrice}>
-                    ${(item.grading?.grade === 10
-                      ? item.card.price.psa10 ?? item.card.price.raw
-                      : item.card.price.raw
-                    ).toLocaleString('en-AU')}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            filteredCards.map(item => (
-              <Pressable
-                key={item.id}
-                style={[styles.itemRow, { backgroundColor: C.card }]}
-                onPress={() => {
-                  const ids = filteredCards.map(i => i.card.id).join(',');
-                  router.push(`/card/${item.card.id}?cardIds=${ids}`);
-                }}
-              >
-                <View style={styles.cardPlaceholder}>
-                  {/* Gradient fallback — always rendered as base layer */}
-                  <LinearGradient
-                    colors={[item.card.gradientStart, item.card.gradientEnd]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
-                  />
-                  {/* Card artwork on top of gradient */}
-                  {!!item.card.imageUrl && (
-                    <Image
-                      source={{ uri: resizeTcgPlayerUrl(item.card.imageUrl, 437) ?? item.card.imageUrl }}
-                      style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
-                      resizeMode="cover"
-                    />
-                  )}
-                  {item.grading && (
-                    <View style={styles.cardGrade}>
-                      <GradeBadge
-                        grade={item.grading.grade}
-                        company={item.grading.company}
-                        size="sm"
-                      />
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.itemInfo}>
-                  <Text style={styles.itemName} numberOfLines={1}>{item.card.name}</Text>
-                  <Text style={styles.itemSet} numberOfLines={1}>{item.card.setName}</Text>
-                  <Text style={styles.itemNumber}>{item.card.number}</Text>
-                  <View style={styles.itemTags}>
-                    <View style={[styles.tag, { backgroundColor: C.muted }]}>
-                      <Text style={styles.tagText}>
-                        {item.grading
-                          ? `${item.grading.company} ${item.grading.grade}`
-                          : CONDITION_LABELS[item.condition]}
-                      </Text>
-                    </View>
-                    {item.isForSale && (
-                      <View style={[styles.tag, { backgroundColor: `${C.primary}22` }]}>
-                        <Text style={[styles.tagText, { color: C.primary }]}>For Sale</Text>
-                      </View>
-                    )}
-                    {item.isForTrade && (
-                      <View style={[styles.tag, { backgroundColor: `${C.warning}22` }]}>
-                        <Text style={[styles.tagText, { color: C.warning }]}>Trade</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.itemPricing}>
-                  <Text style={styles.itemCurrentValue}>
-                    ${(item.grading?.grade === 10
-                      ? item.card.price.psa10 ?? item.card.price.raw
-                      : item.card.price.raw
-                    ).toLocaleString('en-AU')}
-                  </Text>
-                  <Text style={styles.itemCost}>Cost ${item.acquiredPrice.toLocaleString('en-AU')}</Text>
-                  {item.card.price.change7d !== undefined && (
-                    <Text
-                      style={[
-                        styles.itemChange,
-                        {
-                          color: (item.card.price.change7d ?? 0) >= 0 ? C.positive : C.negative,
-                        },
-                      ]}
-                    >
-                      {(item.card.price.change7d ?? 0) >= 0 ? '+' : ''}
-                      {item.card.price.change7d?.toFixed(1)}% 7d
-                    </Text>
-                  )}
-                </View>
-              </Pressable>
-            ))
-          )}
-        </View>
-      )}
 
       {/* ── SEALED ── */}
       {collectionTab === 'sealed' && (
@@ -384,6 +611,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  offlineNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 12,
+  },
+  offlineNoteText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   valueStrip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -431,14 +668,13 @@ const styles = StyleSheet.create({
   },
   chipText: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.foreground },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  gridItem: { width: '47%', gap: 6 },
+  gridItem: { gap: 6 },
   gridName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   gridPrice: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.primary },
   itemRow: {
     flexDirection: 'row',
     borderRadius: 14,
     padding: 14,
-    marginBottom: 10,
     gap: 12,
     alignItems: 'center',
   },
@@ -450,7 +686,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
   },
-  cardInitial: { fontSize: 24, fontFamily: 'Inter_700Bold', color: 'rgba(255,255,255,0.9)' },
   cardGrade: { position: 'absolute', top: 2, right: -8 },
   itemInfo: { flex: 1, gap: 3 },
   itemName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
@@ -499,14 +734,30 @@ const styles = StyleSheet.create({
   setPct: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   progressBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
-  loadingContainer: {
+  errorBox: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
-    gap: 12,
+    gap: 10,
+    paddingVertical: 32,
   },
-  loadingText: {
+  errorText: {
     fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  retryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#FFF',
+  },
+  allLoadedText: {
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
   },

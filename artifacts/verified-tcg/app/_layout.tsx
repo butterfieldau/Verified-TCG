@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppProvider } from '@/context/AppContext';
 import { SettingsProvider } from '@/context/SettingsContext';
+import { NetworkProvider } from '@/context/NetworkContext';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -94,15 +96,18 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <KeyboardProvider>
-              <SettingsProvider>
-                <AppProvider>
-                  <RootLayoutNav />
-                </AppProvider>
-              </SettingsProvider>
-            </KeyboardProvider>
-          </GestureHandlerRootView>
+          <NetworkProvider>
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <KeyboardProvider>
+                <SettingsProvider>
+                  <AppProvider>
+                    <OfflineBanner />
+                    <RootLayoutNav />
+                  </AppProvider>
+                </SettingsProvider>
+              </KeyboardProvider>
+            </GestureHandlerRootView>
+          </NetworkProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

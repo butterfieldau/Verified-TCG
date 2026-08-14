@@ -14,6 +14,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -410,7 +411,7 @@ export default function CommunityScreen() {
     }
 
     return (
-      <FlatList
+      <FlashList
         data={feed}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
