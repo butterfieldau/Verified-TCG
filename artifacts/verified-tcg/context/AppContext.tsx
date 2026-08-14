@@ -8,7 +8,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState as RNAppState, type AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
@@ -21,7 +21,7 @@ import type {
   User,
   PortfolioSummary,
 } from '@/types';
-import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
+import { getItemCurrentValue, fetchCollection, addCollectionItem, removeCollectionItem } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 import {
@@ -64,6 +64,8 @@ interface AppState {
   user: User | null;
   isAuthenticated: boolean;
   collection: CollectionItem[];
+  collectionLoading: boolean;
+  refreshCollection: () => Promise<void>;
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
   watchlist: WatchlistItem[];
@@ -206,7 +208,8 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
+  const [collection, setCollection] = useState<CollectionItem[]>([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
@@ -404,13 +407,95 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlistLoaded]);
 
+  // ── Pending-mutation tracking ──────────────────────────────────────────────
+  //
+  // Tracks optimistic items whose server round-trip has not yet completed so
+  // that a concurrent loadCollection() cannot wipe them out.
+  //
+  // pendingItemIds     — Set of client-generated temp IDs
+  // pendingFingerprints — Maps temp ID → "cardId::acquiredAt" fingerprint
+  //
+  // During a server merge, a pending item is kept only if its fingerprint does
+  // NOT already appear in the server response. This deduplicates the case where
+  // the POST lands on the server before its promise handler fires: the server
+  // row and the optimistic row would otherwise both appear in state until the
+  // next refresh. Once the fingerprint matches a server item, the POST handler
+  // will imminently swap the temp id → server id, so we drop the optimistic row.
+
+  const pendingItemIds = useRef<Set<string>>(new Set());
+  const pendingFingerprints = useRef<Map<string, string>>(new Map());
+  // IDs of items that have been optimistically deleted but whose server DELETE
+  // has not yet resolved. A background fetch must not restore these items.
+  const pendingDeleteIds = useRef<Set<string>>(new Set());
+  // Monotonically increasing counter; each loadCollection call captures it on
+  // entry so a stale response cannot overwrite a newer one.
+  const loadGeneration = useRef(0);
+
+  // ── Load collection from server ────────────────────────────────────────────
+
+  const loadCollection = useCallback(async () => {
+    const gen = ++loadGeneration.current; // capture before first await
+    setCollectionLoading(true);
+    try {
+      const serverItems = await fetchCollection();
+      // If a newer loadCollection started after this one, discard this result.
+      if (gen !== loadGeneration.current) return;
+
+      setCollection(prev => {
+        // 1. Exclude server items that have been optimistically deleted but
+        //    whose DELETE hasn't landed on the server yet.
+        const deletedIds = pendingDeleteIds.current;
+        const filteredServer = serverItems.filter(i => !deletedIds.has(i.id));
+
+        // 2. Keep optimistic adds whose POST has not yet landed. A pending add
+        //    is kept only when its fingerprint is absent from the server
+        //    response — once the server row appears, the POST handler will swap
+        //    in the persisted id, so we drop the optimistic row to avoid dupes.
+        const serverFingerprints = new Set(
+          filteredServer.map(i => `${i.cardId}::${i.acquiredAt}`),
+        );
+        const pendingIds = pendingItemIds.current;
+        const pendingFps = pendingFingerprints.current;
+        const stillPending = prev.filter(i => {
+          if (!pendingIds.has(i.id)) return false;
+          const fp = pendingFps.get(i.id);
+          return fp !== undefined && !serverFingerprints.has(fp);
+        });
+
+        return [...filteredServer, ...stillPending];
+      });
+    } catch {
+      // Network error or unauthenticated — keep current local state
+    } finally {
+      // Only the latest generation clears the loading flag.
+      if (gen === loadGeneration.current) setCollectionLoading(false);
+    }
+  }, []);
+
   // Restore session on mount (handles app restarts and token refresh)
   useEffect(() => {
     restoreSession().then(session => {
       if (!session) return;
       setUser(userFromSession(session));
       setIsAuthenticated(true);
+      loadCollection();
     }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refresh collection when the app comes back to the foreground so changes
+  // made on another device or session are reflected without requiring a sign-out.
+  const isAuthenticatedRef = useRef(false);
+  useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'active' && isAuthenticatedRef.current) {
+        loadCollection();
+      }
+    };
+    const subscription = RNAppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -419,6 +504,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(userFromSession(session));
     setIsAuthenticated(true);
 
+    // Load real collection from server
+    loadCollection();
+
     // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
       syncWishlistToServer(snapshot)
@@ -426,7 +514,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
       return snapshot;
     });
-  }, []);
+  }, [loadCollection]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     const session = await signInWithOAuth(provider);
@@ -440,6 +528,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     authSignOut().catch(() => {});
     setUser(null);
     setIsAuthenticated(false);
+    setCollection([]);
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
@@ -454,12 +543,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const addToCollection = useCallback((item: CollectionItem) => {
+    // Register temp id and fingerprint BEFORE the optimistic insert so any
+    // concurrent loadCollection() call can preserve or deduplicate correctly.
+    const fp = `${item.cardId}::${item.acquiredAt}`;
+    pendingItemIds.current.add(item.id);
+    pendingFingerprints.current.set(item.id, fp);
     setCollection(prev => [...prev, item]);
+
+    addCollectionItem(item)
+      .then(saved => {
+        // Swap the client-generated temp id for the server-assigned id.
+        pendingItemIds.current.delete(item.id);
+        pendingFingerprints.current.delete(item.id);
+        setCollection(prev =>
+          prev.map(i => i.id === item.id ? saved : i),
+        );
+      })
+      .catch(() => {
+        // Rollback and notify the user.
+        pendingItemIds.current.delete(item.id);
+        pendingFingerprints.current.delete(item.id);
+        setCollection(prev => prev.filter(i => i.id !== item.id));
+        Alert.alert(
+          'Could not save card',
+          'The card was not added to your collection. Please check your connection and try again.',
+          [{ text: 'OK' }],
+        );
+      });
   }, []);
 
   const removeFromCollection = useCallback((id: string) => {
+    // Register as pending-delete BEFORE the optimistic removal so any
+    // concurrent loadCollection() call will filter it out of the server response.
+    pendingDeleteIds.current.add(id);
     setCollection(prev => prev.filter(i => i.id !== id));
-  }, []);
+    removeCollectionItem(id)
+      .then(() => {
+        pendingDeleteIds.current.delete(id);
+      })
+      .catch(() => {
+        // Server delete failed — restore item by re-fetching canonical state.
+        pendingDeleteIds.current.delete(id);
+        loadCollection();
+      });
+  }, [loadCollection]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
     // Optimistic local update
@@ -702,8 +829,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currency: 'AUD',
       cardCount,
       uniqueCardCount,
-      // Keep static chart history — no real time-series data available in mock
-      chartData: MOCK_PORTFOLIO.chartData,
+      // Chart history is a separate task — provide empty ranges as placeholder
+      chartData: {
+        '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
+      },
     };
   }, [collection]);
 
@@ -711,7 +840,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, portfolio, collectionFilters,
+        collection, collectionLoading, refreshCollection: loadCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, activeAlertCount,

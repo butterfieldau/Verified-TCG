@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -9,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { GradeBadge } from '@/components/ui/Badge';
@@ -46,8 +47,16 @@ const SET_PROGRESS = getSetProgress();
 
 export default function CollectionScreen() {
   const insets = useSafeAreaInsets();
-  const { collection, portfolio } = useApp();
+  const { collection, collectionLoading, refreshCollection, portfolio } = useApp();
   const [collectionTab, setCollectionTab] = useState<CollectionTab>('cards');
+
+  // Refresh collection every time this tab comes into focus so edits made
+  // elsewhere (other devices, other sessions) are surfaced without sign-out.
+  useFocusEffect(
+    useCallback(() => {
+      refreshCollection();
+    }, [refreshCollection]),
+  );
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
@@ -163,14 +172,20 @@ export default function CollectionScreen() {
       {/* ── CARDS / GRADED ── */}
       {(collectionTab === 'cards' || collectionTab === 'graded') && (
         <View>
-          {filteredCards.length === 0 && (
+          {collectionLoading && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={C.primary} size="large" />
+              <Text style={styles.loadingText}>Loading your collection…</Text>
+            </View>
+          )}
+          {!collectionLoading && filteredCards.length === 0 && (
             <EmptyState
               icon="layers"
               title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
               description={
                 collectionTab === 'graded'
                   ? 'Add graded cards to see them here'
-                  : 'Scan or add your first card to get started'
+                  : 'Scan your first card or search the database to start building your collection'
               }
               actionLabel="Add Card"
               onAction={() => router.push('/add-card')}
@@ -484,4 +499,15 @@ const styles = StyleSheet.create({
   setPct: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   progressBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
 });

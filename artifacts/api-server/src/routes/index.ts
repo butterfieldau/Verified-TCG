@@ -7,6 +7,7 @@ import catalogRouter from "./catalog";
 import certificationRouter from "./certification";
 import gradedPricesRouter from "./gradedPrices";
 import ebayAccountDeletionRouter from "./ebayAccountDeletion";
+import collectionRouter from "./collection";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(catalogRouter);
 router.use(certificationRouter);
 router.use(gradedPricesRouter);
 router.use(ebayAccountDeletionRouter);
+router.use(collectionRouter);
 
 export default router;
