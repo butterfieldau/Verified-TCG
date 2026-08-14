@@ -49,7 +49,7 @@ const MENU_ITEMS = [
   { icon: 'pie-chart', label: 'Portfolio', route: '/portfolio' },
   { icon: 'award', label: 'Pro Identity', route: '/pro-identity', proOnly: true },
   { icon: 'settings', label: 'Settings', route: '/settings' },
-  { icon: 'help-circle', label: 'Help & Support', route: null },
+  { icon: 'help-circle', label: 'Help & Support', route: '/help-support' },
 ];
 
 const PRO_BENEFITS_ITEMS = [

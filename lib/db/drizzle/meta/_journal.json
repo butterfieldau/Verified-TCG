@@ -15,6 +15,13 @@
       "when": 1786717620505,
       "tag": "0001_happy_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786720114904,
+      "tag": "0002_warm_scrambler",
+      "breakpoints": true
     }
   ]
 }

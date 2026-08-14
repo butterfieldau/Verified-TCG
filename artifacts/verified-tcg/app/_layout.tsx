@@ -5,6 +5,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppProvider } from '@/context/AppContext';
+import { SettingsProvider } from '@/context/SettingsContext';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -60,6 +61,13 @@ function RootLayoutNav() {
       />
       <Stack.Screen name="verified-drops" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="pro-perks" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="appearance" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="currency-select" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="help-support" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="contact-support" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="terms" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="about" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }
@@ -88,9 +96,11 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <AppProvider>
-                <RootLayoutNav />
-              </AppProvider>
+              <SettingsProvider>
+                <AppProvider>
+                  <RootLayoutNav />
+                </AppProvider>
+              </SettingsProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>
