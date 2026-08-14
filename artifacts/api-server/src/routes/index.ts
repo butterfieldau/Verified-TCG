@@ -14,6 +14,8 @@ import scanRouter from "./scan";
 import priceHistoryRouter from "./priceHistory";
 import eventsRouter from "./events";
 import notificationsRouter from "./notifications";
+import collectorsRouter from "./collectors";
+import communityRouter from "./community";
 
 const router: IRouter = Router();
 
@@ -32,5 +34,7 @@ router.use(scanRouter);
 router.use(priceHistoryRouter);
 router.use(eventsRouter);
 router.use(notificationsRouter);
+router.use(collectorsRouter);
+router.use(communityRouter);
 
 export default router;

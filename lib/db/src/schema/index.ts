@@ -9,3 +9,5 @@ export * from "./wishlist";
 export * from "./events";
 export * from "./notifications";
 export * from "./push-tokens";
+export * from "./follows";
+export * from "./posts";
