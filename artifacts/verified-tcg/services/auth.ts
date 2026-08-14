@@ -1,10 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
+import { Alert } from 'react-native';
 
-const SUPABASE_URL = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+// ── Config ───────────────────────────────────────────────────────────────────
+
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 const SESSION_KEY = '@verified_tcg/auth_session';
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 export interface AuthSession {
   access_token: string;
@@ -18,139 +20,108 @@ export interface AuthSession {
   };
 }
 
+/** Kept for AppContext compatibility — social login is not yet supported. */
 export type OAuthProvider = 'google' | 'apple' | 'twitter';
 
-function assertConfigured(): void {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    throw new Error('Authentication is not configured for this build.');
-  }
-}
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
-async function request(path: string, init: RequestInit): Promise<Response> {
-  assertConfigured();
-  return fetch(`${SUPABASE_URL}${path}`, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
-  });
+async function request(
+  path: string,
+  init: RequestInit & { accessToken?: string },
+): Promise<Response> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (init.accessToken) headers['Authorization'] = `Bearer ${init.accessToken}`;
+  return fetch(`${API_BASE}${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) } });
 }
 
 async function parseError(response: Response): Promise<never> {
-  const body = await response.json().catch(() => ({})) as { msg?: string; message?: string; error_description?: string };
-  throw new Error(body.error_description ?? body.msg ?? body.message ?? `Authentication failed (${response.status})`);
-}
-
-function normaliseEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-function getRedirectUrl(): string {
-  return Linking.createURL('auth/callback', { scheme: 'verified-tcg' });
-}
-
-function parseSessionFromUrl(url: string): AuthSession | null {
-  const parsed = Linking.parse(url);
-  const values = new URLSearchParams([
-    ...Object.entries(parsed.queryParams ?? {}).map(([key, value]) => [key, String(value)]),
-  ]);
-  const hash = url.split('#')[1];
-  if (hash) {
-    for (const [key, value] of new URLSearchParams(hash)) values.set(key, value);
-  }
-
-  const accessToken = values.get('access_token');
-  const refreshToken = values.get('refresh_token');
-  if (!accessToken || !refreshToken) return null;
-  return {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expires_at: Number(values.get('expires_at') ?? 0) || undefined,
-    user: { id: '' },
+  const body = await response.json().catch(() => ({})) as {
+    msg?: string;
+    message?: string;
+    error_description?: string;
   };
+  throw new Error(
+    body.error_description ?? body.message ?? body.msg ?? `Authentication failed (${response.status})`,
+  );
 }
 
 async function persist(session: AuthSession | null): Promise<void> {
   if (session) {
-    const expiresAt = session.expires_at ?? (
-      session.expires_in ? Math.floor(Date.now() / 1000) + session.expires_in : undefined
-    );
+    const expiresAt =
+      session.expires_at ??
+      (session.expires_in ? Math.floor(Date.now() / 1000) + session.expires_in : undefined);
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({ ...session, expires_at: expiresAt }));
+  } else {
+    await AsyncStorage.removeItem(SESSION_KEY);
   }
-  else await AsyncStorage.removeItem(SESSION_KEY);
 }
 
+// ── Public API ───────────────────────────────────────────────────────────────
+
 export async function signInWithPassword(email: string, password: string): Promise<AuthSession> {
-  const response = await request('/auth/v1/token?grant_type=password', {
+  const response = await request('/api/auth/signin', {
     method: 'POST',
-    body: JSON.stringify({ email: normaliseEmail(email), password }),
+    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   });
   if (!response.ok) return parseError(response);
-  const session = await response.json() as AuthSession;
+  const session = (await response.json()) as AuthSession;
   await persist(session);
   return session;
 }
 
-export async function signUp(email: string, password: string, displayName: string): Promise<AuthSession | null> {
-  const response = await request('/auth/v1/signup', {
+export async function signUp(
+  email: string,
+  password: string,
+  displayName: string,
+): Promise<AuthSession | null> {
+  const response = await request('/api/auth/signup', {
     method: 'POST',
     body: JSON.stringify({
-      email: normaliseEmail(email),
+      email: email.trim().toLowerCase(),
       password,
-      data: { display_name: displayName.trim() },
+      display_name: displayName.trim(),
     }),
   });
   if (!response.ok) return parseError(response);
-  const result = await response.json() as AuthSession;
+  const result = (await response.json()) as AuthSession;
   if (result.access_token) await persist(result);
   return result.access_token ? result : null;
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
-  const response = await request('/auth/v1/recover', {
+  // Password reset via email is not yet supported — the server returns 200
+  // with a friendly message regardless of whether the account exists.
+  await request('/api/auth/recover', {
     method: 'POST',
-    body: JSON.stringify({
-      email: normaliseEmail(email),
-      redirect_to: getRedirectUrl(),
-    }),
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
   });
-  if (!response.ok) return parseError(response);
 }
 
 export async function updateUserMetadata(data: Record<string, string>): Promise<void> {
   const session = await restoreSession();
   if (!session) throw new Error('You need an account to edit your profile.');
-  const response = await request('/auth/v1/user', {
+
+  const response = await request('/api/auth/user', {
     method: 'PUT',
-    headers: { Authorization: `Bearer ${session.access_token}` },
+    accessToken: session.access_token,
     body: JSON.stringify({ data: { ...(session.user.user_metadata ?? {}), ...data } }),
   });
   if (!response.ok) return parseError(response);
-  session.user = await response.json() as AuthSession['user'];
+  session.user = (await response.json()) as AuthSession['user'];
   await persist(session);
 }
 
-export async function signInWithOAuth(provider: OAuthProvider): Promise<AuthSession | null> {
-  assertConfigured();
-  const redirectTo = getRedirectUrl();
-  const authorizeUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`;
-  const result = await WebBrowser.openAuthSessionAsync(authorizeUrl, redirectTo);
-  if (result.type !== 'success') return null;
-
-  const session = parseSessionFromUrl(result.url);
-  if (!session) {
-    throw new Error('Supabase did not return a complete sign-in session. Check the provider redirect settings.');
-  }
-  const userResponse = await request('/auth/v1/user', {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
-  if (!userResponse.ok) return parseError(userResponse);
-  session.user = await userResponse.json() as AuthSession['user'];
-  await persist(session);
-  return session;
+/**
+ * Social login is not yet supported on this backend.
+ * Shows a friendly alert and returns null so the app stays on the sign-in screen.
+ */
+export async function signInWithOAuth(_provider: OAuthProvider): Promise<AuthSession | null> {
+  Alert.alert(
+    'Coming Soon',
+    'Social sign-in will be available in a future update. Please sign in with your email and password.',
+    [{ text: 'OK' }],
+  );
+  return null;
 }
 
 export async function restoreSession(): Promise<AuthSession | null> {
@@ -168,9 +139,9 @@ export async function restoreSession(): Promise<AuthSession | null> {
   const expiresAt = session.expires_at ?? 0;
   if (expiresAt > Math.floor(Date.now() / 1000) + 60) return session;
 
-  // Token expired — try refresh
+  // Token approaching expiry — attempt refresh
   try {
-    const response = await request('/auth/v1/token?grant_type=refresh_token', {
+    const response = await request('/api/auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refresh_token: session.refresh_token }),
     });
@@ -178,11 +149,11 @@ export async function restoreSession(): Promise<AuthSession | null> {
       await persist(null);
       return null;
     }
-    const refreshed = await response.json() as AuthSession;
+    const refreshed = (await response.json()) as AuthSession;
     await persist(refreshed);
     return refreshed;
   } catch {
-    // Network error — return existing session so the user stays logged in offline
+    // Network unavailable — return the stale session so the user stays logged in offline
     return session;
   }
 }
@@ -192,9 +163,9 @@ export async function signOut(): Promise<void> {
     const raw = await AsyncStorage.getItem(SESSION_KEY);
     if (raw) {
       const session = JSON.parse(raw) as AuthSession;
-      await request('/auth/v1/logout', {
+      await request('/api/auth/signout', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        accessToken: session.access_token,
       }).catch(() => {});
     }
   } catch {}
