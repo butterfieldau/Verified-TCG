@@ -2,9 +2,11 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
+import { Resend } from "resend";
 import { db } from "@workspace/db";
-import { usersTable, userSessionsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { usersTable, userSessionsTable, passwordResetTokensTable } from "@workspace/db";
+import { eq, and, gt, sql } from "drizzle-orm";
+import { clearUserWishlists } from "./wishlist.js";
 
 const router = Router();
 
@@ -35,7 +37,7 @@ function refreshTokenExpiry(): Date {
 }
 
 function sessionResponse(
-  user: { id: string; email: string; displayName: string; username: string; bio: string; location: string },
+  user: { id: string; email: string; displayName: string; username: string; bio: string; location: string; subscriptionTier: string; isFoundingMember: boolean },
   accessToken: string,
   refreshToken: string,
 ) {
@@ -53,6 +55,8 @@ function sessionResponse(
         username: user.username,
         bio: user.bio,
         location: user.location,
+        subscription_tier: user.subscriptionTier,
+        is_founding_member: user.isFoundingMember,
       },
     },
   };
@@ -231,6 +235,8 @@ router.get("/auth/user", async (req, res) => {
       username: user.username,
       bio: user.bio,
       location: user.location,
+      subscription_tier: user.subscriptionTier,
+      is_founding_member: user.isFoundingMember,
     },
   });
 });
@@ -289,18 +295,255 @@ router.put("/auth/user", async (req, res) => {
       username: updated.username,
       bio: updated.bio,
       location: updated.location,
+      subscription_tier: updated.subscriptionTier,
+      is_founding_member: updated.isFoundingMember,
     },
   });
 });
 
-// ── POST /api/auth/recover ───────────────────────────────────────────────────
-// Password reset via email is not yet supported (no mail service configured).
-// Returns 200 so the UI shows a friendly message rather than crashing.
+// ── Recovery rate limiting ────────────────────────────────────────────────────
+// Protects /api/auth/recover from abuse: limits both per-IP and per-email so
+// an attacker cannot flood a target's inbox or continuously invalidate tokens.
 
-router.post("/auth/recover", (_req, res) => {
-  return res.json({
-    message: "If an account with that email exists, a reset link will be sent shortly.",
+const RECOVER_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const RECOVER_MAX_PER_IP = 5;                   // per IP per window
+const RECOVER_MAX_PER_EMAIL = 3;                // per normalised email per window
+
+type RateBucket = { count: number; windowStart: number };
+const recoverIpBuckets = new Map<string, RateBucket>();
+const recoverEmailBuckets = new Map<string, RateBucket>();
+
+function checkRecoverRateLimit(key: string, store: Map<string, RateBucket>, max: number): boolean {
+  const now = Date.now();
+  const bucket = store.get(key);
+  if (!bucket || now - bucket.windowStart > RECOVER_RATE_WINDOW_MS) {
+    store.set(key, { count: 1, windowStart: now });
+    return false; // not limited
+  }
+  if (bucket.count >= max) return true; // limited
+  bucket.count++;
+  return false;
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - RECOVER_RATE_WINDOW_MS;
+  for (const [k, b] of recoverIpBuckets) if (b.windowStart < cutoff) recoverIpBuckets.delete(k);
+  for (const [k, b] of recoverEmailBuckets) if (b.windowStart < cutoff) recoverEmailBuckets.delete(k);
+}, RECOVER_RATE_WINDOW_MS);
+
+// ── Email helper ──────────────────────────────────────────────────────────────
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_EMAIL = process.env.RESET_FROM_EMAIL ?? "noreply@verifiedtcg.com";
+const APP_SCHEME = "verified-tcg";
+const RESET_TOKEN_TTL_MINUTES = 60;
+
+function getResendClient(): Resend | null {
+  if (!RESEND_API_KEY) return null;
+  return new Resend(RESEND_API_KEY);
+}
+
+async function sendPasswordResetEmail(toEmail: string, plainToken: string): Promise<void> {
+  const resend = getResendClient();
+  const deepLink = `${APP_SCHEME}://reset-password?token=${plainToken}`;
+
+  if (!resend) {
+    // No mail service — log that email cannot be sent but never log the token
+    console.warn("[password-reset] RESEND_API_KEY not set; reset email not delivered.");
+    return;
+  }
+
+  const { error } = await resend.emails.send({
+    from: FROM_EMAIL,
+    to: toEmail,
+    subject: "Reset your Verified TCG password",
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #1a1a2e;">Reset your password</h2>
+        <p>We received a request to reset the password for your Verified TCG account.</p>
+        <p>Tap the button below to choose a new password. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.</p>
+        <a href="${deepLink}"
+           style="display:inline-block;padding:14px 28px;background:#6c63ff;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">
+          Reset Password
+        </a>
+        <p style="color:#888;font-size:13px;">
+          If the button doesn't work, open your Verified TCG app and use this link:<br>
+          <code>${deepLink}</code>
+        </p>
+        <p style="color:#888;font-size:13px;">
+          If you didn't request a password reset, you can safely ignore this email.
+        </p>
+      </div>
+    `,
   });
+
+  if (error) {
+    // Log the error detail (no tokens in scope here) and re-throw for the caller
+    console.error("[password-reset] Resend delivery error:", error.name, error.message);
+    throw new Error("Failed to send reset email.");
+  }
+}
+
+// ── POST /api/auth/recover ───────────────────────────────────────────────────
+
+router.post("/auth/recover", async (req, res) => {
+  const { email } = req.body as { email?: string };
+  if (!email) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  const normEmail = email.trim().toLowerCase();
+
+  // Always respond with the same message to avoid user enumeration
+  const genericOk = () =>
+    res.json({ message: "If an account with that email exists, a reset link will be sent shortly." });
+
+  // Rate limit by IP then by normalised email — return generic 200 so the
+  // response is indistinguishable from a legitimate request (no enumeration).
+  const clientIp = (req.ip ?? req.socket.remoteAddress ?? "unknown");
+  if (
+    checkRecoverRateLimit(clientIp, recoverIpBuckets, RECOVER_MAX_PER_IP) ||
+    checkRecoverRateLimit(normEmail, recoverEmailBuckets, RECOVER_MAX_PER_EMAIL)
+  ) {
+    return genericOk();
+  }
+
+  const [user] = await db
+    .select({ id: usersTable.id, email: usersTable.email })
+    .from(usersTable)
+    .where(eq(usersTable.email, normEmail))
+    .limit(1);
+
+  if (!user) return genericOk();
+
+  // Invalidate any existing unused tokens for this user
+  await db
+    .delete(passwordResetTokensTable)
+    .where(eq(passwordResetTokensTable.userId, user.id));
+
+  // Generate a new token
+  const plainToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(plainToken).digest("hex");
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
+
+  await db.insert(passwordResetTokensTable).values({
+    userId: user.id,
+    tokenHash,
+    expiresAt,
+  });
+
+  try {
+    await sendPasswordResetEmail(user.email, plainToken);
+  } catch (err) {
+    // Log internally but never expose whether delivery succeeded — prevents enumeration
+    console.error("[password-reset] email delivery failed:", (err as Error).message);
+  }
+
+  // Always return the generic message regardless of delivery outcome
+  return genericOk();
+});
+
+// ── POST /api/auth/reset-password ────────────────────────────────────────────
+
+router.post("/auth/reset-password", async (req, res) => {
+  const { token, new_password: newPassword } = req.body as {
+    token?: string;
+    new_password?: string;
+  };
+
+  if (!token || !newPassword) {
+    return res.status(400).json({ message: "token and new_password are required" });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters" });
+  }
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const now = new Date();
+
+  // Hash the password before entering the transaction (bcrypt is slow; avoid holding a connection)
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+
+  // Atomically consume the token: the conditional UPDATE is the gating check.
+  // If a concurrent request races to use the same token, only one UPDATE will
+  // affect a row — the other will see rowCount=0 and be rejected.
+  const consumed = await db.transaction(async (tx) => {
+    const result = await tx.execute(sql`
+      UPDATE password_reset_tokens
+      SET used = true
+      WHERE token_hash = ${tokenHash}
+        AND used = false
+        AND expires_at > NOW()
+      RETURNING user_id
+    `);
+
+    if (result.rowCount === 0) return null;
+
+    const userId = (result.rows[0] as { user_id: string }).user_id;
+
+    await tx
+      .update(usersTable)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(usersTable.id, userId));
+
+    await tx
+      .delete(userSessionsTable)
+      .where(eq(userSessionsTable.userId, userId));
+
+    return userId;
+  });
+
+  if (!consumed) {
+    return res.status(400).json({ message: "This reset link is invalid or has expired. Please request a new one." });
+  }
+
+  return res.json({ message: "Password updated successfully." });
+});
+
+// ── DELETE /api/auth/account ─────────────────────────────────────────────────
+
+router.delete("/auth/account", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Authorization header required" });
+  }
+
+  let payload: { sub: string };
+  try {
+    payload = jwt.verify(authHeader.slice(7), JWT_SECRET as string) as { sub: string };
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token. Please sign in again." });
+  }
+
+  const { password } = req.body as { password?: string };
+  if (!password) {
+    return res.status(400).json({ message: "password is required to confirm account deletion" });
+  }
+
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, payload.sub))
+    .limit(1);
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ message: "Incorrect password. Please try again." });
+  }
+
+  // Clear in-memory wishlist data and block any still-valid access tokens
+  // for this user before the DB row is removed, so no window exists where
+  // a JWT can access data belonging to a just-deleted account.
+  clearUserWishlists(user.id);
+
+  // Delete user row — sessions and password reset tokens cascade via FK constraints
+  await db.delete(usersTable).where(eq(usersTable.id, user.id));
+
+  return res.status(204).send();
 });
 
 export default router;

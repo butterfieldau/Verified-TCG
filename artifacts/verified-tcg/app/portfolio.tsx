@@ -12,7 +12,9 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import { getItemCurrentValue } from '@/services/collection';
+import { formatPrice } from '@/utils/currency';
 import colors from '@/constants/colors';
 import type { CollectionItem, TCGId } from '@/types';
 
@@ -92,7 +94,7 @@ function AllocationBar({ data }: { data: AllocRow[] }) {
   );
 }
 
-function AllocationLegend({ data }: { data: AllocRow[] }) {
+function AllocationLegend({ data, currency }: { data: AllocRow[]; currency: import('@/services/settingsStore').CurrencyCode }) {
   return (
     <View style={styles.legend}>
       {data.map(d => (
@@ -100,7 +102,7 @@ function AllocationLegend({ data }: { data: AllocRow[] }) {
           <View style={[styles.legendDot, { backgroundColor: d.color }]} />
           <Text style={styles.legendLabel}>{d.label}</Text>
           <Text style={styles.legendPct}>{d.pct}%</Text>
-          <Text style={styles.legendValue}>${d.value.toLocaleString('en-AU')}</Text>
+          <Text style={styles.legendValue}>{formatPrice(d.value, currency)}</Text>
         </View>
       ))}
     </View>
@@ -129,6 +131,7 @@ function formatLastUpdated(date: Date): string {
 export default function PortfolioScreen() {
   const insets = useSafeAreaInsets();
   const { portfolio, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated } = useApp();
+  const { currency } = useSettings();
   const [allocTab, setAllocTab] = useState<AllocTab>('tcg');
 
   const onRefresh = useCallback(async () => {
@@ -253,7 +256,7 @@ export default function PortfolioScreen() {
       <View style={[styles.heroCard, { backgroundColor: C.card }]}>
         <Text style={styles.heroLabel}>TOTAL VALUE</Text>
         <Text style={styles.heroValue}>
-          ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+          {formatPrice(portfolio.totalValue, currency)}
         </Text>
         <View style={styles.heroRow}>
           <View style={[styles.gainPill, { backgroundColor: isPositive ? `${C.positive}22` : `${C.negative}22` }]}>
@@ -267,7 +270,7 @@ export default function PortfolioScreen() {
             </Text>
           </View>
           <Text style={[styles.gainAbs, { color: isPositive ? C.positive : C.negative }]}>
-            {isPositive ? '+' : ''}${Math.abs(portfolio.totalGain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+            {isPositive ? '+' : ''}{formatPrice(Math.abs(portfolio.totalGain), currency)}
           </Text>
         </View>
         {pricesLastUpdated && (
@@ -281,13 +284,13 @@ export default function PortfolioScreen() {
       <View style={styles.statsGrid}>
         <View style={[styles.statCard, { backgroundColor: C.card }]}>
           <Text style={styles.statLabel}>INVESTED</Text>
-          <Text style={styles.statVal}>${portfolio.totalCost.toLocaleString('en-AU', { minimumFractionDigits: 0 })}</Text>
+          <Text style={styles.statVal}>{formatPrice(portfolio.totalCost, currency)}</Text>
           <Text style={styles.statSub}>Total cost basis</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: C.card }]}>
           <Text style={styles.statLabel}>PROFIT / LOSS</Text>
           <Text style={[styles.statVal, { color: isPositive ? C.positive : C.negative }]}>
-            {isPositive ? '+' : ''}${portfolio.totalGain.toLocaleString('en-AU', { minimumFractionDigits: 0 })}
+            {isPositive ? '+' : ''}{formatPrice(Math.abs(portfolio.totalGain), currency)}
           </Text>
           <Text style={styles.statSub}>Unrealised gain</Text>
         </View>
@@ -315,11 +318,11 @@ export default function PortfolioScreen() {
             </View>
             <View style={styles.performerInfo}>
               <Text style={styles.performerName} numberOfLines={1}>{p.name}</Text>
-              <Text style={styles.performerValue}>${p.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
+              <Text style={styles.performerValue}>{formatPrice(p.value, currency)}</Text>
             </View>
             <View style={styles.performerRight}>
               <Text style={[styles.performerGain, { color: C.positive }]}>+{p.gain.toFixed(1)}%</Text>
-              <Text style={[styles.performerAbs, { color: C.positive }]}>+${p.change.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
+              <Text style={[styles.performerAbs, { color: C.positive }]}>+{formatPrice(p.change, currency)}</Text>
             </View>
           </View>
         ))}
@@ -352,7 +355,7 @@ export default function PortfolioScreen() {
         ) : (
           <View style={[styles.allocCard, { backgroundColor: C.card }]}>
             <AllocationBar data={allocData} />
-            <AllocationLegend data={allocData} />
+            <AllocationLegend data={allocData} currency={currency} />
           </View>
         )}
       </View>
@@ -369,7 +372,7 @@ export default function PortfolioScreen() {
               <Text style={styles.holdingGrade}>{h.grade}</Text>
             </View>
             <View style={styles.holdingRight}>
-              <Text style={styles.holdingValue}>${h.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}</Text>
+              <Text style={styles.holdingValue}>{formatPrice(h.value, currency)}</Text>
               <Text style={styles.holdingPct}>{h.pct.toFixed(1)}% of portfolio</Text>
             </View>
           </View>

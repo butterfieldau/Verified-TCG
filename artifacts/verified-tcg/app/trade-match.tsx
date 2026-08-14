@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -17,23 +18,95 @@ import type { TradeMatch, AlternativeCombination } from '@/services/matching';
 import { useApp } from '@/context/AppContext';
 import { canUseTradeMatchPlus } from '@/services/subscription';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
+import { fetchTradeMatches, type TradeMatchResult } from '@/services/eventsApi';
 
 const C = colors.dark;
 const FREE_MATCH_LIMIT = 3;
+
+/** Convert a real event trade match result to the TradeMatch UI shape. */
+function toTradeMatch(r: TradeMatchResult, idx: number): TradeMatch {
+  const theyHave = r.theyHave[0];
+  const youHave = r.youHave[0];
+  const initials = r.displayName.substring(0, 2).toUpperCase();
+  const avatarColors = ['#3B82F6', '#8B5CF6', '#22C55E', '#F59E0B', '#E63946'];
+  const avatarColor = avatarColors[idx % avatarColors.length];
+
+  return {
+    id: r.participantUserId,
+    matchPercent: r.matchScore,
+    collector: {
+      username: r.username,
+      displayName: r.displayName,
+      initials,
+      avatarColor,
+      isVerified: false,
+      location: 'At This Event',
+      rating: 0,
+      tradesCount: 0,
+    },
+    youWant: theyHave
+      ? { name: theyHave.name, set: theyHave.set, grade: theyHave.grade, value: 0, color: '#22C55E' }
+      : { name: '—', set: '', grade: '', value: 0, color: '#22C55E' },
+    theyWant: youHave
+      ? { name: youHave.name, set: youHave.set, grade: youHave.grade, value: 0, color: C.primary }
+      : { name: '—', set: '', grade: '', value: 0, color: C.primary },
+    suggestedCashBalance: 0,
+    smartSuggestion: `${r.displayName} has ${r.theyHave.length} card${r.theyHave.length !== 1 ? 's' : ''} you want and wants ${r.youHave.length} card${r.youHave.length !== 1 ? 's' : ''} from your collection.`,
+    alternativeCombinations: [],
+  };
+}
 
 export default function TradeMatchScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const { watchlist, subscriptionTier } = useApp();
+  const { watchlist, subscriptionTier, currentEventId } = useApp();
   const isPro = canUseTradeMatchPlus(subscriptionTier);
 
-  // Show up to one match per wishlist item (min 1 so demo is never blank)
-  const allMatches = MOCK_TRADE_MATCHES.slice(0, Math.max(1, watchlist.length));
+  // Real event matches when in an event; null means "not loaded yet"
+  const [eventMatches, setEventMatches] = useState<TradeMatch[] | null>(null);
+  // Raw API results preserved so navigation can pass real card arrays to event-profile
+  const [eventMatchesRaw, setEventMatchesRaw] = useState<TradeMatchResult[] | null>(null);
+  const [eventMatchCount, setEventMatchCount] = useState(0);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [isProRequired, setIsProRequired] = useState(false);
+
+  const loadEventMatches = useCallback(async (eventId: string) => {
+    setMatchesLoading(true);
+    try {
+      const result = await fetchTradeMatches(eventId);
+      setEventMatchCount(result.matchCount);
+      setIsProRequired(result.isProRequired);
+      setEventMatchesRaw(result.matches);
+      setEventMatches(result.matches.map((m, i) => toTradeMatch(m, i)));
+    } catch {
+      setEventMatches(null);
+      setEventMatchesRaw(null);
+    } finally {
+      setMatchesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentEventId) {
+      loadEventMatches(currentEventId);
+    } else {
+      setEventMatches(null);
+      setEventMatchCount(0);
+    }
+  }, [currentEventId, loadEventMatches]);
+
+  // Use real event matches when available; fall back to mock for non-event context
+  const usingRealMatches = currentEventId !== null && eventMatches !== null;
+  const baseMatches = usingRealMatches
+    ? eventMatches
+    : MOCK_TRADE_MATCHES.slice(0, Math.max(1, watchlist.length));
+
+  const allMatches = baseMatches;
   // Free users are capped at FREE_MATCH_LIMIT; Pro sees all
   const visibleMatches = isPro ? allMatches : allMatches.slice(0, FREE_MATCH_LIMIT);
-  const hasMoreMatches = !isPro && allMatches.length > FREE_MATCH_LIMIT;
+  const hasMoreMatches = !isPro && (usingRealMatches ? eventMatchCount : allMatches.length) > FREE_MATCH_LIMIT;
 
   const selectedMatch = allMatches.find(m => m.id === selectedId);
 
@@ -104,21 +177,80 @@ export default function TradeMatchScreen() {
         </Pressable>
       )}
 
+      {/* Event mode banner */}
+      {currentEventId && (
+        <Pressable
+          onPress={() => router.push('/event-mode' as any)}
+          style={[styles.eventBanner, { backgroundColor: '#22C55E18', borderColor: '#22C55E33' }]}
+        >
+          <View style={styles.eventBannerDot} />
+          <Text style={[styles.eventBannerText, { color: '#22C55E' }]}>
+            {matchesLoading
+              ? 'Loading live event matches…'
+              : isProRequired && !isPro
+              ? `${eventMatchCount} live matches — upgrade to Pro to see them`
+              : `Showing ${allMatches.length} live event match${allMatches.length !== 1 ? 'es' : ''}`}
+          </Text>
+          <Feather name="chevron-right" size={13} color="#22C55E" />
+        </Pressable>
+      )}
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {visibleMatches.map((match, idx) =>
+        {matchesLoading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={C.primary} />
+            <Text style={[styles.loadingText, { color: C.mutedForeground }]}>Finding live event matches…</Text>
+          </View>
+        ) : null}
+        {!matchesLoading && visibleMatches.map((match, idx) =>
           isPro ? (
             <ProMatchCard
               key={match.id}
               match={match}
               rank={idx + 1}
-              onPress={() => setSelectedId(match.id)}
+              onPress={() => {
+                // For real event matches, navigate to event profile with actual card arrays
+                if (usingRealMatches) {
+                  const rawMatch = eventMatchesRaw?.find(r => r.participantUserId === match.id);
+                  router.push({
+                    pathname: '/event/event-profile' as any,
+                    params: {
+                      userId: match.id,
+                      displayName: match.collector.displayName,
+                      username: match.collector.username,
+                      matchScore: String(match.matchPercent),
+                      theyHave: JSON.stringify(rawMatch?.theyHave ?? []),
+                      youHave: JSON.stringify(rawMatch?.youHave ?? []),
+                    },
+                  });
+                  return;
+                }
+                setSelectedId(match.id);
+              }}
             />
           ) : (
             <FreeMatchCard
               key={match.id}
               match={match}
               rank={idx + 1}
-              onPress={() => setSelectedId(match.id)}
+              onPress={() => {
+                if (usingRealMatches) {
+                  const rawMatch = eventMatchesRaw?.find(r => r.participantUserId === match.id);
+                  router.push({
+                    pathname: '/event/event-profile' as any,
+                    params: {
+                      userId: match.id,
+                      displayName: match.collector.displayName,
+                      username: match.collector.username,
+                      matchScore: String(match.matchPercent),
+                      theyHave: JSON.stringify(rawMatch?.theyHave ?? []),
+                      youHave: JSON.stringify(rawMatch?.youHave ?? []),
+                    },
+                  });
+                  return;
+                }
+                setSelectedId(match.id);
+              }}
             />
           )
         )}
@@ -772,6 +904,17 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, padding: 14,
   },
   emptyWishlistText: { flex: 1, fontSize: 13, fontFamily: 'Inter_600SemiBold', lineHeight: 18 },
+
+  eventBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 20, marginBottom: 8,
+    borderRadius: 12, borderWidth: 1, padding: 12,
+  },
+  eventBannerDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E' },
+  eventBannerText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+
+  loadingWrap: { alignItems: 'center', gap: 10, paddingVertical: 32 },
+  loadingText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
 
   // Detail view
   scoreCard: { borderRadius: 16, padding: 20, borderWidth: 1, alignItems: 'center', gap: 8 },

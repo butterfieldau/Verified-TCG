@@ -1,0 +1,2275 @@
+You are continuing development of **Verified TCG**.
+
+The current app design and feature direction already exists. Do **not** redesign the entire app from scratch and do not remove existing features unless they are clearly broken, duplicated or unnecessary.
+
+Your task is to now turn Verified TCG from a prototype/demo into a **fully functional, production-ready consumer app**.
+
+The most important rule is:
+
+> **If a user can see it, tap it, select it, edit it, search it, save it, delete it, share it or interact with it — it must actually work.**
+
+There must be no fake buttons, dead links, placeholder actions, unfinished screens, demo-only functionality or UI elements that appear interactive but do nothing.
+
+---
+
+# 1. PRIMARY GOAL
+
+Make Verified TCG feel like a polished app someone could download from the App Store or Google Play today.
+
+A completely new user should be able to:
+
+* Download/open the app
+* Understand what Verified TCG does
+* Create an account
+* Verify/login to their account
+* Complete onboarding
+* Set up their collector profile
+* Search cards
+* Scan cards
+* View card information
+* View pricing
+* Add cards to their collection
+* Add cards to their wishlist
+* Mark cards For Trade
+* Mark cards For Sale
+* Edit/remove cards
+* View their portfolio
+* Use community/social features
+* Access Event Mode where eligible
+* Access their account
+* Change settings
+* Upgrade to Pro
+* Restore purchases
+* Contact support
+* Read legal/privacy information
+* Log out
+* Delete their account and associated personal data
+
+All navigation and states must make sense.
+
+---
+
+# 2. USER EXPERIENCE MUST BE EXTREMELY SIMPLE
+
+The target audience includes experienced collectors and complete beginners.
+
+Do not assume users understand technical terminology.
+
+The interface should feel:
+
+* Fast
+* Minimal
+* Modern
+* Easy to understand
+* Clean
+* Premium without being complicated
+* Consistent across every screen
+* Similar in usability quality to major consumer apps
+
+Users should rarely have to ask:
+
+> "Where do I go to do this?"
+
+Every important action should be obvious.
+
+Use clear titles, icons, labels, confirmation states and useful empty states.
+
+Avoid overcrowding screens.
+
+Important actions should generally be reachable within 1–3 taps.
+
+---
+
+# 3. AUTHENTICATION — FULLY IMPLEMENT THIS
+
+Create proper account authentication.
+
+Support:
+
+## Sign Up
+
+Users must be able to create an account using:
+
+* Email
+* Password
+
+Structure the system so Apple Sign In and Google Sign In can also be supported properly.
+
+Registration should include:
+
+* First name/display name
+* Email address
+* Password
+* Confirm password
+* Acceptance of Terms of Service
+* Acceptance of Privacy Policy
+
+Validate all fields properly.
+
+Do not allow duplicate email addresses.
+
+Use useful human-readable errors.
+
+Example:
+
+Instead of:
+
+"Authentication Error 409"
+
+Show:
+
+"An account already exists with this email address."
+
+---
+
+# 4. LOGIN
+
+Users must be able to:
+
+* Log in
+* Log out
+* Stay logged in securely
+* Reset forgotten password
+* Change password
+* Verify email if verification is enabled
+
+Add:
+
+**Forgot Password?**
+
+The flow should send/reset properly and then return the user to login.
+
+---
+
+# 5. ONBOARDING
+
+New users should receive a short onboarding experience.
+
+Do not make onboarding long.
+
+Example onboarding flow:
+
+### Welcome to Verified TCG
+
+Track your collection, understand what your cards are worth and connect with collectors.
+
+### Choose Your Games
+
+Allow users to choose what they collect.
+
+Examples:
+
+* Pokémon
+* One Piece
+* Magic: The Gathering
+* Yu-Gi-Oh!
+* Lorcana
+* Dragon Ball
+* Sports Cards
+* Other supported TCGs
+
+Allow multiple selections.
+
+### Your Collection
+
+Explain:
+
+* Collection
+* Wishlist
+* For Trade
+* For Sale
+
+### Card Scanner
+
+Explain that users can scan cards rather than manually search.
+
+### Event Mode
+
+Explain:
+
+"Find collectors nearby who have cards you want — and see what they want from you."
+
+Make Event Mode clearly identifiable as a Pro feature where applicable.
+
+### Finish
+
+Take them directly to the Home dashboard.
+
+Users must be able to skip onboarding.
+
+Do not show onboarding again after completion unless manually restarted through settings/help.
+
+---
+
+# 6. PROFILE SYSTEM
+
+Every registered user needs a collector profile.
+
+Profile should support:
+
+* Profile photo/avatar
+* Display name
+* Username
+* Bio
+* Location
+* Favourite TCG
+* Collector since
+* Public/private profile
+* Show collection toggle
+* Show wishlist toggle
+* Show For Trade toggle
+* Show For Sale toggle
+
+Username must be unique.
+
+Example:
+
+@omarcollects
+
+Users should be able to preview their public profile.
+
+---
+
+# 7. HOME DASHBOARD
+
+The Home screen needs to immediately show useful information.
+
+Possible sections:
+
+## Portfolio Value
+
+Show:
+
+Current Collection Value
+
+Example:
+
+**$18,420 AUD**
+
+Then:
+
+Today
+7 Days
+30 Days
+All Time
+
+If historical data exists.
+
+Show movement:
+
++$410
++2.3%
+
+Do not display made-up pricing.
+
+If data has not loaded or doesn't exist, show an appropriate state instead.
+
+---
+
+## Collection Overview
+
+Show:
+
+* Total Cards
+* Raw Cards
+* Graded Cards
+* Sets
+* Estimated Value
+
+---
+
+## Quick Actions
+
+Include:
+
+Scan Card
+
+Search Cards
+
+Add Card
+
+Wishlist
+
+Event Mode
+
+---
+
+## Recent Activity
+
+Examples:
+
+Added Charizard ex
+
+Pikachu increased 6.2%
+
+Added Umbreon to Wishlist
+
+---
+
+# 8. GLOBAL CARD SEARCH
+
+Search must genuinely work.
+
+Users should be able to search by:
+
+* Card name
+* Card number
+* Set
+* Pokémon/character
+* TCG
+* Year
+* Rarity
+
+Allow useful filters.
+
+Example:
+
+Pokémon
+Set: Team Rocket
+Rarity: Holo Rare
+Year: 2000
+
+Search results must display proper card images and useful information.
+
+---
+
+# 9. CARD DETAIL PAGE
+
+This is one of the most important screens.
+
+Every card should have a proper detail page.
+
+Display:
+
+* Card image
+* Card name
+* Set
+* Card number
+* Year
+* Rarity
+* TCG
+* Variant
+* Market value
+* Raw value
+* Graded values where available
+
+Possible grading companies:
+
+* PSA
+* TAG
+* BGS
+* CGC
+* SGC
+* Other supported companies
+
+Where population information exists, display it.
+
+Example:
+
+PSA 10
+Population 1,284
+
+TAG 10
+Population 82
+
+Do not fabricate population information.
+
+---
+
+# 10. PRICING PAGE
+
+Create a polished pricing experience.
+
+Where data is available display:
+
+Raw
+
+PSA 10
+
+PSA 9
+
+TAG 10
+
+BGS 10
+
+CGC 10
+
+etc.
+
+Allow users to switch between condition/grading options.
+
+Show historical charts where supported.
+
+Periods:
+
+7D
+
+30D
+
+90D
+
+1Y
+
+All
+
+Clearly display pricing source and last updated time where appropriate.
+
+---
+
+# 11. EBAY LISTINGS
+
+Allow a user to tap:
+
+**View Listings**
+
+This should take them to relevant external listings for that exact card.
+
+Do not create an in-app marketplace.
+
+Verified TCG should assist users in researching cards but should not initially process buyer/seller transactions.
+
+---
+
+# 12. COLLECTION
+
+The Collection section needs to be completely functional.
+
+Users must be able to:
+
+* Add card
+* Remove card
+* Edit card
+* Change quantity
+* Change condition
+* Change grading company
+* Add grade
+* Add purchase price
+* Add purchase date
+* Add notes
+* Add serial/certification number
+* Mark card For Trade
+* Mark card For Sale
+* Add to Wishlist
+
+A card can potentially exist across different statuses depending on user behaviour.
+
+Example:
+
+User owns 3 copies.
+
+1 Personal Collection
+
+1 For Trade
+
+1 For Sale
+
+Design the underlying data model to support this properly.
+
+---
+
+# 13. RAW CARD CONDITIONS
+
+Allow useful condition options such as:
+
+* Near Mint
+* Lightly Played
+* Moderately Played
+* Heavily Played
+* Damaged
+
+Use whichever terminology best matches the supported card ecosystem.
+
+---
+
+# 14. GRADED CARDS
+
+For graded cards allow:
+
+Grading company
+
+Grade
+
+Certification number
+
+Purchase price
+
+Purchase date
+
+Optional notes
+
+Examples:
+
+PSA 10
+
+TAG 10
+
+BGS 9.5
+
+CGC 10
+
+---
+
+# 15. WISHLIST
+
+Wishlist must function properly.
+
+Users should be able to:
+
+* Add cards
+* Remove cards
+* Select desired condition
+* Select desired grade
+* Set target price
+* Add notes
+
+This wishlist becomes important later for Trade Match.
+
+---
+
+# 16. FOR TRADE
+
+Create a proper For Trade area.
+
+Allow users to:
+
+* Add cards
+* Remove cards
+* Choose condition/grade
+* Add trade notes
+* Choose visibility
+
+Example:
+
+"Looking for Pikachu promos."
+
+---
+
+# 17. FOR SALE
+
+Allow users to mark owned cards as For Sale.
+
+Include:
+
+* Asking price
+* Condition
+* Grade
+* Notes
+* Visibility
+
+Verified TCG should NOT initially process payments.
+
+If another collector is interested, support safe contact/profile interaction without becoming a marketplace transaction provider.
+
+---
+
+# 18. CARD SCANNER
+
+Card scanning should feel like a major feature.
+
+Flow:
+
+Open scanner
+
+Camera opens
+
+User positions card
+
+App identifies possible card
+
+Show best match
+
+Allow user to confirm/correct
+
+Then choose:
+
+Add to Collection
+
+Wishlist
+
+For Trade
+
+For Sale
+
+View Card
+
+Do not automatically add something if confidence is low.
+
+Always allow manual correction.
+
+---
+
+# 19. SCANNING LIMITS
+
+Free plan:
+
+Allow **30 card scans** within the appropriate usage period defined by the subscription system.
+
+Clearly show remaining scans.
+
+Example:
+
+18 of 30 scans remaining.
+
+Do not surprise the user when they hit the limit.
+
+When close to the limit, show a subtle upgrade message.
+
+Pro users:
+
+Unlimited scanning subject to reasonable anti-abuse/rate limits.
+
+---
+
+# 20. EVENT MODE
+
+Build Event Mode properly as a core Verified TCG feature.
+
+Event Mode should allow participating collectors to temporarily make selected trading information discoverable.
+
+Users should deliberately activate Event Mode.
+
+Never automatically expose someone's live location.
+
+Event Mode should have:
+
+Event Mode ON/OFF
+
+Selected event
+
+Approximate/local event participation
+
+Collection preferences
+
+Wishlist
+
+For Trade cards
+
+For Sale cards
+
+---
+
+# 21. TRADE MATCH
+
+Trade Match should compare users participating in the same event.
+
+Example:
+
+🔥 **17 collectors have cards you want**
+
+Then allow users to see matches.
+
+Example:
+
+James has:
+
+Umbreon VMAX PSA 10
+
+You want:
+
+Umbreon VMAX PSA 10
+
+You have:
+
+Pikachu ex PSA 10
+
+James wants:
+
+Pikachu ex PSA 10
+
+Then show:
+
+**Potential Trade Match**
+
+Never automatically expose private collection information without user consent.
+
+---
+
+# 22. EVENT PROFILE
+
+During Event Mode provide a simplified profile containing:
+
+* Avatar
+* Username
+* TCG interests
+* Wishlist matches
+* Trade matches
+* Cards For Trade
+* Cards For Sale
+
+Consider QR profiles.
+
+Example:
+
+Scan my Verified profile.
+
+---
+
+# 23. COMMUNITY
+
+Make the existing Community functionality usable.
+
+Depending on the current implementation this may include:
+
+* Collector profiles
+* Followers/following
+* Activity
+* Card showcases
+* Community posts
+* Likes
+* Comments
+* Giveaways
+
+Do not overcomplicate it.
+
+The core purpose should remain TCG collecting.
+
+Every visible community function must work.
+
+---
+
+# 24. NOTIFICATIONS
+
+Create a proper notification centre.
+
+Potential notifications:
+
+* Wishlist card price change
+* Trade match
+* Event match
+* Someone follows you
+* Community interaction
+* Giveaway announcement
+* Pro subscription update
+* Important account/security alert
+
+Allow notification preferences.
+
+---
+
+# 25. VERIFIED PRO
+
+Create a real subscription area.
+
+Display clearly:
+
+## Verified Free
+
+## Verified Pro
+
+Initial proposed Pro price:
+
+**$8.99 AUD/month**
+
+Do not hard-code pricing everywhere.
+
+Create subscription configuration so pricing can change later.
+
+Pro should unlock features such as:
+
+* Unlimited card scanning
+* Advanced pricing
+* Price history
+* Advanced collection analytics
+* Graded pricing
+* Population information where supported
+* Event Mode
+* Trade Match
+* Custom app icons
+* Pro giveaways/perks
+* Additional collection insights
+
+Free users must still have a useful app.
+
+Do not make the free version feel intentionally broken.
+
+---
+
+# 26. SUBSCRIPTION MANAGEMENT
+
+Create:
+
+Upgrade to Pro
+
+Manage Subscription
+
+Restore Purchases
+
+Subscription Status
+
+Renewal information where available
+
+Cancel instructions/manage through respective platform
+
+Ensure Apple and Google requirements are considered.
+
+Do not manually store payment card information.
+
+---
+
+# 27. ACCOUNT SCREEN
+
+Create a proper Account/Profile section.
+
+Include:
+
+* Profile
+* Edit Profile
+* Collection Preferences
+* Subscription
+* Settings
+* Notifications
+* Privacy
+* Security
+* Help & Support
+* Terms
+* Privacy Policy
+* About Verified TCG
+* Log Out
+
+---
+
+# 28. SETTINGS
+
+Settings needs to feel complete.
+
+Include relevant controls such as:
+
+## Appearance
+
+System
+
+Light
+
+Dark
+
+## Currency
+
+AUD
+
+USD
+
+GBP
+
+EUR
+
+CAD
+
+NZD
+
+etc.
+
+Default based on locale where sensible.
+
+## Region
+
+Allow selection.
+
+## Notifications
+
+Price alerts
+
+Trade Match alerts
+
+Event alerts
+
+Community alerts
+
+Giveaways
+
+Marketing
+
+## Privacy
+
+Public/private profile
+
+Show collection
+
+Show wishlist
+
+Show trade list
+
+Show For Sale
+
+Event visibility
+
+Blocked users
+
+## Security
+
+Change password
+
+Active sessions where feasible
+
+Login security
+
+## Data
+
+Export collection
+
+Export account data
+
+Delete account
+
+---
+
+# 29. HELP & SUPPORT
+
+Create a polished Help & Support area.
+
+Include:
+
+Search Help
+
+FAQs
+
+Common categories:
+
+Getting Started
+
+Collection
+
+Card Scanner
+
+Pricing
+
+Grading
+
+Verified Pro
+
+Event Mode
+
+Trade Match
+
+Account
+
+Privacy
+
+Technical Support
+
+---
+
+# 30. CONTACT SUPPORT
+
+Add:
+
+**Contact Support**
+
+Support form:
+
+Name
+
+Email
+
+Category
+
+Subject
+
+Message
+
+Optional screenshot/image attachment where possible
+
+Submit
+
+Show confirmation.
+
+---
+
+# 31. DELETE ACCOUNT
+
+This is essential.
+
+Account deletion must be easy enough to find.
+
+Put:
+
+Settings → Account / Privacy → Delete Account
+
+AND
+
+Help & Support → Account → Delete My Account
+
+Do not hide account deletion.
+
+Before deletion show:
+
+**Delete your Verified TCG account?**
+
+Explain that this can remove:
+
+* Profile
+* Collection
+* Wishlist
+* Trade listings
+* Sale listings
+* Preferences
+* Personal data
+
+Require authentication/reconfirmation.
+
+Example:
+
+Enter password / authenticate again.
+
+Then confirm:
+
+DELETE ACCOUNT
+
+Use a final confirmation.
+
+Follow Apple/Google requirements and applicable privacy obligations.
+
+Do not merely hide the user profile.
+
+Implement genuine account/data deletion where applicable.
+
+---
+
+# 32. LOG OUT
+
+Log Out needs to actually destroy the appropriate local authenticated session/token.
+
+Do not leave users appearing logged in after relaunch.
+
+Show a confirmation where appropriate.
+
+---
+
+# 33. EMPTY STATES
+
+Every empty section must look intentional.
+
+Do not show blank white screens.
+
+Example:
+
+## Your collection is empty
+
+Scan your first card or search the database to start building your collection.
+
+[Scan Card]
+
+[Search Cards]
+
+Wishlist:
+
+## Nothing on your wishlist yet
+
+Save cards you're hunting for and Verified will help you keep track of them.
+
+---
+
+# 34. LOADING STATES
+
+Use proper:
+
+* Skeleton screens
+* Loading indicators
+* Pull-to-refresh where appropriate
+
+Do not freeze the interface during API requests.
+
+---
+
+# 35. ERROR HANDLING
+
+Every failed API call needs graceful behaviour.
+
+Examples:
+
+No internet
+
+API timeout
+
+Pricing unavailable
+
+Image unavailable
+
+Login failed
+
+Scanner failed
+
+Payment failed
+
+Server error
+
+Never expose raw technical error messages to ordinary users.
+
+Example:
+
+Instead of:
+
+`TypeError: Cannot read properties of undefined`
+
+Show:
+
+"Something went wrong. Please try again."
+
+Allow Retry.
+
+---
+
+# 36. OFFLINE / POOR INTERNET
+
+Where practical, cached user data should remain visible.
+
+Example:
+
+Collection can still display last known values.
+
+Show:
+
+"You're offline. Showing your most recently saved data."
+
+Do not pretend live pricing is current while offline.
+
+---
+
+# 37. CONFIRMATIONS
+
+Destructive actions need confirmation.
+
+Examples:
+
+Remove Card
+
+Delete Collection Item
+
+Delete Account
+
+Log Out where appropriate
+
+Block User
+
+Discard Changes
+
+---
+
+# 38. TOAST / SUCCESS MESSAGES
+
+Provide subtle feedback.
+
+Examples:
+
+Added to Collection ✓
+
+Wishlist Updated ✓
+
+Profile Saved ✓
+
+Removed from Trade List
+
+Password Updated
+
+---
+
+# 39. NAVIGATION
+
+Review the entire navigation structure.
+
+Users must always understand where they are.
+
+Avoid duplicate screens.
+
+Use a clean bottom navigation if that matches the current design.
+
+Possible structure:
+
+Home
+
+Collection
+
+Scan
+
+Community / Discover
+
+Profile
+
+Event Mode can be accessed prominently from Home and relevant sections.
+
+Do not overcrowd the bottom navigation.
+
+---
+
+# 40. SEARCH THROUGHOUT THE APP
+
+Where lists can become large, add search/filtering.
+
+Examples:
+
+Collection
+
+Wishlist
+
+For Trade
+
+For Sale
+
+Community
+
+Cards
+
+Events
+
+---
+
+# 41. SORTING AND FILTERS
+
+Collection sorting examples:
+
+Highest Value
+
+Lowest Value
+
+Recently Added
+
+Oldest Added
+
+A–Z
+
+Z–A
+
+Biggest Gain
+
+Biggest Loss
+
+TCG
+
+Set
+
+Grading Company
+
+Grade
+
+Condition
+
+---
+
+# 42. COLLECTION VALUE
+
+Calculate collection value from selected valuation method.
+
+Allow users eventually to choose:
+
+Raw market
+
+Graded market
+
+Manual value where necessary
+
+Purchase price
+
+Current estimated value
+
+Profit/loss:
+
+Current Value – Purchase Cost
+
+---
+
+# 43. COLLECTION ANALYTICS
+
+Create useful analytics.
+
+Examples:
+
+Total portfolio value
+
+Invested amount
+
+Estimated profit
+
+Best performing card
+
+Biggest loss
+
+TCG breakdown
+
+Set breakdown
+
+Grading company breakdown
+
+Raw vs graded
+
+---
+
+# 44. CARD CERTIFICATION
+
+For graded cards users should be able to save:
+
+Grading Company
+
+Grade
+
+Certification Number
+
+Where supported later, structure it so certificate validation can be added.
+
+Do not claim a certification has been verified unless there is a genuine validation source.
+
+---
+
+# 45. SHARING
+
+Users should be able to share useful content.
+
+Examples:
+
+Share Card
+
+Share Collection
+
+Share Profile
+
+Share Wishlist
+
+Share Trade Profile
+
+Use native share sheets where appropriate.
+
+---
+
+# 46. CUSTOM APP ICONS
+
+If Custom App Icons already exist as a Pro feature, implement the interface and make sure unsupported platforms fail gracefully.
+
+---
+
+# 47. GIVEAWAYS
+
+If Giveaways exist, create a proper interface.
+
+Show:
+
+Active
+
+Upcoming
+
+Completed
+
+Eligibility requirements.
+
+Never fake giveaway results.
+
+---
+
+# 48. ABOUT VERIFIED TCG
+
+Create:
+
+About Verified TCG
+
+Version number
+
+Build number
+
+Website
+
+Terms
+
+Privacy Policy
+
+Acknowledgements if required
+
+Social/contact links where applicable.
+
+---
+
+# 49. LEGAL
+
+Ensure screens/links exist for:
+
+Terms of Service
+
+Privacy Policy
+
+Community Guidelines if community features exist
+
+Subscription Terms
+
+Account Deletion information
+
+Data/privacy requests
+
+These can use temporary content until final legal documents are supplied, but they must be structured correctly and clearly labelled if not final.
+
+---
+
+# 50. ACCESSIBILITY
+
+Check:
+
+Text contrast
+
+Dynamic font scaling
+
+Touch target sizes
+
+Screen reader labels
+
+Buttons
+
+Form labels
+
+Keyboard avoidance
+
+Safe areas
+
+Do not build an app that only works visually.
+
+---
+
+# 51. RESPONSIVE MOBILE DESIGN
+
+Check common:
+
+iPhones
+
+Android phones
+
+Small screens
+
+Large screens
+
+Notches
+
+Dynamic Island
+
+Safe areas
+
+Keyboard positioning
+
+Do not allow buttons to disappear under the keyboard.
+
+---
+
+# 52. SECURITY
+
+Audit the whole app.
+
+Never expose sensitive API keys in client-side source.
+
+Do not commit:
+
+Passwords
+
+Private API secrets
+
+Database credentials
+
+Service account credentials
+
+Private signing keys
+
+Payment secrets
+
+Move sensitive external API requests through secure backend endpoints.
+
+Use secure authentication tokens.
+
+Validate API input server-side.
+
+Add sensible rate limiting where required.
+
+---
+
+# 53. DATABASE
+
+Ensure the database properly represents:
+
+Users
+
+Profiles
+
+Preferences
+
+Collections
+
+Collection Items
+
+Cards
+
+Sets
+
+TCGs
+
+Wishlist Items
+
+Trade Items
+
+Sale Items
+
+Events
+
+Event Participants
+
+Trade Matches
+
+Subscriptions
+
+Scan Usage
+
+Notifications
+
+Support Requests
+
+User Blocks
+
+Community data if applicable
+
+Design relational integrity properly.
+
+Do not store everything inside giant JSON blobs unless there is a valid reason.
+
+---
+
+# 54. API
+
+Ensure every frontend feature connects to a proper backend action.
+
+Examples:
+
+Create account
+
+Update profile
+
+Search cards
+
+Add collection item
+
+Update collection item
+
+Delete collection item
+
+Wishlist
+
+Trade status
+
+Sale status
+
+Scan usage
+
+Subscriptions
+
+Event participation
+
+Trade matching
+
+Notifications
+
+Account deletion
+
+Do not rely on frontend-only state for important user information.
+
+---
+
+# 55. REMOVE MOCK DATA FROM PRODUCTION PATHS
+
+Review the entire project for:
+
+* Mock users
+* Fake cards
+* Fake portfolio values
+* Fake prices
+* Hard-coded notifications
+* Sample trade matches
+* Fake event participants
+* Demo subscription status
+* Placeholder APIs
+* Hard-coded login credentials
+* Fake population numbers
+
+Mock data may be used only in development/testing and must be clearly separated from production behaviour.
+
+---
+
+# 56. DEVELOPMENT ENVIRONMENT
+
+Maintain:
+
+Development
+
+Staging where appropriate
+
+Production
+
+Keep configuration separate.
+
+Do not hard-code URLs throughout the application.
+
+Create a central environment/config system.
+
+---
+
+# 57. TESTING
+
+Add meaningful tests for important flows.
+
+At minimum test:
+
+Sign up
+
+Login
+
+Forgot password
+
+Logout
+
+Profile editing
+
+Adding card
+
+Editing card
+
+Removing card
+
+Wishlist
+
+For Trade
+
+For Sale
+
+Scan limits
+
+Free vs Pro permissions
+
+Subscription status
+
+Event Mode permissions
+
+Trade matching
+
+Account deletion
+
+---
+
+# 58. COMPLETE EVERY EXISTING SCREEN
+
+Audit every screen already in the project.
+
+For each element:
+
+Ask:
+
+Does this button work?
+
+Does this link work?
+
+Does this toggle persist?
+
+Does this form validate?
+
+Does Save work?
+
+Does Cancel work?
+
+Does Back work?
+
+Does Refresh work?
+
+Does Search work?
+
+Does Share work?
+
+Does Delete work?
+
+Does this display genuine stored/API data?
+
+If not, fix it.
+
+---
+
+# 59. REMOVE UX DEAD ENDS
+
+A user should never reach a screen where there is no obvious next action.
+
+Example:
+
+If there are no trade matches:
+
+"No matches yet.
+
+Add more cards to your Wishlist and For Trade list to increase your chances of finding a match."
+
+Provide actions.
+
+---
+
+# 60. CONSISTENT DESIGN SYSTEM
+
+Keep the current Verified TCG visual identity.
+
+Standardise:
+
+Buttons
+
+Cards
+
+Forms
+
+Inputs
+
+Modal windows
+
+Typography
+
+Spacing
+
+Icons
+
+Colours
+
+Loading states
+
+Error states
+
+Empty states
+
+Navigation
+
+Do not let every page feel designed by a different developer.
+
+---
+
+# 61. PERFORMANCE
+
+Optimise:
+
+Card image loading
+
+Large collections
+
+Search
+
+Infinite scrolling/pagination
+
+Lists
+
+Caching
+
+API requests
+
+Do not download huge datasets unnecessarily.
+
+Use pagination and sensible caching.
+
+---
+
+# 62. APP START-UP
+
+The app should correctly determine:
+
+Is user authenticated?
+
+If YES:
+
+Load authenticated experience.
+
+If NO:
+
+Show authentication/onboarding flow.
+
+Do not flash the wrong screen before authentication resolves.
+
+---
+
+# 63. SESSION BEHAVIOUR
+
+If user closes the app while logged in, they should remain signed in unless session/security rules require otherwise.
+
+If authentication expires:
+
+Explain appropriately and return them to login.
+
+---
+
+# 64. BACK BUTTON BEHAVIOUR
+
+Android back navigation must work correctly.
+
+Users should not accidentally exit flows or lose data.
+
+Prompt before abandoning unsaved changes when important.
+
+---
+
+# 65. FORMS
+
+Forms must include:
+
+Proper validation
+
+Correct keyboard type
+
+Email keyboard
+
+Numeric keyboard for prices
+
+Password visibility toggle
+
+Required fields
+
+Clear error messages
+
+Loading state while saving
+
+Success confirmation
+
+---
+
+# 66. CURRENCY
+
+The app should support currency handling cleanly.
+
+Default to local currency where appropriate.
+
+For Australian users:
+
+AUD
+
+Display:
+
+$1,250 AUD
+
+where ambiguity may exist.
+
+Store values in a consistent backend representation.
+
+---
+
+# 67. DATE/TIME
+
+Respect user locale/time zone.
+
+Examples:
+
+Purchase dates
+
+Event times
+
+Price update times
+
+Notification timestamps
+
+---
+
+# 68. PRIVACY-FIRST EVENT MODE
+
+This is important.
+
+Never permanently expose precise user location.
+
+Event Mode should primarily work through:
+
+Event participation
+
+Temporary visibility
+
+Opt-in matching
+
+Users choose when they are discoverable.
+
+Provide:
+
+Leave Event Mode
+
+Hide Profile
+
+Block User
+
+Report User
+
+---
+
+# 69. REPORTING AND BLOCKING
+
+If community/Event Mode allows user interaction, create:
+
+Block User
+
+Report User
+
+Reasons such as:
+
+Spam
+
+Harassment
+
+Fraud/Suspicious behaviour
+
+Inappropriate content
+
+Other
+
+Blocked users should no longer interact normally.
+
+---
+
+# 70. APP STORE READINESS
+
+Review functionality against typical Apple and Google requirements.
+
+Pay particular attention to:
+
+Account deletion
+
+Privacy
+
+Subscriptions
+
+Restore Purchases
+
+Apple Sign In requirements if social login exists
+
+Permissions
+
+Camera disclosure
+
+Location disclosure
+
+Photo permissions
+
+Notification permissions
+
+User-generated content moderation
+
+Terms
+
+Privacy policy
+
+---
+
+# 71. PERMISSIONS
+
+Do not ask for every permission when the app first launches.
+
+Ask contextually.
+
+Example:
+
+Camera permission only when opening Scanner.
+
+Notifications only when explaining why they are useful.
+
+Location/event functionality only when entering Event Mode if required.
+
+Explain WHY each permission is needed.
+
+---
+
+# 72. ANALYTICS EVENTS
+
+Structure analytics for important events without collecting unnecessary sensitive data.
+
+Examples:
+
+Account Created
+
+Onboarding Completed
+
+Card Searched
+
+Card Scanned
+
+Card Added
+
+Wishlist Added
+
+Event Mode Started
+
+Trade Match Found
+
+Upgrade Screen Viewed
+
+Pro Subscription Started
+
+Subscription Cancelled
+
+Do not store payment card data.
+
+---
+
+# 73. NO MARKETPLACE PAYMENTS
+
+Verified TCG is NOT currently an in-app marketplace.
+
+Do not add:
+
+Escrow
+
+Buyer payments
+
+Seller payouts
+
+Shipping labels
+
+Refund systems
+
+Marketplace fees
+
+Transaction dispute systems
+
+Users may discover cards and collectors, but financial transactions remain external unless explicitly developed later.
+
+---
+
+# 74. KEEP FUTURE EXPANSION POSSIBLE
+
+Build in a way that lets Verified TCG later support:
+
+More TCGs
+
+New grading companies
+
+New card data providers
+
+Additional pricing providers
+
+More countries
+
+Events globally
+
+More subscription tiers
+
+Web platform
+
+Admin dashboard
+
+Dealer accounts
+
+Store accounts
+
+Verified collector verification
+
+But do not overengineer unfinished future features now.
+
+---
+
+# 75. ADMIN / OPERATIONS FOUNDATION
+
+Where reasonable, ensure the backend can eventually support an internal admin dashboard containing:
+
+Users
+
+Subscriptions
+
+Support cases
+
+Reports
+
+Events
+
+Giveaways
+
+Card data issues
+
+Abuse reports
+
+Feature flags
+
+Do not expose these routes to ordinary users.
+
+---
+
+# 76. CODE QUALITY
+
+Refactor obvious duplicated/broken code.
+
+Use:
+
+Reusable components
+
+Type safety
+
+Clear API services
+
+Central configuration
+
+Consistent error handling
+
+Logical folder structure
+
+Comments only where useful
+
+Do not rewrite working sections merely for the sake of rewriting them.
+
+---
+
+# 77. IMPORTANT — DO NOT CHANGE THE PRODUCT WITHOUT REASON
+
+Preserve the existing Verified TCG branding and major product direction.
+
+Do not suddenly:
+
+Change the entire colour palette
+
+Replace the navigation
+
+Remove Event Mode
+
+Remove Trade Match
+
+Create a marketplace
+
+Change subscription strategy
+
+Rename the product
+
+Replace major features
+
+unless required to fix a genuine usability problem.
+
+---
+
+# 78. BUILD THIS IN PHASES
+
+Do not attempt risky changes across the whole app in one uncontrolled operation.
+
+Work in this order:
+
+## PHASE 1 — Audit
+
+Inspect every existing route, screen, component, API endpoint and database table.
+
+Identify what is:
+
+Working
+
+Partially working
+
+Mocked
+
+Broken
+
+Missing
+
+## PHASE 2 — Authentication + Account
+
+Complete:
+
+Register
+
+Login
+
+Forgot Password
+
+Persistent Session
+
+Profile
+
+Settings
+
+Logout
+
+Delete Account
+
+## PHASE 3 — Card Core
+
+Complete:
+
+Search
+
+Card detail
+
+Collection
+
+Wishlist
+
+For Trade
+
+For Sale
+
+## PHASE 4 — Scanner
+
+Connect scanning to real card matching and user collections.
+
+## PHASE 5 — Pricing
+
+Complete:
+
+Pricing
+
+History
+
+Grading options
+
+Population where real data exists
+
+External listings
+
+## PHASE 6 — Pro
+
+Implement:
+
+Free limitations
+
+Subscription entitlement
+
+Upgrade
+
+Restore
+
+Manage Subscription
+
+## PHASE 7 — Event Mode + Trade Match
+
+Build proper opt-in event matching.
+
+## PHASE 8 — Community
+
+Finish remaining social/community functionality.
+
+## PHASE 9 — Settings / Support / Legal
+
+Finish every expected consumer app utility.
+
+## PHASE 10 — Production Hardening
+
+Security
+
+Error handling
+
+Loading
+
+Offline states
+
+Performance
+
+Testing
+
+Permissions
+
+App Store readiness
+
+---
+
+# FINAL ACCEPTANCE STANDARD
+
+Do not consider the project complete because screens look good.
+
+It is complete when a real person can use Verified TCG from account creation through everyday collecting without encountering fake features or unexplained dead ends.
+
+Before finishing, manually audit EVERY interactive element in the app.
+
+For every button/toggle/input/card/menu/link ask:
+
+> "What happens when the user taps this?"
+
+If the answer is:
+
+"Nothing"
+
+"Placeholder"
+
+"Coming soon"
+
+"Mock"
+
+"Console log"
+
+"Not connected yet"
+
+then either complete it or intentionally disable/remove it until the functionality exists.
+
+The final product should feel like a real App Store product, not a prototype.
+
+Keep the app clean, intuitive and easy enough that a new collector understands how to use it without instructions.

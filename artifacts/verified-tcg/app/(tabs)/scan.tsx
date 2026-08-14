@@ -1,300 +1,629 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import {
+  CameraView,
+  type CameraType,
+  useCameraPermissions,
+} from 'expo-camera';
 import { useApp } from '@/context/AppContext';
-import { MOCK_CARDS } from '@/services/cards';
 import colors from '@/constants/colors';
 import type { CollectionItem } from '@/types';
 import { canUseUnlimitedScanner } from '@/services/subscription';
 import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
+import { getAccessToken } from '@/services/auth';
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
 const FRAME_W = Math.min(W - 64, 280);
 const FRAME_H = FRAME_W * 1.4;
 
-type ScanState = 'idle' | 'scanning' | 'match' | 'confirmed';
+// API base — same pattern as other service files
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
-const SCAN_RESULT = MOCK_CARDS[0]; // Charizard ex as simulated result
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type ScanState = 'idle' | 'capturing' | 'recognizing' | 'match' | 'low_confidence' | 'error' | 'confirmed';
+
+interface RecognizedCard {
+  card: Record<string, unknown>;
+  confidence: number;
+}
+
+interface ScanResult {
+  topMatch: RecognizedCard | null;
+  matches: RecognizedCard[];
+  lowConfidence: boolean;
+  extracted: { name: string; setName: string; number: string };
+  scansUsed: number;
+  scanLimit: number | null;
+  scansRemaining: number | null;
+}
+
+// ── API error type ────────────────────────────────────────────────────────────
+
+/** Error thrown by recognizeCard for all non-200 responses. */
+class ScanApiError extends Error {
+  code?: string;
+  scansUsed?: number;
+  scanLimit?: number | null;
+  scansRemaining?: number | null;
+
+  constructor(
+    message: string,
+    opts?: {
+      code?: string;
+      scansUsed?: number;
+      scanLimit?: number | null;
+      scansRemaining?: number | null;
+    },
+  ) {
+    super(message);
+    this.name = 'ScanApiError';
+    this.code = opts?.code;
+    this.scansUsed = opts?.scansUsed;
+    this.scanLimit = opts?.scanLimit;
+    this.scansRemaining = opts?.scansRemaining;
+  }
+}
+
+// ── API call ──────────────────────────────────────────────────────────────────
+
+/**
+ * Send a card image to the recognition endpoint and return the result.
+ *
+ * All non-200 responses are thrown as `ScanApiError` with the full quota
+ * payload preserved (scansUsed / scanLimit / scansRemaining) so the caller
+ * can sync client state even when recognition fails after a scan was charged.
+ */
+async function recognizeCard(base64Image: string): Promise<ScanResult> {
+  const token = await getAccessToken();
+  const response = await fetch(`${API_BASE}/api/scan/recognize`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ image: base64Image, mimeType: 'image/jpeg' }),
+  });
+
+  if (!response.ok) {
+    // Parse the full error body — every server error path should include
+    // quota fields so the client can stay in sync even after a charged failure.
+    const body = await response.json().catch(() => ({})) as {
+      message?: string;
+      scansUsed?: number;
+      scanLimit?: number | null;
+      scansRemaining?: number | null;
+    };
+
+    throw new ScanApiError(
+      body.message ?? `Recognition failed (${response.status})`,
+      {
+        code: response.status === 403 ? 'LIMIT_REACHED' : undefined,
+        scansUsed: body.scansUsed,
+        scanLimit: body.scanLimit,
+        scansRemaining: body.scansRemaining,
+      },
+    );
+  }
+
+  return response.json() as Promise<ScanResult>;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { addToCollection, incrementScanCount, subscriptionTier, scansUsed, scanLimit, scanResetDate } = useApp();
+  const { addToCollection, addToWatchlist, subscriptionTier, scansUsed, scanLimit, scanResetDate, syncScanCount } = useApp();
+
   const isLimitExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed >= scanLimit;
-  const [scanState, setScanState] = useState<ScanState>('idle');
+
+  const [permission, requestPermission] = useCameraPermissions();
+  const [facing] = useState<CameraType>('back');
   const [flashEnabled, setFlashEnabled] = useState(false);
-  const [addedToCollection, setAddedToCollection] = useState(false);
+  const [scanState, setScanState] = useState<ScanState>('idle');
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [showLimitSheet, setShowLimitSheet] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  const [confirmedAction, setConfirmedAction] = useState<string>('');
 
-  // Format reset date as "1 Sep", "12 Oct", etc.
-  const resetLabel = scanResetDate.toLocaleDateString('en-AU', {
-    day: 'numeric',
-    month: 'short',
-  });
-
-  const scanLineAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const cameraRef = useRef<CameraView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const scanLineAnim = useRef(new Animated.Value(0)).current;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  // Scan line animation
+  const resetLabel = scanResetDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+
+  // ── Animations ───────────────────────────────────────────────────────────
+
   useEffect(() => {
-    if (scanState === 'scanning') {
+    if (scanState === 'recognizing') {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(scanLineAnim, { toValue: 1, duration: 1600, useNativeDriver: true }),
-          Animated.timing(scanLineAnim, { toValue: 0, duration: 1600, useNativeDriver: true }),
-        ])
+          Animated.timing(scanLineAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+          Animated.timing(scanLineAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
+        ]),
       ).start();
-      const timer = setTimeout(() => {
-        setScanState('match');
-        Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-      }, 2800);
-      return () => clearTimeout(timer);
     } else {
       scanLineAnim.setValue(0);
     }
   }, [scanState]);
 
-  // Pulse on match
   useEffect(() => {
-    if (scanState === 'match') {
+    if (scanState === 'match' || scanState === 'low_confidence') {
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.03, duration: 900, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.02, duration: 900, useNativeDriver: true }),
           Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
-        ])
+        ]),
       ).start();
     } else {
+      fadeAnim.setValue(0);
       pulseAnim.setValue(1);
     }
   }, [scanState]);
 
-  function startScan() {
-    // Free users who have used all their monthly scans cannot start a new scan.
-    // ScanLimitBanner already shows the upgrade prompt in this state.
-    if (isLimitExhausted) return;
-    fadeAnim.setValue(0);
-    setScanState('scanning');
+  const scanLineY = scanLineAnim.interpolate({ inputRange: [0, 1], outputRange: [0, FRAME_H - 4] });
+
+  // ── Capture & recognize ──────────────────────────────────────────────────
+
+  const handleCapture = useCallback(async () => {
+    if (isLimitExhausted || scanState !== 'idle') return;
+
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) return;
+    }
+
+    setScanState('capturing');
+
+    try {
+      const photo = await cameraRef.current?.takePictureAsync({
+        base64: true,
+        quality: 0.5, // compress to reduce payload size
+        skipProcessing: true,
+      });
+
+      if (!photo?.base64) {
+        setErrorMessage('Could not capture image. Please try again.');
+        setScanState('error');
+        return;
+      }
+
+      setScanState('recognizing');
+
+      const result = await recognizeCard(photo.base64);
+
+      // Sync scan count from server-authoritative response.
+      // The server atomically incremented the count (even on recognition failure),
+      // so we always use the returned value rather than a local increment — this
+      // keeps the gate accurate across device switches and charged failures.
+      if (!canUseUnlimitedScanner(subscriptionTier) && typeof result.scansUsed === 'number') {
+        syncScanCount(result.scansUsed);
+      }
+
+      setScanResult(result);
+
+      if (!result.topMatch) {
+        setErrorMessage('Could not identify this card. Try searching manually.');
+        setScanState('error');
+      } else if (result.lowConfidence) {
+        setScanState('low_confidence');
+      } else {
+        setScanState('match');
+      }
+    } catch (err: unknown) {
+      const e = err as Error & { code?: string; scansUsed?: number };
+      if (e.code === 'LIMIT_REACHED') {
+        // Server returned 403 before calling vision API — no scan was charged
+        setScanState('idle');
+        setShowLimitSheet(true);
+      } else {
+        // If the server charged the scan and included a count in the error
+        // body (503 from vision API), sync it so the client stays accurate.
+        if (!canUseUnlimitedScanner(subscriptionTier) && typeof e.scansUsed === 'number') {
+          syncScanCount(e.scansUsed);
+        }
+        setErrorMessage(e.message ?? 'Recognition failed. Please try again or search manually.');
+        setScanState('error');
+      }
+    }
+  }, [isLimitExhausted, scanState, permission, subscriptionTier, syncScanCount, requestPermission]);
+
+  // ── Actions after match ──────────────────────────────────────────────────
+
+  function getMatchedCard() {
+    return scanResult?.topMatch?.card ?? null;
   }
 
-  function tryAgain() {
-    setAddedToCollection(false);
-    setScanState('idle');
+  function handleConfirm() {
+    setShowActionSheet(true);
+  }
+
+  function handleSearchManually() {
+    const extracted = scanResult?.extracted;
+    const query = [extracted?.name, extracted?.setName].filter(Boolean).join(' ');
+    router.push(query ? `/search?q=${encodeURIComponent(query)}` : '/search');
+  }
+
+  /** Build a typed Card from a raw catalog result, filling required fields with safe defaults. */
+  function buildCard(raw: Record<string, unknown>): import('@/types').Card {
+    return {
+      id: String(raw.id ?? ''),
+      name: String(raw.name ?? ''),
+      setId: String(raw.set ?? raw.set_id ?? ''),
+      setName: String(raw.set_name ?? raw.set ?? ''),
+      tcg: (String(raw.game ?? 'pokemon').toLowerCase().includes('magic') ? 'magic' : String(raw.game ?? 'pokemon').toLowerCase().includes('yugioh') || String(raw.game ?? '').toLowerCase().includes('yu-gi-oh') ? 'yugioh' : 'pokemon') as import('@/types').TCGId,
+      number: String(raw.number ?? ''),
+      rarity: 'rare',
+      year: new Date().getFullYear(),
+      imageUrl: raw.image_url ? String(raw.image_url) : undefined,
+      gradientStart: '#1e293b',
+      gradientEnd: '#0f172a',
+      price: { raw: 0, currency: 'AUD', updatedAt: new Date().toISOString() },
+    };
   }
 
   function handleAddToCollection() {
+    const raw = getMatchedCard();
+    if (!raw) return;
+
+    const card = buildCard(raw);
     const item: CollectionItem = {
       id: `col-scan-${Date.now()}`,
-      cardId: SCAN_RESULT.id,
-      card: SCAN_RESULT,
+      cardId: card.id,
+      card,
       quantity: 1,
       condition: 'near_mint',
       acquiredAt: new Date().toISOString().split('T')[0],
-      acquiredPrice: SCAN_RESULT.price.raw,
+      acquiredPrice: 0,
       currency: 'AUD',
     };
+
     addToCollection(item);
-    incrementScanCount();
-    setAddedToCollection(true);
-
-    // Free users who just hit the 30th scan see the limit bottom sheet
-    // instead of the normal "Added to collection" confirmation screen.
-    const willBeExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed + 1 >= scanLimit;
-    if (willBeExhausted) {
-      // Card is added; surface the limit moment then return to idle (disabled).
-      setScanState('idle');
-      setShowLimitSheet(true);
-    } else {
-      setScanState('confirmed');
-    }
+    setShowActionSheet(false);
+    setConfirmedAction('collection');
+    setScanState('confirmed');
   }
 
-  function handleDismissLimitSheet() {
-    setShowLimitSheet(false);
+  function handleAddToWishlist() {
+    const raw = getMatchedCard();
+    if (!raw) return;
+
+    const card = buildCard(raw);
+    addToWatchlist({
+      id: `wish-scan-${Date.now()}`,
+      cardId: card.id,
+      card,
+      addedAt: new Date().toISOString(),
+      priceAlertEnabled: false,
+    });
+    setShowActionSheet(false);
+    setConfirmedAction('wishlist');
+    setScanState('confirmed');
   }
 
-  function handleUpgradeFromSheet() {
-    setShowLimitSheet(false);
-    router.push('/pro-subscription');
+  function handleViewCard() {
+    const card = getMatchedCard();
+    if (!card) return;
+    setShowActionSheet(false);
+    router.push(`/card/${card.id}`);
   }
 
-  function handleCheckValue() {
-    router.push(`/card/${SCAN_RESULT.id}`);
+  function tryAgain() {
+    setScanResult(null);
+    setErrorMessage('');
+    setConfirmedAction('');
+    setScanState('idle');
   }
 
-  const scanLineTranslateY = scanLineAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, FRAME_H - 4],
-  });
+  // ── Permission prompt ────────────────────────────────────────────────────
 
-  const isActiveView = scanState === 'idle' || scanState === 'scanning';
+  if (!permission) {
+    return <View style={styles.container} />;
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={[styles.container, { paddingTop: topPad, paddingBottom: Math.max(botPad, 16) }]}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Scan Card</Text>
+        </View>
+        <View style={styles.permissionPanel}>
+          <View style={styles.permissionIconWrap}>
+            <Feather name="camera" size={52} color={C.primary} />
+          </View>
+          <Text style={styles.permissionTitle}>Camera Access Required</Text>
+          <Text style={styles.permissionBody}>
+            To scan and identify your trading cards, Verified TCG needs camera access. Your photos are only used for card recognition and are never stored.
+          </Text>
+          <Pressable onPress={requestPermission} style={styles.permissionBtn}>
+            <Feather name="camera" size={16} color="#FFFFFF" />
+            <Text style={styles.permissionBtnText}>Enable Camera</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push('/add-card')} style={styles.ghostBtn}>
+            <Text style={styles.ghostBtnText}>Add card manually instead</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  // ── Main render ──────────────────────────────────────────────────────────
+
+  const isActiveView = scanState === 'idle' || scanState === 'capturing' || scanState === 'recognizing';
+  const isMatchView = scanState === 'match' || scanState === 'low_confidence';
+  const topMatch = scanResult?.topMatch;
+  const scansLeft = scanResult?.scansRemaining ?? (scanLimit - scansUsed);
 
   return (
     <View style={[styles.container, { paddingTop: topPad, paddingBottom: Math.max(botPad, 16) }]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>
-          {scanState === 'match' ? 'Match Found' : scanState === 'confirmed' ? 'Added!' : 'Scan Card'}
+          {isMatchView ? 'Match Found' : scanState === 'confirmed' ? (confirmedAction === 'collection' ? 'Added!' : confirmedAction === 'wishlist' ? 'Saved!' : 'Done!') : 'Scan Card'}
         </Text>
-        <Pressable style={styles.headerBtn} onPress={() => router.push('/add-card')}>
-          <Feather name="plus" size={19} color={C.foreground} />
-        </Pressable>
+        <View style={styles.headerRight}>
+          {/* Scan counter for free users */}
+          {!canUseUnlimitedScanner(subscriptionTier) && scanState === 'idle' && (
+            <Pressable style={styles.scanCountBadge} onPress={() => router.push('/pro-subscription')}>
+              <Feather name="camera" size={12} color={scansLeft <= 5 ? '#F59E0B' : C.mutedForeground} />
+              <Text style={[styles.scanCountText, scansLeft <= 5 && { color: '#F59E0B' }]}>
+                {Math.max(0, scansLeft)} left
+              </Text>
+            </Pressable>
+          )}
+          <Pressable style={styles.headerBtn} onPress={() => router.push('/add-card')}>
+            <Feather name="plus" size={19} color={C.foreground} />
+          </Pressable>
+        </View>
       </View>
 
-      {/* Scan limit banner — visible in idle state when in last 20% of quota */}
+      {/* Scan limit banner */}
       {scanState === 'idle' && <ScanLimitBanner />}
 
-      {/* 30th-scan limit bottom sheet */}
-      <Modal
-        visible={showLimitSheet}
-        transparent
-        animationType="slide"
-        onRequestClose={handleDismissLimitSheet}
-      >
-        <Pressable style={styles.sheetBackdrop} onPress={handleDismissLimitSheet} />
+      {/* 30th-scan limit sheet */}
+      <Modal visible={showLimitSheet} transparent animationType="slide" onRequestClose={() => setShowLimitSheet(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setShowLimitSheet(false)} />
         <View style={[styles.sheet, { paddingBottom: Math.max(botPad, 24) }]}>
           <View style={styles.sheetHandle} />
-
           <View style={styles.sheetIconWrap}>
             <Feather name="camera-off" size={32} color={C.mutedForeground} />
           </View>
-
           <Text style={styles.sheetTitle}>Monthly scan limit reached</Text>
           <Text style={styles.sheetBody}>
             You've used your 30 free scans this month.{'\n'}Resets {resetLabel}.
           </Text>
-
-          <Pressable onPress={handleUpgradeFromSheet} style={styles.sheetPrimaryBtn}>
+          <Pressable onPress={() => { setShowLimitSheet(false); router.push('/pro-subscription'); }} style={styles.sheetPrimaryBtn}>
             <Feather name="zap" size={16} color="#FFFFFF" />
             <Text style={styles.sheetPrimaryBtnText}>Unlock Unlimited Scanning</Text>
           </Pressable>
-
-          <Pressable onPress={handleDismissLimitSheet} style={styles.sheetGhostBtn}>
+          <Pressable onPress={() => setShowLimitSheet(false)} style={styles.sheetGhostBtn}>
             <Text style={styles.sheetGhostBtnText}>Got it</Text>
           </Pressable>
         </View>
       </Modal>
 
-      {/* Scanner viewfinder */}
+      {/* Action sheet */}
+      <Modal visible={showActionSheet} transparent animationType="slide" onRequestClose={() => setShowActionSheet(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setShowActionSheet(false)} />
+        <View style={[styles.sheet, { paddingBottom: Math.max(botPad, 24) }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>What would you like to do?</Text>
+          {topMatch && (
+            <Text style={styles.sheetCardName}>{String(topMatch.card.name ?? '')}</Text>
+          )}
+
+          <Pressable onPress={handleAddToCollection} style={styles.sheetActionBtn}>
+            <Feather name="layers" size={18} color={C.foreground} />
+            <Text style={styles.sheetActionText}>Add to Collection</Text>
+            <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+          </Pressable>
+
+          <Pressable onPress={handleAddToWishlist} style={styles.sheetActionBtn}>
+            <Feather name="heart" size={18} color={C.foreground} />
+            <Text style={styles.sheetActionText}>Add to Wishlist</Text>
+            <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+          </Pressable>
+
+          <Pressable onPress={handleViewCard} style={styles.sheetActionBtn}>
+            <Feather name="eye" size={18} color={C.foreground} />
+            <Text style={styles.sheetActionText}>View Card Detail</Text>
+            <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+          </Pressable>
+
+          <Pressable onPress={() => setShowActionSheet(false)} style={styles.sheetGhostBtn}>
+            <Text style={styles.sheetGhostBtnText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
+      {/* Camera viewfinder */}
       {isActiveView && (
         <View style={styles.viewfinder}>
           <View style={[styles.scanFrame, { width: FRAME_W, height: FRAME_H }]}>
+            {/* Live camera feed */}
+            {!isLimitExhausted && (
+              <CameraView
+                ref={cameraRef}
+                style={StyleSheet.absoluteFill}
+                facing={facing}
+                flash={flashEnabled ? 'on' : 'off'}
+              />
+            )}
+
             {/* Corner marks */}
             <View style={[styles.corner, { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3 }]} />
             <View style={[styles.corner, { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3 }]} />
             <View style={[styles.corner, { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3 }]} />
             <View style={[styles.corner, { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3 }]} />
 
-            {/* Scan line */}
-            {scanState === 'scanning' && (
-              <Animated.View
-                style={[styles.scanLine, { transform: [{ translateY: scanLineTranslateY }] }]}
-              />
+            {/* Scan line during recognition */}
+            {scanState === 'recognizing' && (
+              <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineY }] }]} />
             )}
 
-            {/* Idle state */}
-            {scanState === 'idle' && (
+            {/* Idle placeholder when limit exhausted */}
+            {isLimitExhausted && (
               <View style={styles.idleCenter}>
-                <Feather
-                  name={isLimitExhausted ? 'camera-off' : 'camera'}
-                  size={48}
-                  color={isLimitExhausted ? `${C.mutedForeground}55` : `${C.primary}55`}
-                />
+                <Feather name="camera-off" size={48} color={`${C.mutedForeground}55`} />
               </View>
             )}
 
-            {/* Dim overlay when scan limit is exhausted */}
+            {/* Dim overlay when limit exhausted */}
             {isLimitExhausted && (
               <View style={[styles.exhaustedOverlay, { pointerEvents: 'none' }]} />
             )}
 
-            {/* Scanning badge */}
-            {scanState === 'scanning' && (
+            {/* Capturing / recognizing badge */}
+            {(scanState === 'capturing' || scanState === 'recognizing') && (
               <View style={styles.scanningBadge}>
                 <View style={styles.scanDot} />
-                <Text style={styles.scanningText}>SCANNING</Text>
+                <Text style={styles.scanningText}>
+                  {scanState === 'capturing' ? 'CAPTURING' : 'IDENTIFYING'}
+                </Text>
               </View>
             )}
           </View>
+
           <Text style={styles.hint}>
-            {scanState === 'idle'
-              ? 'Tap the button below to scan'
-              : 'Hold steady — detecting card...'}
+            {isLimitExhausted
+              ? 'Scan limit reached for this month'
+              : scanState === 'idle'
+              ? 'Position card in frame, then tap capture'
+              : scanState === 'capturing'
+              ? 'Hold steady…'
+              : 'Identifying card…'}
           </Text>
+
+          {/* Identifying spinner */}
+          {scanState === 'recognizing' && (
+            <ActivityIndicator size="small" color={C.primary} style={{ marginTop: 8 }} />
+          )}
         </View>
       )}
 
       {/* Match result */}
-      {scanState === 'match' && (
+      {isMatchView && topMatch && (
         <Animated.View style={[styles.matchPanel, { opacity: fadeAnim, transform: [{ scale: pulseAnim }] }]}>
+          {/* Low confidence warning */}
+          {scanState === 'low_confidence' && (
+            <View style={styles.lowConfBanner}>
+              <Feather name="alert-triangle" size={14} color="#F59E0B" />
+              <Text style={styles.lowConfText}>Low confidence — please verify</Text>
+            </View>
+          )}
+
           <View style={styles.confidenceBadge}>
-            <Text style={styles.confidenceNum}>98%</Text>
+            <Text style={[styles.confidenceNum, scanState === 'low_confidence' && { color: '#F59E0B' }]}>
+              {topMatch.confidence}%
+            </Text>
             <Text style={styles.confidenceLabel}>MATCH</Text>
           </View>
+
           <View style={styles.matchCard}>
-            <View style={[styles.matchThumb, { backgroundColor: SCAN_RESULT.gradientStart }]}>
-              <Text style={styles.matchInitial}>{SCAN_RESULT.name[0]}</Text>
-            </View>
-            <View style={styles.matchInfo}>
-              <Text style={styles.matchName}>{SCAN_RESULT.name}</Text>
-              <Text style={styles.matchSet}>{SCAN_RESULT.setName}</Text>
-              <Text style={styles.matchNumber}>{SCAN_RESULT.number}</Text>
-              <View style={styles.matchPriceRow}>
-                <Text style={styles.matchPrice}>${SCAN_RESULT.price.raw.toLocaleString()} AUD</Text>
-                <Text style={styles.matchPriceLabel}>Raw market</Text>
+            {/* Card image or initial fallback */}
+            {topMatch.card.image_url ? (
+              <Image
+                source={{ uri: String(topMatch.card.image_url) }}
+                style={styles.matchThumb}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={[styles.matchThumb, { backgroundColor: '#1e293b', alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={styles.matchInitial}>{String(topMatch.card.name ?? '?')[0]}</Text>
               </View>
+            )}
+            <View style={styles.matchInfo}>
+              <Text style={styles.matchName}>{String(topMatch.card.name ?? '')}</Text>
+              <Text style={styles.matchSet}>{String(topMatch.card.set_name ?? topMatch.card.set ?? '')}</Text>
+              {topMatch.card.number ? (
+                <Text style={styles.matchNumber}>#{String(topMatch.card.number)}</Text>
+              ) : null}
             </View>
           </View>
+
+          {/* All candidates if multiple */}
+          {(scanResult?.matches?.length ?? 0) > 1 && (
+            <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
+              {scanResult!.matches.slice(1).map((m, i) => (
+                <View key={i} style={styles.altChip}>
+                  <Text style={styles.altChipText} numberOfLines={1}>{String(m.card.name ?? '')}</Text>
+                  <Text style={styles.altChipConf}>{m.confidence}%</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
         </Animated.View>
       )}
 
-      {/* Confirmed */}
-      {scanState === 'confirmed' && (
+      {/* Error state */}
+      {scanState === 'error' && (
+        <View style={styles.errorPanel}>
+          <Feather name="alert-circle" size={44} color={C.mutedForeground} style={{ marginBottom: 12 }} />
+          <Text style={styles.errorTitle}>Couldn't identify card</Text>
+          <Text style={styles.errorBody}>{errorMessage}</Text>
+        </View>
+      )}
+
+      {/* Confirmed state */}
+      {scanState === 'confirmed' && topMatch && (
         <View style={styles.confirmedPanel}>
           <View style={styles.confirmedIconWrap}>
             <Feather name="check-circle" size={52} color={C.positive} />
           </View>
-          <Text style={styles.confirmedTitle}>{SCAN_RESULT.name}</Text>
-          <Text style={styles.confirmedSub}>Added to your collection</Text>
+          <Text style={styles.confirmedTitle}>{String(topMatch.card.name ?? '')}</Text>
+          <Text style={styles.confirmedSub}>
+            {confirmedAction === 'collection' ? 'Added to your collection' : confirmedAction === 'wishlist' ? 'Added to your wishlist' : 'Done!'}
+          </Text>
           <View style={[styles.confirmedMeta, { backgroundColor: C.card }]}>
-            <Text style={styles.confirmedMetaText}>{SCAN_RESULT.setName} · {SCAN_RESULT.number}</Text>
-            <Text style={styles.confirmedPrice}>${SCAN_RESULT.price.raw.toLocaleString()} AUD</Text>
+            <Text style={styles.confirmedMetaText}>
+              {String(topMatch.card.set_name ?? topMatch.card.set ?? '')}
+              {topMatch.card.number ? ` · #${topMatch.card.number}` : ''}
+            </Text>
           </View>
         </View>
       )}
 
       {/* Controls */}
       <View style={styles.controls}>
+        {/* Idle / recognizing controls */}
         {isActiveView && (
           <View>
             <View style={styles.iconRow}>
               <Pressable
                 onPress={() => setFlashEnabled(f => !f)}
-                disabled={isLimitExhausted}
+                disabled={isLimitExhausted || scanState !== 'idle'}
                 style={[
                   styles.iconBtn,
-                  flashEnabled && !isLimitExhausted && { backgroundColor: `#F59E0B22`, borderColor: '#F59E0B' },
-                  isLimitExhausted && styles.iconBtnDisabled,
+                  flashEnabled && !isLimitExhausted && { backgroundColor: '#F59E0B22', borderColor: '#F59E0B' },
+                  (isLimitExhausted || scanState !== 'idle') && styles.iconBtnDisabled,
                 ]}
               >
                 <Feather name="zap" size={22} color={isLimitExhausted ? C.mutedForeground : (flashEnabled ? '#F59E0B' : C.foreground)} />
               </Pressable>
 
-              {/* When limit is exhausted, replace the scan trigger with a "Scan limit reached" label */}
               {isLimitExhausted ? (
                 <View style={styles.limitReachedLabel}>
                   <Feather name="lock" size={16} color={C.mutedForeground} />
@@ -302,26 +631,41 @@ export default function ScanScreen() {
                 </View>
               ) : (
                 <Pressable
-                  onPress={startScan}
-                  style={styles.scanTrigger}
-                  accessibilityLabel="Start scan"
+                  onPress={handleCapture}
+                  disabled={scanState !== 'idle'}
+                  style={[styles.scanTrigger, scanState !== 'idle' && styles.scanTriggerDisabled]}
+                  accessibilityLabel="Capture card"
                 >
                   <View style={styles.scanTriggerInner}>
-                    <Feather name="camera" size={28} color="#FFFFFF" />
+                    {scanState === 'idle'
+                      ? <Feather name="camera" size={28} color="#FFFFFF" />
+                      : <ActivityIndicator size="small" color="#FFFFFF" />
+                    }
                   </View>
                 </Pressable>
               )}
 
               <Pressable
-                disabled={isLimitExhausted}
-                style={[styles.iconBtn, isLimitExhausted && styles.iconBtnDisabled]}
-                onPress={() => !isLimitExhausted && router.push('/add-card')}
+                disabled={isLimitExhausted || scanState !== 'idle'}
+                style={[styles.iconBtn, (isLimitExhausted || scanState !== 'idle') && styles.iconBtnDisabled]}
+                onPress={() => router.push('/search')}
               >
-                <Feather name="image" size={22} color={isLimitExhausted ? C.mutedForeground : C.foreground} />
+                <Feather name="search" size={22} color={isLimitExhausted ? C.mutedForeground : C.foreground} />
               </Pressable>
             </View>
 
-            {/* Upgrade to Pro link — visible only when limit is exhausted */}
+            {/* Pro upgrade nudge when ≤5 scans remain */}
+            {!canUseUnlimitedScanner(subscriptionTier) && scansLeft <= 5 && scansLeft > 0 && (
+              <Pressable onPress={() => router.push('/pro-subscription')} style={styles.upgradeLinkRow}>
+                <Feather name="zap" size={13} color={C.primary} />
+                <Text style={styles.upgradeLinkText}>
+                  {scansLeft === 1 ? '1 scan remaining — upgrade for unlimited' : `${scansLeft} scans remaining — upgrade for unlimited`}
+                </Text>
+                <Feather name="chevron-right" size={13} color={C.primary} />
+              </Pressable>
+            )}
+
+            {/* Exhausted upgrade link */}
             {isLimitExhausted && (
               <Pressable onPress={() => router.push('/pro-subscription')} style={styles.upgradeLinkRow}>
                 <Feather name="zap" size={13} color={C.primary} />
@@ -332,14 +676,29 @@ export default function ScanScreen() {
           </View>
         )}
 
-        {scanState === 'match' && (
+        {/* Match actions */}
+        {isMatchView && (
           <View style={styles.actionStack}>
-            <Pressable onPress={handleAddToCollection} style={styles.primaryActionBtn}>
-              <Feather name="plus" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Add to Collection</Text>
+            <Pressable onPress={handleConfirm} style={styles.primaryActionBtn}>
+              <Feather name="check" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>That's the one — save it</Text>
             </Pressable>
-            <Pressable onPress={handleCheckValue} style={styles.secondaryActionBtn}>
-              <Text style={styles.secondaryActionText}>Check Value</Text>
+            <Pressable onPress={handleSearchManually} style={styles.secondaryActionBtn}>
+              <Feather name="search" size={16} color={C.foreground} />
+              <Text style={styles.secondaryActionText}>Not right? Search manually</Text>
+            </Pressable>
+            <Pressable onPress={tryAgain} style={styles.ghostBtn}>
+              <Text style={styles.ghostBtnText}>Scan Again</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Error actions */}
+        {scanState === 'error' && (
+          <View style={styles.actionStack}>
+            <Pressable onPress={handleSearchManually} style={styles.primaryActionBtn}>
+              <Feather name="search" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Search Manually</Text>
             </Pressable>
             <Pressable onPress={tryAgain} style={styles.ghostBtn}>
               <Text style={styles.ghostBtnText}>Try Again</Text>
@@ -347,41 +706,25 @@ export default function ScanScreen() {
           </View>
         )}
 
+        {/* Confirmed actions */}
         {scanState === 'confirmed' && (
           <View style={styles.actionStack}>
-            <Pressable onPress={handleCheckValue} style={styles.primaryActionBtn}>
-              <Text style={styles.primaryActionText}>View Card Detail</Text>
-            </Pressable>
+            {topMatch && (
+              <Pressable onPress={() => router.push(`/card/${topMatch.card.id}`)} style={styles.primaryActionBtn}>
+                <Text style={styles.primaryActionText}>View Card Detail</Text>
+              </Pressable>
+            )}
             <Pressable onPress={tryAgain} style={styles.ghostBtn}>
               <Text style={styles.ghostBtnText}>Scan Another Card</Text>
             </Pressable>
           </View>
         )}
       </View>
-
-      {/* Recent scans (idle only) */}
-      {scanState === 'idle' && (
-        <View style={styles.recent}>
-          <Text style={styles.recentTitle}>Recent Scans</Text>
-          {[
-            { name: 'Charizard ex', set: 'Obsidian Flames', id: 'charizard-ex-ob' },
-            { name: 'Umbreon ex', set: 'Prismatic Evolutions', id: 'umbreon-ex-pe' },
-          ].map(item => (
-            <Pressable
-              key={item.id}
-              style={[styles.recentRow, { backgroundColor: C.card }]}
-              onPress={() => router.push(`/card/${item.id}`)}
-            >
-              <Feather name="rotate-ccw" size={15} color={C.mutedForeground} />
-              <Text style={styles.recentLabel}>{item.name} · {item.set}</Text>
-              <Feather name="chevron-right" size={15} color={C.mutedForeground} />
-            </Pressable>
-          ))}
-        </View>
-      )}
     </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
@@ -401,6 +744,27 @@ const styles = StyleSheet.create({
     color: C.foreground,
     letterSpacing: -0.3,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scanCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: C.card,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  scanCountText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+  },
   headerBtn: {
     width: 42,
     height: 42,
@@ -409,6 +773,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Permission screen
+  permissionPanel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    gap: 16,
+  },
+  permissionIconWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 28,
+    backgroundColor: `${C.primary}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  permissionTitle: {
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+    color: C.foreground,
+    textAlign: 'center',
+  },
+  permissionBody: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  permissionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: C.primary,
+    alignSelf: 'stretch',
+    marginTop: 8,
+  },
+  permissionBtnText: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFFFFF',
+  },
+  // Viewfinder
   viewfinder: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   scanFrame: {
     borderRadius: 18,
@@ -427,6 +838,7 @@ const styles = StyleSheet.create({
     height: 24,
     borderColor: C.primary,
     borderRadius: 3,
+    zIndex: 2,
   },
   scanLine: {
     position: 'absolute',
@@ -438,8 +850,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 10,
+    zIndex: 3,
   },
   idleCenter: { alignItems: 'center', gap: 12 },
+  exhaustedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 1,
+  },
   scanningBadge: {
     position: 'absolute',
     bottom: 14,
@@ -450,6 +868,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 5,
+    zIndex: 4,
   },
   scanDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.primary },
   scanningText: {
@@ -464,6 +883,7 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
     textAlign: 'center',
   },
+  // Match panel
   matchPanel: {
     flex: 1,
     justifyContent: 'center',
@@ -471,7 +891,23 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     marginBottom: 8,
-    gap: 16,
+    gap: 12,
+  },
+  lowConfBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F59E0B18',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B44',
+  },
+  lowConfText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: '#F59E0B',
   },
   confidenceBadge: { alignItems: 'center' },
   confidenceNum: { fontSize: 40, fontFamily: 'Inter_700Bold', color: C.positive },
@@ -487,8 +923,6 @@ const styles = StyleSheet.create({
     width: 70,
     height: 98,
     borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   matchInitial: {
     fontSize: 36,
@@ -499,9 +933,41 @@ const styles = StyleSheet.create({
   matchName: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
   matchSet: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   matchNumber: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}88` },
-  matchPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4 },
-  matchPrice: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  matchPriceLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  altsList: { marginTop: 4 },
+  altChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: C.surface,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  altChipText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
+    maxWidth: 120,
+  },
+  altChipConf: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
+  // Error panel
+  errorPanel: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  errorTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginBottom: 8 },
+  errorBody: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  // Confirmed panel
   confirmedPanel: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   confirmedIconWrap: { marginBottom: 4 },
   confirmedTitle: { fontSize: 24, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
@@ -515,7 +981,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   confirmedMetaText: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  confirmedPrice: { fontSize: 20, fontFamily: 'Inter_700Bold', color: C.foreground },
+  // Controls
   controls: { paddingVertical: 20 },
   iconRow: {
     flexDirection: 'row',
@@ -533,6 +999,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
   },
+  iconBtnDisabled: { opacity: 0.4 },
   scanTrigger: {
     width: 72,
     height: 72,
@@ -549,12 +1016,27 @@ const styles = StyleSheet.create({
     borderColor: C.background,
   },
   scanTriggerInner: { alignItems: 'center', justifyContent: 'center' },
-  scanTriggerDisabled: {
-    backgroundColor: C.muted,
-    shadowOpacity: 0,
+  scanTriggerDisabled: { backgroundColor: C.muted, shadowOpacity: 0, borderColor: C.border, opacity: 0.7 },
+  limitReachedLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: C.card,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 1,
     borderColor: C.border,
-    opacity: 0.7,
   },
+  limitReachedText: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  upgradeLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 14,
+  },
+  upgradeLinkText: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.primary },
   actionStack: { gap: 10 },
   primaryActionBtn: {
     flexDirection: 'row',
@@ -567,109 +1049,45 @@ const styles = StyleSheet.create({
   },
   primaryActionText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   secondaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     height: 52,
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: C.border,
     backgroundColor: C.card,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   secondaryActionText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   ghostBtn: { height: 44, alignItems: 'center', justifyContent: 'center' },
   ghostBtnText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  recent: { marginTop: 4 },
-  recentTitle: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-    color: C.foreground,
-    marginBottom: 10,
-  },
-  recentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    marginBottom: 8,
-    gap: 12,
-  },
-  recentLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: C.foreground,
-  },
-
-  // ── Exhausted overlay ───────────────────────────────────────────────────────
-  exhaustedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: 18,
-  },
-
-  // ── Disabled icon button ────────────────────────────────────────────────────
-  iconBtnDisabled: {
-    opacity: 0.4,
-  },
-
-  // ── "Scan limit reached" label (replaces scan trigger) ─────────────────────
-  limitReachedLabel: {
-    width: 72,
-    height: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  limitReachedText: {
-    fontSize: 10,
-    fontFamily: 'Inter_500Medium',
-    color: C.mutedForeground,
-    textAlign: 'center',
-    letterSpacing: 0.2,
-  },
-
-  // ── "Upgrade to Pro" link below the controls ────────────────────────────────
-  upgradeLinkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    marginTop: 14,
-  },
-  upgradeLinkText: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: C.primary,
-  },
-
-  // ── 30th-scan limit bottom sheet ────────────────────────────────────────────
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
+  // Modals / sheets
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: {
     backgroundColor: C.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingHorizontal: 24,
     paddingTop: 12,
-    alignItems: 'center',
+    paddingHorizontal: 20,
+    gap: 4,
   },
   sheetHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
     backgroundColor: C.border,
-    marginBottom: 24,
+    alignSelf: 'center',
+    marginBottom: 16,
   },
   sheetIconWrap: {
     width: 64,
     height: 64,
-    borderRadius: 32,
+    borderRadius: 20,
     backgroundColor: C.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'center',
     marginBottom: 16,
     borderWidth: 1,
     borderColor: C.border,
@@ -681,6 +1099,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
   },
+  sheetCardName: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
   sheetBody: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
@@ -688,6 +1113,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 24,
+  },
+  sheetActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 8,
+  },
+  sheetActionText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
   },
   sheetPrimaryBtn: {
     flexDirection: 'row',
@@ -700,11 +1143,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginBottom: 10,
   },
-  sheetPrimaryBtnText: {
-    fontSize: 15,
-    fontFamily: 'Inter_700Bold',
-    color: '#FFFFFF',
-  },
+  sheetPrimaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   sheetGhostBtn: {
     height: 44,
     alignItems: 'center',
@@ -712,9 +1151,5 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginBottom: 4,
   },
-  sheetGhostBtnText: {
-    fontSize: 14,
-    fontFamily: 'Inter_500Medium',
-    color: C.mutedForeground,
-  },
+  sheetGhostBtnText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
 });

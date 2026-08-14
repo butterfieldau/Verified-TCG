@@ -7,6 +7,15 @@ import catalogRouter from "./catalog";
 import certificationRouter from "./certification";
 import gradedPricesRouter from "./gradedPrices";
 import ebayAccountDeletionRouter from "./ebayAccountDeletion";
+import collectionRouter from "./collection";
+import supportRouter from "./support";
+import subscriptionRouter from "./subscription";
+import scanRouter from "./scan";
+import priceHistoryRouter from "./priceHistory";
+import eventsRouter from "./events";
+import notificationsRouter from "./notifications";
+import collectorsRouter from "./collectors";
+import communityRouter from "./community";
 
 const router: IRouter = Router();
 
@@ -18,5 +27,14 @@ router.use(catalogRouter);
 router.use(certificationRouter);
 router.use(gradedPricesRouter);
 router.use(ebayAccountDeletionRouter);
+router.use(collectionRouter);
+router.use(supportRouter);
+router.use(subscriptionRouter);
+router.use(scanRouter);
+router.use(priceHistoryRouter);
+router.use(eventsRouter);
+router.use(notificationsRouter);
+router.use(collectorsRouter);
+router.use(communityRouter);
 
 export default router;

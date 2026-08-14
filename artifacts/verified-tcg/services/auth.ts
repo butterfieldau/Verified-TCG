@@ -16,7 +16,10 @@ export interface AuthSession {
   user: {
     id: string;
     email?: string;
-    user_metadata?: Record<string, unknown>;
+    user_metadata?: Record<string, unknown> & {
+      subscription_tier?: string;
+      is_founding_member?: boolean;
+    };
   };
 }
 
@@ -89,12 +92,19 @@ export async function signUp(
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
-  // Password reset via email is not yet supported — the server returns 200
-  // with a friendly message regardless of whether the account exists.
-  await request('/api/auth/recover', {
+  const response = await request('/api/auth/recover', {
     method: 'POST',
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   });
+  if (!response.ok) return parseError(response);
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  const response = await request('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!response.ok) return parseError(response);
 }
 
 export async function updateUserMetadata(data: Record<string, string>): Promise<void> {
@@ -158,6 +168,22 @@ export async function restoreSession(): Promise<AuthSession | null> {
   }
 }
 
+/** All AsyncStorage keys owned by this app — cleared on sign-out or account deletion. */
+export const ALL_STORAGE_KEYS = [
+  '@verified_tcg/auth_session',
+  '@verified_tcg/watchlist',
+  '@verified_tcg/prices_v2',
+  // Legacy price keys (written by older app versions)
+  '@verified_tcg/collection_prices',
+  '@verified_tcg/watchlist_prices',
+  '@verified_tcg/prices_last_updated',
+  '@verified_tcg/scan_state',
+  '@verified_tcg/alerts',
+  // Home-screen dismissal banners
+  '@verified_tcg/event_banner_dismissed_event_id',
+  '@verified_tcg/trade_matches_dismissed_count',
+] as const;
+
 export async function signOut(): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(SESSION_KEY);
@@ -169,10 +195,68 @@ export async function signOut(): Promise<void> {
       }).catch(() => {});
     }
   } catch {}
-  await persist(null);
+  // Clear every local key so the next user starts completely fresh
+  await AsyncStorage.multiRemove([...ALL_STORAGE_KEYS]).catch(() => {});
+}
+
+export async function deleteAccount(password: string): Promise<void> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You must be signed in to delete your account.');
+
+  const response = await request('/api/auth/account', {
+    method: 'DELETE',
+    accessToken: session.access_token,
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) return parseError(response);
+
+  // Wipe all local data after the server confirms deletion
+  await AsyncStorage.multiRemove([...ALL_STORAGE_KEYS]).catch(() => {});
 }
 
 export async function getAccessToken(): Promise<string | null> {
   const session = await restoreSession();
   return session?.access_token ?? null;
+}
+
+/**
+ * Upgrade the authenticated user's subscription to Pro.
+ *
+ * Calls POST /api/subscription/upgrade on the server which sets
+ * subscription_tier = 'pro' in the database.  Also updates the cached
+ * session in AsyncStorage so subsequent restoreSession() calls return the
+ * new tier without needing an extra round-trip.
+ *
+ * In production this would be triggered after a successful payment
+ * webhook rather than called directly from the client.
+ *
+ * @returns The updated subscription_tier and is_founding_member values.
+ */
+export async function upgradeToPro(): Promise<{ subscription_tier: string; is_founding_member: boolean }> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You must be signed in to upgrade.');
+
+  const response = await request('/api/subscription/upgrade', {
+    method: 'POST',
+    accessToken: session.access_token,
+  });
+  if (!response.ok) return parseError(response);
+
+  const result = (await response.json()) as { subscription_tier: string; is_founding_member: boolean };
+
+  // Update the cached session so the new tier is available on next restore
+  const updatedSession: AuthSession = {
+    ...session,
+    user: {
+      ...session.user,
+      user_metadata: {
+        ...(session.user.user_metadata ?? {}),
+        subscription_tier: result.subscription_tier,
+        is_founding_member: result.is_founding_member,
+      },
+    },
+  };
+  await persist(updatedSession);
+
+  return result;
 }

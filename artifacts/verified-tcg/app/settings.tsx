@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Platform,
   Pressable,
@@ -14,6 +14,9 @@ import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { Button } from '@/components/ui/Button';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
+import type { NotificationPrefs, PrivacyPrefs } from '@/services/settingsStore';
+import { CURRENCY_CONFIGS } from '@/utils/currency';
 
 const C = colors.dark;
 
@@ -81,17 +84,24 @@ function ToggleRow({
   );
 }
 
+const APPEARANCE_LABELS: Record<string, string> = {
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+};
+
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthenticated } = useApp();
+  const {
+    appearance,
+    currency,
+    notifications,
+    privacy,
+    updateNotificationPref,
+    updatePrivacyPref,
+  } = useSettings();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-
-  const [priceAlerts, setPriceAlerts] = useState(true);
-  const [verificationAlerts, setVerificationAlerts] = useState(true);
-  const [marketUpdates, setMarketUpdates] = useState(false);
-  const [publicCollection, setPublicCollection] = useState(true);
-  const [showPortfolioValue, setShowPortfolioValue] = useState(false);
-  const [faceIdEnabled, setFaceIdEnabled] = useState(true);
 
   const requireAccount = (destination?: string) => {
     if (isAuthenticated && destination) router.push(destination as any);
@@ -116,9 +126,25 @@ export default function SettingsScreen() {
       {/* General */}
       <Text style={styles.sectionLabel}>General</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <SettingRow icon="dollar-sign" label="Currency" value="AUD" onPress={() => {}} />
-        <SettingRow icon="globe" label="Language" value="English" onPress={() => {}} />
-        <SettingRow icon="moon" label="Appearance" value="Dark" onPress={() => {}} isLast />
+        <SettingRow
+          icon="dollar-sign"
+          label="Currency"
+          value={currency}
+          onPress={() => router.push('/currency-select' as any)}
+        />
+        <SettingRow
+          icon="globe"
+          label="Language"
+          value="English"
+          onPress={() => {}}
+        />
+        <SettingRow
+          icon="moon"
+          label="Appearance"
+          value={APPEARANCE_LABELS[appearance] ?? 'Dark'}
+          onPress={() => router.push('/appearance' as any)}
+          isLast
+        />
       </View>
 
       {!isAuthenticated && (
@@ -140,18 +166,41 @@ export default function SettingsScreen() {
       {/* Notifications */}
       <Text style={styles.sectionLabel}>Notifications</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <ToggleRow icon="bell" label="Price Alerts" value={priceAlerts} onChange={setPriceAlerts} />
         <ToggleRow
-          icon="shield"
-          label="Verification Updates"
-          value={verificationAlerts}
-          onChange={setVerificationAlerts}
+          icon="bell"
+          label="Price Alerts"
+          value={notifications.priceAlerts}
+          onChange={v => updateNotificationPref('priceAlerts', v)}
+        />
+        <ToggleRow
+          icon="git-branch"
+          label="Trade Matches"
+          value={notifications.tradeMatches}
+          onChange={v => updateNotificationPref('tradeMatches', v)}
+        />
+        <ToggleRow
+          icon="zap"
+          label="Events"
+          value={notifications.events}
+          onChange={v => updateNotificationPref('events', v)}
+        />
+        <ToggleRow
+          icon="users"
+          label="Community"
+          value={notifications.community}
+          onChange={v => updateNotificationPref('community', v)}
+        />
+        <ToggleRow
+          icon="gift"
+          label="Giveaways & Drops"
+          value={notifications.giveaways}
+          onChange={v => updateNotificationPref('giveaways', v)}
         />
         <ToggleRow
           icon="trending-up"
-          label="Market Updates"
-          value={marketUpdates}
-          onChange={setMarketUpdates}
+          label="Marketing Updates"
+          value={notifications.marketing}
+          onChange={v => updateNotificationPref('marketing', v)}
           isLast
         />
       </View>
@@ -160,16 +209,34 @@ export default function SettingsScreen() {
       <Text style={styles.sectionLabel}>Privacy</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
         <ToggleRow
-          icon="users"
-          label="Public Collection"
-          value={publicCollection}
-          onChange={setPublicCollection}
+          icon="user"
+          label="Public Profile"
+          value={privacy.publicProfile}
+          onChange={v => updatePrivacyPref('publicProfile', v)}
         />
         <ToggleRow
-          icon="eye-off"
-          label="Show Portfolio Value Publicly"
-          value={showPortfolioValue}
-          onChange={setShowPortfolioValue}
+          icon="layers"
+          label="Show My Collection"
+          value={privacy.showCollection}
+          onChange={v => updatePrivacyPref('showCollection', v)}
+        />
+        <ToggleRow
+          icon="heart"
+          label="Show My Wishlist"
+          value={privacy.showWishlist}
+          onChange={v => updatePrivacyPref('showWishlist', v)}
+        />
+        <ToggleRow
+          icon="repeat"
+          label="Show For-Trade Cards"
+          value={privacy.showForTrade}
+          onChange={v => updatePrivacyPref('showForTrade', v)}
+        />
+        <ToggleRow
+          icon="tag"
+          label="Show For-Sale Cards"
+          value={privacy.showForSale}
+          onChange={v => updatePrivacyPref('showForSale', v)}
           isLast
         />
       </View>
@@ -177,13 +244,12 @@ export default function SettingsScreen() {
       {/* Security */}
       <Text style={styles.sectionLabel}>Security</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
-        <ToggleRow
-          icon="lock"
-          label="Face ID / Touch ID"
-          value={faceIdEnabled}
-          onChange={setFaceIdEnabled}
+        <SettingRow
+          icon="key"
+          label="Change Password"
+          onPress={() => requireAccount('/forgot-password')}
+          isLast
         />
-        <SettingRow icon="key" label="Change Password" onPress={() => requireAccount('/forgot-password')} isLast />
       </View>
 
       {/* Account */}
@@ -191,16 +257,23 @@ export default function SettingsScreen() {
       <View style={[styles.card, { backgroundColor: C.card }]}>
         <SettingRow icon="user" label="Edit Profile" onPress={() => requireAccount('/edit-profile')} />
         <SettingRow icon="credit-card" label="Payment Methods" onPress={() => requireAccount('/pro-subscription')} />
-        <SettingRow icon="help-circle" label="Help & Support" onPress={() => {}} />
-        <SettingRow icon="file-text" label="Terms of Service" onPress={() => {}} />
-        <SettingRow icon="shield" label="Privacy Policy" onPress={() => {}} isLast />
+        <SettingRow icon="help-circle" label="Help & Support" onPress={() => router.push('/help-support' as any)} />
+        <SettingRow icon="info" label="About Verified TCG" onPress={() => router.push('/about' as any)} />
+        <SettingRow icon="file-text" label="Terms of Service" onPress={() => router.push('/terms' as any)} />
+        <SettingRow icon="shield" label="Privacy Policy" onPress={() => router.push('/privacy-policy' as any)} isLast />
       </View>
 
       {/* Data */}
       <Text style={styles.sectionLabel}>Data & Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
         <SettingRow icon="download" label="Export My Data" onPress={() => requireAccount('/portfolio')} />
-        <Pressable style={[styles.row]} onPress={() => requireAccount()}>
+        <Pressable
+          style={[styles.row]}
+          onPress={() => {
+            if (!isAuthenticated) { router.push('/create-account'); return; }
+            router.push('/delete-account' as any);
+          }}
+        >
           <View style={[styles.rowIcon, { backgroundColor: `${C.destructive}22` }]}>
             <Feather name="trash-2" size={16} color={C.destructive} />
           </View>

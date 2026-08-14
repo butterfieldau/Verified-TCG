@@ -1,6 +1,10 @@
 import type { CollectionItem, PortfolioSummary } from '@/types';
-import { MOCK_CARDS } from './cards';
 import { PORTFOLIO_CHART_DATA } from './market';
+import { getAccessToken } from './auth';
+
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+
+// ── Value helper (kept for price-display callers) ─────────────────────────────
 
 /**
  * Returns the current market value for a single CollectionItem, using the
@@ -28,74 +32,76 @@ export function getItemCurrentValue(item: CollectionItem): number {
   return p.raw;
 }
 
-export const MOCK_COLLECTION: CollectionItem[] = [
-  {
-    id: 'col-001', cardId: 'umbreon-ex-pe', card: MOCK_CARDS[1],
-    quantity: 1, condition: 'mint',
-    grading: { company: 'PSA', grade: 10, certNumber: '88245612', gradedAt: '2025-04-15', population: 847 },
-    acquiredAt: '2025-02-18', acquiredPrice: 680, currency: 'AUD',
-    notes: 'Alt art — pristine centering', isForSale: false, isForTrade: false,
-  },
-  {
-    id: 'col-002', cardId: 'charizard-ex-ob', card: MOCK_CARDS[0],
-    quantity: 1, condition: 'near_mint',
-    grading: { company: 'PSA', grade: 10, certNumber: '75839201', gradedAt: '2024-11-03', population: 2341 },
-    acquiredAt: '2024-09-12', acquiredPrice: 420, currency: 'AUD',
-    isForSale: true,
-  },
-  {
-    id: 'col-003', cardId: 'rayquaza-vmax-es', card: MOCK_CARDS[3],
-    quantity: 1, condition: 'mint',
-    grading: { company: 'BGS', grade: 9.5, certNumber: '0012984715', gradedAt: '2023-06-28' },
-    acquiredAt: '2023-04-10', acquiredPrice: 340, currency: 'AUD',
-  },
-  {
-    id: 'col-004', cardId: 'luffy-op01', card: MOCK_CARDS[8],
-    quantity: 1, condition: 'near_mint',
-    grading: { company: 'CGC', grade: 10, certNumber: 'CGC-2024-88841', gradedAt: '2024-08-14' },
-    acquiredAt: '2024-05-20', acquiredPrice: 180, currency: 'AUD',
-    isForTrade: true,
-  },
-  {
-    id: 'col-005', cardId: 'lugia-v-st', card: MOCK_CARDS[4],
-    quantity: 1, condition: 'mint',
-    acquiredAt: '2023-12-25', acquiredPrice: 78, currency: 'AUD',
-  },
-  {
-    id: 'col-006', cardId: 'pikachu-ex-151', card: MOCK_CARDS[2],
-    quantity: 3, condition: 'near_mint',
-    acquiredAt: '2024-01-15', acquiredPrice: 35, currency: 'AUD',
-  },
-];
+// ── Authenticated API helpers ─────────────────────────────────────────────────
 
-export const MOCK_PORTFOLIO: PortfolioSummary = {
-  totalValue: 24850.40,
-  totalCost: 17200.00,
-  totalGain: 7650.40,
-  totalGainPercent: 44.48,
-  currency: 'AUD',
-  cardCount: 10,
-  uniqueCardCount: 6,
-  chartData: PORTFOLIO_CHART_DATA,
-};
-
-export function getCollection(): CollectionItem[] {
-  return MOCK_COLLECTION;
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
 }
 
-export function getPortfolioSummary(): PortfolioSummary {
-  return MOCK_PORTFOLIO;
+// ── Collection API calls ──────────────────────────────────────────────────────
+
+/** Fetch all collection items for the signed-in user from the server. */
+export async function fetchCollection(): Promise<CollectionItem[]> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/collection`, { headers });
+  if (!res.ok) throw new Error(`Failed to load collection (${res.status})`);
+  return res.json() as Promise<CollectionItem[]>;
 }
 
-export function getForSaleItems(): CollectionItem[] {
-  return MOCK_COLLECTION.filter(i => i.isForSale);
+/** Add a card to the server collection. Returns the persisted item (server-assigned id). */
+export async function addCollectionItem(
+  item: CollectionItem,
+): Promise<CollectionItem> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/collection`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      cardId: item.cardId,
+      card: item.card,
+      quantity: item.quantity,
+      condition: item.condition,
+      grading: item.grading ?? null,
+      acquiredAt: item.acquiredAt,
+      acquiredPrice: item.acquiredPrice,
+      notes: item.notes,
+      isForSale: item.isForSale ?? false,
+      isForTrade: item.isForTrade ?? false,
+    }),
+  });
+  if (!res.ok) throw new Error(`Failed to add card (${res.status})`);
+  return res.json() as Promise<CollectionItem>;
 }
 
-export function getForTradeItems(): CollectionItem[] {
-  return MOCK_COLLECTION.filter(i => i.isForTrade);
+/** Update a collection item's mutable fields. Returns the updated item. */
+export async function updateCollectionItem(
+  id: string,
+  patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice'>>,
+): Promise<CollectionItem> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/collection/${id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Failed to update card (${res.status})`);
+  return res.json() as Promise<CollectionItem>;
 }
 
-// ── Sealed products ───────────────────────────────────────────────────────────
+/** Remove a card from the user's collection on the server. */
+export async function removeCollectionItem(id: string): Promise<void> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/collection/${id}`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!res.ok) throw new Error(`Failed to remove card (${res.status})`);
+}
+
+// ── Sealed products (static, out of scope for this task) ─────────────────────
 
 export interface SealedProduct {
   id: string;
@@ -114,7 +120,7 @@ export function getSealedProducts(): SealedProduct[] {
   return MOCK_SEALED_PRODUCTS;
 }
 
-// ── Set progress ──────────────────────────────────────────────────────────────
+// ── Set progress (static, out of scope for this task) ────────────────────────
 
 export interface SetProgress {
   id: string;
@@ -134,7 +140,7 @@ export function getSetProgress(): SetProgress[] {
   return MOCK_SET_PROGRESS;
 }
 
-// ── Collection Insights (Pro analytics) ───────────────────────────────────────
+// ── Collection Insights (Pro analytics — static mock, separate task) ──────────
 
 export interface InsightsChartPoint {
   date: string;   // ISO date label e.g. '2025-01'
@@ -184,7 +190,6 @@ export interface CollectionInsights {
 
 /** Weekly data points — suitable for 1M (4 pts) and 3M (13 pts) ranges. */
 function makeWeeklyPoints(base: number, weeks: number, trend: number, noise: number): InsightsChartPoint[] {
-  // Reference: 12 Aug 2026
   const nowMs = new Date(2026, 7, 12).getTime();
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
   const points: InsightsChartPoint[] = [];
@@ -200,7 +205,7 @@ function makeWeeklyPoints(base: number, weeks: number, trend: number, noise: num
 
 /** Monthly data points — suitable for 6M (6 pts), 1Y (12 pts), and ALL (30 pts) ranges. */
 function makeMonthlyPoints(base: number, months: number, trend: number, noise: number): InsightsChartPoint[] {
-  const now = new Date(2026, 7, 1); // Aug 2026
+  const now = new Date(2026, 7, 1);
   const points: InsightsChartPoint[] = [];
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -220,11 +225,11 @@ export const MOCK_COLLECTION_INSIGHTS: CollectionInsights = {
   cardCount: 10,
   currency: 'AUD',
   chartData: {
-    '1M':  makeWeeklyPoints(23200,  4,  1650,  120),  //  4 weekly pts  → spans ~1 month
-    '3M':  makeWeeklyPoints(21800, 13,  3050,  280),  // 13 weekly pts  → spans ~3 months
-    '6M':  makeMonthlyPoints(20400,  6, 4450,  520),  //  6 monthly pts → spans 6 months
-    '1Y':  makeMonthlyPoints(16200, 12, 8650,  800),  // 12 monthly pts → spans 1 year
-    'ALL': makeMonthlyPoints(9800,  30, 15050, 1200), // 30 monthly pts → spans ~2.5 years
+    '1M':  makeWeeklyPoints(23200,  4,  1650,  120),
+    '3M':  makeWeeklyPoints(21800, 13,  3050,  280),
+    '6M':  makeMonthlyPoints(20400,  6, 4450,  520),
+    '1Y':  makeMonthlyPoints(16200, 12, 8650,  800),
+    'ALL': makeMonthlyPoints(9800,  30, 15050, 1200),
   },
   highlights: {
     bestPerformer: {

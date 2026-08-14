@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -37,7 +38,7 @@ const statStyles = StyleSheet.create({
 });
 
 const MENU_ITEMS = [
-  { icon: 'bell', label: 'Notifications', badge: '3', route: '/notifications' },
+  { icon: 'bell', label: 'Notifications', badge: null as string | null, route: '/notifications', dynamicBadge: true },
   { icon: 'heart', label: 'Wishlist', route: '/wishlist' },
   { icon: 'zap', label: 'Event Mode', badge: 'LIVE', route: '/event-mode', highlight: true },
   { icon: 'git-branch', label: 'Trade Matches', badge: '4', route: '/trade-match' },
@@ -48,7 +49,7 @@ const MENU_ITEMS = [
   { icon: 'pie-chart', label: 'Portfolio', route: '/portfolio' },
   { icon: 'award', label: 'Pro Identity', route: '/pro-identity', proOnly: true },
   { icon: 'settings', label: 'Settings', route: '/settings' },
-  { icon: 'help-circle', label: 'Help & Support', route: null },
+  { icon: 'help-circle', label: 'Help & Support', route: '/help-support' },
 ];
 
 const PRO_BENEFITS_ITEMS = [
@@ -63,6 +64,7 @@ export default function ProfileScreen() {
     subscriptionTier, profileTheme,
     selectedIcon, foundingMemberClaimed,
     scansUsed, scanLimit, scanResetDate,
+    unreadNotificationCount,
   } = useApp();
   const isPro = subscriptionTier === 'pro';
 
@@ -299,40 +301,59 @@ export default function ProfileScreen() {
       {/* Menu */}
       <View style={styles.section}>
         <View style={[styles.menuCard, { backgroundColor: C.card }]}>
-          {MENU_ITEMS.map((item, idx) => (
-            <Pressable
-              key={item.label}
-              onPress={() => {
-                if ((item as any).proOnly && !isPro) {
-                  router.push('/pro-subscription' as any);
-                } else if (item.route) {
-                  router.push(item.route as any);
-                }
-              }}
-              style={({ pressed }) => [
-                styles.menuRow,
-                idx < MENU_ITEMS.length - 1 ? styles.menuDivider : null,
-                { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
-              ]}
-            >
-              <View style={[styles.menuIcon, { backgroundColor: (item as any).highlight ? `${C.primary}22` : C.muted }]}>
-                <Feather name={item.icon as any} size={16} color={(item as any).highlight ? C.primary : C.foreground} />
-              </View>
-              <Text style={[styles.menuLabel, (item as any).highlight && { color: C.primary }]}>{item.label}</Text>
-              {item.badge && (
-                <View style={[styles.menuBadge, { backgroundColor: (item as any).highlight ? C.primary : C.primary }]}>
-                  <Text style={styles.menuBadgeText}>{item.badge}</Text>
+          {MENU_ITEMS.map((item, idx) => {
+            // Use real unread count for the Notifications row
+            const badgeValue = (item as any).dynamicBadge
+              ? (unreadNotificationCount > 0 ? String(unreadNotificationCount) : null)
+              : item.badge;
+            return (
+              <Pressable
+                key={item.label}
+                onPress={() => {
+                  if ((item as any).proOnly && !isPro) {
+                    router.push('/pro-subscription' as any);
+                  } else if (item.route) {
+                    router.push(item.route as any);
+                  }
+                }}
+                style={({ pressed }) => [
+                  styles.menuRow,
+                  idx < MENU_ITEMS.length - 1 ? styles.menuDivider : null,
+                  { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
+                ]}
+              >
+                <View style={[styles.menuIcon, { backgroundColor: (item as any).highlight ? `${C.primary}22` : C.muted }]}>
+                  <Feather name={item.icon as any} size={16} color={(item as any).highlight ? C.primary : C.foreground} />
                 </View>
-              )}
-              <Feather name="chevron-right" size={16} color={C.mutedForeground} style={styles.menuChevron} />
-            </Pressable>
-          ))}
+                <Text style={[styles.menuLabel, (item as any).highlight && { color: C.primary }]}>{item.label}</Text>
+                {badgeValue && (
+                  <View style={[styles.menuBadge, { backgroundColor: C.primary }]}>
+                    <Text style={styles.menuBadgeText}>{badgeValue}</Text>
+                  </View>
+                )}
+                <Feather name="chevron-right" size={16} color={C.mutedForeground} style={styles.menuChevron} />
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
       {isAuthenticated ? (
         <Pressable
-          onPress={() => { signOut(); router.replace('/welcome'); }}
+          onPress={() => {
+            Alert.alert(
+              'Sign Out',
+              'Are you sure you want to sign out?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Sign Out',
+                  style: 'destructive',
+                  onPress: () => { signOut(); router.replace('/welcome'); },
+                },
+              ],
+            );
+          }}
           style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: `${C.destructive}44` }]}
         >
           <Feather name="log-out" size={16} color={C.destructive} />

@@ -1,12 +1,13 @@
 /**
- * wishlistApi.ts — single-tenant prototype
+ * wishlistApi.ts — per-user, JWT-authenticated
  *
  * HTTP client for the /api/wishlist endpoints.
  *
- * No authentication is required or claimed: the API server is a single-tenant
- * prototype that stores data for one fixed collector.  A production
- * implementation would integrate a real authentication system (e.g. Clerk)
- * before enabling multi-user storage.
+ * Every request includes the collector's Bearer token from the active session
+ * so the API server can scope data to the authenticated user.  Unauthenticated
+ * calls (no token available) are rejected gracefully — the caller receives an
+ * error that is caught and silenced in AppContext, leaving AsyncStorage as the
+ * authoritative offline cache.
  *
  * URL strategy
  * ──────────────
@@ -17,6 +18,7 @@
  */
 
 import type { WatchlistItem } from '@/types';
+import { getAccessToken } from '@/services/auth';
 
 const API_BASE =
   (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '') + '/api';
@@ -28,6 +30,17 @@ async function checkResponse(res: Response): Promise<void> {
     const body = await res.text().catch(() => '');
     throw new Error(`Wishlist API ${res.status}: ${body}`);
   }
+}
+
+/**
+ * Returns headers that include the Bearer token for the active session.
+ * Throws if no token is available so callers can skip the request when
+ * the collector is not signed in.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('No active session — wishlist request skipped');
+  return { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
 }
 
 // ── Wishlist operations ───────────────────────────────────────────────────────
@@ -49,9 +62,10 @@ async function checkResponse(res: Response): Promise<void> {
 export async function syncWishlistToServer(
   items: WatchlistItem[],
 ): Promise<WatchlistItem[]> {
+  const headers = await authHeaders();
   const res = await fetch(`${API_BASE}/wishlist/sync`, {
     method: 'POST',
-    headers: JSON_HEADERS,
+    headers,
     body: JSON.stringify({ items }),
   });
   await checkResponse(res);
@@ -67,9 +81,10 @@ export async function syncWishlistToServer(
 export async function addWishlistItemToServer(
   item: WatchlistItem,
 ): Promise<void> {
+  const headers = await authHeaders();
   const res = await fetch(`${API_BASE}/wishlist`, {
     method: 'POST',
-    headers: JSON_HEADERS,
+    headers,
     body: JSON.stringify(item),
   });
   await checkResponse(res);
@@ -83,9 +98,10 @@ export async function addWishlistItemToServer(
 export async function removeWishlistItemFromServer(
   itemId: string,
 ): Promise<void> {
+  const headers = await authHeaders();
   const res = await fetch(
     `${API_BASE}/wishlist/${encodeURIComponent(itemId)}`,
-    { method: 'DELETE', headers: JSON_HEADERS },
+    { method: 'DELETE', headers },
   );
   await checkResponse(res);
 }
@@ -97,11 +113,12 @@ export async function updateWishlistItemOnServer(
   itemId: string,
   patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
 ): Promise<void> {
+  const headers = await authHeaders();
   const res = await fetch(
     `${API_BASE}/wishlist/${encodeURIComponent(itemId)}`,
     {
       method: 'PATCH',
-      headers: JSON_HEADERS,
+      headers,
       body: JSON.stringify(patch),
     },
   );

@@ -10,6 +10,8 @@
 
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StatusBar,
@@ -22,6 +24,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import colors from '@/constants/colors';
 import { SUBSCRIPTION_CONFIG } from '@/services/subscription';
+import { upgradeToPro } from '@/services/auth';
 import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
@@ -36,22 +39,38 @@ type FeatherIconName = React.ComponentProps<typeof Feather>['name'];
 
 export default function ProSubscriptionScreen() {
   const [cycle, setCycle] = useState<BillingCycle>('annual');
-  const { isAuthenticated, setSubscriptionTier } = useApp();
+  const [upgrading, setUpgrading] = useState(false);
+  const { isAuthenticated, subscriptionTier, setSubscriptionTier } = useApp();
 
+  const isPro = subscriptionTier === 'pro';
   const monthly = SUBSCRIPTION_CONFIG.monthlyPriceAUD;
   const annual = SUBSCRIPTION_CONFIG.annualPriceAUD;
   const equiv = SUBSCRIPTION_CONFIG.annualMonthlyEquiv;
   const saving = SUBSCRIPTION_CONFIG.annualSavingPercent;
 
-  function handleStartTrial() {
+  async function handleStartTrial() {
     if (!isAuthenticated) {
       router.push({ pathname: '/create-account', params: { next: '/pro-subscription' } } as any);
       return;
     }
-    // Billing is not connected yet; keep the entitlement transition explicit
-    // so the complete upgrade experience can be tested end to end.
-    setSubscriptionTier('pro');
-    router.back();
+    if (isPro) {
+      router.back();
+      return;
+    }
+    setUpgrading(true);
+    try {
+      await upgradeToPro();
+      setSubscriptionTier('pro');
+      router.back();
+    } catch (err) {
+      Alert.alert(
+        'Upgrade failed',
+        'Unable to upgrade to Pro right now. Please check your connection and try again.',
+        [{ text: 'OK' }],
+      );
+    } finally {
+      setUpgrading(false);
+    }
   }
 
   return (
@@ -79,10 +98,21 @@ export default function ProSubscriptionScreen() {
             <Feather name="zap" size={13} color={C.primaryForeground} />
             <Text style={styles.proBadgeText}>Verified TCG Pro</Text>
           </View>
-          <Text style={styles.headline}>Collect smarter.{'\n'}Trade faster.</Text>
-          <Text style={styles.subheadline}>
-            Everything a serious collector needs in one subscription.
-          </Text>
+          {isPro ? (
+            <>
+              <Text style={styles.headline}>You're on{'\n'}Verified Pro.</Text>
+              <Text style={styles.subheadline}>
+                Your Pro membership is active. Enjoy unlimited scanning, full price history, and all Pro features.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.headline}>Collect smarter.{'\n'}Trade faster.</Text>
+              <Text style={styles.subheadline}>
+                Everything a serious collector needs in one subscription.
+              </Text>
+            </>
+          )}
         </View>
 
         {/* ── Billing toggle ── */}
@@ -151,18 +181,41 @@ export default function ProSubscriptionScreen() {
 
         {/* ── CTA ── */}
         <View style={styles.ctaSection}>
-          <Pressable
-            style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaButtonPressed]}
-            onPress={handleStartTrial}
-            accessibilityRole="button"
-            accessibilityLabel="Start 7-day free trial"
-          >
-            <Feather name="zap" size={16} color={C.primaryForeground} />
-            <Text style={styles.ctaButtonText}>START 7-DAY FREE TRIAL</Text>
-          </Pressable>
+          {isPro ? (
+            <Pressable
+              style={({ pressed }) => [styles.ctaButton, styles.ctaButtonPro, pressed && styles.ctaButtonPressed]}
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="You're already on Verified Pro"
+            >
+              <Feather name="check-circle" size={16} color={C.primaryForeground} />
+              <Text style={styles.ctaButtonText}>YOU'RE ON VERIFIED PRO</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [styles.ctaButton, upgrading && styles.ctaButtonDisabled, pressed && !upgrading && styles.ctaButtonPressed]}
+              onPress={handleStartTrial}
+              disabled={upgrading}
+              accessibilityRole="button"
+              accessibilityLabel="Start 7-day free trial"
+            >
+              {upgrading ? (
+                <ActivityIndicator size="small" color={C.primaryForeground} />
+              ) : (
+                <Feather name="zap" size={16} color={C.primaryForeground} />
+              )}
+              <Text style={styles.ctaButtonText}>
+                {upgrading ? 'UPGRADING…' : 'START 7-DAY FREE TRIAL'}
+              </Text>
+            </Pressable>
+          )}
 
           <Text style={styles.ctaSecondary}>
-            {isAuthenticated ? 'Keep using Verified TCG Free anytime.' : 'Create a free account before starting your trial.'}
+            {isPro
+              ? 'Your Pro membership is active.'
+              : isAuthenticated
+                ? 'Keep using Verified TCG Free anytime.'
+                : 'Create a free account before starting your trial.'}
           </Text>
         </View>
 
@@ -524,6 +577,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 6,
+  },
+  ctaButtonPro: {
+    backgroundColor: '#2a6e3f',
+  },
+  ctaButtonDisabled: {
+    opacity: 0.7,
   },
   ctaButtonPressed: {
     opacity: 0.88,

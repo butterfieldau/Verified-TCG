@@ -1,0 +1,211 @@
+/**
+ * Schema readiness check and forward migrations.
+ *
+ * On startup this module:
+ *   1. Verifies that all required base tables exist (hard fail if missing).
+ *   2. Applies additive, idempotent column migrations using
+ *      `ALTER TABLE … ADD COLUMN IF NOT EXISTS` so new columns are always
+ *      present regardless of when the database was first provisioned.
+ *
+ * Adding a new column:
+ *   - Add an `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to
+ *     COLUMN_MIGRATIONS below.
+ *   - Also update lib/db/src/schema/<table>.ts with the matching Drizzle
+ *     column definition and run `pnpm --filter @workspace/db run push` to
+ *     sync a fresh development database.
+ */
+import { sql } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { logger } from "./logger";
+
+const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
+
+/**
+ * Idempotent column-level migrations.  Each entry is a raw SQL string that
+ * adds a column only when it does not already exist, so running this on an
+ * already-migrated database is always safe.
+ */
+const COLUMN_MIGRATIONS: string[] = [
+  // Added: subscription tier and founding-member flag for Pro persistence
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
+  // Added: soft-delete support for wishlist items so deletions are durable across restarts
+  // (NULL = active, non-NULL = tombstone; sync endpoint respects this column)
+  `ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+];
+
+/**
+ * Idempotent table-level migrations.  Each entry is a raw SQL string that
+ * creates a table only when it does not already exist, so running this on an
+ * already-migrated database is always safe.
+ */
+const TABLE_MIGRATIONS: string[] = [
+  // Added: per-user monthly scan usage tracking for the card scanner feature.
+  // Includes the unique constraint so it is present on freshly-provisioned DBs.
+  `CREATE TABLE IF NOT EXISTS scan_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period_start TIMESTAMP NOT NULL,
+    scan_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT scan_usage_user_period_uniq UNIQUE (user_id, period_start)
+  )`,
+  // Added: periodic price snapshots for the price history chart feature.
+  `CREATE TABLE IF NOT EXISTS price_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'AUD',
+    source TEXT NOT NULL DEFAULT 'ebay_sold',
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: persistent wishlist storage for trade matching and cross-device sync.
+  `CREATE TABLE IF NOT EXISTS wishlist_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    card_data JSONB NOT NULL,
+    desired_grade TEXT,
+    target_price_cents INTEGER,
+    price_alert_enabled BOOLEAN NOT NULL DEFAULT false,
+    added_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: TCG events (conventions, meetups) that collectors can join.
+  `CREATE TABLE IF NOT EXISTS events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    city TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: tracks which users are participating in which events.
+  `CREATE TABLE IF NOT EXISTS event_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    left_at TIMESTAMPTZ,
+    is_visible BOOLEAN NOT NULL DEFAULT true
+  )`,
+  // Added: per-user in-app notification store (price alerts, trade matches, etc.)
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(30) NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Added: Expo push notification tokens, one row per device per user.
+  `CREATE TABLE IF NOT EXISTS push_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT push_tokens_token_uniq UNIQUE (token)
+  )`,
+];
+
+/**
+ * Idempotent index/constraint migrations applied AFTER table creation.
+ * Used to add constraints that were absent from older versions of a table
+ * created before this migration was added.
+ */
+const CONSTRAINT_MIGRATIONS: string[] = [
+  // Ensure scan_usage unique constraint exists on databases where the table
+  // was created by an earlier version of TABLE_MIGRATIONS that omitted it.
+  `DO $$ BEGIN
+    ALTER TABLE scan_usage
+      ADD CONSTRAINT scan_usage_user_period_uniq UNIQUE (user_id, period_start);
+  EXCEPTION WHEN duplicate_table THEN NULL;
+            WHEN duplicate_object THEN NULL;
+  END $$`,
+  // Add index on price_snapshots for efficient card+grade+time queries
+  `CREATE INDEX IF NOT EXISTS price_snapshots_card_grade_idx
+     ON price_snapshots (card_id, grade_key, recorded_at)`,
+  // Index on event_participants for efficient (event_id, user_id) lookups
+  `CREATE INDEX IF NOT EXISTS event_participants_event_user_idx
+     ON event_participants (event_id, user_id)`,
+  // Unique constraint on event_participants so each user has exactly one row per event.
+  // Prevents concurrent joins from creating duplicate active-participation rows.
+  // Uses DO $$ to swallow "already exists" rather than failing on already-migrated DBs.
+  `DO $$ BEGIN
+     ALTER TABLE event_participants
+       ADD CONSTRAINT event_participants_event_user_uniq UNIQUE (event_id, user_id);
+   EXCEPTION WHEN duplicate_table THEN NULL;
+             WHEN duplicate_object THEN NULL;
+   END $$`,
+  // Unique constraint on wishlist_items (user_id, item_id) to enable upsert semantics.
+  `DO $$ BEGIN
+     ALTER TABLE wishlist_items
+       ADD CONSTRAINT wishlist_items_user_item_uniq UNIQUE (user_id, item_id);
+   EXCEPTION WHEN duplicate_table THEN NULL;
+             WHEN duplicate_object THEN NULL;
+   END $$`,
+  // Index on notifications for efficient per-user reads (newest unread first)
+  `CREATE INDEX IF NOT EXISTS notifications_user_read_created_idx
+     ON notifications (user_id, is_read, created_at DESC)`,
+  // Seed initial events if the table is empty
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events LIMIT 1)`,
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'Melbourne TCG Fest', 'Melbourne Convention Centre', 'Melbourne, VIC', 'Sep 20–21, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Melbourne TCG Fest')`,
+  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
+   SELECT gen_random_uuid(), 'Brisbane Card Expo', 'Brisbane Convention Centre', 'Brisbane, QLD', 'Oct 5, 2026', true, NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Brisbane Card Expo')`,
+];
+
+export async function runMigrations(): Promise<void> {
+  logger.info("Verifying database schema");
+
+  const result = await db.execute<{ table_name: string }>(sql`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = ANY(ARRAY[${sql.raw(REQUIRED_TABLES.map(t => `'${t}'`).join(", "))}])
+  `);
+
+  const found = new Set(result.rows.map((r) => r.table_name));
+  const missing = REQUIRED_TABLES.filter((t) => !found.has(t));
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Required database tables are missing: [${missing.join(", ")}]. ` +
+        "Run 'pnpm --filter @workspace/db run push' before starting the server.",
+    );
+  }
+
+  logger.info({ tables: [...found] }, "Database schema verified");
+
+  // Apply forward table migrations (CREATE TABLE IF NOT EXISTS)
+  for (const statement of TABLE_MIGRATIONS) {
+    await db.execute(sql.raw(statement));
+  }
+
+  logger.info({ count: TABLE_MIGRATIONS.length }, "Table migrations applied");
+
+  // Apply forward column migrations
+  for (const statement of COLUMN_MIGRATIONS) {
+    await db.execute(sql.raw(statement));
+  }
+
+  logger.info({ count: COLUMN_MIGRATIONS.length }, "Column migrations applied");
+
+  // Apply forward constraint/index migrations (idempotent, post-table)
+  for (const statement of CONSTRAINT_MIGRATIONS) {
+    await db.execute(sql.raw(statement));
+  }
+
+  logger.info({ count: CONSTRAINT_MIGRATIONS.length }, "Constraint migrations applied");
+}

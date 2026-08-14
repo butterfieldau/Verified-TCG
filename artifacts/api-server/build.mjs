@@ -50,6 +50,7 @@ async function buildAll() {
       "oracledb",
       "mongodb-client-encryption",
       "nodemailer",
+      "resend",
       "handlebars",
       "knex",
       "typeorm",
@@ -100,6 +101,7 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
+      "openai",
     ],
     sourcemap: "linked",
     plugins: [

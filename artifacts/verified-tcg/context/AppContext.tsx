@@ -8,7 +8,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState as RNAppState, type AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   CollectionItem,
@@ -21,7 +21,7 @@ import type {
   User,
   PortfolioSummary,
 } from '@/types';
-import { MOCK_COLLECTION, MOCK_PORTFOLIO, getItemCurrentValue } from '@/services/collection';
+import { getItemCurrentValue, fetchCollection, addCollectionItem, removeCollectionItem } from '@/services/collection';
 import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
 import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 import {
@@ -40,18 +40,50 @@ import {
   saveAlertState,
   mergeAlertSources,
 } from '@/services/alertsStore';
-import { getNotifications } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
+import {
+  fetchNotifications,
+  fetchUnreadCount,
+  markNotificationReadOnServer,
+  markAllNotificationsReadOnServer,
+} from '@/services/notifications';
+import {
+  configureForegroundNotifications,
+  requestAndRegisterPushToken,
+} from '@/services/pushRegistration';
+import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
   signInWithPassword,
   signInWithOAuth,
   signOut as authSignOut,
+  deleteAccount as authDeleteAccount,
   updateUserMetadata,
   type OAuthProvider,
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
+
+// API base for server-side quota sync — same pattern as other service files
+const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+
+/**
+ * Fetch the authoritative scan count for the current period from the server.
+ * Fire-and-forget — call it after sign-in / session restore so the local
+ * counter cannot drift from the server-side truth.
+ */
+async function fetchServerScanCount(accessToken: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${_SCAN_API_BASE}/api/scan/usage`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { scansUsed?: number };
+    return typeof body.scansUsed === 'number' ? body.scansUsed : null;
+  } catch {
+    return null;
+  }
+}
 import {
   SCAN_STATE_STORAGE_KEY,
   nextMonthFirstDay,
@@ -64,6 +96,8 @@ interface AppState {
   user: User | null;
   isAuthenticated: boolean;
   collection: CollectionItem[];
+  collectionLoading: boolean;
+  refreshCollection: () => Promise<void>;
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
   watchlist: WatchlistItem[];
@@ -73,7 +107,10 @@ interface AppState {
   pricesLastUpdated: Date | null;
   isPriceRefreshing: boolean;
   notifications: Notification[];
+  /** Server-authoritative unread count — accurate even beyond the first loaded page. */
   unreadNotificationCount: number;
+  /** True when more notifications exist on the server beyond the first page. */
+  notificationsHasMore: boolean;
   /** Number of watchlist items with priceAlertEnabled === true. */
   activeAlertCount: number;
   // ── Subscription ──────────────────────────────────────────────────────────
@@ -92,12 +129,16 @@ interface AppState {
    * unique member number assigned from a counter capped at FOUNDING_MEMBER_LIMIT.
    */
   foundingMemberClaimed: boolean;
+  // ── Event Mode ─────────────────────────────────────────────────────────────
+  /** ID of the event the collector is currently participating in, or null. */
+  currentEventId: string | null;
 }
 
 interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
+  deleteAccount: (password: string) => Promise<void>;
   updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => Promise<void>;
   addToCollection: (item: CollectionItem) => void;
   removeFromCollection: (id: string) => void;
@@ -109,11 +150,20 @@ interface AppActions {
   setMarketFilters: (filters: Partial<MarketFilters>) => void;
   setActiveTCG: (tcg: TCGId | null) => void;
   refreshPrices: () => Promise<void>;
-  markNotificationRead: (id: string) => void;
+  markNotificationRead: (id: string, currentlyRead?: boolean) => void;
   markAllNotificationsRead: () => void;
+  /** Pull fresh notifications from the server (call on pull-to-refresh). */
+  refreshNotifications: () => Promise<void>;
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
+  /**
+   * Sync the scan count with an authoritative server value.
+   * Called after recognition (success or charged failure) to replace the
+   * locally-incremented count with the count returned by the server, so
+   * device-switch, reinstall, and charged-failure cases stay accurate.
+   */
+  syncScanCount: (serverCount: number) => void;
   /** Reset scansUsed to 0 (also available to DEV panel for quick testing). */
   resetScanCount: () => void;
   /**
@@ -126,6 +176,9 @@ interface AppActions {
   setProfileTheme: (theme: string) => void;
   /** Toggle the mock Founding Member claim. Only callable when tier === 'pro'. */
   claimFoundingMember: () => void;
+  // ── Event Mode ─────────────────────────────────────────────────────────────
+  /** Set or clear the currently active event ID. */
+  setCurrentEventId: (id: string | null) => void;
 }
 
 type AppContextType = AppState & AppActions;
@@ -153,14 +206,22 @@ const WATCHLIST_SCHEMA_VERSION = 1;
 
 function userFromSession(session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }): User {
   const email = session.user.email ?? '';
-  const displayName = typeof session.user.user_metadata?.display_name === 'string'
-    ? session.user.user_metadata.display_name
+  const meta = session.user.user_metadata ?? {};
+  const displayName = typeof meta.display_name === 'string' && meta.display_name
+    ? meta.display_name
     : (email || 'Collector');
+  const username = typeof meta.username === 'string' && meta.username
+    ? meta.username
+    : (email.split('@')[0] || 'collector');
+  const bio = typeof meta.bio === 'string' ? meta.bio : undefined;
+  const location = typeof meta.location === 'string' ? meta.location : undefined;
   return {
     id: session.user.id,
     email,
     displayName,
-    username: email.split('@')[0] || 'collector',
+    username,
+    bio,
+    location,
     joinedAt: new Date().toISOString(),
     tcgPreferences: MOCK_USER.tcgPreferences,
     stats: MOCK_USER.stats,
@@ -204,9 +265,14 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Configure how in-app notifications are displayed while the app is open.
+  // Called once on mount — safe to call on all platforms.
+  useEffect(() => { configureForegroundNotifications(); }, []);
+
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [collection, setCollection] = useState<CollectionItem[]>(MOCK_COLLECTION);
+  const [collection, setCollection] = useState<CollectionItem[]>([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
@@ -215,7 +281,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [serverUnreadCount, setServerUnreadCount] = useState(0);
+  const [notificationsHasMore, setNotificationsHasMore] = useState(false);
 
   // ── Pro Identity state ─────────────────────────────────────────────────────
   const [selectedIcon, setSelectedIcon] = useState<string>('original');
@@ -225,6 +293,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * survives navigation but resets on full app restart (no backend yet).
    */
   const [foundingMemberClaimed, setFoundingMemberClaimed] = useState<boolean>(false);
+
+  // ── Event Mode state ───────────────────────────────────────────────────────
+  const [currentEventId, setCurrentEventId] = useState<string | null>(null);
 
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
@@ -404,13 +475,162 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlistLoaded]);
 
+  // ── Pending-mutation tracking ──────────────────────────────────────────────
+  //
+  // Tracks optimistic items whose server round-trip has not yet completed so
+  // that a concurrent loadCollection() cannot wipe them out.
+  //
+  // pendingItemIds     — Set of client-generated temp IDs
+  // pendingFingerprints — Maps temp ID → "cardId::acquiredAt" fingerprint
+  //
+  // During a server merge, a pending item is kept only if its fingerprint does
+  // NOT already appear in the server response. This deduplicates the case where
+  // the POST lands on the server before its promise handler fires: the server
+  // row and the optimistic row would otherwise both appear in state until the
+  // next refresh. Once the fingerprint matches a server item, the POST handler
+  // will imminently swap the temp id → server id, so we drop the optimistic row.
+
+  const pendingItemIds = useRef<Set<string>>(new Set());
+  const pendingFingerprints = useRef<Map<string, string>>(new Map());
+  // IDs of items that have been optimistically deleted but whose server DELETE
+  // has not yet resolved. A background fetch must not restore these items.
+  const pendingDeleteIds = useRef<Set<string>>(new Set());
+  // Monotonically increasing counter; each loadCollection call captures it on
+  // entry so a stale response cannot overwrite a newer one.
+  const loadGeneration = useRef(0);
+
+  // ── Load collection from server ────────────────────────────────────────────
+
+  const loadCollection = useCallback(async () => {
+    const gen = ++loadGeneration.current; // capture before first await
+    setCollectionLoading(true);
+    try {
+      const serverItems = await fetchCollection();
+      // If a newer loadCollection started after this one, discard this result.
+      if (gen !== loadGeneration.current) return;
+
+      setCollection(prev => {
+        // 1. Exclude server items that have been optimistically deleted but
+        //    whose DELETE hasn't landed on the server yet.
+        const deletedIds = pendingDeleteIds.current;
+        const filteredServer = serverItems.filter(i => !deletedIds.has(i.id));
+
+        // 2. Keep optimistic adds whose POST has not yet landed. A pending add
+        //    is kept only when its fingerprint is absent from the server
+        //    response — once the server row appears, the POST handler will swap
+        //    in the persisted id, so we drop the optimistic row to avoid dupes.
+        const serverFingerprints = new Set(
+          filteredServer.map(i => `${i.cardId}::${i.acquiredAt}`),
+        );
+        const pendingIds = pendingItemIds.current;
+        const pendingFps = pendingFingerprints.current;
+        const stillPending = prev.filter(i => {
+          if (!pendingIds.has(i.id)) return false;
+          const fp = pendingFps.get(i.id);
+          return fp !== undefined && !serverFingerprints.has(fp);
+        });
+
+        return [...filteredServer, ...stillPending];
+      });
+    } catch {
+      // Network error or unauthenticated — keep current local state
+    } finally {
+      // Only the latest generation clears the loading flag.
+      if (gen === loadGeneration.current) setCollectionLoading(false);
+    }
+  }, []);
+
+  // ── Notifications ───────────────────────────────────────────────────────────
+
+  /**
+   * Load the first page of server notifications and merge with any
+   * locally-generated client notifications (price alerts with temp IDs).
+   * Silently no-ops when the user is not authenticated.
+   */
+  const loadNotifications = useCallback(async () => {
+    try {
+      // Fetch first page of server notifications AND the authoritative unread count
+      // in parallel so the badge is always accurate (even beyond the first page).
+      const [page, unread] = await Promise.all([
+        fetchNotifications(1, 20),
+        fetchUnreadCount(),
+      ]);
+      setNotifications(prev => {
+        // Keep any client-generated entries (temp IDs prefixed 'price-alert-wl-')
+        const local = prev.filter(n => n.id.startsWith('price-alert-wl-'));
+        // Merge: local first (most recent), then server (dedup by id)
+        const serverIds = new Set(page.notifications.map(n => n.id));
+        const dedupedLocal = local.filter(n => !serverIds.has(n.id));
+        return [...dedupedLocal, ...page.notifications];
+      });
+      // Store server count only — local price-alert count is derived separately
+      // via useMemo to avoid stale closure issues (no notifications in deps).
+      setServerUnreadCount(unread);
+      setNotificationsHasMore(page.hasMore);
+    } catch {
+      // Network unavailable — keep current state
+    }
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    await loadNotifications();
+  }, [loadNotifications]);
+
   // Restore session on mount (handles app restarts and token refresh)
   useEffect(() => {
-    restoreSession().then(session => {
+    restoreSession().then(async session => {
       if (!session) return;
       setUser(userFromSession(session));
       setIsAuthenticated(true);
+
+      // Restore subscription tier from the cached session metadata.
+      // The session is refreshed from the server whenever the access token
+      // expires, so this value stays up-to-date across restarts.
+      const meta = session.user.user_metadata ?? {};
+      const restoredTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+      if (restoredTier === 'pro') setSubscriptionTierState('pro');
+      if (meta.is_founding_member === true) setFoundingMemberClaimed(true);
+
+      loadCollection();
+      loadNotifications();
+
+      // NOTE: Push token registration is NOT triggered on cold session restore.
+      // It runs only after an explicit sign-in (see signIn callback) so the
+      // OS permission prompt appears contextually — not on every app launch.
+
+      // Hydrate scan count from server so the gate is accurate across
+      // reinstalls, device switches, and charged-failure scenarios.
+      // Only free-tier users have a meaningful quota to enforce.
+      if (restoredTier === 'free') {
+        fetchServerScanCount(session.access_token).then(count => {
+          if (typeof count === 'number') setScansUsed(count);
+        }).catch(() => {});
+      }
+
+      // Restore active event participation so Trade Match and Event Mode reflect
+      // real data immediately without requiring navigation to Event Mode first.
+      fetchMyActiveParticipation().then(p => {
+        if (p.eventId) setCurrentEventId(p.eventId);
+      }).catch(() => {});
     }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refresh collection and unread notification count when the app comes back
+  // to the foreground so changes made on another device are reflected.
+  const isAuthenticatedRef = useRef(false);
+  useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'active' && isAuthenticatedRef.current) {
+        loadCollection();
+        // Refresh notifications on app focus so new server-side alerts appear
+        loadNotifications();
+      }
+    };
+    const subscription = RNAppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -419,6 +639,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(userFromSession(session));
     setIsAuthenticated(true);
 
+    // Restore subscription tier from the sign-in response
+    const meta = session.user.user_metadata ?? {};
+    if (meta.subscription_tier === 'pro') {
+      setSubscriptionTierState('pro');
+    } else {
+      setSubscriptionTierState('free');
+    }
+    if (meta.is_founding_member === true) {
+      setFoundingMemberClaimed(true);
+    }
+
+    // Load real collection and notifications from server
+    loadCollection();
+    loadNotifications();
+
+    // Request push token after a fresh sign-in (contextual, not cold-launch)
+    requestAndRegisterPushToken();
+
     // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
       syncWishlistToServer(snapshot)
@@ -426,20 +664,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
       return snapshot;
     });
-  }, []);
+
+    // Hydrate server-authoritative scan count for free users
+    const signedInTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+    if (signedInTier === 'free') {
+      fetchServerScanCount(session.access_token).then(count => {
+        if (typeof count === 'number') setScansUsed(count);
+      }).catch(() => {});
+    }
+  }, [loadCollection, loadNotifications]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     const session = await signInWithOAuth(provider);
     if (!session) return false;
     setUser(userFromSession(session));
     setIsAuthenticated(true);
+    // Run the same post-sign-in initialization as email/password sign-in
+    loadCollection();
+    loadNotifications();
+    requestAndRegisterPushToken();
     return true;
-  }, []);
+  }, [loadCollection, loadNotifications]);
 
   const signOut = useCallback(() => {
+    // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
+    // Reset all in-memory state so the next user starts completely fresh
     setUser(null);
     setIsAuthenticated(false);
+    setCollection([]);
+    setWatchlist([]);
+    setNotifications([]);
+    setServerUnreadCount(0);
+    setNotificationsHasMore(false);
+    setSubscriptionTierState('free');
+    setScansUsed(0);
+    setScanResetDate(nextMonthFirstDay(new Date()));
+    setSelectedIcon('original');
+    setProfileTheme('default');
+    setFoundingMemberClaimed(false);
+    setPricesLastUpdated(null);
+    setCurrentEventId(null);
+  }, []);
+
+  const deleteAccount = useCallback(async (password: string) => {
+    await authDeleteAccount(password);
+    // Reset all in-memory state after successful deletion
+    setUser(null);
+    setIsAuthenticated(false);
+    setCollection([]);
+    setWatchlist([]);
+    setNotifications([]);
+    setServerUnreadCount(0);
+    setNotificationsHasMore(false);
+    setSubscriptionTierState('free');
+    setScansUsed(0);
+    setScanResetDate(nextMonthFirstDay(new Date()));
+    setSelectedIcon('original');
+    setProfileTheme('default');
+    setFoundingMemberClaimed(false);
+    setPricesLastUpdated(null);
+    setCurrentEventId(null);
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
@@ -454,12 +739,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const addToCollection = useCallback((item: CollectionItem) => {
+    // Register temp id and fingerprint BEFORE the optimistic insert so any
+    // concurrent loadCollection() call can preserve or deduplicate correctly.
+    const fp = `${item.cardId}::${item.acquiredAt}`;
+    pendingItemIds.current.add(item.id);
+    pendingFingerprints.current.set(item.id, fp);
     setCollection(prev => [...prev, item]);
+
+    addCollectionItem(item)
+      .then(saved => {
+        // Swap the client-generated temp id for the server-assigned id.
+        pendingItemIds.current.delete(item.id);
+        pendingFingerprints.current.delete(item.id);
+        setCollection(prev =>
+          prev.map(i => i.id === item.id ? saved : i),
+        );
+      })
+      .catch(() => {
+        // Rollback and notify the user.
+        pendingItemIds.current.delete(item.id);
+        pendingFingerprints.current.delete(item.id);
+        setCollection(prev => prev.filter(i => i.id !== item.id));
+        Alert.alert(
+          'Could not save card',
+          'The card was not added to your collection. Please check your connection and try again.',
+          [{ text: 'OK' }],
+        );
+      });
   }, []);
 
   const removeFromCollection = useCallback((id: string) => {
+    // Register as pending-delete BEFORE the optimistic removal so any
+    // concurrent loadCollection() call will filter it out of the server response.
+    pendingDeleteIds.current.add(id);
     setCollection(prev => prev.filter(i => i.id !== id));
-  }, []);
+    removeCollectionItem(id)
+      .then(() => {
+        pendingDeleteIds.current.delete(id);
+      })
+      .catch(() => {
+        // Server delete failed — restore item by re-fetching canonical state.
+        pendingDeleteIds.current.delete(id);
+        loadCollection();
+      });
+  }, [loadCollection]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
     // Optimistic local update
@@ -513,12 +836,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMarketFiltersState(prev => ({ ...prev, ...filters }));
   }, []);
 
-  const markNotificationRead = useCallback((id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  const markNotificationRead = useCallback((id: string, currentlyRead = false) => {
+    // Optimistic local update — mark in context notifications array (page 1)
+    setNotifications(prev => {
+      const target = prev.find(n => n.id === id);
+      // For page-1 notifications we have the live isRead state from context.
+      // For page-2+ notifications (stored in extraNotifications in the screen)
+      // the caller passes `currentlyRead` so we know not to double-decrement.
+      const wasRead = target ? target.isRead : currentlyRead;
+      if (!wasRead && !id.startsWith('price-alert-wl-')) {
+        setServerUnreadCount(c => Math.max(0, c - 1));
+      }
+      return prev.map(n => n.id === id ? { ...n, isRead: true } : n);
+    });
+    // Persist to server for real notification rows (fire-and-forget)
+    if (!id.startsWith('price-alert-wl-')) {
+      markNotificationReadOnServer(id);
+    }
   }, []);
 
   const markAllNotificationsRead = useCallback(() => {
+    // Optimistic local update — zero out the server-backed badge count
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setServerUnreadCount(0);
+    // Persist to server (fire-and-forget)
+    markAllNotificationsReadOnServer();
   }, []);
 
   // ── Subscription actions ───────────────────────────────────────────────────
@@ -544,6 +886,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       return tier; // unchanged
     });
+  }, []);
+
+  /**
+   * Sync the local scan counter with an authoritative server value.
+   * Always prefers the server count so device-switch, reinstall, and
+   * charged-failure scenarios stay accurate.  Clamps to [0, FREE_SCAN_LIMIT]
+   * for safety.
+   */
+  const syncScanCount = useCallback((serverCount: number) => {
+    setScansUsed(Math.max(0, Math.min(serverCount, FREE_SCAN_LIMIT)));
   }, []);
 
   /** Reset scansUsed to 0, regardless of tier (DEV panel convenience). */
@@ -658,6 +1010,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
               },
               ...updated,
             ];
+            // localUnreadCount (derived via useMemo from notifications) will
+            // automatically pick this up — no manual counter update needed.
           }
           alertedItemIds.current.add(item.id);
         } else if (!conditionMet) {
@@ -670,10 +1024,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [watchlist, watchlistLoaded]);
 
-  const unreadNotificationCount = useMemo(
-    () => notifications.filter(n => !n.isRead).length,
+  // Local unread count — client-generated price-alert-wl-* entries only.
+  // Derived fresh from state every render, no stale-closure risk.
+  const localUnreadCount = useMemo(
+    () => notifications.filter(n => n.id.startsWith('price-alert-wl-') && !n.isRead).length,
     [notifications],
   );
+
+  // Combined badge: server count (authoritative, covers all pages) +
+  // in-memory local price-alert entries not yet persisted to the server.
+  const unreadNotificationCount = serverUnreadCount + localUnreadCount;
 
   const activeAlertCount = useMemo(
     () => watchlist.filter(w => w.priceAlertEnabled && !!w.targetPrice).length,
@@ -702,8 +1062,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currency: 'AUD',
       cardCount,
       uniqueCardCount,
-      // Keep static chart history — no real time-series data available in mock
-      chartData: MOCK_PORTFOLIO.chartData,
+      // Chart history is a separate task — provide empty ranges as placeholder
+      chartData: {
+        '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
+      },
     };
   }, [collection]);
 
@@ -711,22 +1073,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, portfolio, collectionFilters,
+        collection, collectionLoading, refreshCollection: loadCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
-        notifications, unreadNotificationCount, activeAlertCount,
-        signIn, signInWithProvider, signOut, updateProfile,
+        notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,
+        signIn, signInWithProvider, signOut, deleteAccount, updateProfile,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
-        markNotificationRead, markAllNotificationsRead,
+        markNotificationRead, markAllNotificationsRead, refreshNotifications,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
-        setSubscriptionTier, incrementScanCount, resetScanCount, devSetScansUsed,
+        setSubscriptionTier, incrementScanCount, syncScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,
         profileTheme, setProfileTheme,
         foundingMemberClaimed,
         claimFoundingMember: () => setFoundingMemberClaimed(true),
+        currentEventId, setCurrentEventId,
       }}
     >
       {children}

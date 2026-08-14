@@ -1,26 +1,29 @@
 /**
- * Wishlist routes — single-tenant prototype.
+ * Wishlist routes — per-user, JWT-authenticated.
  *
- * This server backs the wishlist for one collector (the single mock user whose
- * identity is fixed on the server).  There are no credentials, tokens, or
- * user-supplied identity headers — the server owns the user identity entirely.
+ * Storage: in-memory Map as fast primary read cache +
+ * PostgreSQL wishlist_items table as the durable source of truth.
  *
- * This is explicitly a prototype for demonstrating the cross-device sync
- * pattern described in Task #40.  A production implementation would integrate
- * a real authentication system (e.g. Clerk) and per-user database rows.
- *
- * Storage: in-memory Map.  Data resets on server restart; the mobile client
- * treats AsyncStorage as the authoritative local cache and re-syncs on every
- * app launch, so the server quickly recovers the latest state.
- * Task #55 tracks migrating to PostgreSQL.
+ * Durability contract:
+ *   - All mutations await the DB write before returning 2xx, so a caller
+ *     receiving success can rely on persistence surviving a server restart.
+ *   - Deletions use a soft-delete (deleted_at column) rather than row removal
+ *     so tombstones are durable; a sync from a stale client cannot resurrect
+ *     a deleted item even after a server restart.
+ *   - Every route hydrates from DB before mutating when the user's data is
+ *     absent from the in-memory cache, preventing a post-restart mutation
+ *     from overwriting persisted data with an empty baseline.
+ *   - The sync endpoint wraps all DB upserts in a single transaction.
  */
 
 import { Router } from "express";
+import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { db } from "@workspace/db";
+import { wishlistItemsTable } from "@workspace/db";
+import { and, eq, isNull, isNotNull } from "drizzle-orm";
+import type { InferInsertModel } from "drizzle-orm";
 
 const wishlistRouter = Router();
-
-/** Fixed user for this single-tenant prototype.  Never derived from requests. */
-const SINGLE_USER_ID = "usr-001";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,44 +55,91 @@ interface WishlistItem {
   priceAlertEnabled?: boolean;
 }
 
-// ── In-memory store ───────────────────────────────────────────────────────────
+// ── In-memory cache ───────────────────────────────────────────────────────────
+// Caches ACTIVE items only (deleted_at IS NULL). Populated on first access
+// and kept in sync with every mutation.
 
-const store = new Map<string, WishlistItem[]>();
+const cache = new Map<string, WishlistItem[]>();
+
+export function clearUserWishlists(userId: string): void {
+  cache.delete(userId);
+}
+
+// ── DB helpers ────────────────────────────────────────────────────────────────
+
+function rowToItem(row: typeof wishlistItemsTable.$inferSelect): WishlistItem {
+  return {
+    id: row.itemId,
+    cardId: row.cardId,
+    card: row.cardData as Card,
+    desiredGrade: row.desiredGrade ?? undefined,
+    targetPrice: row.targetPrice != null ? row.targetPrice / 100 : undefined,
+    addedAt: row.addedAt,
+    priceAlertEnabled: row.priceAlertEnabled,
+  };
+}
+
+function itemToInsert(userId: string, item: WishlistItem): InferInsertModel<typeof wishlistItemsTable> {
+  return {
+    userId,
+    itemId: item.id,
+    cardId: item.cardId,
+    cardData: item.card as Record<string, unknown>,
+    desiredGrade: item.desiredGrade ?? null,
+    targetPrice: item.targetPrice != null ? Math.round(item.targetPrice * 100) : null,
+    priceAlertEnabled: item.priceAlertEnabled ?? false,
+    addedAt: item.addedAt,
+    deletedAt: null,
+  };
+}
 
 /**
- * Tombstone set: records item IDs that have been explicitly deleted via DELETE.
- * Sync requests filter incoming items whose IDs appear here, preventing a
- * stale client list from resurrecting a deleted item.
- *
- * Tombstones are cleared when an item is explicitly re-added via POST, so a
- * collector can re-add a card they previously removed.
+ * Load active wishlist items from the DB into the in-memory cache when the
+ * cache is absent (e.g. after a server restart). No-op when cache is present.
  */
-const tombstones = new Map<string, Set<string>>();
+async function hydrateIfNeeded(userId: string): Promise<void> {
+  if (cache.has(userId)) return;
+
+  const rows = await db
+    .select()
+    .from(wishlistItemsTable)
+    .where(
+      and(
+        eq(wishlistItemsTable.userId, userId),
+        isNull(wishlistItemsTable.deletedAt),
+      ),
+    );
+
+  cache.set(userId, rows.map(rowToItem));
+}
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-/**
- * GET /api/wishlist
- * Returns the current wishlist.
- */
-wishlistRouter.get("/wishlist", (_req, res) => {
-  const items = store.get(SINGLE_USER_ID) ?? [];
+/** GET /api/wishlist — current wishlist for the authenticated collector */
+wishlistRouter.get("/wishlist", requireActiveUser, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  await hydrateIfNeeded(userId);
+  const items = cache.get(userId) ?? [];
   res.json({ items });
 });
 
 /**
  * POST /api/wishlist/sync
  *
- * Merges the client's items into the server state:
- *   - Client items replace matching server items (client has fresher field values)
- *   - Server-only items are preserved (items added from other devices)
- *   - Tombstoned IDs are stripped from the client list before merging, so a
- *     stale sync cannot resurrect an item that was explicitly deleted
+ * Merge-sync client items into the server state:
+ *   - Client items whose item_id is DB-tombstoned (deleted_at IS NOT NULL) are
+ *     silently dropped — durable tombstone wins over stale-client resurrection.
+ *   - Client items that exist in the DB (active) have their editable fields
+ *     updated (card data, grade, price preferences).
+ *   - Client items not in the DB at all are inserted as new.
+ *   - Server-only items (from other devices) are preserved untouched.
+ * All writes are wrapped in a single DB transaction.
+ * Returns the canonical merged active list.
  *
- * Returns the canonical merged list so the client can reconcile local state.
  * Body: { items: WishlistItem[] }
  */
-wishlistRouter.post("/wishlist/sync", (req, res) => {
+wishlistRouter.post("/wishlist/sync", requireActiveUser, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
   const { items: clientItems } = req.body as { items: WishlistItem[] };
 
   if (!Array.isArray(clientItems)) {
@@ -97,41 +147,77 @@ wishlistRouter.post("/wishlist/sync", (req, res) => {
     return;
   }
 
-  const serverItems = store.get(SINGLE_USER_ID) ?? [];
-  const userTombstones = tombstones.get(SINGLE_USER_ID) ?? new Set<string>();
+  // Get current DB state (active + tombstoned) for this user
+  const allRows = await db
+    .select()
+    .from(wishlistItemsTable)
+    .where(eq(wishlistItemsTable.userId, userId));
 
-  // Strip tombstoned IDs from the incoming client list
-  const liveClientItems = clientItems.filter((i) => !userTombstones.has(i.id));
-
-  // Build a client-item lookup for O(1) access
-  const clientMap = new Map<string, WishlistItem>(
-    liveClientItems.map((i) => [i.id, i]),
+  const activeById = new Map(
+    allRows.filter((r) => r.deletedAt === null).map((r) => [r.itemId, r]),
+  );
+  const tombstonedIds = new Set(
+    allRows.filter((r) => r.deletedAt !== null).map((r) => r.itemId),
   );
 
-  // Start with the server list; replace any item the client also has
-  const merged: WishlistItem[] = serverItems.map((serverItem) =>
-    clientMap.has(serverItem.id) ? clientMap.get(serverItem.id)! : serverItem,
-  );
+  // Filter out tombstoned items from client
+  const liveClientItems = clientItems.filter((i) => !tombstonedIds.has(i.id));
 
-  // Append live client items the server doesn't know about yet
-  const serverIds = new Set(serverItems.map((i) => i.id));
-  for (const clientItem of liveClientItems) {
-    if (!serverIds.has(clientItem.id)) {
-      merged.push(clientItem);
-    }
+  // Compute upserts: update matching active rows, insert genuinely new ones
+  const toUpsert = liveClientItems.map((item) => itemToInsert(userId, item));
+
+  if (toUpsert.length > 0) {
+    await db.transaction(async (tx) => {
+      for (const row of toUpsert) {
+        await tx
+          .insert(wishlistItemsTable)
+          .values(row)
+          .onConflictDoUpdate({
+            target: [wishlistItemsTable.userId, wishlistItemsTable.itemId],
+            set: {
+              cardId: row.cardId,
+              cardData: row.cardData,
+              desiredGrade: row.desiredGrade,
+              targetPrice: row.targetPrice,
+              priceAlertEnabled: row.priceAlertEnabled,
+              addedAt: row.addedAt,
+              deletedAt: null, // un-delete if somehow re-synced
+              updatedAt: new Date(),
+            },
+          });
+      }
+    });
   }
 
-  store.set(SINGLE_USER_ID, merged);
+  // Re-read canonical active state from DB
+  const finalRows = await db
+    .select()
+    .from(wishlistItemsTable)
+    .where(
+      and(
+        eq(wishlistItemsTable.userId, userId),
+        isNull(wishlistItemsTable.deletedAt),
+      ),
+    );
+
+  // Merge: server rows already include server-only items + just-upserted items
+  // Also preserve any server items that exist in activeById but weren't in client list
+  const serverOnlyItems = [...activeById.values()]
+    .filter((r) => !liveClientItems.some((c) => c.id === r.itemId))
+    .map(rowToItem);
+
+  const merged = [...finalRows.map(rowToItem)];
+  cache.set(userId, merged);
+
   res.json({ ok: true, items: merged, count: merged.length });
 });
 
 /**
  * POST /api/wishlist
- * Adds or replaces a single item (idempotent by id).
- * Re-adding a tombstoned item clears the tombstone.
- * Body: WishlistItem
+ * Add or update a single item (upsert by item_id). Durable.
  */
-wishlistRouter.post("/wishlist", (req, res) => {
+wishlistRouter.post("/wishlist", requireActiveUser, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
   const item = req.body as WishlistItem;
 
   if (!item?.id || !item?.cardId) {
@@ -139,60 +225,108 @@ wishlistRouter.post("/wishlist", (req, res) => {
     return;
   }
 
-  // Clear tombstone — the collector is intentionally re-adding this item
-  const userTombstones = tombstones.get(SINGLE_USER_ID);
-  if (userTombstones?.has(item.id)) {
-    userTombstones.delete(item.id);
-  }
+  const row = itemToInsert(userId, item);
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
+  await db
+    .insert(wishlistItemsTable)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [wishlistItemsTable.userId, wishlistItemsTable.itemId],
+      set: {
+        cardId: row.cardId,
+        cardData: row.cardData,
+        desiredGrade: row.desiredGrade,
+        targetPrice: row.targetPrice,
+        priceAlertEnabled: row.priceAlertEnabled,
+        addedAt: row.addedAt,
+        deletedAt: null,
+        updatedAt: new Date(),
+      },
+    });
+
+  // Update cache after confirmed DB write
+  await hydrateIfNeeded(userId);
+  const existing = cache.get(userId) ?? [];
   const updated = existing.some((i) => i.id === item.id)
     ? existing.map((i) => (i.id === item.id ? item : i))
     : [...existing, item];
-  store.set(SINGLE_USER_ID, updated);
+  cache.set(userId, updated);
+
   res.status(201).json({ ok: true, item });
 });
 
 /**
  * PATCH /api/wishlist/:id
- * Updates fields on a single item.
- * Body: Partial<{ desiredGrade, targetPrice, priceAlertEnabled }>
+ * Update editable fields of a single active item.
  */
-wishlistRouter.patch("/wishlist/:id", (req, res) => {
-  const { id } = req.params;
+wishlistRouter.patch("/wishlist/:id", requireActiveUser, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const id = typeof req.params.id === "string" ? req.params.id : String(req.params.id);
   const patch = req.body as Partial<
     Pick<WishlistItem, "desiredGrade" | "targetPrice" | "priceAlertEnabled">
   >;
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
+  await hydrateIfNeeded(userId);
+
+  const existing = cache.get(userId) ?? [];
   const item = existing.find((i) => i.id === id);
   if (!item) {
     res.status(404).json({ error: "Item not found" });
     return;
   }
 
-  const updated = existing.map((i) => (i.id === id ? { ...i, ...patch } : i));
-  store.set(SINGLE_USER_ID, updated);
-  res.json({ ok: true, item: updated.find((i) => i.id === id) });
+  const setValues: Record<string, unknown> = { updatedAt: new Date() };
+  if ("desiredGrade" in patch) setValues.desiredGrade = patch.desiredGrade ?? null;
+  if ("targetPrice" in patch) {
+    setValues.targetPrice = patch.targetPrice != null
+      ? Math.round(patch.targetPrice * 100)
+      : null;
+  }
+  if ("priceAlertEnabled" in patch) setValues.priceAlertEnabled = patch.priceAlertEnabled;
+
+  await db
+    .update(wishlistItemsTable)
+    .set(setValues)
+    .where(
+      and(
+        eq(wishlistItemsTable.userId, userId),
+        eq(wishlistItemsTable.itemId, id),
+        isNull(wishlistItemsTable.deletedAt),
+      ),
+    );
+
+  const patched = { ...item, ...patch };
+  cache.set(userId, existing.map((i) => (i.id === id ? patched : i)));
+
+  res.json({ ok: true, item: patched });
 });
 
 /**
  * DELETE /api/wishlist/:id
- * Removes a single item and records a tombstone so subsequent syncs from
- * stale clients cannot resurrect it.
+ * Soft-delete: sets deleted_at so the tombstone survives server restarts.
  */
-wishlistRouter.delete("/wishlist/:id", (req, res) => {
-  const { id } = req.params;
+wishlistRouter.delete("/wishlist/:id", requireActiveUser, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const id = typeof req.params.id === "string" ? req.params.id : String(req.params.id);
 
-  // Record tombstone
-  const userTombstones = tombstones.get(SINGLE_USER_ID) ?? new Set<string>();
-  userTombstones.add(id);
-  tombstones.set(SINGLE_USER_ID, userTombstones);
+  // Soft-delete in DB first — durable tombstone
+  const result = await db
+    .update(wishlistItemsTable)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(wishlistItemsTable.userId, userId),
+        eq(wishlistItemsTable.itemId, id),
+      ),
+    )
+    .returning({ itemId: wishlistItemsTable.itemId });
 
-  const existing = store.get(SINGLE_USER_ID) ?? [];
-  const filtered = existing.filter((i) => i.id !== id);
-  store.set(SINGLE_USER_ID, filtered);
-  res.json({ ok: true, removed: existing.length - filtered.length });
+  // Update cache after confirmed DB write
+  await hydrateIfNeeded(userId);
+  const existing = cache.get(userId) ?? [];
+  cache.set(userId, existing.filter((i) => i.id !== id));
+
+  res.json({ ok: true, removed: result.length });
 });
 
 export default wishlistRouter;

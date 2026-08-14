@@ -22,6 +22,11 @@
     "web": {
       "favicon": "./assets/images/icon.png"
     },
+    "extra": {
+      "eas": {
+        "projectId": "fde9dffb-2952-4ee6-825a-daff5adb8a92"
+      }
+    },
     "plugins": [
       [
         "expo-router",
@@ -30,7 +35,23 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Verified TCG uses your camera to scan and identify trading cards. Photos are only used for card recognition and are never stored.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#C89B3C",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
