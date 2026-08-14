@@ -49,7 +49,7 @@ import {
 } from '@/services/notifications';
 import {
   configureForegroundNotifications,
-  requestAndRegisterPushToken,
+  registerPushTokenIfPermitted,
 } from '@/services/pushRegistration';
 import { syncPreferredTcgsAfterSignIn } from '@/services/tcgPreferences';
 import { fetchMyActiveParticipation } from '@/services/eventsApi';
@@ -702,8 +702,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadCollection();
     loadNotifications();
 
-    // Request push token after a fresh sign-in (contextual, not cold-launch)
-    requestAndRegisterPushToken();
+    // Register push token silently if permission already granted — no prompt.
+    // The contextual prompt is shown in onboarding or at first price-alert creation.
+    registerPushTokenIfPermitted();
 
     // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
@@ -737,7 +738,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Run the same post-sign-in initialization as email/password sign-in
     loadCollection();
     loadNotifications();
-    requestAndRegisterPushToken();
+    registerPushTokenIfPermitted();
     // Sync TCG preferences bidirectionally after OAuth sign-in
     const oauthMeta = session.user.user_metadata ?? {};
     syncPreferredTcgsAfterSignIn(

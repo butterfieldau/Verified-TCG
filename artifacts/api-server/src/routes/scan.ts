@@ -332,9 +332,10 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
     try {
       extracted = await extractCardInfo(image, mimeType);
     } catch (err) {
+      // Log the full error server-side; only return a sanitized message to the client.
+      console.error("[scan] Vision API error:", err instanceof Error ? err.message : String(err));
       res.status(503).json({
         message: "Card recognition service is temporarily unavailable. Please try searching manually.",
-        error: err instanceof Error ? err.message : String(err),
         // Return updated scan count so the client stays in sync even on failure
         scansUsed: newScanCount,
         scanLimit: isFreeTier ? FREE_SCAN_LIMIT : null,
@@ -385,9 +386,10 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
         }
       : {};
 
+    // Log full error server-side; return only a sanitized message to the client.
+    console.error("[scan] Unexpected error:", err instanceof Error ? err.message : String(err));
     res.status(500).json({
-      message: "Internal server error during card recognition",
-      error: err instanceof Error ? err.message : String(err),
+      message: "Something went wrong during card recognition. Please try again.",
       ...quotaPayload,
     });
   }

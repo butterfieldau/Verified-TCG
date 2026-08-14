@@ -298,3 +298,50 @@ export async function upgradeToPro(): Promise<{ subscription_tier: string; is_fo
 
   return result;
 }
+
+/**
+ * Restore Purchases — required by Apple App Store Review Guidelines §3.1.1.
+ *
+ * Re-fetches the user's current subscription_tier from the server so that
+ * after a reinstall / device switch the Pro status can be confirmed without
+ * requiring a new purchase.
+ *
+ * @returns { subscription_tier, is_founding_member, restored }
+ *   `restored` is true when the server confirmed an active Pro subscription.
+ */
+export async function restorePurchases(): Promise<{
+  subscription_tier: string;
+  is_founding_member: boolean;
+  restored: boolean;
+}> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You must be signed in to restore purchases.');
+
+  const response = await request('/api/subscription/restore', {
+    method: 'POST',
+    accessToken: session.access_token,
+  });
+  if (!response.ok) return parseError(response);
+
+  const result = (await response.json()) as {
+    subscription_tier: string;
+    is_founding_member: boolean;
+    restored: boolean;
+  };
+
+  // Sync the cached session with the authoritative tier from the server
+  const updatedSession: AuthSession = {
+    ...session,
+    user: {
+      ...session.user,
+      user_metadata: {
+        ...(session.user.user_metadata ?? {}),
+        subscription_tier: result.subscription_tier,
+        is_founding_member: result.is_founding_member,
+      },
+    },
+  };
+  await persist(updatedSession);
+
+  return result;
+}

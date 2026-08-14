@@ -1,17 +1,23 @@
 /**
  * Pro Subscription Screen — Verified TCG
  *
- * Full upgrade screen with pricing toggle, benefit cards, CTA, and
- * Free vs Pro feature comparison. All pricing constants come from
- * SUBSCRIPTION_CONFIG so copy can be updated in one place.
+ * Shows Pro benefits and the Free vs Pro comparison.
+ * Billing/payment is not yet active — the transactional purchase UI
+ * (pricing, trial CTA, auto-renewal terms) is intentionally omitted until
+ * in-app billing is integrated (task #229).
  *
- * Out of scope: real payment / billing SDK, trial enforcement.
+ * "Restore Purchases" is present as a required Apple/Google affordance:
+ * it re-reads the user's subscription_tier from Verified TCG's own database.
+ * It does NOT communicate with StoreKit or Google Play — that requires the
+ * future billing integration. It is useful for fixing a mismatch between
+ * local app state and the server after a reinstall or sign-in on a new device.
  */
 
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StatusBar,
@@ -24,52 +30,47 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import colors from '@/constants/colors';
 import { SUBSCRIPTION_CONFIG } from '@/services/subscription';
-import { upgradeToPro } from '@/services/auth';
+import { restorePurchases } from '@/services/auth';
 import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
-type BillingCycle = 'monthly' | 'annual';
-
-// ─── Icon names used in benefit cards ────────────────────────────────────────
-// Feather icon type is a string union; cast to satisfy TypeScript.
+// ─── Icon names ───────────────────────────────────────────────────────────────
 type FeatherIconName = React.ComponentProps<typeof Feather>['name'];
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ProSubscriptionScreen() {
-  const [cycle, setCycle] = useState<BillingCycle>('annual');
-  const [upgrading, setUpgrading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const { isAuthenticated, subscriptionTier, setSubscriptionTier } = useApp();
-
   const isPro = subscriptionTier === 'pro';
-  const monthly = SUBSCRIPTION_CONFIG.monthlyPriceAUD;
-  const annual = SUBSCRIPTION_CONFIG.annualPriceAUD;
-  const equiv = SUBSCRIPTION_CONFIG.annualMonthlyEquiv;
-  const saving = SUBSCRIPTION_CONFIG.annualSavingPercent;
 
-  async function handleStartTrial() {
+  async function handleRestorePurchases() {
     if (!isAuthenticated) {
-      router.push({ pathname: '/create-account', params: { next: '/pro-subscription' } } as any);
+      router.push({ pathname: '/sign-in', params: { next: '/pro-subscription' } } as any);
       return;
     }
-    if (isPro) {
-      router.back();
-      return;
-    }
-    setUpgrading(true);
+    setRestoring(true);
     try {
-      await upgradeToPro();
-      setSubscriptionTier('pro');
-      router.back();
-    } catch (err) {
-      Alert.alert(
-        'Upgrade failed',
-        'Unable to upgrade to Pro right now. Please check your connection and try again.',
-        [{ text: 'OK' }],
-      );
+      const result = await restorePurchases();
+      if (result.restored) {
+        setSubscriptionTier('pro');
+        Alert.alert(
+          'Pro Active',
+          'Your Verified TCG Pro subscription is active on this account and has been applied to this device.',
+          [{ text: 'OK' }],
+        );
+      } else {
+        Alert.alert(
+          'No Active Subscription',
+          'No active Pro subscription was found on your Verified TCG account.',
+          [{ text: 'OK' }],
+        );
+      }
+    } catch {
+      Alert.alert('Sync Failed', 'Unable to check your subscription. Please check your connection and try again.', [{ text: 'OK' }]);
     } finally {
-      setUpgrading(false);
+      setRestoring(false);
     }
   }
 
@@ -115,57 +116,15 @@ export default function ProSubscriptionScreen() {
           )}
         </View>
 
-        {/* ── Billing toggle ── */}
-        <View style={styles.toggleContainer}>
-          <Pressable
-            style={[styles.toggleSegment, cycle === 'monthly' && styles.toggleSegmentActive]}
-            onPress={() => setCycle('monthly')}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: cycle === 'monthly' }}
-          >
-            <Text style={[styles.toggleLabel, cycle === 'monthly' && styles.toggleLabelActive]}>
-              MONTHLY
+        {/* ── Coming soon notice (non-Pro only) ── */}
+        {!isPro && (
+          <View style={styles.comingSoonBanner}>
+            <Feather name="clock" size={16} color={C.mutedForeground} />
+            <Text style={styles.comingSoonText}>
+              In-app billing is coming soon. Join our early-access list to be notified when Pro subscriptions open.
             </Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.toggleSegment, cycle === 'annual' && styles.toggleSegmentActive]}
-            onPress={() => setCycle('annual')}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: cycle === 'annual' }}
-          >
-            <Text style={[styles.toggleLabel, cycle === 'annual' && styles.toggleLabelActive]}>
-              ANNUAL
-            </Text>
-            {/* Save badge */}
-            <View style={styles.saveBadge}>
-              <Text style={styles.saveBadgeText}>Save {saving}%</Text>
-            </View>
-          </Pressable>
-        </View>
-
-        {/* ── Price display ── */}
-        <View style={styles.priceBlock}>
-          {cycle === 'annual' ? (
-            <>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceCurrency}>$</Text>
-                <Text style={styles.priceAmount}>{annual.toFixed(2)}</Text>
-                <Text style={styles.pricePer}> AUD / year</Text>
-              </View>
-              <Text style={styles.priceEquiv}>${equiv.toFixed(2)} / mo — billed annually</Text>
-              <View style={styles.recommendedChip}>
-                <Text style={styles.recommendedText}>Recommended</Text>
-              </View>
-            </>
-          ) : (
-            <View style={styles.priceRow}>
-              <Text style={styles.priceCurrency}>$</Text>
-              <Text style={styles.priceAmount}>{monthly.toFixed(2)}</Text>
-              <Text style={styles.pricePer}> AUD / month</Text>
-            </View>
-          )}
-        </View>
+          </View>
+        )}
 
         {/* ── Benefit cards ── */}
         <View style={styles.benefitsSection}>
@@ -179,7 +138,7 @@ export default function ProSubscriptionScreen() {
           ))}
         </View>
 
-        {/* ── CTA ── */}
+        {/* ── Status / action row ── */}
         <View style={styles.ctaSection}>
           {isPro ? (
             <Pressable
@@ -192,31 +151,52 @@ export default function ProSubscriptionScreen() {
               <Text style={styles.ctaButtonText}>YOU'RE ON VERIFIED PRO</Text>
             </Pressable>
           ) : (
-            <Pressable
-              style={({ pressed }) => [styles.ctaButton, upgrading && styles.ctaButtonDisabled, pressed && !upgrading && styles.ctaButtonPressed]}
-              onPress={handleStartTrial}
-              disabled={upgrading}
-              accessibilityRole="button"
-              accessibilityLabel="Start 7-day free trial"
-            >
-              {upgrading ? (
-                <ActivityIndicator size="small" color={C.primaryForeground} />
-              ) : (
-                <Feather name="zap" size={16} color={C.primaryForeground} />
-              )}
-              <Text style={styles.ctaButtonText}>
-                {upgrading ? 'UPGRADING…' : 'START 7-DAY FREE TRIAL'}
-              </Text>
-            </Pressable>
+            <View style={styles.ctaComingSoonBox}>
+              <Feather name="clock" size={18} color={C.mutedForeground} />
+              <Text style={styles.ctaComingSoonLabel}>Pro Purchasing Coming Soon</Text>
+            </View>
           )}
 
           <Text style={styles.ctaSecondary}>
             {isPro
               ? 'Your Pro membership is active.'
-              : isAuthenticated
-                ? 'Keep using Verified TCG Free anytime.'
-                : 'Create a free account before starting your trial.'}
+              : 'Billing integration is in development. No purchases are available yet.'}
           </Text>
+
+          {/* Subscription Terms link */}
+          <Pressable
+            onPress={() => {
+              const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'verifiedtcg.com';
+              Linking.openURL(`https://${domain}/vtcg-site/subscription-terms`);
+            }}
+            style={styles.termsLink}
+          >
+            <Text style={styles.termsLinkText}>Subscription Terms</Text>
+            <Feather name="external-link" size={11} color={C.mutedForeground} />
+          </Pressable>
+
+          {/* ── Restore Purchases ──────────────────────────────────────────
+              Required UI affordance — Apple App Store Review Guidelines §3.1.1.
+              Re-reads the subscription_tier stored in Verified TCG's own database
+              and applies it on this device. Does NOT query StoreKit or Google Play;
+              store-side receipt validation is added with the billing integration
+              in task #229. Useful after a reinstall or device switch: sign back
+              in, then tap this to re-apply a previously granted Pro tier.
+          ─────────────────────────────────────────────────────────────────── */}
+          {isAuthenticated && !isPro && (
+            <Pressable
+              onPress={handleRestorePurchases}
+              disabled={restoring}
+              style={({ pressed }) => [styles.restoreBtn, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Restore Purchases"
+            >
+              {restoring
+                ? <ActivityIndicator size="small" color={C.mutedForeground} />
+                : <Text style={styles.restoreBtnText}>Restore Purchases</Text>
+              }
+            </Pressable>
+          )}
         </View>
 
         {/* ── Pro Benefits quick links ── */}
@@ -386,7 +366,7 @@ const styles = StyleSheet.create({
   // Hero
   heroSection: {
     marginTop: 8,
-    marginBottom: 28,
+    marginBottom: 20,
   },
   proBadge: {
     flexDirection: 'row',
@@ -419,99 +399,23 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 
-  // Toggle
-  toggleContainer: {
+  // Coming Soon banner
+  comingSoonBanner: {
     flexDirection: 'row',
-    backgroundColor: C.card,
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: `${C.primary}10`,
+    borderWidth: 1,
+    borderColor: `${C.primary}30`,
     borderRadius: 12,
-    padding: 4,
+    padding: 14,
     marginBottom: 20,
-    borderWidth: 1,
-    borderColor: C.border,
   },
-  toggleSegment: {
+  comingSoonText: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 9,
-    gap: 6,
-  },
-  toggleSegmentActive: {
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.primary,
-  },
-  toggleLabel: {
     color: C.mutedForeground,
     fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-  },
-  toggleLabelActive: {
-    color: C.foreground,
-  },
-  saveBadge: {
-    backgroundColor: C.primary,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  saveBadgeText: {
-    color: C.primaryForeground,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-
-  // Price
-  priceBlock: {
-    alignItems: 'center',
-    marginBottom: 28,
-    minHeight: 72,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-  },
-  priceCurrency: {
-    color: C.foreground,
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  priceAmount: {
-    color: C.foreground,
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: -1.5,
-    lineHeight: 52,
-  },
-  pricePer: {
-    color: C.mutedForeground,
-    fontSize: 15,
-    marginBottom: 10,
-  },
-  priceEquiv: {
-    color: C.mutedForeground,
-    fontSize: 13,
-    marginTop: 4,
-  },
-  recommendedChip: {
-    marginTop: 8,
-    backgroundColor: C.surface,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: C.primary,
-  },
-  recommendedText: {
-    color: C.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.3,
+    lineHeight: 19,
   },
 
   // Benefits
@@ -562,6 +466,7 @@ const styles = StyleSheet.create({
   // CTA
   ctaSection: {
     marginBottom: 36,
+    alignItems: 'center',
   },
   ctaButton: {
     flexDirection: 'row',
@@ -577,12 +482,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 6,
+    alignSelf: 'stretch',
   },
   ctaButtonPro: {
     backgroundColor: '#2a6e3f',
   },
-  ctaButtonDisabled: {
-    opacity: 0.7,
+  ctaButtonComingSoon: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   ctaButtonPressed: {
     opacity: 0.88,
@@ -598,9 +508,99 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
     fontSize: 13,
     textAlign: 'center',
+    marginBottom: 8,
+  },
+  ctaComingSoonBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    paddingVertical: 18,
+    marginBottom: 14,
+    alignSelf: 'stretch',
+  },
+  ctaComingSoonLabel: {
+    color: C.mutedForeground,
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  termsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  termsLinkText: {
+    color: C.mutedForeground,
+    fontSize: 11,
+    textDecorationLine: 'underline',
+  },
+  restoreBtn: {
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  restoreBtnText: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
 
-  // Comparison
+  // Pro Benefits quick-links
+  proBenefitsSection: {
+    marginBottom: 28,
+  },
+  proBenefitsHeading: {
+    color: C.foreground,
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  proBenefitsSub: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    marginBottom: 14,
+  },
+  proBenefitsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  proBenefitCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+    gap: 10,
+  },
+  proBenefitIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  proBenefitLabel: {
+    flex: 1,
+    color: C.foreground,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+
+  // Comparison table
   comparisonSection: {
     borderRadius: 14,
     overflow: 'hidden',
@@ -612,31 +612,30 @@ const styles = StyleSheet.create({
     color: C.foreground,
     fontSize: 18,
     fontWeight: '800',
-    letterSpacing: -0.3,
-    paddingHorizontal: 16,
-    paddingTop: 16,
+    padding: 16,
     paddingBottom: 12,
   },
   comparisonHeaderRow: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: C.surface,
   },
   comparisonFeatureHeader: {
     flex: 1,
     color: C.mutedForeground,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   comparisonColHeader: {
-    width: 64,
+    width: 52,
     color: C.mutedForeground,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     textAlign: 'center',
@@ -646,9 +645,9 @@ const styles = StyleSheet.create({
   },
   comparisonGroup: {},
   categoryDivider: {
-    backgroundColor: C.surface,
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    backgroundColor: `${C.muted}80`,
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
@@ -656,17 +655,19 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
     fontSize: 11,
     fontWeight: '700',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
   },
   comparisonRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
   },
   comparisonRowShaded: {
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: `${C.muted}40`,
   },
   comparisonFeature: {
     flex: 1,
@@ -675,65 +676,16 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   comparisonCell: {
-    width: 64,
+    width: 52,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   cellString: {
-    color: C.mutedForeground,
+    color: C.foreground,
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
   cellStringPro: {
     color: C.primary,
-  },
-
-  // Pro Benefits quick links
-  proBenefitsSection: {
-    marginBottom: 32,
-  },
-  proBenefitsHeading: {
-    color: C.foreground,
-    fontSize: 20,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-    marginBottom: 4,
-  },
-  proBenefitsSub: {
-    color: C.mutedForeground,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  proBenefitsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  proBenefitCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  proBenefitIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: C.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  proBenefitLabel: {
-    flex: 1,
-    color: C.foreground,
-    fontSize: 13,
-    fontWeight: '600',
-    lineHeight: 17,
   },
 });

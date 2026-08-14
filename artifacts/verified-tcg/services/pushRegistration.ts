@@ -1,9 +1,17 @@
 /**
  * Push notification registration — scaffolded MVP.
  *
- * Requests notification permission (contextually, not on first launch),
- * obtains the Expo push token, and registers it with the server so future
- * server-side notification delivery can reach this device.
+ * Exports two functions with different permission-request behaviours:
+ *
+ * `registerPushTokenIfPermitted()` — silent, no OS prompt.
+ *   Use after sign-in / session restore.  Registers the token only when the
+ *   user has already granted permission; never prompts for it.
+ *
+ * `requestAndRegisterPushToken()` — contextual, may show OS prompt.
+ *   Use only at a moment the user understands why notifications are needed
+ *   (e.g. the onboarding "Price Alerts" card or the first price-alert toggle).
+ *   On iOS, `requestPermissionsAsync` is idempotent — it returns the existing
+ *   state without prompting if the user has already decided.
  *
  * Out of scope: actual locked-screen push delivery (deferred).
  * In scope: token acquisition, server registration, graceful no-ops on simulators.
@@ -29,33 +37,70 @@ export function configureForegroundNotifications(): void {
   });
 }
 
-/**
- * Request notification permissions and register the Expo push token with the server.
- *
- * Safe to call multiple times — the server upserts on conflict.
- * No-ops silently when:
- *   - Running on a simulator (physical device required for push tokens)
- *   - Permission is denied
- *   - Token acquisition fails
- *
- * Call this AFTER the user is authenticated and has had a chance to understand
- * why permissions are needed (contextual request, not on cold-launch).
- */
-export async function requestAndRegisterPushToken(): Promise<void> {
-  // Push tokens only work on physical devices
-  if (!Device.isDevice) return;
+/** Shared helper that acquires and registers the push token when permission is granted. */
+async function registerTokenIfGranted(granted: boolean): Promise<void> {
+  if (!granted) return;
 
-  // Android requires a notification channel
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const easConfigId = (Constants.easConfig as Record<string, string> | undefined)?.['projectId'];
+  const extra = Constants.expoConfig?.extra as Record<string, Record<string, string>> | undefined;
+  const appJsonId = extra?.['eas']?.['projectId'];
+  const projectId: string | undefined = easConfigId ?? appJsonId;
+  if (!projectId || !uuidPattern.test(projectId)) return;
+
+  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+  const token = tokenData.data;
+  if (token) {
+    await registerPushToken(token);
+  }
+}
+
+/** Shared Android channel setup. */
+async function ensureAndroidChannel(): Promise<void> {
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'Verified TCG',
       importance: Notifications.AndroidImportance.DEFAULT,
     });
   }
+}
 
+/**
+ * Silent registration — no OS permission prompt.
+ *
+ * Reads the current permission state with `getPermissionsAsync()` and registers
+ * the push token only if the user has already granted notification permission.
+ *
+ * Safe to call after every sign-in; will not prompt the user.
+ */
+export async function registerPushTokenIfPermitted(): Promise<void> {
+  if (!Device.isDevice) return;
   try {
-    // requestPermissionsAsync() is idempotent — it returns current permission
-    // if already granted rather than prompting again on iOS.
+    await ensureAndroidChannel();
+    const { granted } = await Notifications.getPermissionsAsync();
+    await registerTokenIfGranted(granted);
+  } catch {
+    // Non-critical — push delivery is deferred; silently swallow all errors
+  }
+}
+
+/**
+ * Contextual registration — may show the OS permission prompt.
+ *
+ * Call only when the user has been shown an explanation of why notifications
+ * are needed (e.g. the onboarding "Price Alerts" opt-in card, or when the
+ * user first enables a price alert).
+ *
+ * On iOS, `requestPermissionsAsync` is idempotent: if the user has already
+ * decided (granted or denied), the OS returns the current state without
+ * showing the prompt again.
+ *
+ * Returns true if permission was granted, false otherwise.
+ */
+export async function requestAndRegisterPushToken(): Promise<boolean> {
+  if (!Device.isDevice) return false;
+  try {
+    await ensureAndroidChannel();
     const result = await Notifications.requestPermissionsAsync({
       ios: {
         allowAlert: true,
@@ -63,29 +108,11 @@ export async function requestAndRegisterPushToken(): Promise<void> {
         allowSound: false,
       },
     });
-    // expo-notifications PermissionResponse: granted is a bool on the response
     const granted = (result as unknown as { granted?: boolean }).granted ?? false;
-    if (!granted) return; // user declined — respect their choice
-
-    // Resolve the EAS project UUID from two sources:
-    //   1. Constants.easConfig.projectId  — populated only during EAS builds
-    //   2. Constants.expoConfig.extra.eas.projectId — from app.json (dev/preview builds)
-    // Validate it is a proper UUID before calling getExpoPushTokenAsync to avoid
-    // hard-to-diagnose errors from passing a slug or placeholder value.
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const easConfigId = (Constants.easConfig as Record<string, string> | undefined)?.['projectId'];
-    const extra = Constants.expoConfig?.extra as Record<string, Record<string, string>> | undefined;
-    const appJsonId = extra?.['eas']?.['projectId'];
-    const projectId: string | undefined = easConfigId ?? appJsonId;
-    if (!projectId || !uuidPattern.test(projectId)) return; // no valid UUID — skip token acquisition
-
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    const token = tokenData.data;
-
-    if (token) {
-      await registerPushToken(token);
-    }
+    await registerTokenIfGranted(granted);
+    return granted;
   } catch {
     // Non-critical — push delivery is deferred; silently swallow all errors
+    return false;
   }
 }

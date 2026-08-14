@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import { requestAndRegisterPushToken } from '@/services/pushRegistration';
 import { Feather } from '@expo/vector-icons';
 import { Button } from '@/components/ui/Button';
 import colors from '@/constants/colors';
@@ -98,7 +99,10 @@ function Step2({ selectedGames, onToggleGame }: Pick<StepProps, 'selectedGames' 
   );
 }
 
-function Step3() {
+function Step3({ onRequestNotifications, notifGranted }: {
+  onRequestNotifications: () => void;
+  notifGranted: boolean | null;
+}) {
   return (
     <View style={stepStyles.container}>
       <View style={stepStyles.iconCircle}>
@@ -123,6 +127,36 @@ function Step3() {
           </View>
         ))}
       </View>
+
+      {/* Notification opt-in card */}
+      <View style={stepStyles.notifCard}>
+        <View style={stepStyles.notifIconWrap}>
+          <Feather name="bell" size={22} color={C.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={stepStyles.notifTitle}>Price drop alerts</Text>
+          <Text style={stepStyles.notifBody}>
+            We'll notify you when wishlist cards drop in price or your collection value changes. No spam — just the alerts that matter.
+          </Text>
+          {notifGranted === true ? (
+            <View style={stepStyles.notifGrantedRow}>
+              <Feather name="check-circle" size={14} color={C.positive} />
+              <Text style={stepStyles.notifGrantedText}>Notifications enabled</Text>
+            </View>
+          ) : notifGranted === false ? (
+            <Text style={stepStyles.notifDeniedText}>
+              You can enable notifications later in Settings → Notifications.
+            </Text>
+          ) : (
+            <Pressable
+              onPress={onRequestNotifications}
+              style={({ pressed }) => [stepStyles.notifBtn, pressed && { opacity: 0.75 }]}
+            >
+              <Text style={stepStyles.notifBtnText}>Enable Price Alerts</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
     </View>
   );
 }
@@ -132,6 +166,16 @@ export default function OnboardingScreen() {
   const [step, setStep] = useState(0);
   const [selectedGames, setSelectedGames] = useState<string[]>(['Pokémon', 'One Piece TCG']);
   const [loading, setLoading] = useState(false);
+  // null = not yet asked, true = granted, false = denied/not granted
+  const [notifGranted, setNotifGranted] = useState<boolean | null>(null);
+
+  const handleRequestNotifications = async () => {
+    // Uses the shared contextual registration path: shows the OS permission
+    // prompt (idempotent — no second prompt on iOS if already decided), then
+    // registers the push token with the server if permission is granted.
+    const granted = await requestAndRegisterPushToken();
+    setNotifGranted(granted);
+  };
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -200,7 +244,12 @@ export default function OnboardingScreen() {
       >
         {step === 0 && <Step1 />}
         {step === 1 && <Step2 selectedGames={selectedGames} onToggleGame={toggleGame} />}
-        {step === 2 && <Step3 />}
+        {step === 2 && (
+          <Step3
+            onRequestNotifications={handleRequestNotifications}
+            notifGranted={notifGranted}
+          />
+        )}
       </ScrollView>
 
       {/* Bottom CTAs */}
@@ -369,5 +418,67 @@ const stepStyles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: C.foreground,
     flex: 1,
+  },
+
+  // Notification opt-in card on step 3
+  notifCard: {
+    flexDirection: 'row',
+    gap: 14,
+    backgroundColor: `${C.primary}15`,
+    borderWidth: 1,
+    borderColor: `${C.primary}40`,
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 24,
+  },
+  notifIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: `${C.primary}22`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: C.foreground,
+    marginBottom: 4,
+  },
+  notifBody: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  notifBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: C.primary,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  notifBtnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: '#FFFFFF',
+  },
+  notifGrantedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  notifGrantedText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.positive,
+  },
+  notifDeniedText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    lineHeight: 18,
+    fontStyle: 'italic',
   },
 });
