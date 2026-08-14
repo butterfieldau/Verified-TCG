@@ -114,6 +114,13 @@ interface AppActions {
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
+  /** Reset scansUsed to 0 (also available to DEV panel for quick testing). */
+  resetScanCount: () => void;
+  /**
+   * DEV-only: set scansUsed to an arbitrary value so the limit flow can be
+   * tested without clicking through 29+ scans.  Never call from product code.
+   */
+  devSetScansUsed: (count: number) => void;
   // ── Pro Identity ──────────────────────────────────────────────────────────
   setSelectedIcon: (icon: string) => void;
   setProfileTheme: (theme: string) => void;
@@ -539,6 +546,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /** Reset scansUsed to 0, regardless of tier (DEV panel convenience). */
+  const resetScanCount = useCallback(() => {
+    setScansUsed(0);
+  }, []);
+
+  /**
+   * DEV-only: set scansUsed to an exact value so the limit flow (amber banner
+   * at 29, disabled scanner at 30) can be reached without clicking through
+   * many scans.  Clamps to [0, FREE_SCAN_LIMIT].
+   */
+  const devSetScansUsed = useCallback((count: number) => {
+    setScansUsed(Math.max(0, Math.min(count, FREE_SCAN_LIMIT)));
+  }, []);
+
   // Refs so refreshPrices can read the latest collection/watchlist without
   // them being stale-closure-captured in the useCallback dependency array.
   const collectionRef = useRef<CollectionItem[]>(collection);
@@ -701,7 +722,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshPrices,
         markNotificationRead, markAllNotificationsRead,
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
-        setSubscriptionTier, incrementScanCount,
+        setSubscriptionTier, incrementScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,
         profileTheme, setProfileTheme,
         foundingMemberClaimed,

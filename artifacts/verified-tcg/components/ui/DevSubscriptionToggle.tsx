@@ -1,8 +1,9 @@
 /**
- * DevSubscriptionToggle — DEV-ONLY floating pill to flip subscription tier.
+ * DevSubscriptionToggle — DEV-ONLY floating pill to flip subscription tier
+ * and control the scan counter for testing the scan-limit flow.
  *
  * Renders only when __DEV__ is true (i.e. never in production builds).
- * Displayed as a clearly amber-coloured "DEV" pill fixed in the bottom-right
+ * Displayed as clearly amber-coloured "DEV" pills fixed in the bottom-right
  * corner above the tab bar so it's never confused for real product UI.
  *
  * To remove before production: delete this file and remove the
@@ -21,6 +22,8 @@ const DEV = {
   pill: '#F59E0B',      // amber-400
   pillText: '#1C1917',  // stone-900
   label: '#FDE68A',     // amber-200
+  scanPill: '#065F46',  // emerald-800 — distinct from tier toggle amber
+  scanPillText: '#D1FAE5', // emerald-100
 };
 
 export default function DevSubscriptionToggle() {
@@ -31,7 +34,7 @@ export default function DevSubscriptionToggle() {
 }
 
 function DevToggleInner() {
-  const { subscriptionTier, setSubscriptionTier } = useApp();
+  const { subscriptionTier, setSubscriptionTier, scansUsed, scanLimit, resetScanCount, devSetScansUsed } = useApp();
   const isPro = subscriptionTier === 'pro';
 
   function toggle() {
@@ -80,6 +83,47 @@ function DevToggleInner() {
         {/* Tap hint */}
         <Feather name="refresh-cw" size={10} color={DEV.pillText} style={styles.refreshIcon} />
       </Pressable>
+
+      {/* Scan count controls — three quick-set presets */}
+      <View style={[styles.pill, styles.scanPill]}>
+        <View style={styles.devBadge}>
+          <Text style={styles.devBadgeText}>DEV</Text>
+        </View>
+        <Feather name="camera" size={12} color={DEV.scanPillText} style={styles.icon} />
+        <Text style={styles.scanLabel}>
+          {scansUsed}/{scanLimit}
+        </Text>
+
+        {/* Reset → 0 */}
+        <Pressable
+          onPress={resetScanCount}
+          style={({ pressed }) => [styles.scanBtn, pressed && styles.pillPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="DEV: Reset scan count to 0"
+        >
+          <Text style={styles.scanBtnText}>↺0</Text>
+        </Pressable>
+
+        {/* Set → 29 (1 remaining — amber banner visible) */}
+        <Pressable
+          onPress={() => devSetScansUsed(29)}
+          style={({ pressed }) => [styles.scanBtn, styles.scanBtnAmber, pressed && styles.pillPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="DEV: Set scan count to 29 (1 remaining)"
+        >
+          <Text style={styles.scanBtnText}>29</Text>
+        </Pressable>
+
+        {/* Set → 30 (exhausted — scanner disabled) */}
+        <Pressable
+          onPress={() => devSetScansUsed(30)}
+          style={({ pressed }) => [styles.scanBtn, styles.scanBtnRed, pressed && styles.pillPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="DEV: Set scan count to 30 (exhausted)"
+        >
+          <Text style={styles.scanBtnText}>30</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -113,6 +157,9 @@ const styles = StyleSheet.create({
   pillScreen: {
     backgroundColor: '#6D28D9', // purple — distinct from tier toggle amber
   },
+  scanPill: {
+    backgroundColor: DEV.scanPill,
+  },
   devBadge: {
     backgroundColor: DEV.bg,
     borderRadius: 4,
@@ -137,5 +184,29 @@ const styles = StyleSheet.create({
   refreshIcon: {
     marginLeft: 2,
     opacity: 0.7,
+  },
+  // Scan controls
+  scanLabel: {
+    color: DEV.scanPillText,
+    fontSize: 12,
+    fontWeight: '700',
+    marginRight: 2,
+  },
+  scanBtn: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  scanBtnAmber: {
+    backgroundColor: 'rgba(245,158,11,0.45)', // amber tint
+  },
+  scanBtnRed: {
+    backgroundColor: 'rgba(220,38,38,0.55)',  // red tint
+  },
+  scanBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });
