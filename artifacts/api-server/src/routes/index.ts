@@ -5,6 +5,7 @@ import imageProxyRouter from "./imageProxy";
 import catalogRouter from "./catalog";
 import certificationRouter from "./certification";
 import gradedPricesRouter from "./gradedPrices";
+import ebayAccountDeletionRouter from "./ebayAccountDeletion";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(imageProxyRouter);
 router.use(catalogRouter);
 router.use(certificationRouter);
 router.use(gradedPricesRouter);
+router.use(ebayAccountDeletionRouter);
 
 export default router;
