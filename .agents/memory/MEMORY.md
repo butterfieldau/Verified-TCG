@@ -1,1 +1,2 @@
 - [Auth Architecture](auth-architecture.md) — Custom JWT auth on Replit Postgres; no Supabase. bcryptjs + SESSION_SECRET. See file for endpoint list and OAuth status.
+- [Null fields in profile API](null-profile-fields.md) — nullable text profile fields (favourite_tcg, collector_since) must be set with explicit null; avoid ?? undefined which causes Drizzle to skip the column update.

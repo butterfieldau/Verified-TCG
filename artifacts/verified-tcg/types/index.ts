@@ -165,12 +165,20 @@ export interface User {
   username: string;
   displayName: string;
   email: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
   bio?: string;
   location?: string;
   joinedAt: string;
   isVerifiedSeller?: boolean;
   tcgPreferences: TCGId[];
+  // Extended profile
+  favouriteTcg?: string | null;
+  collectorSince?: string | null; // "YYYY-MM"
+  profilePublic?: boolean;
+  showCollection?: boolean;
+  showWishlist?: boolean;
+  showForTrade?: boolean;
+  showForSale?: boolean;
   stats: {
     collectionCount: number;
     collectionValue: number;

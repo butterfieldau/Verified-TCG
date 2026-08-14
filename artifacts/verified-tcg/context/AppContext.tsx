@@ -139,7 +139,15 @@ interface AppActions {
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
   deleteAccount: (password: string) => Promise<void>;
-  updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => Promise<void>;
+  updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+    favouriteTcg?: string | null;
+    collectorSince?: string | null;
+    profilePublic?: boolean;
+    showCollection?: boolean;
+    showWishlist?: boolean;
+    showForTrade?: boolean;
+    showForSale?: boolean;
+  }) => Promise<void>;
   addToCollection: (item: CollectionItem) => void;
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
@@ -215,6 +223,9 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
     : (email.split('@')[0] || 'collector');
   const bio = typeof meta.bio === 'string' ? meta.bio : undefined;
   const location = typeof meta.location === 'string' ? meta.location : undefined;
+  const avatarUrl = typeof meta.avatar_url === 'string' ? meta.avatar_url : null;
+  const favouriteTcg = typeof meta.favourite_tcg === 'string' ? meta.favourite_tcg : null;
+  const collectorSince = typeof meta.collector_since === 'string' ? meta.collector_since : null;
   return {
     id: session.user.id,
     email,
@@ -222,6 +233,14 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
     username,
     bio,
     location,
+    avatarUrl,
+    favouriteTcg,
+    collectorSince,
+    profilePublic: meta.profile_public !== false,
+    showCollection: meta.show_collection !== false,
+    showWishlist: meta.show_wishlist !== false,
+    showForTrade: meta.show_for_trade !== false,
+    showForSale: meta.show_for_sale !== false,
     joinedAt: new Date().toISOString(),
     tcgPreferences: MOCK_USER.tcgPreferences,
     stats: MOCK_USER.stats,
@@ -727,15 +746,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentEventId(null);
   }, []);
 
-  const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'>) => {
+  const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+    favouriteTcg?: string | null;
+    collectorSince?: string | null;
+    profilePublic?: boolean;
+    showCollection?: boolean;
+    showWishlist?: boolean;
+    showForTrade?: boolean;
+    showForSale?: boolean;
+  }) => {
     if (!user) throw new Error('Create an account to edit your profile.');
-    await updateUserMetadata({
+    const data: Record<string, unknown> = {
       display_name: patch.displayName.trim(),
       username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
       bio: patch.bio?.trim() ?? '',
       location: patch.location?.trim() ?? '',
-    });
-    setUser(current => current ? { ...current, ...patch } : current);
+    };
+    if (patch.favouriteTcg !== undefined) data.favourite_tcg = patch.favouriteTcg;
+    if (patch.collectorSince !== undefined) data.collector_since = patch.collectorSince;
+    if (patch.profilePublic !== undefined) data.profile_public = patch.profilePublic;
+    if (patch.showCollection !== undefined) data.show_collection = patch.showCollection;
+    if (patch.showWishlist !== undefined) data.show_wishlist = patch.showWishlist;
+    if (patch.showForTrade !== undefined) data.show_for_trade = patch.showForTrade;
+    if (patch.showForSale !== undefined) data.show_for_sale = patch.showForSale;
+    await updateUserMetadata(data);
+    setUser(current => current
+      ? {
+          ...current,
+          displayName: patch.displayName,
+          username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
+          bio: patch.bio,
+          location: patch.location,
+          // Use !== undefined so that explicit null (user clearing the field) is preserved
+          favouriteTcg: patch.favouriteTcg !== undefined ? patch.favouriteTcg : current.favouriteTcg,
+          collectorSince: patch.collectorSince !== undefined ? patch.collectorSince : current.collectorSince,
+          profilePublic: patch.profilePublic ?? current.profilePublic,
+          showCollection: patch.showCollection ?? current.showCollection,
+          showWishlist: patch.showWishlist ?? current.showWishlist,
+          showForTrade: patch.showForTrade ?? current.showForTrade,
+          showForSale: patch.showForSale ?? current.showForSale,
+        }
+      : current,
+    );
   }, [user]);
 
   const addToCollection = useCallback((item: CollectionItem) => {

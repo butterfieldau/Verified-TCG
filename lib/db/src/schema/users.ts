@@ -1,4 +1,4 @@
-import { boolean, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, date, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const usersTable = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -10,6 +10,15 @@ export const usersTable = pgTable("users", {
   location: text("location").notNull().default(""),
   subscriptionTier: varchar("subscription_tier", { length: 20 }).notNull().default("free"),
   isFoundingMember: boolean("is_founding_member").notNull().default(false),
+  // Extended profile fields
+  avatarUrl: varchar("avatar_url", { length: 2048 }),
+  favouriteTcg: varchar("favourite_tcg", { length: 100 }),
+  collectorSince: varchar("collector_since", { length: 7 }), // stored as "YYYY-MM"
+  profilePublic: boolean("profile_public").notNull().default(true),
+  showCollection: boolean("show_collection").notNull().default(true),
+  showWishlist: boolean("show_wishlist").notNull().default(true),
+  showForTrade: boolean("show_for_trade").notNull().default(true),
+  showForSale: boolean("show_for_sale").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

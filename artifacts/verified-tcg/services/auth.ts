@@ -107,17 +107,52 @@ export async function resetPassword(token: string, newPassword: string): Promise
   if (!response.ok) return parseError(response);
 }
 
-export async function updateUserMetadata(data: Record<string, string>): Promise<void> {
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You need to be signed in to change your password.');
+
+  const response = await request('/api/auth/change-password', {
+    method: 'POST',
+    accessToken: session.access_token,
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!response.ok) return parseError(response);
+}
+
+export async function uploadAvatar(base64: string, mimeType: string): Promise<string> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You need to be signed in to upload a photo.');
+
+  const response = await request('/api/auth/avatar', {
+    method: 'POST',
+    accessToken: session.access_token,
+    body: JSON.stringify({ base64, mimeType }),
+  });
+  if (!response.ok) return parseError(response);
+  const result = (await response.json()) as { avatar_url: string };
+
+  // Persist the new avatar URL to the cached session
+  session.user.user_metadata = {
+    ...(session.user.user_metadata ?? {}),
+    avatar_url: result.avatar_url,
+  };
+  await persist(session);
+
+  return result.avatar_url;
+}
+
+export async function updateUserMetadata(data: Record<string, unknown>): Promise<void> {
   const session = await restoreSession();
   if (!session) throw new Error('You need an account to edit your profile.');
 
   const response = await request('/api/auth/user', {
     method: 'PUT',
     accessToken: session.access_token,
-    body: JSON.stringify({ data: { ...(session.user.user_metadata ?? {}), ...data } }),
+    body: JSON.stringify({ data }),
   });
   if (!response.ok) return parseError(response);
-  session.user = (await response.json()) as AuthSession['user'];
+  const updated = (await response.json()) as AuthSession['user'];
+  session.user = updated;
   await persist(session);
 }
 

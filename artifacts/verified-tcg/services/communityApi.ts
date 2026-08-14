@@ -61,6 +61,14 @@ export interface PublicCollector {
   subscriptionTier: string;
   isFoundingMember: boolean;
   joinedAt: string;
+  avatarUrl?: string | null;
+  favouriteTcg?: string | null;
+  collectorSince?: string | null; // "YYYY-MM"
+  profilePublic?: boolean;
+  showCollection?: boolean;
+  showWishlist?: boolean;
+  showForTrade?: boolean;
+  showForSale?: boolean;
   followerCount?: number;
   followingCount?: number;
   postCount?: number;

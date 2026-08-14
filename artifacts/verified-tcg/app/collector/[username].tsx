@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -12,8 +13,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
-import { TCG_LIST } from '@/types';
-import { getCollectionMatch } from '@/services/matching';
 import { ProBadge } from '@/components/ui/ProBadge';
 import { useApp } from '@/context/AppContext';
 import {
@@ -42,21 +41,42 @@ function avatarColor(initials: string): string {
   return AVATAR_COLORS[code % AVATAR_COLORS.length]!;
 }
 
+// Month name from "YYYY-MM" string
+function formatCollectorSince(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const [year, month] = value.split('-');
+  if (!year || !month) return null;
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  const monthName = monthNames[parseInt(month, 10) - 1];
+  return monthName ? `${monthName} ${year}` : null;
+}
+
+const TCG_LABELS: Record<string, string> = {
+  pokemon: 'Pokémon',
+  onepiece: 'One Piece',
+  magic: 'Magic: The Gathering',
+  yugioh: 'Yu-Gi-Oh!',
+  lorcana: 'Disney Lorcana',
+  dragonball: 'Dragon Ball Super',
+  sports: 'Sports',
+  other: 'Other',
+};
+
 export default function CollectorProfileScreen() {
   const insets = useSafeAreaInsets();
   const { username } = useLocalSearchParams<{ username: string }>();
   const { user, isAuthenticated } = useApp();
   const [activeTab, setActiveTab] = useState<ProfileTab>('about');
-  const [showMatchCards, setShowMatchCards] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
-  // Real collector data
   const [collector, setCollector] = useState<PublicCollector | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Follow state
   const [isFollowing, setIsFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
   const [followLoading, setFollowLoading] = useState(false);
@@ -84,7 +104,6 @@ export default function CollectorProfileScreen() {
   const handleFollow = async () => {
     if (!collector || followLoading) return;
     setFollowLoading(true);
-    // Optimistic update
     const wasFollowing = isFollowing;
     setIsFollowing(!isFollowing);
     setFollowerCount(c => wasFollowing ? c - 1 : c + 1);
@@ -97,7 +116,6 @@ export default function CollectorProfileScreen() {
         setFollowerCount(newCount);
       }
     } catch {
-      // Revert
       setIsFollowing(wasFollowing);
       setFollowerCount(c => wasFollowing ? c + 1 : c - 1);
     } finally {
@@ -108,13 +126,7 @@ export default function CollectorProfileScreen() {
   if (loading) {
     return (
       <View style={[styles.screen, { paddingTop: topPad + 8 }]}>
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Feather name="arrow-left" size={20} color={C.foreground} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Collector Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <Header />
         <View style={styles.center}>
           <ActivityIndicator color={C.primary} />
         </View>
@@ -125,13 +137,7 @@ export default function CollectorProfileScreen() {
   if (error || !collector) {
     return (
       <View style={[styles.screen, { paddingTop: topPad + 8 }]}>
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Feather name="arrow-left" size={20} color={C.foreground} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Collector Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <Header />
         <View style={styles.center}>
           <Feather name="alert-circle" size={32} color={C.mutedForeground} />
           <Text style={styles.errorText}>{error ?? 'Collector not found'}</Text>
@@ -143,18 +149,39 @@ export default function CollectorProfileScreen() {
     );
   }
 
-  const joinYear = new Date(collector.joinedAt).getFullYear();
-  const color = avatarColor(collector.initials);
+  // Private profile — show minimal info only
+  if ((collector as any).isPrivate) {
+    return (
+      <ScrollView
+        style={[styles.screen, { backgroundColor: C.background }]}
+        contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: 48 }]}
+      >
+        <Header />
+        <View style={[styles.profileCard, { backgroundColor: C.card }]}>
+          <View style={styles.avatarRow}>
+            <View style={[styles.avatar, { backgroundColor: avatarColor(collector.initials) }]}>
+              <Text style={styles.avatarText}>{collector.initials}</Text>
+            </View>
+            <View style={styles.nameBlock}>
+              <Text style={styles.displayName}>{collector.displayName}</Text>
+              <Text style={styles.username}>@{collector.username}</Text>
+            </View>
+          </View>
+          <View style={[styles.privateBox, { backgroundColor: C.muted }]}>
+            <Feather name="lock" size={18} color={C.mutedForeground} />
+            <Text style={styles.privateBoxTitle}>This profile is private</Text>
+            <Text style={styles.privateBoxBody}>
+              This collector has set their profile to private.
+            </Text>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
 
-  // Map profileTheme → card background
-  const THEME_CARD_COLORS: Record<string, string> = {
-    default:         C.card,
-    carbon:          '#1C1C1E',
-    deep_red:        '#1A0000',
-    collector_black: '#000000',
-    chrome:          '#222222',
-  };
-  const profileCardBg = C.card;
+  const color = avatarColor(collector.initials);
+  const collectorSinceLabel = formatCollectorSince(collector.collectorSince);
+  const favTcgLabel = collector.favouriteTcg ? TCG_LABELS[collector.favouriteTcg] ?? collector.favouriteTcg : null;
 
   return (
     <ScrollView
@@ -162,21 +189,18 @@ export default function CollectorProfileScreen() {
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: 48 }]}
       showsVerticalScrollIndicator={false}
     >
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Feather name="arrow-left" size={20} color={C.foreground} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Collector Profile</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <Header />
 
       {/* Profile card */}
-      <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
+      <View style={[styles.profileCard, { backgroundColor: C.card }]}>
         <View style={styles.avatarRow}>
-          <View style={[styles.avatar, { backgroundColor: color }]}>
-            <Text style={styles.avatarText}>{collector.initials}</Text>
-          </View>
+          {collector.avatarUrl ? (
+            <Image source={{ uri: collector.avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <View style={[styles.avatar, { backgroundColor: color }]}>
+              <Text style={styles.avatarText}>{collector.initials}</Text>
+            </View>
+          )}
           <View style={styles.nameBlock}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
               <Text style={styles.displayName}>{collector.displayName}</Text>
@@ -207,12 +231,20 @@ export default function CollectorProfileScreen() {
           <StatBlock label="Posts" value={String(collector.postCount ?? 0)} />
         </View>
 
-        {/* Privacy note */}
-        <View style={[styles.privacyNote, { backgroundColor: C.muted }]}>
-          <Feather name="lock" size={11} color={C.mutedForeground} />
-          <Text style={styles.privacyText}>
-            Collector since {joinYear}
+        {/* Member info row */}
+        <View style={[styles.memberRow, { backgroundColor: C.muted }]}>
+          <Feather name="clock" size={11} color={C.mutedForeground} />
+          <Text style={styles.memberText}>
+            {collectorSinceLabel
+              ? `Collecting since ${collectorSinceLabel}`
+              : `Member since ${new Date(collector.joinedAt).getFullYear()}`}
           </Text>
+          {favTcgLabel ? (
+            <>
+              <Text style={[styles.memberText, { color: C.border }]}> · </Text>
+              <Text style={[styles.memberText, { color: C.primary }]}>{favTcgLabel}</Text>
+            </>
+          ) : null}
         </View>
       </View>
 
@@ -255,6 +287,17 @@ export default function CollectorProfileScreen() {
         </View>
       )}
 
+      {/* Own profile — show edit button */}
+      {isOwnProfile && (
+        <Pressable
+          style={[styles.editProfileBtn, { backgroundColor: C.card, borderColor: C.border }]}
+          onPress={() => router.push('/edit-profile' as any)}
+        >
+          <Feather name="edit-2" size={15} color={C.foreground} />
+          <Text style={styles.editProfileText}>Edit Profile</Text>
+        </Pressable>
+      )}
+
       {/* Tabs */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsRow}>
         {PROFILE_TABS.map(t => (
@@ -282,12 +325,28 @@ export default function CollectorProfileScreen() {
               <Text style={styles.aboutText}>{collector.bio}</Text>
             </View>
           ) : null}
-          <View style={[styles.aboutCard, { backgroundColor: C.card }]}>
-            <Text style={styles.aboutLabel}>MEMBER SINCE</Text>
-            <Text style={styles.aboutText}>
-              {new Date(collector.joinedAt).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })}
-            </Text>
-          </View>
+
+          {collectorSinceLabel ? (
+            <View style={[styles.aboutCard, { backgroundColor: C.card }]}>
+              <Text style={styles.aboutLabel}>COLLECTING SINCE</Text>
+              <Text style={styles.aboutText}>{collectorSinceLabel}</Text>
+            </View>
+          ) : (
+            <View style={[styles.aboutCard, { backgroundColor: C.card }]}>
+              <Text style={styles.aboutLabel}>MEMBER SINCE</Text>
+              <Text style={styles.aboutText}>
+                {new Date(collector.joinedAt).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })}
+              </Text>
+            </View>
+          )}
+
+          {favTcgLabel ? (
+            <View style={[styles.aboutCard, { backgroundColor: C.card }]}>
+              <Text style={styles.aboutLabel}>FAVOURITE TCG</Text>
+              <Text style={styles.aboutText}>{favTcgLabel}</Text>
+            </View>
+          ) : null}
+
           {!isAuthenticated && (
             <View style={[styles.privateNote, { backgroundColor: C.card, borderColor: C.border }]}>
               <Feather name="info" size={14} color={C.mutedForeground} />
@@ -311,6 +370,18 @@ export default function CollectorProfileScreen() {
         </View>
       )}
     </ScrollView>
+  );
+}
+
+function Header() {
+  return (
+    <View style={styles.header}>
+      <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Feather name="arrow-left" size={20} color={C.foreground} />
+      </Pressable>
+      <Text style={styles.headerTitle}>Collector Profile</Text>
+      <View style={{ width: 40 }} />
+    </View>
   );
 }
 
@@ -354,6 +425,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarImage: { width: 64, height: 64, borderRadius: 32 },
   avatarText: { fontSize: 24, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   nameBlock: { flex: 1, gap: 4 },
   displayName: { fontSize: 20, fontFamily: 'Inter_700Bold', color: C.foreground },
@@ -378,15 +450,16 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   divider: { width: 1, height: 32, backgroundColor: C.border },
-  privacyNote: {
+  memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    flexWrap: 'wrap',
+    gap: 4,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
-  privacyText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  memberText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   actionsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   followBtn: {
     flex: 2,
@@ -407,6 +480,17 @@ const styles = StyleSheet.create({
     borderRadius: 13,
   },
   actionBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  editProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  editProfileText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },
   tabsRow: { borderBottomWidth: 1, borderBottomColor: C.border, marginBottom: 4 },
   tab: {
     paddingHorizontal: 16,
@@ -439,6 +523,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
+    lineHeight: 18,
+  },
+  privateBox: {
+    alignItems: 'center',
+    borderRadius: 14,
+    padding: 24,
+    gap: 10,
+    marginTop: 4,
+  },
+  privateBoxTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
+  privateBoxBody: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
     lineHeight: 18,
   },
 });
