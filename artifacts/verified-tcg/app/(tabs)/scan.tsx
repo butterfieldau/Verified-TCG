@@ -358,11 +358,21 @@ export default function ScanScreen() {
           <Text style={styles.permissionBody}>
             To scan and identify your trading cards, Verified TCG needs camera access. Your photos are only used for card recognition and are never stored.
           </Text>
-          <Pressable onPress={requestPermission} style={styles.permissionBtn}>
+          <Pressable
+            onPress={requestPermission}
+            style={styles.permissionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Enable camera access"
+          >
             <Feather name="camera" size={16} color="#FFFFFF" />
             <Text style={styles.permissionBtnText}>Enable Camera</Text>
           </Pressable>
-          <Pressable onPress={() => router.push('/add-card')} style={styles.ghostBtn}>
+          <Pressable
+            onPress={() => router.push('/add-card')}
+            style={styles.ghostBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Add card manually instead"
+          >
             <Text style={styles.ghostBtnText}>Add card manually instead</Text>
           </Pressable>
         </View>
@@ -387,14 +397,26 @@ export default function ScanScreen() {
         <View style={styles.headerRight}>
           {/* Scan counter for free users */}
           {!canUseUnlimitedScanner(subscriptionTier) && scanState === 'idle' && (
-            <Pressable style={styles.scanCountBadge} onPress={() => router.push('/pro-subscription')}>
+            <Pressable
+              style={styles.scanCountBadge}
+              onPress={() => router.push('/pro-subscription')}
+              accessibilityRole="button"
+              accessibilityLabel={`${Math.max(0, scansLeft)} scans remaining. Upgrade to Pro for unlimited`}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
               <Feather name="camera" size={12} color={scansLeft <= 5 ? '#F59E0B' : C.mutedForeground} />
               <Text style={[styles.scanCountText, scansLeft <= 5 && { color: '#F59E0B' }]}>
                 {Math.max(0, scansLeft)} left
               </Text>
             </Pressable>
           )}
-          <Pressable style={styles.headerBtn} onPress={() => router.push('/add-card')}>
+          <Pressable
+            style={styles.headerBtn}
+            onPress={() => router.push('/add-card')}
+            accessibilityRole="button"
+            accessibilityLabel="Add card manually"
+            hitSlop={2}
+          >
             <Feather name="plus" size={19} color={C.foreground} />
           </Pressable>
         </View>
@@ -405,7 +427,12 @@ export default function ScanScreen() {
 
       {/* 30th-scan limit sheet */}
       <Modal visible={showLimitSheet} transparent animationType="slide" onRequestClose={() => setShowLimitSheet(false)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setShowLimitSheet(false)} />
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowLimitSheet(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <View style={[styles.sheet, { paddingBottom: Math.max(botPad, 24) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetIconWrap}>
@@ -415,11 +442,21 @@ export default function ScanScreen() {
           <Text style={styles.sheetBody}>
             You've used your 30 free scans this month.{'\n'}Resets {resetLabel}.
           </Text>
-          <Pressable onPress={() => { setShowLimitSheet(false); router.push('/pro-subscription'); }} style={styles.sheetPrimaryBtn}>
+          <Pressable
+            onPress={() => { setShowLimitSheet(false); router.push('/pro-subscription'); }}
+            style={styles.sheetPrimaryBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Unlock unlimited scanning"
+          >
             <Feather name="zap" size={16} color="#FFFFFF" />
             <Text style={styles.sheetPrimaryBtnText}>Unlock Unlimited Scanning</Text>
           </Pressable>
-          <Pressable onPress={() => setShowLimitSheet(false)} style={styles.sheetGhostBtn}>
+          <Pressable
+            onPress={() => setShowLimitSheet(false)}
+            style={styles.sheetGhostBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Got it, dismiss"
+          >
             <Text style={styles.sheetGhostBtnText}>Got it</Text>
           </Pressable>
         </View>
@@ -427,7 +464,12 @@ export default function ScanScreen() {
 
       {/* Action sheet */}
       <Modal visible={showActionSheet} transparent animationType="slide" onRequestClose={() => setShowActionSheet(false)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setShowActionSheet(false)} />
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowActionSheet(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <View style={[styles.sheet, { paddingBottom: Math.max(botPad, 24) }]}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>What would you like to do?</Text>
@@ -435,25 +477,45 @@ export default function ScanScreen() {
             <Text style={styles.sheetCardName}>{String(topMatch.card.name ?? '')}</Text>
           )}
 
-          <Pressable onPress={handleAddToCollection} style={styles.sheetActionBtn}>
+          <Pressable
+            onPress={handleAddToCollection}
+            style={styles.sheetActionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Add to collection"
+          >
             <Feather name="layers" size={18} color={C.foreground} />
             <Text style={styles.sheetActionText}>Add to Collection</Text>
             <Feather name="chevron-right" size={16} color={C.mutedForeground} />
           </Pressable>
 
-          <Pressable onPress={handleAddToWishlist} style={styles.sheetActionBtn}>
+          <Pressable
+            onPress={handleAddToWishlist}
+            style={styles.sheetActionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Add to wishlist"
+          >
             <Feather name="heart" size={18} color={C.foreground} />
             <Text style={styles.sheetActionText}>Add to Wishlist</Text>
             <Feather name="chevron-right" size={16} color={C.mutedForeground} />
           </Pressable>
 
-          <Pressable onPress={handleViewCard} style={styles.sheetActionBtn}>
+          <Pressable
+            onPress={handleViewCard}
+            style={styles.sheetActionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="View card detail"
+          >
             <Feather name="eye" size={18} color={C.foreground} />
             <Text style={styles.sheetActionText}>View Card Detail</Text>
             <Feather name="chevron-right" size={16} color={C.mutedForeground} />
           </Pressable>
 
-          <Pressable onPress={() => setShowActionSheet(false)} style={styles.sheetGhostBtn}>
+          <Pressable
+            onPress={() => setShowActionSheet(false)}
+            style={styles.sheetGhostBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
             <Text style={styles.sheetGhostBtnText}>Cancel</Text>
           </Pressable>
         </View>
@@ -620,6 +682,9 @@ export default function ScanScreen() {
                   flashEnabled && !isLimitExhausted && { backgroundColor: '#F59E0B22', borderColor: '#F59E0B' },
                   (isLimitExhausted || scanState !== 'idle') && styles.iconBtnDisabled,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={flashEnabled ? 'Flash on' : 'Flash off'}
+                accessibilityState={{ disabled: isLimitExhausted || scanState !== 'idle' }}
               >
                 <Feather name="zap" size={22} color={isLimitExhausted ? C.mutedForeground : (flashEnabled ? '#F59E0B' : C.foreground)} />
               </Pressable>
@@ -649,6 +714,9 @@ export default function ScanScreen() {
                 disabled={isLimitExhausted || scanState !== 'idle'}
                 style={[styles.iconBtn, (isLimitExhausted || scanState !== 'idle') && styles.iconBtnDisabled]}
                 onPress={() => router.push('/search')}
+                accessibilityRole="button"
+                accessibilityLabel="Search cards manually"
+                accessibilityState={{ disabled: isLimitExhausted || scanState !== 'idle' }}
               >
                 <Feather name="search" size={22} color={isLimitExhausted ? C.mutedForeground : C.foreground} />
               </Pressable>
@@ -656,7 +724,12 @@ export default function ScanScreen() {
 
             {/* Pro upgrade nudge when ≤5 scans remain */}
             {!canUseUnlimitedScanner(subscriptionTier) && scansLeft <= 5 && scansLeft > 0 && (
-              <Pressable onPress={() => router.push('/pro-subscription')} style={styles.upgradeLinkRow}>
+              <Pressable
+                onPress={() => router.push('/pro-subscription')}
+                style={styles.upgradeLinkRow}
+                accessibilityRole="button"
+                accessibilityLabel={scansLeft === 1 ? '1 scan remaining. Upgrade to Pro for unlimited' : `${scansLeft} scans remaining. Upgrade to Pro for unlimited`}
+              >
                 <Feather name="zap" size={13} color={C.primary} />
                 <Text style={styles.upgradeLinkText}>
                   {scansLeft === 1 ? '1 scan remaining — upgrade for unlimited' : `${scansLeft} scans remaining — upgrade for unlimited`}
@@ -667,7 +740,12 @@ export default function ScanScreen() {
 
             {/* Exhausted upgrade link */}
             {isLimitExhausted && (
-              <Pressable onPress={() => router.push('/pro-subscription')} style={styles.upgradeLinkRow}>
+              <Pressable
+                onPress={() => router.push('/pro-subscription')}
+                style={styles.upgradeLinkRow}
+                accessibilityRole="button"
+                accessibilityLabel="Upgrade to Pro for unlimited scanning"
+              >
                 <Feather name="zap" size={13} color={C.primary} />
                 <Text style={styles.upgradeLinkText}>Upgrade to Pro for unlimited scanning</Text>
                 <Feather name="chevron-right" size={13} color={C.primary} />
@@ -679,15 +757,30 @@ export default function ScanScreen() {
         {/* Match actions */}
         {isMatchView && (
           <View style={styles.actionStack}>
-            <Pressable onPress={handleConfirm} style={styles.primaryActionBtn}>
+            <Pressable
+              onPress={handleConfirm}
+              style={styles.primaryActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm match and save card"
+            >
               <Feather name="check" size={18} color="#FFFFFF" />
               <Text style={styles.primaryActionText}>That's the one — save it</Text>
             </Pressable>
-            <Pressable onPress={handleSearchManually} style={styles.secondaryActionBtn}>
+            <Pressable
+              onPress={handleSearchManually}
+              style={styles.secondaryActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Not right? Search manually"
+            >
               <Feather name="search" size={16} color={C.foreground} />
               <Text style={styles.secondaryActionText}>Not right? Search manually</Text>
             </Pressable>
-            <Pressable onPress={tryAgain} style={styles.ghostBtn}>
+            <Pressable
+              onPress={tryAgain}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Scan again"
+            >
               <Text style={styles.ghostBtnText}>Scan Again</Text>
             </Pressable>
           </View>
@@ -696,11 +789,21 @@ export default function ScanScreen() {
         {/* Error actions */}
         {scanState === 'error' && (
           <View style={styles.actionStack}>
-            <Pressable onPress={handleSearchManually} style={styles.primaryActionBtn}>
+            <Pressable
+              onPress={handleSearchManually}
+              style={styles.primaryActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Search manually"
+            >
               <Feather name="search" size={18} color="#FFFFFF" />
               <Text style={styles.primaryActionText}>Search Manually</Text>
             </Pressable>
-            <Pressable onPress={tryAgain} style={styles.ghostBtn}>
+            <Pressable
+              onPress={tryAgain}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Try scanning again"
+            >
               <Text style={styles.ghostBtnText}>Try Again</Text>
             </Pressable>
           </View>
@@ -710,11 +813,21 @@ export default function ScanScreen() {
         {scanState === 'confirmed' && (
           <View style={styles.actionStack}>
             {topMatch && (
-              <Pressable onPress={() => router.push(`/card/${topMatch.card.id}`)} style={styles.primaryActionBtn}>
+              <Pressable
+                onPress={() => router.push(`/card/${topMatch.card.id}`)}
+                style={styles.primaryActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel={`View details for ${String(topMatch.card.name ?? '')}`}
+              >
                 <Text style={styles.primaryActionText}>View Card Detail</Text>
               </Pressable>
             )}
-            <Pressable onPress={tryAgain} style={styles.ghostBtn}>
+            <Pressable
+              onPress={tryAgain}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Scan another card"
+            >
               <Text style={styles.ghostBtnText}>Scan Another Card</Text>
             </Pressable>
           </View>
@@ -810,7 +923,7 @@ const styles = StyleSheet.create({
     gap: 8,
     height: 52,
     borderRadius: 14,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
     alignSelf: 'stretch',
     marginTop: 8,
   },
@@ -1004,10 +1117,10 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: C.primary,
+    shadowColor: '#CC1826',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 14,
@@ -1045,7 +1158,7 @@ const styles = StyleSheet.create({
     gap: 8,
     height: 52,
     borderRadius: 14,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
   },
   primaryActionText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   secondaryActionBtn: {
@@ -1139,7 +1252,7 @@ const styles = StyleSheet.create({
     gap: 8,
     height: 52,
     borderRadius: 14,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
     alignSelf: 'stretch',
     marginBottom: 10,
   },

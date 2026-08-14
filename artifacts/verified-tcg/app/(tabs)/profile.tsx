@@ -131,11 +131,20 @@ export default function ProfileScreen() {
                 }).catch(() => {});
               }}
               style={styles.editBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Share profile"
+              hitSlop={2}
             >
               <Feather name="share-2" size={17} color={C.foreground} />
             </Pressable>
           )}
-          <Pressable onPress={() => router.push('/edit-profile' as any)} style={styles.editBtn}>
+          <Pressable
+            onPress={() => router.push('/edit-profile' as any)}
+            style={styles.editBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Edit profile"
+            hitSlop={2}
+          >
             <Feather name="edit-2" size={17} color={C.foreground} />
           </Pressable>
         </View>
@@ -217,7 +226,12 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Wishlist</Text>
-          <Pressable onPress={() => router.push('/wishlist' as any)}>
+          <Pressable
+            onPress={() => router.push('/wishlist' as any)}
+            accessibilityRole="button"
+            accessibilityLabel={watchlist.length > 0 ? `See all ${watchlist.length} wishlist cards` : 'Add cards to wishlist'}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Text style={styles.seeAll}>
               {watchlist.length > 0 ? `See all (${watchlist.length})` : 'Add cards'}
             </Text>
@@ -225,7 +239,13 @@ export default function ProfileScreen() {
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
           {watchlist.map(w => (
-            <Pressable key={w.id} style={{ gap: 8 }}>
+            <Pressable
+              key={w.id}
+              style={{ gap: 8 }}
+              onPress={() => router.push(`/card/${w.card.id}` as any)}
+              accessibilityRole="button"
+              accessibilityLabel={`${w.card.name}${w.targetPrice ? `, target $${w.targetPrice.toLocaleString()}` : ''}`}
+            >
               <CardThumbnail card={w.card} compact />
               <View>
                 <Text style={styles.watchName} numberOfLines={1}>{w.card.name}</Text>
@@ -243,7 +263,12 @@ export default function ProfileScreen() {
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Pro Benefits</Text>
           {!isPro && (
-            <Pressable onPress={() => router.push('/pro-subscription' as any)}>
+            <Pressable
+              onPress={() => router.push('/pro-subscription' as any)}
+              accessibilityRole="button"
+              accessibilityLabel="Upgrade to Pro"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Text style={styles.seeAll}>Upgrade</Text>
             </Pressable>
           )}
@@ -258,6 +283,8 @@ export default function ProfileScreen() {
                 styles.menuDivider,
                 { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={scansExhausted ? 'No scans left this month — upgrade to Pro' : `Scans: ${scansUsed} of ${scanLimit} used — upgrade to Pro`}
             >
               <View style={[styles.menuIcon, {
                 backgroundColor: scansExhausted
@@ -300,6 +327,8 @@ export default function ProfileScreen() {
                 idx < PRO_BENEFITS_ITEMS.length - 1 ? styles.menuDivider : null,
                 { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.label}${!isPro ? ' — Pro feature' : ''}`}
             >
               <View style={[styles.menuIcon, { backgroundColor: `${C.primary}22` }]}>
                 <Feather name={item.icon as any} size={16} color={C.primary} />
@@ -344,6 +373,8 @@ export default function ProfileScreen() {
                   idx < MENU_ITEMS.length - 1 ? styles.menuDivider : null,
                   { backgroundColor: pressed ? C.muted : 'transparent', borderColor: C.border },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.label}${badgeValue ? `, ${badgeValue} unread` : ''}`}
               >
                 <View style={[styles.menuIcon, { backgroundColor: (item as any).highlight ? `${C.primary}22` : C.muted }]}>
                   <Feather name={item.icon as any} size={16} color={(item as any).highlight ? C.primary : C.foreground} />
@@ -378,6 +409,8 @@ export default function ProfileScreen() {
             );
           }}
           style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: `${C.destructive}44` }]}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
         >
           <Feather name="log-out" size={16} color={C.destructive} />
           <Text style={[styles.signOutText, { color: C.destructive }]}>Sign Out</Text>
@@ -386,6 +419,8 @@ export default function ProfileScreen() {
         <Pressable
           onPress={() => router.push('/sign-in' as any)}
           style={[styles.signOutBtn, { backgroundColor: C.card, borderColor: C.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Sign in"
         >
           <Feather name="log-in" size={16} color={C.foreground} />
           <Text style={[styles.signOutText, { color: C.foreground }]}>Sign In</Text>

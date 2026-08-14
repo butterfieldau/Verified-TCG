@@ -61,7 +61,12 @@ function PostCard({ post, onLike, onDelete, onComment, onProfile }: PostCardProp
   return (
     <View style={[styles.postCard, { backgroundColor: C.card }]}>
       {/* Header */}
-      <Pressable style={styles.postHeader} onPress={() => onProfile(post.author.username)}>
+      <Pressable
+        style={styles.postHeader}
+        onPress={() => onProfile(post.author.username)}
+        accessibilityRole="button"
+        accessibilityLabel={`View ${post.author.displayName}'s profile`}
+      >
         <View style={[styles.postAvatar, { backgroundColor: color }]}>
           <Text style={styles.postAvatarText}>{post.author.initials}</Text>
         </View>
@@ -88,7 +93,9 @@ function PostCard({ post, onLike, onDelete, onComment, onProfile }: PostCardProp
                 },
               ]);
             }}
-            hitSlop={8}
+            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            accessibilityRole="button"
+            accessibilityLabel="Delete post"
           >
             <Feather name="trash-2" size={15} color={C.mutedForeground} />
           </Pressable>
@@ -108,7 +115,15 @@ function PostCard({ post, onLike, onDelete, onComment, onProfile }: PostCardProp
 
       {/* Actions */}
       <View style={styles.postActions}>
-        <Pressable style={styles.actionChip} onPress={() => onLike(post)}>
+        <Pressable
+          style={[styles.actionChip, { minHeight: 44, alignItems: 'center' }]}
+          onPress={() => onLike(post)}
+          accessibilityRole="button"
+          accessibilityLabel={post.isLiked
+            ? `Unlike post. ${post.likeCount} like${post.likeCount !== 1 ? 's' : ''}`
+            : `Like post. ${post.likeCount} like${post.likeCount !== 1 ? 's' : ''}`}
+          accessibilityState={{ selected: post.isLiked }}
+        >
           <Feather
             name="heart"
             size={16}
@@ -119,7 +134,12 @@ function PostCard({ post, onLike, onDelete, onComment, onProfile }: PostCardProp
             {post.likeCount > 0 ? post.likeCount : ''}
           </Text>
         </Pressable>
-        <Pressable style={styles.actionChip} onPress={() => onComment(post)}>
+        <Pressable
+          style={[styles.actionChip, { minHeight: 44, alignItems: 'center' }]}
+          onPress={() => onComment(post)}
+          accessibilityRole="button"
+          accessibilityLabel={`Comment. ${post.commentCount} comment${post.commentCount !== 1 ? 's' : ''}`}
+        >
           <Feather name="message-circle" size={16} color={C.mutedForeground} style={{ opacity: 0.7 }} />
           <Text style={styles.actionChipText}>
             {post.commentCount > 0 ? post.commentCount : ''}
@@ -135,7 +155,12 @@ function PostCard({ post, onLike, onDelete, onComment, onProfile }: PostCardProp
 function CollectorRow({ collector, onPress }: { collector: PublicCollector; onPress: () => void }) {
   const color = avatarColor(collector.initials);
   return (
-    <Pressable style={[styles.collectorRow, { backgroundColor: C.card }]} onPress={onPress}>
+    <Pressable
+      style={[styles.collectorRow, { backgroundColor: C.card }]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`View ${collector.displayName}'s profile`}
+    >
       <View style={[styles.collectorAvatar, { backgroundColor: color }]}>
         <Text style={styles.collectorAvatarText}>{collector.initials}</Text>
       </View>
@@ -190,11 +215,21 @@ function CreatePostModal({ visible, onClose, onSubmit }: CreatePostModalProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.modalOverlay}
       >
-        <Pressable style={styles.modalBg} onPress={onClose} />
+        <Pressable
+          style={styles.modalBg}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <View style={[styles.modalSheet, { backgroundColor: C.card }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>New Post</Text>
-            <Pressable onPress={onClose}>
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={{ top: 11, bottom: 11, left: 11, right: 11 }}
+            >
               <Feather name="x" size={22} color={C.mutedForeground} />
             </Pressable>
           </View>
@@ -212,9 +247,11 @@ function CreatePostModal({ visible, onClose, onSubmit }: CreatePostModalProps) {
           <View style={styles.modalFooter}>
             <Text style={styles.charCount}>{text.length}/500</Text>
             <Pressable
-              style={[styles.submitBtn, { backgroundColor: C.primary, opacity: text.trim() ? 1 : 0.4 }]}
+              style={[styles.submitBtn, { backgroundColor: '#CC1826', opacity: text.trim() ? 1 : 0.4 }]}
               onPress={handleSubmit}
               disabled={!text.trim() || submitting}
+              accessibilityRole="button"
+              accessibilityLabel="Submit post"
             >
               {submitting
                 ? <ActivityIndicator size="small" color="#FFF" />
@@ -359,8 +396,10 @@ export default function CommunityScreen() {
             Sign in to follow collectors, share posts, and see what's happening in the community.
           </Text>
           <Pressable
-            style={[styles.signInBtn, { backgroundColor: C.primary }]}
+            style={[styles.signInBtn, { backgroundColor: '#CC1826' }]}
             onPress={() => router.push('/sign-in' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Sign In"
           >
             <Text style={styles.signInBtnText}>Sign In</Text>
           </Pressable>
@@ -385,7 +424,12 @@ export default function CommunityScreen() {
         <View style={styles.center}>
           <Feather name="wifi-off" size={32} color={C.mutedForeground} />
           <Text style={styles.emptyText}>{feedError}</Text>
-          <Pressable onPress={() => loadFeed(1, true)} style={styles.retryBtn}>
+          <Pressable
+            onPress={() => loadFeed(1, true)}
+            style={styles.retryBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading feed"
+          >
             <Text style={[styles.retryBtnText, { color: C.primary }]}>Retry</Text>
           </Pressable>
         </View>
@@ -403,7 +447,12 @@ export default function CommunityScreen() {
           <Text style={styles.emptyText}>
             Follow some collectors to see their activity here. Search for collectors to get started.
           </Text>
-          <Pressable style={[styles.discoverBtn, { backgroundColor: C.primary }]} onPress={() => setActiveTab('discover')}>
+          <Pressable
+            style={[styles.discoverBtn, { backgroundColor: '#CC1826' }]}
+            onPress={() => setActiveTab('discover')}
+            accessibilityRole="button"
+            accessibilityLabel="Find Collectors"
+          >
             <Text style={styles.discoverBtnText}>Find Collectors</Text>
           </Pressable>
         </ScrollView>
@@ -453,7 +502,12 @@ export default function CommunityScreen() {
         />
         {searchLoading && <ActivityIndicator size="small" color={C.mutedForeground} />}
         {searchQuery.length > 0 && !searchLoading && (
-          <Pressable onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+          <Pressable
+            onPress={() => { setSearchQuery(''); setSearchResults([]); }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+          >
             <Feather name="x" size={16} color={C.mutedForeground} />
           </Pressable>
         )}
@@ -495,8 +549,10 @@ export default function CommunityScreen() {
         <Text style={styles.headerTitle}>Community</Text>
         {activeTab === 'feed' && (
           <Pressable
-            style={[styles.createBtn, { backgroundColor: C.primary }]}
+            style={[styles.createBtn, { backgroundColor: '#CC1826' }]}
             onPress={() => setShowCreatePost(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Create new post"
           >
             <Feather name="edit-3" size={14} color="#FFF" />
             <Text style={styles.createBtnText}>Post</Text>
@@ -509,8 +565,11 @@ export default function CommunityScreen() {
         {(['feed', 'discover'] as TabView[]).map(tab => (
           <Pressable
             key={tab}
-            style={[styles.tab, activeTab === tab && { borderBottomColor: C.primary }]}
+            style={[styles.tab, activeTab === tab && { borderBottomColor: C.primary }, { minHeight: 44, justifyContent: 'center' }]}
             onPress={() => setActiveTab(tab)}
+            accessibilityRole="tab"
+            accessibilityLabel={tab === 'feed' ? 'Feed' : 'Discover'}
+            accessibilityState={{ selected: activeTab === tab }}
           >
             <Text style={[styles.tabText, activeTab === tab && { color: C.foreground }]}>
               {tab === 'feed' ? 'Feed' : 'Discover'}
@@ -553,6 +612,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   createBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#FFF' },
   tabRow: {
@@ -641,7 +702,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
   emptyTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground, textAlign: 'center' },
   emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center', lineHeight: 20 },
-  retryBtn: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 10 },
+  retryBtn: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
   retryBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   discoverBtn: { marginTop: 12, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
   discoverBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#FFF' },
@@ -670,6 +731,6 @@ const styles = StyleSheet.create({
   },
   modalFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   charCount: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  submitBtn: { paddingHorizontal: 24, paddingVertical: 10, borderRadius: 20, minWidth: 80, alignItems: 'center' },
+  submitBtn: { paddingHorizontal: 24, paddingVertical: 10, borderRadius: 20, minWidth: 80, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   submitBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#FFF' },
 });

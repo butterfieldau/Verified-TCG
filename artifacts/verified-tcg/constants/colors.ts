@@ -27,7 +27,7 @@ const darkPalette = {
 
   // Muted / subdued
   muted: '#2A2A2A',
-  mutedForeground: '#888888',
+  mutedForeground: '#9A9A9A', // bumped from #888888 → WCAG AA on muted (#2A2A2A) ≈5.3:1
 
   // Accent
   accent: '#FF1E2D',

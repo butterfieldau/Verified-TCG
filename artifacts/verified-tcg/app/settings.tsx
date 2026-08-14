@@ -43,6 +43,8 @@ function SettingRow({
         !isLast && styles.rowBorder,
         { backgroundColor: pressed ? C.muted : 'transparent' },
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={value ? `${label}: ${value}` : label}
     >
       <View style={styles.rowIcon}>
         <Feather name={icon as any} size={16} color={C.foreground} />
@@ -81,6 +83,8 @@ function ToggleRow({
         trackColor={{ false: C.border, true: `${C.primary}88` }}
         thumbColor={value ? C.primary : C.mutedForeground}
         ios_backgroundColor={C.border}
+        accessibilityLabel={label}
+        accessibilityRole="switch"
       />
     </View>
   );
@@ -118,7 +122,13 @@ export default function SettingsScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={2}
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <Text style={styles.title}>Settings</Text>
@@ -159,7 +169,12 @@ export default function SettingsScreen() {
             Keep exploring as a guest, or create an account to edit your profile, sync your collection, and unlock account features.
           </Text>
           <Button fullWidth onPress={() => router.push('/create-account')}>Create an Account</Button>
-          <Pressable onPress={() => router.push('/sign-in')} style={styles.accountSignIn}>
+          <Pressable
+            onPress={() => router.push('/sign-in')}
+            style={styles.accountSignIn}
+            accessibilityRole="button"
+            accessibilityLabel="Already have an account? Sign in"
+          >
             <Text style={styles.accountSignInText}>Already have an account? Sign in</Text>
           </Pressable>
         </View>
@@ -301,6 +316,8 @@ export default function SettingsScreen() {
             if (!isAuthenticated) { router.push('/create-account'); return; }
             router.push('/delete-account' as any);
           }}
+          accessibilityRole="button"
+          accessibilityLabel="Delete account"
         >
           <View style={[styles.rowIcon, { backgroundColor: `${C.destructive}22` }]}>
             <Feather name="trash-2" size={16} color={C.destructive} />

@@ -144,17 +144,28 @@ export default function CollectionScreen() {
             <Pressable
               onPress={() => router.push('/collection-insights' as any)}
               style={styles.iconBtn}
+              accessibilityRole="button"
               accessibilityLabel="Collection Insights"
+              hitSlop={2}
             >
               <Feather name="bar-chart-2" size={18} color={C.foreground} />
             </Pressable>
             <Pressable
               onPress={() => setViewMode(v => (v === 'grid' ? 'list' : 'grid'))}
               style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+              hitSlop={2}
             >
               <Feather name={viewMode === 'grid' ? 'list' : 'grid'} size={18} color={C.foreground} />
             </Pressable>
-            <Pressable style={styles.iconBtn} onPress={() => router.push('/add-card')}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => router.push('/add-card')}
+              accessibilityRole="button"
+              accessibilityLabel="Add a card"
+              hitSlop={2}
+            >
               <Feather name="plus" size={18} color={C.foreground} />
             </Pressable>
           </View>
@@ -189,6 +200,9 @@ export default function CollectionScreen() {
                 styles.typeTab,
                 collectionTab === t.value && { borderBottomColor: C.primary },
               ]}
+              accessibilityRole="tab"
+              accessibilityLabel={t.label}
+              accessibilityState={{ selected: collectionTab === t.value }}
             >
               <Text
                 style={[
@@ -211,8 +225,12 @@ export default function CollectionScreen() {
                 onPress={() => { setActiveTCG(t.value); onTabOrFilterChange(); }}
                 style={[
                   styles.chip,
-                  activeTCG === t.value && { backgroundColor: C.primary, borderColor: C.primary },
+                  activeTCG === t.value && { backgroundColor: '#CC1826', borderColor: '#CC1826' },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter by ${t.label}`}
+                accessibilityState={{ selected: activeTCG === t.value }}
+                hitSlop={{ top: 6, bottom: 6 }}
               >
                 <Text
                   style={[styles.chipText, activeTCG === t.value && { color: '#FFFFFF' }]}
@@ -255,6 +273,8 @@ export default function CollectionScreen() {
           const ids = filteredItems.map(i => i.card.id).join(',');
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
         }}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.card.name}, ${item.grading ? `${item.grading.company} ${item.grading.grade}` : item.condition}, $${(item.grading?.grade === 10 ? item.card.price.psa10 ?? item.card.price.raw : item.card.price.raw).toLocaleString('en-AU')}`}
       >
         <View style={styles.cardPlaceholder}>
           <LinearGradient
@@ -338,6 +358,8 @@ export default function CollectionScreen() {
           const ids = filteredItems.map(i => i.card.id).join(',');
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
         }}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.card.name}, $${(item.grading?.grade === 10 ? item.card.price.psa10 ?? item.card.price.raw : item.card.price.raw).toLocaleString('en-AU')}`}
       >
         <CardThumbnail card={item.card} grading={item.grading} />
         <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
@@ -480,10 +502,22 @@ export default function CollectionScreen() {
           <Text style={styles.title}>Collection</Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable onPress={() => router.push('/collection-insights' as any)} style={styles.iconBtn}>
+          <Pressable
+            onPress={() => router.push('/collection-insights' as any)}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Collection insights"
+            hitSlop={2}
+          >
             <Feather name="bar-chart-2" size={18} color={C.foreground} />
           </Pressable>
-          <Pressable style={styles.iconBtn} onPress={() => router.push('/add-card')}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => router.push('/add-card')}
+            accessibilityRole="button"
+            accessibilityLabel="Add a card"
+            hitSlop={2}
+          >
             <Feather name="plus" size={18} color={C.foreground} />
           </Pressable>
         </View>
@@ -518,6 +552,9 @@ export default function CollectionScreen() {
               styles.typeTab,
               collectionTab === t.value && { borderBottomColor: C.primary },
             ]}
+            accessibilityRole="tab"
+            accessibilityLabel={t.label}
+            accessibilityState={{ selected: collectionTab === t.value }}
           >
             <Text
               style={[

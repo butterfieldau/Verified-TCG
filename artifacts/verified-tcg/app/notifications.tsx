@@ -153,7 +153,13 @@ export default function NotificationsScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={2}
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <View style={styles.titleRow}>
@@ -165,7 +171,12 @@ export default function NotificationsScreen() {
           )}
         </View>
         {unreadCount > 0 && (
-          <Pressable onPress={handleMarkAllRead}>
+          <Pressable
+            onPress={handleMarkAllRead}
+            accessibilityRole="button"
+            accessibilityLabel="Mark all notifications as read"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Text style={styles.markAllText}>Mark all read</Text>
           </Pressable>
         )}
@@ -184,9 +195,13 @@ export default function NotificationsScreen() {
             onPress={() => setFilter(f.value)}
             style={[
               styles.filterChip,
-              filter === f.value && { backgroundColor: C.primary },
+              filter === f.value && { backgroundColor: '#CC1826' },
               filter !== f.value && { backgroundColor: C.card },
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Filter: ${f.label}`}
+            accessibilityState={{ selected: filter === f.value }}
+            hitSlop={{ top: 6, bottom: 6 }}
           >
             <Text style={[styles.filterText, filter === f.value && { color: '#FFFFFF' }]}>
               {f.label}
@@ -238,6 +253,9 @@ export default function NotificationsScreen() {
                     borderLeftColor: C.primary,
                   },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${notif.title}: ${notif.body}${notif.actionLabel ? `. ${notif.actionLabel}` : ''}`}
+                accessibilityState={{ checked: notif.isRead }}
               >
                 <View style={[styles.notifIcon, { backgroundColor: icon.bg }]}>
                   <Feather name={icon.name} size={18} color={icon.color} />
@@ -274,6 +292,9 @@ export default function NotificationsScreen() {
           onPress={handleLoadMore}
           disabled={isLoadingMore}
           style={[styles.loadMoreBtn, { backgroundColor: C.card }]}
+          accessibilityRole="button"
+          accessibilityLabel={isLoadingMore ? 'Loading more notifications' : 'Load more notifications'}
+          accessibilityState={{ disabled: isLoadingMore }}
         >
           {isLoadingMore
             ? <ActivityIndicator size="small" color={C.primary} />
@@ -305,7 +326,7 @@ const styles = StyleSheet.create({
   titleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { fontSize: 28, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.3 },
   unreadBadge: {
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,

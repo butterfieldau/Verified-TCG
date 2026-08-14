@@ -115,7 +115,13 @@ export default function MarketScreen() {
           <Text style={styles.title}>Market</Text>
           <Text style={styles.sub}>Updated just now · AUD</Text>
         </View>
-        <Pressable style={styles.searchBtn} onPress={() => router.push('/search')}>
+        <Pressable
+          style={styles.searchBtn}
+          onPress={() => router.push('/search')}
+          accessibilityRole="button"
+          accessibilityLabel="Search cards"
+          hitSlop={1}
+        >
           <Feather name="search" size={18} color={C.foreground} />
         </Pressable>
       </View>
@@ -131,8 +137,11 @@ export default function MarketScreen() {
             onPress={() => setMainTab(tab)}
             style={[
               styles.mainTab,
-              mainTab === tab && { backgroundColor: C.primary, borderRadius: 10 },
+              mainTab === tab && { backgroundColor: '#CC1826', borderRadius: 10 },
             ]}
+            accessibilityRole="tab"
+            accessibilityLabel={label}
+            accessibilityState={{ selected: mainTab === tab }}
           >
             <Text style={[styles.mainTabText, mainTab === tab && { color: '#FFFFFF' }]}>
               {label}
@@ -184,6 +193,8 @@ export default function MarketScreen() {
                     key={m.card.id}
                     style={styles.moverCard}
                     onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${m.card.name}, ${m.trend === 'up' ? '+' : ''}${m.priceChangePercent.toFixed(1)}% — $${m.currentPrice.toLocaleString()}`}
                   >
                     <CardThumbnail card={m.card} compact />
                     <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
@@ -288,8 +299,12 @@ export default function MarketScreen() {
               onPress={() => setVerifiedOnly(v => !v)}
               style={[
                 styles.filterChip,
-                { backgroundColor: verifiedOnly ? C.primary : C.card, borderColor: verifiedOnly ? C.primary : C.border },
+                { backgroundColor: verifiedOnly ? '#CC1826' : C.card, borderColor: verifiedOnly ? '#CC1826' : C.border },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Verified sellers only"
+              accessibilityState={{ selected: verifiedOnly }}
+              hitSlop={{ top: 8, bottom: 8 }}
             >
               <Feather name="shield" size={12} color={verifiedOnly ? '#FFF' : C.mutedForeground} />
               <Text style={[styles.filterChipText, { color: verifiedOnly ? '#FFF' : C.mutedForeground }]}>Verified</Text>
@@ -301,8 +316,12 @@ export default function MarketScreen() {
                   onPress={() => setActiveSort(s)}
                   style={[
                     styles.filterChip,
-                    { backgroundColor: activeSort === s ? C.primary : C.card, borderColor: activeSort === s ? C.primary : C.border },
+                    { backgroundColor: activeSort === s ? '#CC1826' : C.card, borderColor: activeSort === s ? '#CC1826' : C.border },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sort by ${s}`}
+                  accessibilityState={{ selected: activeSort === s }}
+                  hitSlop={{ top: 8, bottom: 8 }}
                 >
                   <Text style={[styles.filterChipText, { color: activeSort === s ? '#FFF' : C.mutedForeground }]}>{s}</Text>
                 </Pressable>
@@ -315,6 +334,8 @@ export default function MarketScreen() {
               key={listing.id}
               style={[styles.listingRow, { backgroundColor: C.card }]}
               onPress={() => router.push({ pathname: `/card/${listing.card.id}` as any, params: { appCardJson: JSON.stringify(listing.card) } })}
+              accessibilityRole="button"
+              accessibilityLabel={`${listing.card.name}, ${listing.condition}${listing.grading ? `, ${listing.grading.company} ${listing.grading.grade}` : ''}, $${listing.askingPrice.toLocaleString()} AUD`}
             >
               <View style={[styles.listingThumb, { backgroundColor: listing.card.gradientStart }]}>
                 {listing.card.imageUrl
@@ -339,7 +360,12 @@ export default function MarketScreen() {
               <View style={styles.listingPricing}>
                 <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString()}</Text>
                 <Text style={[styles.listingPriceLabel, { color: C.mutedForeground }]}>AUD</Text>
-                <Pressable style={[styles.buyBtn, { backgroundColor: `${C.primary}22` }]}>
+                <Pressable
+                  style={[styles.buyBtn, { backgroundColor: `${C.primary}22` }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Buy ${listing.card.name} for $${listing.askingPrice.toLocaleString()} AUD`}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
                   <Text style={[styles.buyBtnText, { color: C.primary }]}>Buy</Text>
                 </Pressable>
               </View>
@@ -383,6 +409,8 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   mainTabText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
   chips: { marginBottom: 20 },
@@ -456,6 +484,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1.5,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   filterChipText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   listingRow: {

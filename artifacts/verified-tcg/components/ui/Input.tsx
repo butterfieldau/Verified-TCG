@@ -68,6 +68,7 @@ export function Input({
         )}
         <TextInput
           {...props}
+          accessibilityLabel={props.accessibilityLabel ?? label}
           secureTextEntry={isPassword && !showPassword}
           onFocus={(e) => { setIsFocused(true); props.onFocus?.(e); }}
           onBlur={(e) => { setIsFocused(false); props.onBlur?.(e); }}
@@ -81,7 +82,13 @@ export function Input({
           placeholderTextColor={colors.mutedForeground}
         />
         {isPassword ? (
-          <Pressable onPress={() => setShowPassword(v => !v)} style={styles.rightIcon}>
+          <Pressable
+            onPress={() => setShowPassword(v => !v)}
+            style={styles.rightIcon}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
             <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color={colors.mutedForeground} />
           </Pressable>
         ) : rightIcon ? (

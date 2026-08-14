@@ -44,7 +44,12 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const showImage = !!imgUri && !imgError;
 
   return (
-    <Pressable style={[styles.resultRow, { backgroundColor: C.card }]} onPress={onPress}>
+    <Pressable
+      style={[styles.resultRow, { backgroundColor: C.card }]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, $${card.price.raw.toLocaleString()} raw`}
+    >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
           <Image
@@ -208,7 +213,13 @@ export default function SearchScreen() {
     <View style={[styles.screen, { paddingTop: topPad }]}>
       {/* Search bar */}
       <View style={styles.searchRow}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={2}
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <View style={styles.inputWrap}>
@@ -225,7 +236,12 @@ export default function SearchScreen() {
             selectionColor={C.primary}
           />
           {query.length > 0 && (
-            <Pressable onPress={() => setQuery('')}>
+            <Pressable
+              onPress={() => setQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Feather name="x" size={16} color={C.mutedForeground} />
             </Pressable>
           )}
@@ -265,6 +281,8 @@ export default function SearchScreen() {
                       key={t}
                       onPress={() => setQuery(t)}
                       style={[styles.trendingTag, { backgroundColor: C.card }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Search for ${t}`}
                     >
                       <Feather name="trending-up" size={13} color={C.primary} />
                       <Text style={styles.trendingTagText}>{t}</Text>

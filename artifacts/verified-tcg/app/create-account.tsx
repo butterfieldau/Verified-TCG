@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import {
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Input } from '@/components/ui/Input';
@@ -74,7 +74,12 @@ export default function CreateAccountScreen() {
           We sent a confirmation link to{'\n'}<Text style={{ color: C.foreground }}>{email}</Text>
           {'\n\n'}Open it to activate your account, then come back to sign in.
         </Text>
-        <Pressable onPress={() => router.replace({ pathname: '/sign-in', params: next ? { next } : undefined } as any)} style={styles.signInRow}>
+        <Pressable
+          onPress={() => router.replace({ pathname: '/sign-in', params: next ? { next } : undefined } as any)}
+          style={styles.signInRow}
+          accessibilityRole="button"
+          accessibilityLabel="Already confirmed? Sign in"
+        >
           <Text style={styles.signInText}>
             Already confirmed? <Text style={styles.signInLink}>Sign in</Text>
           </Text>
@@ -85,14 +90,19 @@ export default function CreateAccountScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
-      <Pressable onPress={() => router.back()} style={styles.back}>
+      <Pressable
+        onPress={() => router.back()}
+        style={styles.back}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Feather name="arrow-left" size={22} color={C.foreground} />
       </Pressable>
 
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         contentContainerStyle={[styles.content, { paddingBottom: botPad + 40 }]}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
         <Logo variant="white" width={130} height={58} style={styles.logo} />
 
@@ -142,13 +152,19 @@ export default function CreateAccountScreen() {
           <Text style={styles.legalLink}>Privacy Policy</Text>.
         </Text>
 
-        <Pressable onPress={() => router.push('/sign-in')} style={styles.signInRow}>
+        <Pressable
+          onPress={() => router.push('/sign-in')}
+          style={styles.signInRow}
+          accessibilityRole="link"
+          accessibilityLabel="Sign in"
+          accessibilityHint="Opens the sign in screen"
+        >
           <Text style={styles.signInText}>
             Already have an account?{' '}
             <Text style={styles.signInLink}>Sign in</Text>
           </Text>
         </Pressable>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
     </View>
   );
 }

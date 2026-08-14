@@ -189,7 +189,12 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={panelStyles.overlay}
     >
-      <Pressable style={panelStyles.backdrop} onPress={onClose} />
+      <Pressable
+        style={panelStyles.backdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      />
       <View style={[panelStyles.panel, { backgroundColor: C2.card }]}>
         <View style={panelStyles.handle} />
         <Text style={panelStyles.title}>Add to Wishlist</Text>
@@ -218,9 +223,13 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
               style={[
                 panelStyles.gradeChip,
                 grade === g
-                  ? { backgroundColor: C2.primary }
+                  ? { backgroundColor: '#CC1826' }
                   : { backgroundColor: C2.muted },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Grade ${g}`}
+              accessibilityState={{ selected: grade === g }}
+              hitSlop={{ top: 4, bottom: 4 }}
             >
               <Text style={[
                 panelStyles.gradeChipText,
@@ -255,12 +264,16 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
           <Pressable
             onPress={onClose}
             style={[panelStyles.cancelBtn, { backgroundColor: C2.muted }]}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
             <Text style={[panelStyles.cancelBtnText, { color: C2.foreground }]}>Cancel</Text>
           </Pressable>
           <Pressable
             onPress={handleConfirm}
-            style={[panelStyles.confirmBtn, { backgroundColor: C2.primary }]}
+            style={[panelStyles.confirmBtn, { backgroundColor: '#CC1826' }]}
+            accessibilityRole="button"
+            accessibilityLabel="Add to Wishlist"
           >
             <Feather name="heart" size={15} color="#FFF" />
             <Text style={panelStyles.confirmBtnText}>Add to Wishlist</Text>
@@ -910,7 +923,12 @@ export default function CardDetailScreen() {
         <Text style={{ color: C.mutedForeground, marginTop: 8, fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center' }}>
           This card couldn't be loaded. Try searching again.
         </Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 24, backgroundColor: C.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}>
+        <Pressable
+          onPress={() => router.back()}
+          style={{ marginTop: 24, backgroundColor: '#CC1826', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, minHeight: 44, justifyContent: 'center' }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Text style={{ color: '#FFF', fontFamily: 'Inter_700Bold', fontSize: 15 }}>Go Back</Text>
         </Pressable>
       </View>
@@ -999,13 +1017,22 @@ export default function CardDetailScreen() {
       >
         {/* Nav */}
         <View style={styles.nav}>
-          <Pressable onPress={() => router.back()} style={styles.navBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.navBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={2}
+          >
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
           <View style={styles.navRight}>
             <Pressable
               onPress={handleWishlistToggle}
               style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
+              accessibilityRole="button"
+              accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
+              hitSlop={2}
             >
               <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
             </Pressable>
@@ -1019,6 +1046,9 @@ export default function CardDetailScreen() {
                   url,
                 }).catch(() => {});
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Share this card"
+              hitSlop={2}
             >
               <Feather name="share-2" size={20} color={C.foreground} />
             </Pressable>
@@ -1051,6 +1081,8 @@ export default function CardDetailScreen() {
               onPress={goToPrev}
               style={styles.swipeArrowLeft}
               hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Previous card"
             >
               <View style={styles.swipeArrowInner}>
                 <Feather name="chevron-left" size={20} color="rgba(255,255,255,0.9)" />
@@ -1062,6 +1094,8 @@ export default function CardDetailScreen() {
               onPress={goToNext}
               style={styles.swipeArrowRight}
               hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Next card"
             >
               <View style={styles.swipeArrowInner}>
                 <Feather name="chevron-right" size={20} color="rgba(255,255,255,0.9)" />
@@ -1137,6 +1171,9 @@ export default function CardDetailScreen() {
                   styles.priceTab,
                   priceTab === t && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
                 ]}
+                accessibilityRole="tab"
+                accessibilityLabel={`${t} price: $${price.toLocaleString('en-AU')}`}
+                accessibilityState={{ selected: priceTab === t }}
               >
                 <Text style={[styles.priceTabLabel, priceTab === t && { color: C.primary }]}>{t}</Text>
                 <Text style={[styles.priceTabValue, priceTab === t && { color: C.foreground }]}>
@@ -1191,8 +1228,12 @@ export default function CardDetailScreen() {
                   }}
                   style={[
                     styles.rangeChip,
-                    isSelected && { backgroundColor: C.primary, borderColor: C.primary },
+                    isSelected && { backgroundColor: '#CC1826', borderColor: '#CC1826' },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={locked ? `${period} — Pro only` : period}
+                  accessibilityState={{ selected: isSelected }}
+                  hitSlop={{ top: 8, bottom: 8 }}
                 >
                   {locked && <Feather name="lock" size={9} color={C.mutedForeground} style={{ marginRight: 3 }} />}
                   <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
@@ -1232,6 +1273,8 @@ export default function CardDetailScreen() {
             Linking.openURL(url).catch(() => {});
           }}
           style={styles.ebayBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${card.name} listings on eBay`}
         >
           <Feather name="external-link" size={14} color="#FFF" />
           <Text style={styles.ebayBtnText}>View Listings on eBay</Text>
@@ -1342,6 +1385,8 @@ export default function CardDetailScreen() {
               <Pressable
                 onPress={() => router.push('/pro-subscription')}
                 style={styles.gradedCta}
+                accessibilityRole="button"
+                accessibilityLabel="Unlock graded pricing with Pro"
               >
                 <Feather name="zap" size={13} color="#FFF" />
                 <Text style={styles.gradedCtaText}>Unlock graded pricing</Text>
@@ -1393,6 +1438,9 @@ export default function CardDetailScreen() {
             onPress={handleAddToCollection}
             style={[styles.primaryBtn, isOwned && { backgroundColor: C.muted }]}
             disabled={isOwned}
+            accessibilityRole="button"
+            accessibilityLabel={isOwned ? 'Already in collection' : 'Add to Collection'}
+            accessibilityState={{ disabled: isOwned }}
           >
             <Feather name={isOwned ? 'check' : 'plus'} size={18} color="#FFFFFF" />
             <Text style={styles.primaryBtnText}>{isOwned ? 'In Collection' : 'Add to Collection'}</Text>
@@ -1405,6 +1453,9 @@ export default function CardDetailScreen() {
                 ? { backgroundColor: `${C.primary}22`, borderColor: C.primary }
                 : { backgroundColor: C.card, borderColor: C.border },
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
+            accessibilityState={{ selected: isWatched }}
           >
             <Feather
               name="heart"
@@ -1421,6 +1472,8 @@ export default function CardDetailScreen() {
         {hasPassport && <Pressable
           onPress={() => router.push(`/card-passport/${card.id}` as any)}
           style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
+          accessibilityRole="button"
+          accessibilityLabel="Card Passport — ownership history, grading record and provenance"
         >
           <View style={[styles.passportIcon, { backgroundColor: '#D4AF3722' }]}>
             <Feather name="book-open" size={14} color="#D4AF37" />
@@ -1474,7 +1527,11 @@ export default function CardDetailScreen() {
                 <View style={styles.listingRight}>
                   <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
                   <Text style={styles.listingCurrency}>AUD</Text>
-                  <Pressable style={styles.buyBtn}>
+                  <Pressable
+                    style={styles.buyBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Buy for $${listing.askingPrice.toLocaleString('en-AU')} AUD`}
+                  >
                     <Text style={styles.buyBtnText}>Buy</Text>
                   </Pressable>
                 </View>
@@ -1670,7 +1727,7 @@ const styles = StyleSheet.create({
     gap: 8,
     height: 52,
     borderRadius: 14,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: white text on #FF1E2D only 3.84:1; #CC1826 gives 5.25:1
   },
   primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   wishlistBtn: {
@@ -1716,11 +1773,13 @@ const styles = StyleSheet.create({
   listingPrice: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
   listingCurrency: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   buyBtn: {
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: #CC1826 gives 5.25:1 with white text
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 10,
     marginTop: 4,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   buyBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   passportBanner: {
@@ -1896,10 +1955,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: #CC1826 gives 5.25:1 with white text
     borderRadius: 10,
     paddingVertical: 10,
     marginTop: 12,
+    minHeight: 44,
   },
   gradedCtaText: {
     fontSize: 13,

@@ -41,16 +41,22 @@ export function Button({
     onPress?.(e);
   };
 
+  // Visual heights — sm is kept compact but gets hitSlop below to reach 44pt minimum
   const heights: Record<ButtonSize, number> = { sm: 36, md: 48, lg: 56 };
   const pads: Record<ButtonSize, number> = { sm: 16, md: 20, lg: 24 };
   const sizes: Record<ButtonSize, number> = { sm: 13, md: 15, lg: 16 };
 
+  // WCAG AA: white (#FFF) text must have ≥4.5:1 contrast on the button background.
+  // Brand primary #FF1E2D gives only 3.84:1; #CC1826 gives ≈5.25:1.
+  // Brand destructive #EF4444 gives only 3.76:1; #DC2626 gives ≈4.58:1.
+  // We darken ONLY the button-background values; the primary/destructive design
+  // tokens remain unchanged for text/decorative uses (they pass on dark surfaces).
   const bgColor = {
-    primary: colors.primary,
+    primary: '#CC1826',
     secondary: colors.secondary,
     outline: 'transparent',
     ghost: 'transparent',
-    destructive: colors.destructive,
+    destructive: '#DC2626',
   }[variant];
 
   const textColor = {
@@ -61,8 +67,13 @@ export function Button({
     destructive: colors.destructiveForeground,
   }[variant];
 
+  // Expand the hit area to ≥44pt for small buttons without changing visual appearance
+  const hitSlop = size === 'sm' ? { top: 4, bottom: 4, left: 4, right: 4 } : undefined;
+
   return (
     <Pressable
+      accessibilityRole="button"
+      hitSlop={hitSlop}
       {...props}
       onPress={handlePress}
       disabled={disabled || loading}

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
+  KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -65,11 +67,26 @@ export default function ResetPasswordScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
-      <Pressable onPress={() => router.replace('/sign-in')} style={styles.back}>
+      <Pressable
+        onPress={() => router.replace('/sign-in')}
+        style={styles.back}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Feather name="arrow-left" size={22} color={C.foreground} />
       </Pressable>
 
-      <View style={styles.content}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={topPad}
+      >
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {done ? (
           <>
             <View style={[styles.successIcon, { backgroundColor: `${C.positive}22` }]}>
@@ -121,12 +138,18 @@ export default function ResetPasswordScreen() {
             >
               Reset Password
             </Button>
-            <Pressable onPress={() => router.replace('/sign-in')} style={styles.cancelBtn}>
+            <Pressable
+              onPress={() => router.replace('/sign-in')}
+              style={styles.cancelBtn}
+              accessibilityRole="link"
+              accessibilityLabel="Back to sign in"
+            >
               <Text style={styles.cancelText}>Back to Sign In</Text>
             </Pressable>
           </>
         )}
-      </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -134,7 +157,7 @@ export default function ResetPasswordScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.background },
   back: { padding: 8, marginLeft: 16, alignSelf: 'flex-start' },
-  content: { flex: 1, paddingHorizontal: 28, paddingTop: 24 },
+  content: { paddingHorizontal: 28, paddingTop: 24, paddingBottom: 40 },
   iconCircle: {
     width: 72,
     height: 72,
