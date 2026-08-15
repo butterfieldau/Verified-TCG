@@ -56,11 +56,34 @@ interface ScanResult {
   topMatch: RecognizedCard | null;
   matches: RecognizedCard[];
   lowConfidence: boolean;
+  /** True when GPT returned no readable text — image was likely blurry/dark/out-of-frame. */
+  imageUnreadable: boolean;
   extracted: { name: string; setName: string; number: string };
   scansUsed: number;
   scanLimit: number | null;
   scansRemaining: number | null;
 }
+
+/**
+ * Minimum base64 character count for a plausible card photo.
+ *
+ * A completely black or featureless JPEG compresses to ~1–3 KB; a real card
+ * at expo-camera quality=0.5 will be at least 30 KB.  We use 8 000 chars
+ * (~6 KB binary) as a conservative cut-off that avoids false positives while
+ * flagging genuinely blank/dark captures before wasting an API call.
+ */
+const MIN_IMAGE_B64_CHARS = 8_000;
+
+/**
+ * Classify what kind of error occurred after a failed scan so the UI can show
+ * a targeted message and tips.
+ *
+ * - image_quality : client detected a suspiciously small image (blank/dark)
+ * - unreadable    : API returned imageUnreadable=true (GPT read no text)
+ * - no_match      : GPT read text but nothing matched in the catalog
+ * - api_error     : network / server / vision-API failure
+ */
+type ScanErrorCode = 'image_quality' | 'unreadable' | 'no_match' | 'api_error' | '';
 
 // ── API error type ────────────────────────────────────────────────────────────
 
@@ -150,6 +173,7 @@ export default function ScanScreen() {
   const [showLimitSheet, setShowLimitSheet] = useState(false);
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [confirmedAction, setConfirmedAction] = useState<string>('');
+  const [errorCode, setErrorCode] = useState<ScanErrorCode>('');
 
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
   // Incremented on each sign-out so stale async callbacks can detect they
@@ -253,6 +277,18 @@ export default function ScanScreen() {
 
       if (!photo?.base64) {
         setErrorMessage('Could not capture image. Please try again.');
+        setErrorCode('api_error');
+        setScanState('error');
+        return;
+      }
+
+      // ── Client-side image quality pre-flight ────────────────────────────
+      // A JPEG with almost no content (dark/blank frame) compresses to a
+      // very small file.  If the base64 string is shorter than our minimum
+      // threshold we skip the API call and surface a targeted tip instead.
+      if (photo.base64.length < MIN_IMAGE_B64_CHARS) {
+        setErrorMessage('The image looks too dark or blank.');
+        setErrorCode('image_quality');
         setScanState('error');
         return;
       }
@@ -279,7 +315,15 @@ export default function ScanScreen() {
       setScanResult(result);
 
       if (!result.topMatch) {
-        setErrorMessage('Could not identify this card. Try searching manually.');
+        if (result.imageUnreadable) {
+          // GPT returned no text — image was likely blurry/dark/out-of-frame
+          setErrorMessage('Card may be blurry or out of frame.');
+          setErrorCode('unreadable');
+        } else {
+          // GPT read some text but nothing matched the catalog
+          setErrorMessage('No matching card found in our catalog.');
+          setErrorCode('no_match');
+        }
         setScanState('error');
       } else if (result.lowConfidence) {
         setScanState('low_confidence');
@@ -325,6 +369,7 @@ export default function ScanScreen() {
           syncScanCount(e.scansUsed);
         }
         setErrorMessage(e.message ?? 'Recognition failed. Please try again or search manually.');
+        setErrorCode('api_error');
         setScanState('error');
       }
     }
@@ -413,6 +458,7 @@ export default function ScanScreen() {
   function tryAgain() {
     setScanResult(null);
     setErrorMessage('');
+    setErrorCode('');
     setConfirmedAction('');
     setScanState('idle');
   }
@@ -851,13 +897,89 @@ export default function ScanScreen() {
       )}
 
       {/* ── Error state ──────────────────────────────────────────────────────── */}
-      {scanState === 'error' && (
-        <View style={styles.errorPanel}>
-          <Feather name="alert-circle" size={44} color={C.mutedForeground} style={{ marginBottom: 12 }} />
-          <Text style={styles.errorTitle}>Couldn't identify card</Text>
-          <Text style={styles.errorBody}>{errorMessage}</Text>
-        </View>
-      )}
+      {scanState === 'error' && (() => {
+        // Per-error-code config: icon, title, tips
+        const errorConfig: Record<ScanErrorCode, {
+          icon: React.ComponentProps<typeof Feather>['name'];
+          iconColor: string;
+          title: string;
+          tips: string[];
+        }> = {
+          image_quality: {
+            icon: 'sun',
+            iconColor: '#F59E0B',
+            title: 'Image too dark or blank',
+            tips: [
+              'Move to a brighter area or enable flash',
+              'Make sure the card is fully inside the frame',
+              'Hold the phone steady before tapping Capture',
+            ],
+          },
+          unreadable: {
+            icon: 'eye-off',
+            iconColor: '#F59E0B',
+            title: 'Card may be blurry or out of frame',
+            tips: [
+              'Center the card inside the guide corners',
+              'Hold steady — avoid moving while capturing',
+              'Try turning on flash for low-light conditions',
+            ],
+          },
+          no_match: {
+            icon: 'search',
+            iconColor: C.mutedForeground,
+            title: 'No matching card found',
+            tips: [
+              'Use Search Manually to find it by name',
+              'Check spelling if you type the name yourself',
+            ],
+          },
+          api_error: {
+            icon: 'alert-circle',
+            iconColor: C.mutedForeground,
+            title: 'Couldn\'t identify card',
+            tips: [
+              'Check your connection and try again',
+              'Or use Search Manually to find the card',
+            ],
+          },
+          '': {
+            icon: 'alert-circle',
+            iconColor: C.mutedForeground,
+            title: 'Couldn\'t identify card',
+            tips: [],
+          },
+        };
+
+        const cfg = errorConfig[errorCode] ?? errorConfig[''];
+        // For no_match we surface any partial text GPT extracted
+        const partialText = errorCode === 'no_match'
+          ? [scanResult?.extracted?.name, scanResult?.extracted?.setName].filter(Boolean).join(' — ')
+          : '';
+
+        return (
+          <View style={styles.errorPanel}>
+            <Feather name={cfg.icon} size={44} color={cfg.iconColor} style={{ marginBottom: 12 }} />
+            <Text style={styles.errorTitle}>{cfg.title}</Text>
+            {partialText ? (
+              <View style={styles.errorPartialWrap}>
+                <Text style={styles.errorPartialLabel}>Text read from card:</Text>
+                <Text style={styles.errorPartialText}>{partialText}</Text>
+              </View>
+            ) : null}
+            {cfg.tips.length > 0 && (
+              <View style={styles.errorTipsList}>
+                {cfg.tips.map((tip, i) => (
+                  <View key={i} style={styles.errorTipRow}>
+                    <View style={styles.errorTipDot} />
+                    <Text style={styles.errorTipText}>{tip}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        );
+      })()}
 
       {/* ── Confirmed state ──────────────────────────────────────────────────── */}
       {scanState === 'confirmed' && topMatch && (
@@ -917,21 +1039,38 @@ export default function ScanScreen() {
           {scanState === 'error' && (
             <View style={styles.actionStack}>
               <Pressable
-                onPress={handleSearchManually}
+                onPress={tryAgain}
                 style={styles.primaryActionBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Search manually"
+                accessibilityLabel={
+                  errorCode === 'image_quality' ? 'Try capturing again' :
+                  errorCode === 'unreadable' ? 'Try again with better positioning' :
+                  'Try scanning again'
+                }
               >
-                <Feather name="search" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryActionText}>Search Manually</Text>
+                <Feather name="camera" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>
+                  {errorCode === 'image_quality' || errorCode === 'unreadable'
+                    ? 'Try Again'
+                    : 'Scan Again'}
+                </Text>
               </Pressable>
               <Pressable
-                onPress={tryAgain}
-                style={styles.ghostBtn}
+                onPress={handleSearchManually}
+                style={styles.secondaryActionBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Try scanning again"
+                accessibilityLabel={
+                  errorCode === 'no_match' && scanResult?.extracted?.name
+                    ? `Search for ${scanResult.extracted.name}`
+                    : 'Search manually'
+                }
               >
-                <Text style={styles.ghostBtnText}>Try Again</Text>
+                <Feather name="search" size={16} color={C.foreground} />
+                <Text style={styles.secondaryActionText}>
+                  {errorCode === 'no_match' && scanResult?.extracted?.name
+                    ? `Search "${scanResult.extracted.name}"`
+                    : 'Search Manually'}
+                </Text>
               </Pressable>
             </View>
           )}
@@ -1199,14 +1338,68 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
   },
   // Error panel
-  errorPanel: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  errorTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginBottom: 8 },
+  errorPanel: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, gap: 4 },
+  errorTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginBottom: 4, textAlign: 'center' },
   errorBody: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  // Partial extracted text (shown on no_match)
+  errorPartialWrap: {
+    backgroundColor: C.card,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignSelf: 'stretch',
+    marginTop: 6,
+  },
+  errorPartialLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  errorPartialText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
+  },
+  // Tips list
+  errorTipsList: {
+    alignSelf: 'stretch',
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  errorTipRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  errorTipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: C.primary,
+    marginTop: 6,
+  },
+  errorTipText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    lineHeight: 19,
   },
   // Confirmed panel
   confirmedPanel: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
