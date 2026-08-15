@@ -1,0 +1,145 @@
+3. Quick Actions
+
+Immediately after portfolio:
+
+📷 Scan     ＋ Add Card     $ Prices     ♢ Verify
+
+This part of your second screenshot is good.
+
+I’d actually consider changing Prices to Search because users will search a card far more often than specifically opening a generic pricing screen.
+
+So:
+
+Scan • Search • Add • Verify
+
+Those are your four universal actions.
+
+⸻
+
+4. Personalised insight
+
+This is what I think you’re currently missing.
+
+Instead of immediately dumping generic New Arrivals/Trending content, show something useful about their own collection.
+
+Something like:
+
+Your Collection Today
+
+🔥 Umbreon ex increased 8.4%
+Your PSA 10 is now worth approximately $1,420
+
+📈 Portfolio +$182 today
+
+⚠️ 3 cards haven’t had a sale in 30+ days
+
+View insights →
+
+Now Verified starts feeling intelligent rather than simply being a card database.
+
+For Pro, this section can become substantially more powerful.
+
+⸻
+
+5. Trending
+
+I’d combine your current:
+
+* New Arrivals
+* Trending
+* Gainers
+* Losers
+* Market Movers
+
+They’re too repetitive.
+
+Instead:
+
+Market
+
+Trending    Gainers    Losers    New
+
+Then horizontally scrolling cards:
+
+Card image
+Umbreon ex
+$1,284
+↑ 12.4%
+
+Card image
+Pikachu
+$842
+↑ 7.1%
+
+Card image
+Charizard
+$3,120
+↓ 3.8%
+
+View Market →
+
+One section replaces four sections of the current Home screen.
+
+Much cleaner.
+
+⸻
+
+6. Event Mode — only when relevant
+
+This is your killer differentiator.
+
+Your current TCXPO card is actually a strong concept, but I wouldn’t permanently show it.
+
+When there is a nearby/current event:
+
+🟢 LIVE NEAR YOU
+
+TCXPO Sydney 2026
+
+6 Trade Matches
+11 Wishlist Matches
+342 Collectors
+
+Enter Event Mode →
+
+When there isn’t an event, the entire module disappears.
+
+That makes the Home screen contextual rather than cluttered.
+
+⸻
+
+7. Trade Matches
+
+Also conditional.
+
+If there are actual matches:
+
+🔥 4 Trade Matches
+
+YOU WANT ⇄ THEY WANT
+
+Card | Card
+98% Match
+
+@cardvaultsydney
+View Trade →
+
+Your current trade match UI is heading in the right direction.
+
+But again: don’t show the section if there are zero matches.
+
+⸻
+
+8. Recently Added
+
+Near the bottom:
+
+Recently Added
+
+Horizontal card carousel.
+
+This gives collectors an easy way back into cards they’ve just scanned or purchased.
+
+Then:
+
+View Collection →

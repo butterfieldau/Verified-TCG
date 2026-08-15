@@ -47,18 +47,18 @@ const TRADE_MATCHES_DISMISSED_KEY = '@verified_tcg/trade_matches_dismissed_count
 const C = colors.dark;
 const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
 
-type TcgFilter = 'all' | 'pokemon' | 'onepiece' | 'magic';
-const TCG_FILTERS: { id: TcgFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'pokemon', label: 'Pokémon' },
-  { id: 'onepiece', label: 'One Piece' },
-  { id: 'magic', label: 'MTG' },
+type MarketTab = 'trending' | 'gainers' | 'losers' | 'new';
+const MARKET_TABS: { id: MarketTab; label: string }[] = [
+  { id: 'trending', label: 'Trending' },
+  { id: 'gainers', label: 'Gainers' },
+  { id: 'losers', label: 'Losers' },
+  { id: 'new', label: 'New' },
 ];
 
 const QUICK_ACTIONS: { icon: string; label: string; action: string }[] = [
   { icon: 'camera', label: 'Scan', action: 'scan' },
-  { icon: 'plus-circle', label: 'Add Card', action: 'add-card' },
-  { icon: 'dollar-sign', label: 'Prices', action: 'search' },
+  { icon: 'search', label: 'Search', action: 'search' },
+  { icon: 'plus-circle', label: 'Add', action: 'add-card' },
   { icon: 'shield', label: 'Verify', action: 'search' },
 ];
 
@@ -246,53 +246,6 @@ function ChartTooltip({ point }: { point: ChartPoint | null }) {
   );
 }
 
-// ── Market row (gainers / losers / market movers list) ─────────────────────────
-function MarketRow({
-  card,
-  currentPrice,
-  priceChangePercent,
-  positive,
-}: {
-  card: Card;
-  currentPrice: number;
-  priceChangePercent: number;
-  positive: boolean;
-}) {
-  return (
-    <Pressable
-      style={styles.marketRow}
-      onPress={() =>
-        router.push({
-          pathname: `/card/${card.id}` as any,
-          params: { appCardJson: JSON.stringify(card) },
-        })
-      }
-      accessibilityRole="button"
-      accessibilityLabel={`${card.name}, ${positive ? '+' : ''}${priceChangePercent.toFixed(1)}%`}
-    >
-      <View style={[styles.marketRowIcon, { backgroundColor: positive ? `${C.positive}18` : `${C.negative}18` }]}>
-        <Feather
-          name={positive ? 'trending-up' : 'trending-down'}
-          size={14}
-          color={positive ? C.positive : C.negative}
-        />
-      </View>
-      <View style={styles.marketRowInfo}>
-        <Text style={styles.marketRowName} numberOfLines={1}>{card.name}</Text>
-        <Text style={styles.marketRowSet} numberOfLines={1}>{card.setName}</Text>
-      </View>
-      <View style={styles.marketRowRight}>
-        <Text style={styles.marketRowPrice}>
-          ${currentPrice.toLocaleString('en-AU')}
-        </Text>
-        <Text style={[styles.marketRowChange, { color: positive ? C.positive : C.negative }]}>
-          {positive ? '+' : ''}{priceChangePercent.toFixed(1)}%
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
 // ── Main Screen ────────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
@@ -309,7 +262,7 @@ export default function HomeScreen() {
     unreadNotificationCount,
   } = useApp();
 
-  const [tcgFilter, setTcgFilter] = useState<TcgFilter>('all');
+  const [marketTab, setMarketTab] = useState<MarketTab>('trending');
   const [movers, setMovers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
   const [recentCards, setRecentCards] = useState<Card[]>([]);
@@ -397,9 +350,15 @@ export default function HomeScreen() {
   const isPositive = gain >= 0;
 
   // Derive gainers and losers from movers data
-  const filteredMovers = movers.filter(m => tcgFilter === 'all' || m.card.tcg === tcgFilter);
-  const gainers = filteredMovers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 4);
-  const losers = filteredMovers.filter(m => m.trend === 'down').sort((a, b) => a.priceChangePercent - b.priceChangePercent).slice(0, 4);
+  const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
+  const losers = movers.filter(m => m.trend === 'down').sort((a, b) => a.priceChangePercent - b.priceChangePercent).slice(0, 8);
+
+  const marketCards: { card: Card; price: number; change: number | undefined }[] = (() => {
+    if (marketTab === 'gainers') return gainers.map(m => ({ card: m.card, price: m.currentPrice, change: m.priceChangePercent }));
+    if (marketTab === 'losers') return losers.map(m => ({ card: m.card, price: m.currentPrice, change: m.priceChangePercent }));
+    if (marketTab === 'new') return recentCards.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
+    return trending.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
+  })();
 
   const previewMatches = MOCK_TRADE_MATCHES.slice(0, 2);
 
@@ -541,252 +500,7 @@ export default function HomeScreen() {
       {/* ── Divider ─────────────────────────────────────────────────────── */}
       <View style={styles.divider} />
 
-      {/* ── TCG Filter Pills ─────────────────────────────────────────────  */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tcgFilterRow}
-        style={{ marginBottom: 16 }}
-      >
-        {TCG_FILTERS.map(f => (
-          <Pressable
-            key={f.id}
-            onPress={() => setTcgFilter(f.id)}
-            accessibilityRole="button"
-            accessibilityLabel={`Filter by ${f.label}`}
-            accessibilityState={{ selected: tcgFilter === f.id }}
-            hitSlop={{ top: 6, bottom: 6 }}
-            style={[
-              styles.tcgFilterPill,
-              tcgFilter === f.id && styles.tcgFilterPillActive,
-            ]}
-          >
-            <Text style={[
-              styles.tcgFilterPillText,
-              { color: tcgFilter === f.id ? '#FFFFFF' : C.mutedForeground },
-            ]}>
-              {f.label}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      {/* ── New Arrivals ─────────────────────────────────────────────────── */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>New Arrivals</Text>
-          <Pressable
-            onPress={() => router.push('/search')}
-            accessibilityRole="link"
-            accessibilityLabel="Browse all new arrivals"
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Text style={styles.seeAll}>Browse all</Text>
-          </Pressable>
-        </View>
-        {sectionsLoading ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
-          </ScrollView>
-        ) : recentCards.length === 0 ? (
-          <Text style={styles.emptySection}>No data available right now</Text>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {recentCards.map(card => (
-              <Pressable
-                key={card.id}
-                style={{ gap: 8 }}
-                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
-                accessibilityRole="button"
-                accessibilityLabel={`${card.name} from ${card.setName}`}
-              >
-                <CardThumbnail card={card} compact />
-                <View>
-                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
-                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
-      </View>
-
-      {/* ── Trending ─────────────────────────────────────────────────────── */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Trending</Text>
-          <Pressable
-            onPress={() => router.push('/search')}
-            accessibilityRole="link"
-            accessibilityLabel="See all trending cards"
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Text style={styles.seeAll}>See all</Text>
-          </Pressable>
-        </View>
-        {sectionsLoading ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
-          </ScrollView>
-        ) : trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).length === 0 ? (
-          <Text style={styles.emptySection}>No data available right now</Text>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).map(card => (
-              <Pressable
-                key={card.id}
-                style={{ gap: 8 }}
-                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
-                accessibilityRole="button"
-                accessibilityLabel={`${card.name} from ${card.setName}`}
-              >
-                <CardThumbnail card={card} compact />
-                <View>
-                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
-                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                    <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
-                    {card.price.change7d !== undefined && (
-                      <Text style={[styles.moverChange, { color: (card.price.change7d ?? 0) >= 0 ? C.positive : C.negative }]}>
-                        {(card.price.change7d ?? 0) >= 0 ? '+' : ''}{card.price.change7d?.toFixed(1)}%
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
-      </View>
-
-      {/* ── Gainers & Losers ─────────────────────────────────────────────── */}
-      <View style={styles.glRow}>
-
-        {/* Gainers */}
-        <View style={[styles.glCard, { borderColor: C.border }]}>
-          <View style={styles.glHeader}>
-            <View style={[styles.glDot, { backgroundColor: C.positive }]} />
-            <Text style={[styles.glTitle, { color: C.positive }]}>GAINERS</Text>
-          </View>
-          {sectionsLoading ? (
-            <View style={{ gap: 10, padding: 12 }}>
-              {[0, 1, 2, 3].map(i => (
-                <View key={i} style={styles.glSkeletonRow}>
-                  <View style={styles.glSkeletonIcon} />
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <View style={[styles.glSkeletonLine, { width: '80%' }]} />
-                    <View style={[styles.glSkeletonLine, { width: '50%' }]} />
-                  </View>
-                </View>
-              ))}
-            </View>
-          ) : gainers.length === 0 ? (
-            <Text style={styles.glEmpty}>No data</Text>
-          ) : (
-            <View style={styles.glList}>
-              {gainers.map((m, i) => (
-                <Pressable
-                  key={m.card.id}
-                  style={[styles.glRow2, i < gainers.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.border }]}
-                  onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${m.card.name}, +${m.priceChangePercent.toFixed(1)}%`}
-                >
-                  <View style={[styles.glIconBox, { backgroundColor: `${C.positive}14` }]}>
-                    <Feather name="trending-up" size={12} color={C.positive} />
-                  </View>
-                  <View style={styles.glInfo}>
-                    <Text style={styles.glName} numberOfLines={1}>{m.card.name}</Text>
-                    <Text style={[styles.glChange, { color: C.positive }]}>+{m.priceChangePercent.toFixed(1)}%</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Losers */}
-        <View style={[styles.glCard, { borderColor: C.border }]}>
-          <View style={styles.glHeader}>
-            <View style={[styles.glDot, { backgroundColor: C.negative }]} />
-            <Text style={[styles.glTitle, { color: C.negative }]}>LOSERS</Text>
-          </View>
-          {sectionsLoading ? (
-            <View style={{ gap: 10, padding: 12 }}>
-              {[0, 1, 2, 3].map(i => (
-                <View key={i} style={styles.glSkeletonRow}>
-                  <View style={styles.glSkeletonIcon} />
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <View style={[styles.glSkeletonLine, { width: '80%' }]} />
-                    <View style={[styles.glSkeletonLine, { width: '50%' }]} />
-                  </View>
-                </View>
-              ))}
-            </View>
-          ) : losers.length === 0 ? (
-            <Text style={styles.glEmpty}>No data</Text>
-          ) : (
-            <View style={styles.glList}>
-              {losers.map((m, i) => (
-                <Pressable
-                  key={m.card.id}
-                  style={[styles.glRow2, i < losers.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.border }]}
-                  onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${m.card.name}, ${m.priceChangePercent.toFixed(1)}%`}
-                >
-                  <View style={[styles.glIconBox, { backgroundColor: `${C.negative}14` }]}>
-                    <Feather name="trending-down" size={12} color={C.negative} />
-                  </View>
-                  <View style={styles.glInfo}>
-                    <Text style={styles.glName} numberOfLines={1}>{m.card.name}</Text>
-                    <Text style={[styles.glChange, { color: C.negative }]}>{m.priceChangePercent.toFixed(1)}%</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* ── Market Movers list ───────────────────────────────────────────── */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Market Movers</Text>
-          <Pressable
-            onPress={() => router.push('/(tabs)/market')}
-            accessibilityRole="link"
-            accessibilityLabel="See all market movers"
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Text style={styles.seeAll}>See all</Text>
-          </Pressable>
-        </View>
-
-        {sectionsLoading ? (
-          <View style={{ gap: 2 }}>
-            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
-          </View>
-        ) : filteredMovers.length === 0 ? (
-          <Text style={styles.emptySection}>No data available right now</Text>
-        ) : (
-          <View style={[styles.marketListCard, { backgroundColor: C.card, borderColor: C.border }]}>
-            {filteredMovers.slice(0, 6).map((m, i) => (
-              <View key={m.card.id} style={i < Math.min(filteredMovers.length, 6) - 1 ? { borderBottomWidth: 1, borderBottomColor: C.border } : {}}>
-                <MarketRow
-                  card={m.card}
-                  currentPrice={m.currentPrice}
-                  priceChangePercent={m.priceChangePercent}
-                  positive={m.trend === 'up'}
-                />
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-
-      {/* ── Quick Actions ────────────────────────────────────────────────── */}
+      {/* ── Quick Actions ─────────────────────────────────────────────────── */}
       <View style={styles.actions}>
         {QUICK_ACTIONS.map(a => (
           <Pressable
@@ -802,6 +516,135 @@ export default function HomeScreen() {
             <Text style={styles.actionLabel}>{a.label}</Text>
           </Pressable>
         ))}
+      </View>
+
+      {/* ── Your Collection ───────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Your Collection</Text>
+          <Pressable
+            onPress={() => router.push('/(tabs)/collection')}
+            accessibilityRole="link"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Text style={styles.seeAll}>View collection →</Text>
+          </Pressable>
+        </View>
+        {portfolio.totalValue > 0 ? (
+          <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
+            <View style={[styles.insightRow, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+              <View style={[styles.insightIcon, { backgroundColor: `${isPositive ? C.positive : C.negative}18` }]}>
+                <Feather name={isPositive ? 'trending-up' : 'trending-down'} size={14} color={isPositive ? C.positive : C.negative} />
+              </View>
+              <View style={styles.insightBody}>
+                <Text style={styles.insightText}>
+                  Portfolio {isPositive ? 'up' : 'down'} this {portfolioRange} period
+                </Text>
+                <Text style={styles.insightSub}>
+                  {isPositive ? '+' : ''}${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+                </Text>
+              </View>
+              <Text style={[styles.insightBadge, { color: isPositive ? C.positive : C.negative }]}>
+                {isPositive ? '+' : ''}{gainPct.toFixed(1)}%
+              </Text>
+            </View>
+            <View style={styles.insightRow}>
+              <View style={[styles.insightIcon, { backgroundColor: `${C.primary}18` }]}>
+                <Feather name="layers" size={14} color={C.primary} />
+              </View>
+              <View style={styles.insightBody}>
+                <Text style={styles.insightText}>Total portfolio value</Text>
+                <Text style={styles.insightSub}>Across your entire collection</Text>
+              </View>
+              <Text style={[styles.insightBadge, { color: C.foreground }]}>
+                ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={[styles.insightEmpty, { backgroundColor: C.card, borderColor: C.border }]}>
+            <Feather name="layers" size={28} color={C.mutedForeground} />
+            <Text style={styles.insightEmptyTitle}>Start tracking your collection</Text>
+            <Text style={styles.insightEmptySub}>
+              Scan a card to see price movements, portfolio growth, and personalised insights here.
+            </Text>
+            <Pressable
+              style={[styles.insightEmptyBtn, { backgroundColor: C.primary }]}
+              onPress={() => router.push('/scan')}
+              accessibilityRole="button"
+              accessibilityLabel="Scan your first card"
+            >
+              <Feather name="camera" size={14} color="#FFF" />
+              <Text style={styles.insightEmptyBtnText}>Scan a Card</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+
+      {/* ── Market ────────────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Market</Text>
+          <Pressable
+            onPress={() => router.push('/(tabs)/market')}
+            accessibilityRole="link"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Text style={styles.seeAll}>View Market →</Text>
+          </Pressable>
+        </View>
+
+        {/* Tab pills */}
+        <View style={styles.marketTabRow}>
+          {MARKET_TABS.map(t => (
+            <Pressable
+              key={t.id}
+              onPress={() => setMarketTab(t.id)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: marketTab === t.id }}
+              style={[styles.marketTabBtn, marketTab === t.id && styles.marketTabBtnActive]}
+            >
+              <Text style={[styles.marketTabText, { color: marketTab === t.id ? '#FFFFFF' : C.mutedForeground }]}>
+                {t.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Card carousel */}
+        {sectionsLoading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : marketCards.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {marketCards.map(({ card, price, change }) => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8, width: 110 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <Text style={styles.moverPrice}>${price.toLocaleString('en-AU')}</Text>
+                    {change !== undefined && (
+                      <Text style={[styles.moverChange, { color: change >= 0 ? C.positive : C.negative }]}>
+                        {change >= 0 ? '+' : ''}{change.toFixed(1)}%
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
       {/* ── Live Event Banner ────────────────────────────────────────────── */}
@@ -959,6 +802,47 @@ export default function HomeScreen() {
         </View>
       )}
 
+      {/* ── Recently Added ───────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recently Added</Text>
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="link"
+            accessibilityLabel="Browse all recently added cards"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Text style={styles.seeAll}>Browse all</Text>
+          </Pressable>
+        </View>
+        {sectionsLoading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : recentCards.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {recentCards.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8, width: 110 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
 
     </ScrollView>
   );
@@ -1051,64 +935,41 @@ const styles = StyleSheet.create({
   // Divider
   divider: { height: 1, backgroundColor: C.border, marginBottom: 20 },
 
-  // TCG filter
-  tcgFilterRow: { flexDirection: 'row', gap: 8, paddingRight: 4 },
-  tcgFilterPill: {
+  // Market tabs
+  marketTabRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  marketTabBtn: {
     paddingHorizontal: 14, paddingVertical: 7,
     borderRadius: 20, borderWidth: 1, borderColor: C.border,
     backgroundColor: C.card,
   },
-  tcgFilterPillActive: { backgroundColor: '#CC1826', borderColor: '#CC1826' },
-  tcgFilterPillText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  marketTabBtnActive: { backgroundColor: '#CC1826', borderColor: '#CC1826' },
+  marketTabText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
 
-  // Gainers / Losers
-  glRow: { flexDirection: 'row', gap: 10, marginBottom: 28 },
-  glCard: {
-    flex: 1, backgroundColor: C.card,
-    borderRadius: 16, borderWidth: 1, overflow: 'hidden',
-  },
-  glHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-  },
-  glDot: { width: 6, height: 6, borderRadius: 3 },
-  glTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 0.8 },
-  glList: {},
-  glRow2: {
-    flexDirection: 'row', alignItems: 'center',
-    gap: 8, paddingHorizontal: 14, paddingVertical: 9,
-  },
-  glIconBox: {
-    width: 28, height: 28, borderRadius: 8,
+  // Insight card
+  insightCard: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  insightRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  insightIcon: {
+    width: 32, height: 32, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  glInfo: { flex: 1, minWidth: 0 },
-  glName: { fontSize: 11.5, fontFamily: 'Inter_600SemiBold', color: C.foreground, letterSpacing: -0.2 },
-  glChange: { fontSize: 11, fontFamily: 'Inter_700Bold', marginTop: 1 },
-  glEmpty: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, padding: 14 },
-  glSkeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  glSkeletonIcon: { width: 28, height: 28, borderRadius: 8, backgroundColor: C.muted, opacity: 0.4 },
-  glSkeletonLine: { height: 10, borderRadius: 5, backgroundColor: C.muted, opacity: 0.4 },
-
-  // Market list
-  marketListCard: {
-    borderRadius: 16, borderWidth: 1, overflow: 'hidden',
+  insightBody: { flex: 1, minWidth: 0 },
+  insightText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground, letterSpacing: -0.2 },
+  insightSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+  insightBadge: { fontSize: 13, fontFamily: 'Inter_700Bold', flexShrink: 0 },
+  insightEmpty: {
+    borderRadius: 16, borderWidth: 1, padding: 24,
+    alignItems: 'center', gap: 10,
   },
-  marketRow: {
-    flexDirection: 'row', alignItems: 'center',
-    gap: 12, paddingHorizontal: 14, paddingVertical: 12,
+  insightEmptyTitle: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground, textAlign: 'center' },
+  insightEmptySub: {
+    fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground,
+    textAlign: 'center', lineHeight: 18,
   },
-  marketRowIcon: {
-    width: 34, height: 34, borderRadius: 10,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  insightEmptyBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, marginTop: 4,
   },
-  marketRowInfo: { flex: 1, minWidth: 0 },
-  marketRowName: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground, letterSpacing: -0.2 },
-  marketRowSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
-  marketRowRight: { alignItems: 'flex-end', flexShrink: 0 },
-  marketRowPrice: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground, letterSpacing: -0.2 },
-  marketRowChange: { fontSize: 11, fontFamily: 'Inter_700Bold', marginTop: 1 },
+  insightEmptyBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#FFF' },
 
   // Quick actions
   actions: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },
