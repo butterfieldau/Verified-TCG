@@ -35,6 +35,7 @@ import {
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
+import { getItemCurrentValue } from '@/services/collection';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import { CardImage } from '@/components/ui/CardImage';
@@ -253,6 +254,7 @@ export default function HomeScreen() {
   const {
     user,
     isAuthenticated,
+    collection,
     portfolio,
     portfolioRange,
     setPortfolioRange,
@@ -348,6 +350,53 @@ export default function HomeScreen() {
   const gain = displayValue - (chartData[0]?.value ?? displayValue);
   const gainPct = chartData[0]?.value ? (gain / chartData[0].value) * 100 : portfolio.totalGainPercent;
   const isPositive = gain >= 0;
+
+  // ── 1-Day portfolio change derived from per-card change24h ──────────────────
+  // chartData['1D'] is not yet populated server-side (separate task), so we
+  // compute it directly: sum each item's 24h dollar move (current value × pct).
+  const { oneDayGain, oneDayGainPct, hasOneDayData } = React.useMemo(() => {
+    if (collection.length === 0 || portfolio.totalValue === 0) {
+      return { oneDayGain: 0, oneDayGainPct: 0, hasOneDayData: false };
+    }
+    let dollarGain = 0;
+    let itemsWithData = 0;
+    for (const item of collection) {
+      const pct = item.card.price.change24h;
+      if (pct === undefined || pct === null) continue;
+      const currentVal = getItemCurrentValue(item) * item.quantity;
+      dollarGain += currentVal * (pct / 100);
+      itemsWithData++;
+    }
+    if (itemsWithData === 0) return { oneDayGain: 0, oneDayGainPct: 0, hasOneDayData: false };
+    const baseValue = portfolio.totalValue - dollarGain;
+    const pctGain = baseValue > 0 ? (dollarGain / baseValue) * 100 : 0;
+    return { oneDayGain: dollarGain, oneDayGainPct: pctGain, hasOneDayData: true };
+  }, [collection, portfolio.totalValue]);
+  const isOneDayPositive = oneDayGain >= 0;
+
+  // ── Top price mover from the collector's own collection ──────────────────────
+  const topMover = React.useMemo(() => {
+    if (collection.length === 0) return null;
+    let best: { item: typeof collection[0]; changePct: number } | null = null;
+    for (const item of collection) {
+      const changePct = item.card.price.change24h ?? item.card.price.change7d;
+      if (changePct === undefined) continue;
+      if (best === null || Math.abs(changePct) > Math.abs(best.changePct)) {
+        best = { item, changePct };
+      }
+    }
+    return best;
+  }, [collection]);
+
+  // ── Stale cards — no price update in 30+ days ────────────────────────────────
+  const staleCardCount = React.useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return collection.filter(item => {
+      const updatedAt = item.card.price.updatedAt;
+      if (!updatedAt) return true; // treat missing as stale
+      return new Date(updatedAt).getTime() < cutoff;
+    }).length;
+  }, [collection]);
 
   // Derive gainers and losers from movers data
   const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
@@ -532,34 +581,78 @@ export default function HomeScreen() {
         </View>
         {portfolio.totalValue > 0 ? (
           <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
-            <View style={[styles.insightRow, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-              <View style={[styles.insightIcon, { backgroundColor: `${isPositive ? C.positive : C.negative}18` }]}>
-                <Feather name={isPositive ? 'trending-up' : 'trending-down'} size={14} color={isPositive ? C.positive : C.negative} />
-              </View>
-              <View style={styles.insightBody}>
-                <Text style={styles.insightText}>
-                  Portfolio {isPositive ? 'up' : 'down'} this {portfolioRange} period
+
+            {/* Row 1 — 1-day portfolio change (only shown when change24h data exists) */}
+            {hasOneDayData && (
+              <Pressable
+                style={[styles.insightRow, { borderBottomWidth: 1, borderBottomColor: C.border }]}
+                onPress={() => router.push('/(tabs)/collection')}
+                accessibilityRole="button"
+                accessibilityLabel={`Today's portfolio change: ${isOneDayPositive ? '+' : ''}${oneDayGainPct.toFixed(2)}%`}
+              >
+                <View style={[styles.insightIcon, { backgroundColor: `${isOneDayPositive ? C.positive : C.negative}18` }]}>
+                  <Feather name={isOneDayPositive ? 'trending-up' : 'trending-down'} size={14} color={isOneDayPositive ? C.positive : C.negative} />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText}>Today's change</Text>
+                  <Text style={styles.insightSub}>
+                    {isOneDayPositive ? '+' : ''}${Math.abs(oneDayGain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+                  </Text>
+                </View>
+                <Text style={[styles.insightBadge, { color: isOneDayPositive ? C.positive : C.negative }]}>
+                  {isOneDayPositive ? '+' : ''}{oneDayGainPct.toFixed(2)}%
                 </Text>
-                <Text style={styles.insightSub}>
-                  {isPositive ? '+' : ''}${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+              </Pressable>
+            )}
+
+            {/* Row 2 — Top price mover from collection */}
+            {topMover !== null && (
+              <Pressable
+                style={[styles.insightRow, { borderBottomWidth: staleCardCount > 0 ? 1 : 0, borderBottomColor: C.border }]}
+                onPress={() => router.push({
+                  pathname: `/card/${topMover.item.card.id}` as any,
+                  params: { appCardJson: JSON.stringify(topMover.item.card) },
+                })}
+                accessibilityRole="button"
+                accessibilityLabel={`${topMover.item.card.name} is today's top mover at ${topMover.changePct >= 0 ? '+' : ''}${topMover.changePct.toFixed(1)}%`}
+              >
+                <View style={[styles.insightIcon, { backgroundColor: `${topMover.changePct >= 0 ? C.positive : C.negative}18` }]}>
+                  <Feather name={topMover.changePct >= 0 ? 'arrow-up-right' : 'arrow-down-right'} size={14} color={topMover.changePct >= 0 ? C.positive : C.negative} />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText} numberOfLines={1}>
+                    {topMover.item.card.name}
+                  </Text>
+                  <Text style={styles.insightSub} numberOfLines={1}>
+                    {topMover.item.card.price.change24h !== undefined ? 'Today' : '7D'} · ~${(topMover.item.card.price.raw * topMover.item.quantity).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} AUD
+                  </Text>
+                </View>
+                <Text style={[styles.insightBadge, { color: topMover.changePct >= 0 ? C.positive : C.negative }]}>
+                  {topMover.changePct >= 0 ? '+' : ''}{topMover.changePct.toFixed(1)}%
                 </Text>
-              </View>
-              <Text style={[styles.insightBadge, { color: isPositive ? C.positive : C.negative }]}>
-                {isPositive ? '+' : ''}{gainPct.toFixed(1)}%
-              </Text>
-            </View>
-            <View style={styles.insightRow}>
-              <View style={[styles.insightIcon, { backgroundColor: `${C.primary}18` }]}>
-                <Feather name="layers" size={14} color={C.primary} />
-              </View>
-              <View style={styles.insightBody}>
-                <Text style={styles.insightText}>Total portfolio value</Text>
-                <Text style={styles.insightSub}>Across your entire collection</Text>
-              </View>
-              <Text style={[styles.insightBadge, { color: C.foreground }]}>
-                ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
-              </Text>
-            </View>
+              </Pressable>
+            )}
+
+            {/* Row 3 — Stale cards warning (conditional) */}
+            {staleCardCount > 0 && (
+              <Pressable
+                style={styles.insightRow}
+                onPress={() => router.push('/(tabs)/collection')}
+                accessibilityRole="button"
+                accessibilityLabel={`${staleCardCount} card${staleCardCount !== 1 ? 's' : ''} haven't had a sale in 30+ days`}
+              >
+                <View style={[styles.insightIcon, { backgroundColor: '#F59E0B18' }]}>
+                  <Feather name="clock" size={14} color="#F59E0B" />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText}>
+                    {staleCardCount} card{staleCardCount !== 1 ? 's' : ''} with outdated pricing
+                  </Text>
+                  <Text style={styles.insightSub}>Price data not updated in 30+ days</Text>
+                </View>
+                <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={[styles.insightEmpty, { backgroundColor: C.card, borderColor: C.border }]}>
