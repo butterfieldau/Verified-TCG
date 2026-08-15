@@ -92,15 +92,26 @@ export default function MarketScreen() {
           <Text style={styles.title}>Market</Text>
           <Text style={styles.sub}>Updated just now · AUD</Text>
         </View>
-        <Pressable
-          style={styles.searchBtn}
-          onPress={() => router.push('/search')}
-          accessibilityRole="button"
-          accessibilityLabel="Search cards"
-          hitSlop={1}
-        >
-          <Feather name="search" size={18} color={C.foreground} />
-        </Pressable>
+        <View style={styles.headerButtons}>
+          <Pressable
+            style={styles.searchBtn}
+            onPress={() => router.push('/(tabs)/scan')}
+            accessibilityRole="button"
+            accessibilityLabel="Scan a card"
+            hitSlop={1}
+          >
+            <Feather name="camera" size={18} color={C.foreground} />
+          </Pressable>
+          <Pressable
+            style={styles.searchBtn}
+            onPress={() => router.push('/search')}
+            accessibilityRole="button"
+            accessibilityLabel="Search cards"
+            hitSlop={1}
+          >
+            <Feather name="search" size={18} color={C.foreground} />
+          </Pressable>
+        </View>
       </View>
 
       {/* TCG filter */}
@@ -218,6 +229,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  headerButtons: { flexDirection: 'row', gap: 8 },
   title: { fontSize: 28, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.3 },
   sub: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
   searchBtn: {
