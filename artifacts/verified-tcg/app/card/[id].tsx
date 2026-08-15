@@ -760,6 +760,8 @@ export default function CardDetailScreen() {
   const [catalogError, setCatalogError] = useState(false);
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
+  const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
+  const [historyRequiresUpgrade, setHistoryRequiresUpgrade] = useState(false);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -829,6 +831,7 @@ export default function CardDetailScreen() {
     const controller = new AbortController();
     setGradedLoading(true);
     setLiveGradedPrices({});
+    setGradedRequiresUpgrade(false);
     fetchGradedPrices(
       resolvedCard.id,
       resolvedCard.name,
@@ -836,7 +839,10 @@ export default function CardDetailScreen() {
       resolvedCard.tcg,
       controller.signal,
     )
-      .then(prices => setLiveGradedPrices(prices))
+      .then(result => {
+        setLiveGradedPrices(result.prices);
+        setGradedRequiresUpgrade(result.requiresUpgrade);
+      })
       .catch(() => {})
       .finally(() => setGradedLoading(false));
     return () => controller.abort();
@@ -851,10 +857,12 @@ export default function CardDetailScreen() {
     const controller = new AbortController();
     setPriceHistoryLoading(true);
     setPriceHistory([]);
+    setHistoryRequiresUpgrade(false);
     fetchPriceHistory(resolvedCard.id, gradeKeyFromTab(priceTab), selectedPeriod, controller.signal)
       .then(result => {
         setPriceHistory(result.points);
         setPriceHistoryUpdatedAt(result.updatedAt);
+        setHistoryRequiresUpgrade(result.requiresUpgrade ?? false);
       })
       .catch(() => {})
       .finally(() => setPriceHistoryLoading(false));
@@ -1245,25 +1253,47 @@ export default function CardDetailScreen() {
           </ScrollView>
 
           {/* SVG line chart */}
-          <View style={styles.chartAreaWrap}>
-            <PriceLineChart
-              points={priceHistory}
-              width={W - 40 - 36}
-              height={120}
-              loading={priceHistoryLoading}
-            />
-          </View>
+          {historyRequiresUpgrade ? (
+            <Pressable
+              onPress={() => router.push('/pro-subscription')}
+              style={[styles.chartAreaWrap, {
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: `${C.primary}11`, borderRadius: 12, gap: 6,
+              }]}
+              accessibilityRole="button"
+              accessibilityLabel="Upgrade to Pro to see price history"
+            >
+              <Feather name="lock" size={20} color={C.primary} />
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.primary }}>
+                Pro feature
+              </Text>
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' }}>
+                Upgrade to view price history
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.chartAreaWrap}>
+              <PriceLineChart
+                points={priceHistory}
+                width={W - 40 - 36}
+                height={120}
+                loading={priceHistoryLoading}
+              />
+            </View>
+          )}
 
           {/* Source footer */}
-          <View style={styles.chartFooter}>
-            <Feather name="info" size={10} color={C.mutedForeground} />
-            <Text style={styles.chartFooterText}>
-              Prices from eBay sold listings
-              {priceHistoryUpdatedAt
-                ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
-                : ''}
-            </Text>
-          </View>
+          {!historyRequiresUpgrade && (
+            <View style={styles.chartFooter}>
+              <Feather name="info" size={10} color={C.mutedForeground} />
+              <Text style={styles.chartFooterText}>
+                Prices from eBay sold listings
+                {priceHistoryUpdatedAt
+                  ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
+                  : ''}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── View Listings on eBay ────────────────────────────────────── */}
@@ -1341,6 +1371,27 @@ export default function CardDetailScreen() {
                   color={C.primary}
                   style={{ marginVertical: 14, alignSelf: 'center' }}
                 />
+              ) : gradedRequiresUpgrade ? (
+                <>
+                  {GRADERS.map(grader => (
+                    <View key={grader.key} style={styles.gradedRow}>
+                      <Text style={styles.gradedLabel}>{grader.label}</Text>
+                      <View style={styles.gradedBlurred}>
+                        <Text style={styles.gradedBlurText}>••••</Text>
+                        <Feather name="lock" size={12} color={C.mutedForeground} />
+                      </View>
+                    </View>
+                  ))}
+                  <Pressable
+                    onPress={() => router.push('/pro-subscription')}
+                    style={styles.gradedCta}
+                    accessibilityRole="button"
+                    accessibilityLabel="Upgrade to Pro to unlock graded pricing"
+                  >
+                    <Feather name="zap" size={13} color="#FFF" />
+                    <Text style={styles.gradedCtaText}>Upgrade to Pro</Text>
+                  </Pressable>
+                </>
               ) : Object.keys(liveGradedPrices).length === 0 ? (
                 <Text style={[styles.gradedLabel, { textAlign: 'center', paddingVertical: 12, color: C.mutedForeground }]}>
                   Graded price data unavailable

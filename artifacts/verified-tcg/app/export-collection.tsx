@@ -39,6 +39,18 @@ export default function ExportCollectionScreen() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
+      if (res.status === 403) {
+        Alert.alert(
+          'Pro Feature',
+          'Collection export is a Pro feature. Upgrade to export your collection as CSV.',
+          [
+            { text: 'Not Now', style: 'cancel' },
+            { text: 'Upgrade to Pro', onPress: () => router.push('/pro-subscription') },
+          ],
+        );
+        return;
+      }
+
       if (!res.ok) {
         throw new Error(`Server returned ${res.status}`);
       }

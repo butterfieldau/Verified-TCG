@@ -9,7 +9,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { collectionItemsTable, usersTable, wishlistItemsTable } from "@workspace/db";
 import { eq, isNull } from "drizzle-orm";
-import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { requireActiveUser, requireProUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const exportRouter = Router();
 
@@ -17,7 +17,7 @@ const exportRouter = Router();
 
 exportRouter.get(
   "/me/export/collection.csv",
-  requireActiveUser,
+  requireProUser,
   async (req: AuthRequest, res) => {
     try {
       const rows = await db
@@ -98,7 +98,7 @@ exportRouter.get(
 
 exportRouter.get(
   "/me/export/account.json",
-  requireActiveUser,
+  requireProUser,
   async (req: AuthRequest, res) => {
     try {
       const [user] = await db

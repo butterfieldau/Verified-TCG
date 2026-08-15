@@ -11,6 +11,7 @@ import { and, asc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { createNotification } from "./notifications.js";
 import { notificationsTable } from "@workspace/db";
+import { requireProUser, requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
 
@@ -177,7 +178,7 @@ const PERIOD_DAYS: Record<string, number> = {
  * Returns { points: [{date, price}], updatedAt, source } with an empty points
  * array when no history exists yet.
  */
-router.get("/catalog/cards/:id/price-history", async (req, res) => {
+router.get("/catalog/cards/:id/price-history", requireProUser, async (req: AuthRequest, res) => {
   try {
     const cardId   = String(req.params.id);
     const gradeKey = typeof req.query.grade === "string" ? req.query.grade.toLowerCase().trim() : "raw";

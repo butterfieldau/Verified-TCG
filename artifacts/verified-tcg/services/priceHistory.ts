@@ -7,6 +7,8 @@
  * shows a friendly empty state.
  */
 
+import { getAccessToken } from './auth';
+
 const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 const domainBase = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
@@ -27,6 +29,8 @@ export interface PriceHistoryResult {
   /** ISO timestamp of the most recent snapshot, or null if no data */
   updatedAt: string | null;
   source: string;
+  /** True when the server rejected the request because the user is not Pro. */
+  requiresUpgrade?: boolean;
 }
 
 /** In-memory cache: `${cardId}:${gradeKey}:${period}` → result */
@@ -36,6 +40,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Fetch price history for a card from the API server.
  * Returns empty points array on error or if no data exists yet.
+ * Sets `requiresUpgrade: true` when the server returns 403.
  */
 export async function fetchPriceHistory(
   cardId: string,
@@ -52,12 +57,21 @@ export async function fetchPriceHistory(
   if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
 
   try {
+    const token = await getAccessToken();
     const params = new URLSearchParams({ grade: gradeKey, period });
     const res = await fetch(
       `${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/price-history?${params}`,
-      { signal },
+      {
+        signal,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
     );
+
+    if (res.status === 403) {
+      return { points: [], updatedAt: null, source: 'ebay_sold', requiresUpgrade: true };
+    }
     if (!res.ok) return { points: [], updatedAt: null, source: 'ebay_sold' };
+
     const body = (await res.json()) as PriceHistoryResult;
     cache.set(cacheKey, { data: body, fetchedAt: Date.now() });
     return body;
