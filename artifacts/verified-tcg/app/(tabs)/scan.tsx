@@ -48,7 +48,7 @@ const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '')
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type ScanState = 'idle' | 'capturing' | 'recognizing' | 'match' | 'low_confidence' | 'error' | 'confirmed';
+type ScanState = 'idle' | 'capturing' | 'recognizing' | 'match' | 'low_confidence' | 'error' | 'auto_searching' | 'confirmed';
 
 interface RecognizedCard {
   card: Record<string, unknown>;
@@ -322,12 +322,30 @@ export default function ScanScreen() {
           // GPT returned no text — image was likely blurry/dark/out-of-frame
           setErrorMessage('Card may be blurry or out of frame.');
           setErrorCode('unreadable');
+          setScanState('error');
         } else {
-          // GPT read some text but nothing matched the catalog
-          setErrorMessage('No matching card found in our catalog.');
-          setErrorCode('no_match');
+          // GPT read some text but nothing matched the catalog.
+          // If any fields were extracted, auto-navigate to search with them pre-filled.
+          const { name, setName, number } = result.extracted;
+          const hasExtracted = [name, setName, number].some(f => f.trim() !== '');
+          if (hasExtracted) {
+            const query = [name, setName, number].filter(f => f.trim() !== '').join(' ');
+            setScanState('auto_searching');
+            setTimeout(() => {
+              router.push(`/search?q=${encodeURIComponent(query)}`);
+              // Reset scan state so the user returns to the idle scanner
+              setScanResult(null);
+              setErrorMessage('');
+              setErrorCode('');
+              setScanState('idle');
+            }, 2000);
+          } else {
+            // Nothing at all was extracted — show the standard error
+            setErrorMessage('No matching card found in our catalog.');
+            setErrorCode('no_match');
+            setScanState('error');
+          }
         }
-        setScanState('error');
       } else if (result.lowConfidence) {
         setScanState('low_confidence');
       } else {
@@ -390,7 +408,7 @@ export default function ScanScreen() {
 
   function handleSearchManually() {
     const extracted = scanResult?.extracted;
-    const query = [extracted?.name, extracted?.setName].filter(Boolean).join(' ');
+    const query = [extracted?.name, extracted?.setName, extracted?.number].filter(Boolean).join(' ');
     router.push(query ? `/search?q=${encodeURIComponent(query)}` : '/search');
   }
 
@@ -885,6 +903,19 @@ export default function ScanScreen() {
             </View>
           </View>
 
+          {/* Low-confidence: show raw extracted text so collector can verify */}
+          {scanState === 'low_confidence' && scanResult?.extracted && (() => {
+            const { name, setName, number } = scanResult.extracted;
+            const parts = [name, setName, number ? `#${number}` : ''].filter(f => f.trim() !== '');
+            if (parts.length === 0) return null;
+            return (
+              <View style={styles.lcExtractedRow}>
+                <Text style={styles.lcExtractedLabel}>AI read:</Text>
+                <Text style={styles.lcExtractedText} numberOfLines={2}>{parts.join(' · ')}</Text>
+              </View>
+            );
+          })()}
+
           {/* All candidates if multiple */}
           {(scanResult?.matches?.length ?? 0) > 1 && (
             <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
@@ -984,6 +1015,26 @@ export default function ScanScreen() {
         );
       })()}
 
+      {/* ── Auto-searching state: show extracted text toast before navigating ─── */}
+      {scanState === 'auto_searching' && scanResult && (() => {
+        const { name, setName, number } = scanResult.extracted;
+        const parts = [name, setName, number].filter(f => f.trim() !== '');
+        const readText = parts.join(' · ');
+        return (
+          <View style={styles.autoSearchPanel}>
+            <View style={styles.autoSearchIconWrap}>
+              <ActivityIndicator size="large" color={C.primary} />
+            </View>
+            <Text style={styles.autoSearchTitle}>Reading card…</Text>
+            <View style={styles.autoSearchExtractedWrap}>
+              <Text style={styles.autoSearchExtractedLabel}>Found:</Text>
+              <Text style={styles.autoSearchExtractedText}>{readText}</Text>
+            </View>
+            <Text style={styles.autoSearchHint}>Taking you to search…</Text>
+          </View>
+        );
+      })()}
+
       {/* ── Confirmed state ──────────────────────────────────────────────────── */}
       {scanState === 'confirmed' && topMatch && (
         <View style={styles.confirmedPanel}>
@@ -1004,7 +1055,7 @@ export default function ScanScreen() {
       )}
 
       {/* ── Controls for match / error / confirmed states ─────────────────────── */}
-      {!isActiveView && (
+      {!isActiveView && scanState !== 'auto_searching' && (
         <View style={styles.controls}>
           {/* Match actions */}
           {isMatchView && (
@@ -1641,5 +1692,75 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
+  },
+  // Auto-searching state (transient — shown before auto-navigating to search)
+  autoSearchPanel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 12,
+  },
+  autoSearchIconWrap: {
+    marginBottom: 8,
+  },
+  autoSearchTitle: {
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+    color: C.foreground,
+    textAlign: 'center',
+  },
+  autoSearchExtractedWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: C.card,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  autoSearchExtractedLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+  },
+  autoSearchExtractedText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+    textAlign: 'center',
+  },
+  autoSearchHint: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  // Low-confidence extracted text (shown beneath card preview)
+  lcExtractedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 4,
+    flexWrap: 'wrap',
+  },
+  lcExtractedLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+    marginTop: 1,
+  },
+  lcExtractedText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: `${C.mutedForeground}CC`,
+    lineHeight: 17,
   },
 });
