@@ -103,7 +103,7 @@ export default function ProfileScreen() {
 
   // NativeTabs (iOS 26+ liquid glass) already accounts for the safe area —
   // adding insets.top on top of that creates a large black gap.
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const tcgNames = (user?.tcgPreferences ?? [])

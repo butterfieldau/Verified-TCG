@@ -387,7 +387,7 @@ export default function HomeScreen() {
     AsyncStorage.setItem(TRADE_MATCHES_DISMISSED_KEY, String(MOCK_TRADE_MATCHES.length)).catch(() => {});
   }, []);
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const chartData = portfolio.chartData[portfolioRange];
