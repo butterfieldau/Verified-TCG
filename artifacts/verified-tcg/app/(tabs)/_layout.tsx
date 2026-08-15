@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Platform,
-  Pressable,
   StyleSheet,
   useColorScheme,
   View,
@@ -15,23 +14,6 @@ import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 import DevSubscriptionToggle from '@/components/ui/DevSubscriptionToggle';
 
-// Custom raised Scan button — matches the mockup's -top-5 treatment.
-// Accept the broader event type that Expo Router passes to tabBarButton.
-function ScanTabButton({ onPress }: { onPress?: (e: any) => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={styles.scanWrapper}
-      accessibilityRole="button"
-      accessibilityLabel="Scan"
-    >
-      <View style={styles.scanCircle}>
-        <Feather name="camera" size={24} color="#FFFFFF" />
-      </View>
-    </Pressable>
-  );
-}
-
 // iOS 26+ liquid glass tab bar
 function NativeTabLayout() {
   return (
@@ -43,10 +25,6 @@ function NativeTabLayout() {
       <NativeTabs.Trigger name="market">
         <Icon sf={{ default: 'chart.line.uptrend.xyaxis', selected: 'chart.line.uptrend.xyaxis' }} />
         <Label>Market</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="scan">
-        <Icon sf={{ default: 'camera.viewfinder', selected: 'camera.viewfinder' }} />
-        <Label>Scan</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="collection">
         <Icon sf={{ default: 'square.stack', selected: 'square.stack.fill' }} />
@@ -84,8 +62,7 @@ function ClassicTabLayout() {
           borderTopWidth: 1,
           borderTopColor: colors.border,
           elevation: 0,
-          // Taller bar to accommodate the raised Scan button
-          height: isWeb ? 84 : 74,
+          height: isWeb ? 84 : 64,
         },
         tabBarBackground: () =>
           isIOS ? (
@@ -128,14 +105,11 @@ function ClassicTabLayout() {
             ),
         }}
       />
-      {/* Emphasized Scan tab — raised red circle */}
+      {/* Scan screen hidden from tab bar — accessed via Market header button */}
       <Tabs.Screen
         name="scan"
         options={{
-          title: 'Scan',
-          tabBarButton: (props) => (
-            <ScanTabButton onPress={props.onPress ?? undefined} />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -187,28 +161,4 @@ export default function TabLayout() {
   );
 }
 
-const styles = StyleSheet.create({
-  // Raised scan button — lifts 24px above the tab bar
-  scanWrapper: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: -24,
-  },
-  scanCircle: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: '#FF1E2D',
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Outer ring that blends with the dark tab bar
-    borderWidth: 4,
-    borderColor: '#0A0A0A',
-    shadowColor: '#FF1E2D',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-});
+const styles = StyleSheet.create({});
