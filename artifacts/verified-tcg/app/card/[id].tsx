@@ -33,16 +33,13 @@ import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
 import { fetchGradedPrices } from '@/services/gradedPricing';
-import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, CollectionItem, WatchlistItem } from '@/types';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import {
-  getMockPricingPlus,
   GRADERS,
-  type PricePoint,
 } from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
 import {
@@ -386,17 +383,6 @@ const panelStyles = StyleSheet.create({
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
 
-// Helper — keeps raw stat rows DRY across preview/locked content
-function RAW_STAT_ROWS(p: ReturnType<typeof getMockPricingPlus>) {
-  return [
-    { label: '7-Day Avg',    value: `$${p.rawStats.avg7d.toLocaleString('en-AU')}` },
-    { label: '30-Day Avg',   value: `$${p.rawStats.avg30d.toLocaleString('en-AU')}` },
-    { label: '90-Day Avg',   value: `$${p.rawStats.avg90d.toLocaleString('en-AU')}` },
-    { label: '52-Week High', value: `$${p.rawStats.high52w.toLocaleString('en-AU')}` },
-    { label: '52-Week Low',  value: `$${p.rawStats.low52w.toLocaleString('en-AU')}` },
-    { label: 'Sales Vol.',   value: `${p.rawStats.salesVolume} sold/30d` },
-  ];
-}
 
 /** Card aspect ratio: 2.5 wide × 3.5 tall */
 const CARD_W = W - 40;
@@ -946,14 +932,8 @@ export default function CardDetailScreen() {
   // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
   const card = rawCard;
 
-  const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
-  // For live catalog cards, don't substitute random mock listings from other cards
-  const allListings = isCatalogCard
-    ? []
-    : (cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2));
   // Passport records only exist for local mock cards
   const hasPassport = !isCatalogCard && getCardPassport(card.id) !== null;
-  const pricingPlus = getMockPricingPlus(card.id, card.price.raw);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -1319,37 +1299,39 @@ export default function CardDetailScreen() {
             <Text style={styles.sectionTitle}>Market Stats</Text>
           </View>
 
-          {/* Always-visible: market estimate */}
+          {/* Always-visible: market estimate from live catalog price */}
           <View style={styles.rawStatRow}>
             <Text style={styles.rawStatLabel}>Market Estimate</Text>
             <Text style={styles.rawStatValue}>
-              ${pricingPlus.rawStats.marketEstimate.toLocaleString('en-AU')} AUD
+              ${card.price.raw.toLocaleString('en-AU')} AUD
             </Text>
           </View>
 
-          {/* Pro-gated stats — preview shows labels with blurred values */}
+          {/* Pro-gated advanced stats — shown once real history API data is available */}
           <ProFeaturePreview
             featureTitle="Advanced Raw Stats"
             description="7-day, 30-day, 90-day averages, highs, lows and sales volume for serious collectors."
             ctaLabel="Unlock with Pro"
             previewContent={
               <View style={styles.rawGatedPreview}>
-                {RAW_STAT_ROWS(pricingPlus).map(row => (
+                {[
+                  { label: '7-Day Avg', value: '—' },
+                  { label: '30-Day Avg', value: '—' },
+                  { label: '52-Week High', value: '—' },
+                  { label: '52-Week Low', value: '—' },
+                ].map(row => (
                   <View key={row.label} style={styles.rawStatRow}>
                     <Text style={styles.rawStatLabel}>{row.label}</Text>
-                    <Text style={styles.rawStatValue}>{row.value}</Text>
+                    <Text style={[styles.rawStatValue, { color: C.mutedForeground }]}>{row.value}</Text>
                   </View>
                 ))}
               </View>
             }
             lockedContent={
-              <View>
-                {RAW_STAT_ROWS(pricingPlus).map(row => (
-                  <View key={row.label} style={styles.rawStatRow}>
-                    <Text style={styles.rawStatLabel}>{row.label}</Text>
-                    <Text style={styles.rawStatValue}>{row.value}</Text>
-                  </View>
-                ))}
+              <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground }]}>
+                  Advanced stats require price history to accumulate. Check back after a few days.
+                </Text>
               </View>
             }
           />
@@ -1446,7 +1428,7 @@ export default function CardDetailScreen() {
           )}
         </View>
 
-        {/* Recent Sales — full section gated via ProFeaturePreview */}
+        {/* Recent Sales — Pro feature, populated from price history snapshots */}
         <View style={{ marginBottom: 24 }}>
           <ProFeaturePreview
             featureTitle="Recent Sales"
@@ -1455,29 +1437,17 @@ export default function CardDetailScreen() {
             previewContent={
               <View style={[styles.card, { backgroundColor: C.card }]}>
                 <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                {pricingPlus.recentSales.slice(0, 2).map(sale => (
-                  <View key={sale.id} style={styles.saleRow}>
-                    <View style={styles.saleLeft}>
-                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
-                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
-                    </View>
-                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
-                  </View>
-                ))}
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
+                  Sales data accumulates as this card is viewed over time
+                </Text>
               </View>
             }
             lockedContent={
               <View style={[styles.card, { backgroundColor: C.card }]}>
                 <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                {pricingPlus.recentSales.map(sale => (
-                  <View key={sale.id} style={styles.saleRow}>
-                    <View style={styles.saleLeft}>
-                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
-                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
-                    </View>
-                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
-                  </View>
-                ))}
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
+                  Sales data accumulates as this card is viewed over time
+                </Text>
               </View>
             }
           />
@@ -1536,59 +1506,15 @@ export default function CardDetailScreen() {
           <Feather name="chevron-right" size={16} color="#D4AF37" />
         </Pressable>}
 
-        {/* For Sale listings */}
+        {/* For Sale listings — marketplace coming soon */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Cards For Sale</Text>
-            {allListings.length > 0 && (
-              <Text style={styles.sectionCount}>{allListings.length} listing{allListings.length !== 1 ? 's' : ''}</Text>
-            )}
           </View>
-          {allListings.length === 0 ? (
-            <View style={[styles.emptyListings, { backgroundColor: C.card }]}>
-              <Feather name="shopping-bag" size={28} color={C.mutedForeground} />
-              <Text style={styles.emptyListingsText}>No marketplace listings yet</Text>
-            </View>
-          ) : (
-            allListings.map(listing => (
-              <Pressable key={listing.id} style={[styles.listingRow, { backgroundColor: C.card }]}>
-                <View style={styles.listingLeft}>
-                  <Text style={styles.listingSellerName}>{listing.sellerName}</Text>
-                  <View style={styles.listingMeta}>
-                    {listing.grading && (
-                      <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
-                    )}
-                    {listing.isVerifiedSeller && (
-                      <View style={styles.verifiedTag}>
-                        <Feather name="shield" size={11} color={C.positive} />
-                        <Text style={[styles.verifiedTagText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                    {listing.sellerRating && (
-                      <View style={styles.ratingRow}>
-                        <Feather name="star" size={11} color="#F59E0B" />
-                        <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.listingWatchers}>
-                    {listing.watchCount} watching · {listing.views} views
-                  </Text>
-                </View>
-                <View style={styles.listingRight}>
-                  <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
-                  <Text style={styles.listingCurrency}>AUD</Text>
-                  <Pressable
-                    style={styles.buyBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Buy for $${listing.askingPrice.toLocaleString('en-AU')} AUD`}
-                  >
-                    <Text style={styles.buyBtnText}>Buy</Text>
-                  </Pressable>
-                </View>
-              </Pressable>
-            ))
-          )}
+          <View style={[styles.emptyListings, { backgroundColor: C.card }]}>
+            <Feather name="shopping-bag" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyListingsText}>Marketplace coming soon</Text>
+          </View>
         </View>
       </ScrollView>
 

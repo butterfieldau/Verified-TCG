@@ -19,7 +19,6 @@ import { Chip } from '@/components/ui/Chip';
 import { SearchListSkeleton } from '@/components/ui/SkeletonLoader';
 import { getMarketMovers } from '@/services/market';
 import type { MarketMover } from '@/types';
-import { searchCards, CARD_SETS } from '@/services/cards';
 import { handleApiError } from '@/services/errorHandler';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
@@ -36,7 +35,6 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
   { label: 'Users', value: 'users' },
 ];
 
-const TRENDING_SEARCHES = ['Umbreon ex', 'Pikachu', 'Charizard', 'Luffy', 'Black Lotus'];
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
@@ -136,11 +134,7 @@ export default function SearchScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  const localCardResults = query.trim().length > 0 ? searchCards(query) : [];
-  const cardResults = remoteResults.length > 0 ? remoteResults.map(catalogCardToAppCard) : localCardResults;
-  const setResults = query.trim().length > 0
-    ? CARD_SETS.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))
-    : [];
+  const cardResults = remoteResults.map(catalogCardToAppCard);
 
   const isEmpty = query.trim().length === 0;
 
@@ -271,59 +265,46 @@ export default function SearchScreen() {
         onEndReachedThreshold={0.4}
         ListHeaderComponent={() => (
           <View>
-            {/* Empty state — trending */}
+            {/* Empty state — trending from real market movers */}
             {isEmpty && (
               <View>
-                <Text style={styles.sectionTitle}>Trending Searches</Text>
-                <View style={styles.trendingTags}>
-                  {TRENDING_SEARCHES.map(t => (
-                    <Pressable
-                      key={t}
-                      onPress={() => setQuery(t)}
-                      style={[styles.trendingTag, { backgroundColor: C.card }]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Search for ${t}`}
-                    >
-                      <Feather name="trending-up" size={13} color={C.primary} />
-                      <Text style={styles.trendingTagText}>{t}</Text>
-                    </Pressable>
-                  ))}
-                </View>
+                {trendingMovers.length > 0 && (
+                  <>
+                    <Text style={styles.sectionTitle}>Trending Searches</Text>
+                    <View style={styles.trendingTags}>
+                      {trendingMovers.slice(0, 6).map(m => (
+                        <Pressable
+                          key={m.card.id}
+                          onPress={() => setQuery(m.card.name)}
+                          style={[styles.trendingTag, { backgroundColor: C.card }]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Search for ${m.card.name}`}
+                        >
+                          <Feather name="trending-up" size={13} color={C.primary} />
+                          <Text style={styles.trendingTagText}>{m.card.name}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
 
-                <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Trending Cards</Text>
-                {trendingMovers.map(m => (
-                  <CardResultRow
-                    key={m.card.id}
-                    card={m.card}
-                    onPress={() => router.push(`/card/${m.card.id}`)}
-                  />
-                ))}
+                    <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Trending Cards</Text>
+                    {trendingMovers.map(m => (
+                      <CardResultRow
+                        key={m.card.id}
+                        card={m.card}
+                        onPress={() => router.push(`/card/${m.card.id}`)}
+                      />
+                    ))}
+                  </>
+                )}
               </View>
             )}
 
-            {/* Set results */}
+            {/* Set results — no local catalog; show empty state */}
             {!isEmpty && category === 'sets' && (
-              <View>
-                <Text style={styles.sectionTitle}>Sets ({setResults.length})</Text>
-                {setResults.map(s => (
-                  <View key={s.id} style={[styles.resultRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.setIcon, { backgroundColor: C.muted }]}>
-                      <Feather name="package" size={20} color={C.primary} />
-                    </View>
-                    <View style={styles.resultInfo}>
-                      <Text style={styles.resultName}>{s.name}</Text>
-                      <Text style={styles.resultSet}>
-                        {s.series ?? s.tcg} · {s.totalCards} cards
-                      </Text>
-                      <Text style={styles.resultRarity}>
-                        {new Date(s.releaseDate).getFullYear()}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
-                {setResults.length === 0 && (
-                  <Text style={styles.noResults}>No sets found for "{query}"</Text>
-                )}
+              <View style={styles.emptyState}>
+                <Feather name="package" size={40} color={C.muted} />
+                <Text style={styles.emptyTitle}>Set search coming soon</Text>
+                <Text style={styles.emptyBody}>Try searching by card name instead</Text>
               </View>
             )}
 
