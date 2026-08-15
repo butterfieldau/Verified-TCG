@@ -258,6 +258,34 @@ export async function getAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Fetch the current user's full profile from the server.
+ *
+ * Calls GET /api/auth/user with the stored access token and returns the
+ * server's authoritative user object (including all profile fields that
+ * may have been edited on another device or via the web app).
+ *
+ * Returns null if the network is unavailable, the session has expired, or
+ * no session exists — callers should fall back gracefully to cached data.
+ *
+ * The persisted session in AsyncStorage is NOT updated here; the returned
+ * data is intended for updating in-memory state only.
+ */
+export async function fetchCurrentUser(): Promise<AuthSession['user'] | null> {
+  const session = await restoreSession();
+  if (!session) return null;
+  try {
+    const response = await request('/api/auth/user', {
+      accessToken: session.access_token,
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as AuthSession['user'];
+  } catch {
+    // Network unavailable — caller falls back to cached session data
+    return null;
+  }
+}
+
+/**
  * Upgrade the authenticated user's subscription to Pro.
  *
  * Calls POST /api/subscription/upgrade on the server which sets

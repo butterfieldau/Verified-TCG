@@ -55,6 +55,7 @@ import { syncPreferredTcgsAfterSignIn } from '@/services/tcgPreferences';
 import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
+  fetchCurrentUser,
   signInWithPassword,
   signInWithOAuth,
   signOut as authSignOut,
@@ -635,6 +636,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loadCollection();
       loadNotifications();
 
+      // Fetch fresh profile data from the server so edits made on another
+      // device or via the web app are reflected without requiring sign-out.
+      // Runs fire-and-forget after the cached session is already applied so
+      // the UI is never blocked; network errors fall back to the cached data.
+      //
+      // Guard: capture the restored user's ID so the response can be discarded
+      // if a sign-out → sign-in sequence completes before it resolves (avoids
+      // overwriting user B's in-memory profile with user A's stale server data).
+      const restoredUserId = session.user.id;
+      fetchCurrentUser().then(fresh => {
+        if (!fresh) return;
+        // Discard if a different user (or no user) is now authenticated.
+        if (currentUserIdRef.current !== restoredUserId) return;
+        setUser(userFromSession({ user: fresh }));
+        // Sync entitlement state in both directions — always derive from the
+        // fresh server value so a downgrade (Pro → free) is also reflected.
+        const freshMeta = fresh.user_metadata ?? {};
+        setSubscriptionTierState(freshMeta.subscription_tier === 'pro' ? 'pro' : 'free');
+        setFoundingMemberClaimed(freshMeta.is_founding_member === true);
+      }).catch(() => {});
+
       // NOTE: Push token registration is NOT triggered on cold session restore.
       // It runs only after an explicit sign-in (see signIn callback) so the
       // OS permission prompt appears contextually — not on every app launch.
@@ -668,6 +690,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // to the foreground so changes made on another device are reflected.
   const isAuthenticatedRef = useRef(false);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  // Tracks the ID of the currently authenticated user so async profile
+  // fetches can verify they still belong to the active session before applying
+  // their result (guards against sign-out → sign-in race conditions).
+  const currentUserIdRef = useRef<string | null>(null);
+  useEffect(() => { currentUserIdRef.current = user?.id ?? null; }, [user]);
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
