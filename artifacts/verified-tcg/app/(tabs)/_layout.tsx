@@ -109,7 +109,8 @@ function ClassicTabLayout() {
       <Tabs.Screen
         name="scan"
         options={{
-          href: null,
+          tabBarButton: () => null,
+          tabBarStyle: { display: 'none' },
         }}
       />
       <Tabs.Screen
