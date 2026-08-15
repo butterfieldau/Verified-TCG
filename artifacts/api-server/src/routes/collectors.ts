@@ -26,6 +26,7 @@ import {
   ne,
 } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { createNotification } from "./notifications.js";
 
 const collectorsRouter = Router();
 
@@ -370,16 +371,36 @@ collectorsRouter.post(
         return;
       }
 
-      await db
+      const inserted = await db
         .insert(followsTable)
         .values({ followerId, followeeId: followee.id })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ followerId: followsTable.followerId });
 
       // Follower count for the followee
       const [countRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(followsTable)
         .where(eq(followsTable.followeeId, followee.id));
+
+      // Notify the followee only when a new follow row was created
+      if (inserted.length > 0) {
+        db.select({ username: usersTable.username })
+          .from(usersTable)
+          .where(eq(usersTable.id, followerId))
+          .limit(1)
+          .then(([followerRow]) => {
+            if (!followerRow) return;
+            return createNotification({
+              userId: followee.id,
+              type: "follower",
+              title: "New follower",
+              body: `${followerRow.username} started following you.`,
+              metadata: { followerUsername: followerRow.username },
+            });
+          })
+          .catch((err) => console.error("[collectors] follow notification:", err));
+      }
 
       res.json({ ok: true, followerCount: Number(countRow?.count ?? 0) });
     } catch (err) {
