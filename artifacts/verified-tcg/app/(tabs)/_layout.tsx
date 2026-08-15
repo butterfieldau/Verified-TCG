@@ -9,9 +9,7 @@ import {
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
-import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 import DevSubscriptionToggle from '@/components/ui/DevSubscriptionToggle';
 
@@ -32,39 +30,7 @@ function ScanTabButton({ onPress }: { onPress?: (e: any) => void }) {
   );
 }
 
-// iOS 26+ liquid glass tab bar
-function NativeTabLayout() {
-  return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: 'house', selected: 'house.fill' }} />
-        <Label>Home</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="market">
-        <Icon sf={{ default: 'chart.line.uptrend.xyaxis', selected: 'chart.line.uptrend.xyaxis' }} />
-        <Label>Market</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="scan">
-        <Icon sf={{ default: 'camera.viewfinder', selected: 'camera.viewfinder' }} />
-        <Label>Scan</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="collection">
-        <Icon sf={{ default: 'square.stack', selected: 'square.stack.fill' }} />
-        <Label>Collection</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="community">
-        <Icon sf={{ default: 'person.2', selected: 'person.2.fill' }} />
-        <Label>Community</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <Icon sf={{ default: 'person', selected: 'person.fill' }} />
-        <Label>Profile</Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
-  );
-}
-
-// Classic tab bar (pre-iOS 26, Android, Web)
+// Tab bar (all platforms — 6 tabs fit without overflow)
 function ClassicTabLayout() {
   const colors = useColors();
   const colorScheme = useColorScheme();
@@ -181,7 +147,7 @@ function ClassicTabLayout() {
 export default function TabLayout() {
   return (
     <View style={{ flex: 1 }}>
-      {isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />}
+      <ClassicTabLayout />
       <DevSubscriptionToggle />
     </View>
   );
