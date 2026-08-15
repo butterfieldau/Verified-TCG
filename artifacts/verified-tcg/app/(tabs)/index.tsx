@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   Pressable,
   RefreshControl,
@@ -17,7 +16,7 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Logo } from '@/components/Logo';
 import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
-import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
+import { MarketMoverSkeleton, RecentActivitySkeleton } from '@/components/ui/SkeletonLoader';
 import { useApp } from '@/context/AppContext';
 import {
   getMarketMovers,
@@ -717,7 +716,7 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Recent Activity</Text>
           </View>
           {activityLoading ? (
-            <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+            <RecentActivitySkeleton count={4} />
           ) : (
             <View style={[styles.activityCard, { backgroundColor: C.card }]}>
               {activity.map((item, idx) => (
