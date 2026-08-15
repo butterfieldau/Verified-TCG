@@ -40,6 +40,9 @@ const { width: W } = Dimensions.get('window');
 const FRAME_W = Math.min(W - 64, 280);
 const FRAME_H = FRAME_W * 1.4;
 
+// Height of the absolute-positioned tab bar (matches _layout.tsx)
+const TAB_BAR_HEIGHT = Platform.OS === 'web' ? 84 : 74;
+
 // API base — same pattern as other service files
 const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -513,7 +516,7 @@ export default function ScanScreen() {
   const scansLeft = scanResult?.scansRemaining ?? (scanLimit - scansUsed);
 
   return (
-    <View style={[styles.container, { paddingTop: topPad, paddingBottom: Math.max(botPad, 16) }]}>
+    <View style={[styles.container, { paddingTop: topPad, paddingBottom: Math.max(botPad + TAB_BAR_HEIGHT, 16) }]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>
@@ -652,7 +655,7 @@ export default function ScanScreen() {
           style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: TAB_BAR_HEIGHT }}
         >
           {/* Viewfinder */}
           <View style={styles.viewfinder}>

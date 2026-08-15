@@ -40,7 +40,7 @@ const MAX_IMAGE_B64_BYTES = 8 * 1024 * 1024; // 8 MB
 // ── OpenAI client ──────────────────────────────────────────────────────────
 
 const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1",
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? "placeholder",
 });
 
@@ -130,8 +130,13 @@ async function extractCardInfo(base64Image: string, mimeType: string): Promise<{
   number: string;
   rawText: string;
 }> {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  if (!apiKey || apiKey === "placeholder") {
+    throw new Error("Card recognition is not configured — missing API key.");
+  }
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-nano",
+    model: "gpt-4o-mini",
     max_completion_tokens: 256,
     messages: [
       {
