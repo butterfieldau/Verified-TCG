@@ -68,7 +68,7 @@ export default function CollectionScreen() {
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   // Apply tab and TCG filters on the full in-memory collection
