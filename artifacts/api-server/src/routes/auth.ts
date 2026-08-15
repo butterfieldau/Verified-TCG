@@ -10,6 +10,7 @@ import { usersTable, userSessionsTable, passwordResetTokensTable } from "@worksp
 import { eq, and, gt, sql } from "drizzle-orm";
 import { clearUserWishlists } from "./wishlist.js";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { authSignLimiter, authRecoverLimiter } from "../lib/rateLimiters.js";
 
 const router = Router();
 
@@ -62,6 +63,7 @@ function userToMetadata(user: UserRow) {
     show_wishlist: user.showWishlist,
     show_for_trade: user.showForTrade,
     show_for_sale: user.showForSale,
+    preferred_tcgs: user.preferredTcgs ?? null,
   };
 }
 
@@ -95,7 +97,7 @@ async function createSession(userId: string, plainRefreshToken: string): Promise
 
 // ── POST /api/auth/signup ────────────────────────────────────────────────────
 
-router.post("/auth/signup", async (req, res) => {
+router.post("/auth/signup", authSignLimiter, async (req, res) => {
   const { email, password, display_name: displayName } = req.body as {
     email?: string;
     password?: string;
@@ -139,7 +141,7 @@ router.post("/auth/signup", async (req, res) => {
 
 // ── POST /api/auth/signin ────────────────────────────────────────────────────
 
-router.post("/auth/signin", async (req, res) => {
+router.post("/auth/signin", authSignLimiter, async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     return res.status(400).json({ message: "email and password are required" });
@@ -284,6 +286,7 @@ router.put("/auth/user", async (req, res) => {
       show_wishlist?: boolean;
       show_for_trade?: boolean;
       show_for_sale?: boolean;
+      preferred_tcgs?: string | null;
     };
   };
 
@@ -306,6 +309,7 @@ router.put("/auth/user", async (req, res) => {
   if (data.show_wishlist !== undefined) patch.showWishlist = data.show_wishlist;
   if (data.show_for_trade !== undefined) patch.showForTrade = data.show_for_trade;
   if (data.show_for_sale !== undefined) patch.showForSale = data.show_for_sale;
+  if ("preferred_tcgs" in data) patch.preferredTcgs = data.preferred_tcgs ?? null;
 
   const [updated] = await db
     .update(usersTable)
@@ -552,7 +556,7 @@ async function sendPasswordResetEmail(toEmail: string, plainToken: string): Prom
 
 // ── POST /api/auth/recover ───────────────────────────────────────────────────
 
-router.post("/auth/recover", async (req, res) => {
+router.post("/auth/recover", authRecoverLimiter, async (req, res) => {
   const { email } = req.body as { email?: string };
   if (!email) {
     return res.status(400).json({ message: "email is required" });
@@ -604,7 +608,7 @@ router.post("/auth/recover", async (req, res) => {
 
 // ── POST /api/auth/reset-password ────────────────────────────────────────────
 
-router.post("/auth/reset-password", async (req, res) => {
+router.post("/auth/reset-password", authRecoverLimiter, async (req, res) => {
   const { token, new_password: newPassword } = req.body as {
     token?: string;
     new_password?: string;

@@ -7,11 +7,13 @@
  * When at the limit the bell toggle shows an inline prompt and the Smart Alerts
  * entry point shows a lock state with an upgrade CTA.
  */
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -87,7 +89,12 @@ function AddPanel({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.panelOverlay}
       >
-        <Pressable style={styles.panelBackdrop} onPress={() => setSelectedCard(null)} />
+        <Pressable
+          style={styles.panelBackdrop}
+          onPress={() => setSelectedCard(null)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss panel"
+        />
         <View style={[styles.panel, { backgroundColor: C.card }]}>
           <View style={styles.panelHandle} />
           <Text style={styles.panelTitle}>Add to Wishlist</Text>
@@ -104,7 +111,12 @@ function AddPanel({
                 Market: ${selectedCard.price.raw.toLocaleString('en-AU')} AUD
               </Text>
             </View>
-            <Pressable onPress={() => setSelectedCard(null)} hitSlop={8}>
+            <Pressable
+              onPress={() => setSelectedCard(null)}
+              hitSlop={13}
+              accessibilityRole="button"
+              accessibilityLabel="Clear selected card"
+            >
               <Feather name="x" size={18} color={C.mutedForeground} />
             </Pressable>
           </View>
@@ -119,9 +131,13 @@ function AddPanel({
                 style={[
                   styles.gradeChip,
                   grade === g
-                    ? { backgroundColor: C.primary }
+                    ? { backgroundColor: '#CC1826' }
                     : { backgroundColor: C.muted },
                 ]}
+                accessibilityRole="radio"
+                accessibilityLabel={`Grade: ${g}`}
+                accessibilityState={{ selected: grade === g }}
+                hitSlop={{ top: 4, bottom: 4 }}
               >
                 <Text style={[
                   styles.gradeChipText,
@@ -154,12 +170,16 @@ function AddPanel({
             <Pressable
               onPress={() => setSelectedCard(null)}
               style={[styles.panelSecondaryBtn, { backgroundColor: C.muted }]}
+              accessibilityRole="button"
+              accessibilityLabel="Back to card search"
             >
               <Text style={[styles.panelSecondaryBtnText, { color: C.foreground }]}>Back</Text>
             </Pressable>
             <Pressable
               onPress={handleConfirm}
-              style={[styles.panelPrimaryBtn, { backgroundColor: C.primary }]}
+              style={[styles.panelPrimaryBtn, { backgroundColor: '#CC1826' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Add to wishlist"
             >
               <Feather name="heart" size={15} color="#FFF" />
               <Text style={styles.panelPrimaryBtnText}>Add to Wishlist</Text>
@@ -173,7 +193,12 @@ function AddPanel({
   // ── Card search list ─────────────────────────────────────────────────────
   return (
     <View style={styles.panelOverlay}>
-      <Pressable style={styles.panelBackdrop} onPress={onClose} />
+      <Pressable
+        style={styles.panelBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      />
       <View style={[styles.panel, styles.panelTall, { backgroundColor: C.card }]}>
         <View style={styles.panelHandle} />
         <Text style={styles.panelTitle}>Search Cards</Text>
@@ -190,7 +215,12 @@ function AddPanel({
             returnKeyType="search"
           />
           {query.length > 0 && (
-            <Pressable onPress={() => setQuery('')} hitSlop={8}>
+            <Pressable
+              onPress={() => setQuery('')}
+              hitSlop={15}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
               <Feather name="x" size={14} color={C.mutedForeground} />
             </Pressable>
           )}
@@ -212,6 +242,9 @@ function AddPanel({
                   { backgroundColor: pressed && !already ? C.muted : 'transparent' },
                   already && { opacity: 0.45 },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name}, ${card.setName}, $${card.price.raw.toLocaleString('en-AU')} AUD${already ? ', already in wishlist' : ''}`}
+                accessibilityState={{ disabled: already }}
               >
                 <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
                   <Text style={styles.resultInitial}>{card.name[0]}</Text>
@@ -248,7 +281,12 @@ function AlertLimitPrompt({ onDismiss }: { onDismiss: () => void }) {
           <Feather name="bell-off" size={14} color={C.warning} />
         </View>
         <Text style={styles.alertLimitTitle}>Alert limit reached</Text>
-        <Pressable onPress={onDismiss} hitSlop={8}>
+        <Pressable
+          onPress={onDismiss}
+          hitSlop={14}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss alert limit notification"
+        >
           <Feather name="x" size={16} color={C.mutedForeground} />
         </Pressable>
       </View>
@@ -258,7 +296,9 @@ function AlertLimitPrompt({ onDismiss }: { onDismiss: () => void }) {
       </Text>
       <Pressable
         onPress={() => { onDismiss(); router.push('/pro-subscription' as any); }}
-        style={[styles.alertLimitCTA, { backgroundColor: C.primary }]}
+        style={[styles.alertLimitCTA, { backgroundColor: '#CC1826' }]}
+        accessibilityRole="button"
+        accessibilityLabel="Unlock unlimited price alerts"
       >
         <Feather name="zap" size={13} color="#FFF" />
         <Text style={styles.alertLimitCTAText}>Unlock Unlimited Alerts</Text>
@@ -305,6 +345,8 @@ function WishCard({
         styles.wishCard,
         { backgroundColor: pressed ? C.muted : C.card },
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.card.name}${item.desiredGrade ? `, ${item.desiredGrade}` : ''}${item.targetPrice ? `, target $${item.targetPrice.toLocaleString('en-AU')}` : ''}`}
     >
       {/* Thumb */}
       <View style={[styles.thumb, { backgroundColor: item.card.gradientStart }]}>
@@ -380,7 +422,13 @@ function WishCard({
               />
             </Pressable>
           )}
-          <Pressable onPress={e => { e.stopPropagation?.(); onRemove(); }} style={styles.removeBtn} hitSlop={10}>
+          <Pressable
+            onPress={e => { e.stopPropagation?.(); onRemove(); }}
+            style={styles.removeBtn}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${item.card.name} from wishlist`}
+          >
             <Feather name="trash-2" size={13} color={C.mutedForeground} />
           </Pressable>
         </View>
@@ -425,7 +473,10 @@ function SmartAlertsStrip({
         </View>
         <Pressable
           onPress={e => { e.stopPropagation?.(); router.push('/pro-subscription' as any); }}
-          style={[styles.smartAlertsCTA, { backgroundColor: C.primary }]}
+          style={[styles.smartAlertsCTA, { backgroundColor: '#CC1826' }]}
+          accessibilityRole="button"
+          accessibilityLabel="Unlock unlimited alerts"
+          hitSlop={{ top: 6, bottom: 6 }}
         >
           <Feather name="zap" size={12} color="#FFF" />
           <Text style={styles.smartAlertsCTAText}>Unlock Unlimited</Text>
@@ -441,6 +492,8 @@ function SmartAlertsStrip({
         styles.smartAlertsStrip,
         { backgroundColor: pressed ? C.muted : C.card, borderColor: `${C.primary}22` },
       ]}
+      accessibilityRole="button"
+      accessibilityLabel="Smart Alerts — tap to manage"
     >
       <View style={styles.smartAlertsLeft}>
         <View style={[styles.smartAlertsIconWrap, { backgroundColor: `${C.primary}22` }]}>
@@ -473,13 +526,26 @@ export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
   const {
     watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem,
-    subscriptionTier, activeAlertCount,
+    subscriptionTier, activeAlertCount, refreshWishlist,
   } = useApp();
   const [sortBy, setSortBy] = useState<'added' | 'value' | 'change'>('added');
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [showLimitPrompt, setShowLimitPrompt] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  // Pull-to-refresh: re-sync wishlist with the server so any changes made on
+  // another device (or by a price alert) are reflected immediately.
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshWishlist();
+    } catch {
+      // Network unavailable — stay with cached wishlist
+    }
+    setIsRefreshing(false);
+  }, [refreshWishlist]);
 
   const isFree = subscriptionTier === 'free';
   const hasUnlimitedAlerts = canUseUnlimitedAlerts(subscriptionTier);
@@ -516,10 +582,24 @@ export default function WishlistScreen() {
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={C.primary}
+            colors={[C.primary]}
+          />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={2}
+          >
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
           <Text style={styles.title}>Wishlist</Text>
@@ -532,9 +612,34 @@ export default function WishlistScreen() {
               <Text style={[styles.alertCountText, { color: C.warning }]}>{alertCount}</Text>
             </View>
           )}
+          {watchlist.length > 0 && (
+            <Pressable
+              onPress={() => {
+                const lines = watchlist.map(
+                  (w, i) =>
+                    `${i + 1}. ${w.card.name}${w.desiredGrade ? ` (${w.desiredGrade})` : ''}${
+                      w.targetPrice ? ` — target $${w.targetPrice.toLocaleString()} AUD` : ''
+                    }`,
+                );
+                Share.share({
+                  title: 'My Verified TCG Wishlist',
+                  message: `My Verified TCG Wishlist:\n\n${lines.join('\n')}`,
+                }).catch(() => {});
+              }}
+              style={styles.shareBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Share wishlist"
+              hitSlop={2}
+            >
+              <Feather name="share-2" size={18} color={C.foreground} />
+            </Pressable>
+          )}
           <Pressable
             onPress={() => setShowAddPanel(true)}
-            style={[styles.addBtn, { backgroundColor: C.primary }]}
+            style={[styles.addBtn, { backgroundColor: '#CC1826' }]}
+            accessibilityRole="button"
+            accessibilityLabel="Add card to wishlist"
+            hitSlop={2}
           >
             <Feather name="plus" size={18} color="#FFF" />
           </Pressable>
@@ -574,7 +679,9 @@ export default function WishlistScreen() {
             </Text>
             <Pressable
               onPress={() => setShowAddPanel(true)}
-              style={[styles.emptyBtn, { backgroundColor: C.primary }]}
+              style={[styles.emptyBtn, { backgroundColor: '#CC1826' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Add your first card to wishlist"
             >
               <Feather name="plus" size={16} color="#FFF" />
               <Text style={styles.emptyBtnText}>Add Your First Card</Text>
@@ -592,9 +699,13 @@ export default function WishlistScreen() {
                   style={[
                     styles.sortChip,
                     sortBy === s
-                      ? { backgroundColor: C.primary }
+                      ? { backgroundColor: '#CC1826' }
                       : { backgroundColor: C.card },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sort by ${s === 'added' ? 'recently added' : s === 'value' ? 'value' : '7-day change'}`}
+                  accessibilityState={{ selected: sortBy === s }}
+                  hitSlop={{ top: 6, bottom: 6 }}
                 >
                   <Text style={[
                     styles.sortChipText,
@@ -681,6 +792,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
   },
   alertCountText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  shareBtn: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center', justifyContent: 'center',
+  },
   addBtn: {
     width: 40, height: 40, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',

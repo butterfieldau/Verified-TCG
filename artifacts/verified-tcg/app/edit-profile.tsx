@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -90,6 +91,9 @@ function ToggleRow({
         trackColor={{ false: C.border, true: `${C.primary}88` }}
         thumbColor={value ? C.primary : C.mutedForeground}
         ios_backgroundColor={C.border}
+        accessibilityLabel={label}
+        accessibilityHint={description}
+        accessibilityRole="switch"
       />
     </View>
   );
@@ -157,7 +161,12 @@ export default function EditProfileScreen() {
           <Button fullWidth size="lg" onPress={() => router.push('/create-account')}>
             Create an Account
           </Button>
-          <Pressable onPress={() => router.push('/sign-in')} style={styles.secondaryAction}>
+          <Pressable
+            onPress={() => router.push('/sign-in')}
+            style={styles.secondaryAction}
+            accessibilityRole="button"
+            accessibilityLabel="Already have an account? Sign in"
+          >
             <Text style={styles.secondaryText}>Already have an account? Sign in</Text>
           </Pressable>
         </View>
@@ -252,13 +261,20 @@ export default function EditProfileScreen() {
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <Header />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content}>
         <Text style={styles.heading}>Edit Profile</Text>
         <Text style={styles.body}>This information appears on your collector profile.</Text>
 
         {/* ── Avatar ─────────────────────────────────────────────────────── */}
         <View style={styles.avatarSection}>
-          <Pressable onPress={handlePickAvatar} style={styles.avatarWrapper} disabled={avatarUploading}>
+          <Pressable
+          onPress={handlePickAvatar}
+          style={styles.avatarWrapper}
+          disabled={avatarUploading}
+          accessibilityRole="button"
+          accessibilityLabel="Change profile photo"
+          accessibilityHint="Opens your photo library to choose a profile picture"
+        >
             {avatarUri ? (
               <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
             ) : (
@@ -300,6 +316,9 @@ export default function EditProfileScreen() {
             <Pressable
               onPress={() => setTcgModalVisible(true)}
               style={({ pressed }) => [styles.pickerRow, pressed && { backgroundColor: C.muted }]}
+              accessibilityRole="button"
+              accessibilityLabel="Favourite TCG"
+              accessibilityHint="Opens a picker to choose your favourite trading card game"
             >
               <View style={styles.pickerIcon}>
                 <Feather name="star" size={16} color={C.foreground} />
@@ -319,6 +338,9 @@ export default function EditProfileScreen() {
             <Pressable
               onPress={() => setDateModalVisible(true)}
               style={({ pressed }) => [styles.pickerRow, pressed && { backgroundColor: C.muted }]}
+              accessibilityRole="button"
+              accessibilityLabel="Collecting Since"
+              accessibilityHint="Opens a picker to set when you started collecting"
             >
               <View style={styles.pickerIcon}>
                 <Feather name="calendar" size={16} color={C.foreground} />
@@ -389,12 +411,14 @@ export default function EditProfileScreen() {
                 router.push(`/collector/${user.username}` as any);
               }
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Preview my public profile"
           >
             <Feather name="eye" size={15} color={C.primary} />
             <Text style={styles.previewBtnText}>Preview my public profile</Text>
           </Pressable>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       {/* ── TCG picker modal ─────────────────────────────────────────────── */}
       <Modal
@@ -403,7 +427,12 @@ export default function EditProfileScreen() {
         animationType="slide"
         onRequestClose={() => setTcgModalVisible(false)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setTcgModalVisible(false)} />
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setTcgModalVisible(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <View style={[styles.modalSheet, { backgroundColor: C.card }]}>
           <View style={styles.modalHandle} />
           <Text style={styles.modalTitle}>Favourite TCG</Text>
@@ -411,6 +440,9 @@ export default function EditProfileScreen() {
             <Pressable
               style={[styles.tcgOption, !favouriteTcg && { backgroundColor: `${C.primary}22` }]}
               onPress={() => { setFavouriteTcg(''); setTcgModalVisible(false); }}
+              accessibilityRole="radio"
+              accessibilityLabel="Not set"
+              accessibilityState={{ selected: !favouriteTcg }}
             >
               <Text style={[styles.tcgOptionText, !favouriteTcg && { color: C.primary }]}>Not set</Text>
               {!favouriteTcg && <Feather name="check" size={16} color={C.primary} />}
@@ -420,6 +452,9 @@ export default function EditProfileScreen() {
                 key={opt.value}
                 style={[styles.tcgOption, favouriteTcg === opt.value && { backgroundColor: `${C.primary}22` }]}
                 onPress={() => { setFavouriteTcg(opt.value); setTcgModalVisible(false); }}
+                accessibilityRole="radio"
+                accessibilityLabel={opt.label}
+                accessibilityState={{ selected: favouriteTcg === opt.value }}
               >
                 <Text style={[styles.tcgOptionText, favouriteTcg === opt.value && { color: C.primary }]}>
                   {opt.label}
@@ -438,7 +473,12 @@ export default function EditProfileScreen() {
         animationType="slide"
         onRequestClose={() => setDateModalVisible(false)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setDateModalVisible(false)} />
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setDateModalVisible(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <View style={[styles.modalSheet, { backgroundColor: C.card }]}>
           <View style={styles.modalHandle} />
           <Text style={styles.modalTitle}>Collecting Since</Text>
@@ -450,8 +490,11 @@ export default function EditProfileScreen() {
                 {MONTHS.map(m => (
                   <Pressable
                     key={m}
-                    style={[styles.dateOption, pickerMonth === m && { backgroundColor: `${C.primary}22` }]}
+                    style={[styles.dateOption, pickerMonth === m && { backgroundColor: `${C.primary}22` }, { minHeight: 44, justifyContent: 'center' }]}
                     onPress={() => setPickerMonth(m)}
+                    accessibilityRole="radio"
+                    accessibilityLabel={m}
+                    accessibilityState={{ selected: pickerMonth === m }}
                   >
                     <Text style={[styles.dateOptionText, pickerMonth === m && { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>
                       {m}
@@ -468,8 +511,11 @@ export default function EditProfileScreen() {
                 {YEARS.map(y => (
                   <Pressable
                     key={y}
-                    style={[styles.dateOption, pickerYear === y && { backgroundColor: `${C.primary}22` }]}
+                    style={[styles.dateOption, pickerYear === y && { backgroundColor: `${C.primary}22` }, { minHeight: 44, justifyContent: 'center' }]}
                     onPress={() => setPickerYear(y)}
+                    accessibilityRole="radio"
+                    accessibilityLabel={String(y)}
+                    accessibilityState={{ selected: pickerYear === y }}
                   >
                     <Text style={[styles.dateOptionText, pickerYear === y && { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>
                       {y}
@@ -480,7 +526,13 @@ export default function EditProfileScreen() {
             </View>
           </View>
           <View style={styles.dateActions}>
-            <Pressable style={styles.dateClearBtn} onPress={clearDate}>
+            <Pressable
+              style={styles.dateClearBtn}
+              onPress={clearDate}
+              accessibilityRole="button"
+              accessibilityLabel="Clear date"
+              hitSlop={{ top: 4, bottom: 4 }}
+            >
               <Text style={styles.dateClearText}>Clear</Text>
             </Pressable>
             <View style={{ flex: 1 }}>
@@ -496,7 +548,13 @@ export default function EditProfileScreen() {
 function Header() {
   return (
     <View style={styles.header}>
-      <Pressable onPress={() => router.back()} style={styles.backBtn}>
+      <Pressable
+        onPress={() => router.back()}
+        style={styles.backBtn}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={2}
+      >
         <Feather name="arrow-left" size={20} color={C.foreground} />
       </Pressable>
       <Text style={styles.headerTitle}>Profile</Text>

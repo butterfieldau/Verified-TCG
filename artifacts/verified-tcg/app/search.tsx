@@ -1,28 +1,32 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  FlatList,
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { VerificationBadge } from '@/components/ui/Badge';
 import { Chip } from '@/components/ui/Chip';
+import { SearchListSkeleton } from '@/components/ui/SkeletonLoader';
 import { getMarketMovers } from '@/services/market';
 import type { MarketMover } from '@/types';
-import { searchCards, CARD_SETS } from '@/services/cards';
+import { handleApiError } from '@/services/errorHandler';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
 import { catalogCardToAppCard, searchCatalog, resizeTcgPlayerUrl, type CatalogCard } from '@/services/catalogApi';
 import { proxyImageUrl } from '@/services/imageProxy';
 
 const C = colors.dark;
+const SEARCH_PAGE_SIZE = 20;
 
 const CATEGORIES: { label: string; value: SearchCategory }[] = [
   { label: 'Cards', value: 'cards' },
@@ -31,7 +35,6 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
   { label: 'Users', value: 'users' },
 ];
 
-const TRENDING_SEARCHES = ['Umbreon ex', 'Pikachu', 'Charizard', 'Luffy', 'Black Lotus'];
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
@@ -39,7 +42,12 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const showImage = !!imgUri && !imgError;
 
   return (
-    <Pressable style={[styles.resultRow, { backgroundColor: C.card }]} onPress={onPress}>
+    <Pressable
+      style={[styles.resultRow, { backgroundColor: C.card }]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, $${card.price.raw.toLocaleString()} raw`}
+    >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
           <Image
@@ -109,19 +117,24 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<SearchCategory>('cards');
+
+  // Remote catalog results — paginated
   const [remoteResults, setRemoteResults] = useState<CatalogCard[]>([]);
+  const [remotePage, setRemotePage] = useState(1);
+  const [remoteHasMore, setRemoteHasMore] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteLoadingMore, setRemoteLoadingMore] = useState(false);
   const [remoteError, setRemoteError] = useState('');
   const [trendingMovers, setTrendingMovers] = useState<MarketMover[]>([]);
+
+  // Ref tracking the current search query so stale requests don't overwrite
+  const activeQueryRef = useRef('');
+  const activeControllerRef = useRef<AbortController | null>(null);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  const localCardResults = query.trim().length > 0 ? searchCards(query) : [];
-  const cardResults = remoteResults.length > 0 ? remoteResults.map(catalogCardToAppCard) : localCardResults;
-  const setResults = query.trim().length > 0
-    ? CARD_SETS.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))
-    : [];
+  const cardResults = remoteResults.map(catalogCardToAppCard);
 
   const isEmpty = query.trim().length === 0;
 
@@ -130,35 +143,77 @@ export default function SearchScreen() {
     getMarketMovers().then(setTrendingMovers).catch(() => {});
   }, []);
 
+  // Debounced search — resets pagination on new query
   useEffect(() => {
     const trimmed = query.trim();
     if (!trimmed || category !== 'cards') {
       setRemoteResults([]);
       setRemoteError('');
+      setRemoteHasMore(false);
+      setRemotePage(1);
       return;
     }
+    // Cancel any in-flight request
+    if (activeControllerRef.current) activeControllerRef.current.abort();
     const controller = new AbortController();
+    activeControllerRef.current = controller;
+    activeQueryRef.current = trimmed;
+
     setRemoteLoading(true);
     setRemoteError('');
+    setRemotePage(1);
+    setRemoteHasMore(false);
+
     const timer = setTimeout(() => {
-      searchCatalog(trimmed, controller.signal)
-        .then(result => setRemoteResults(result.data ?? []))
+      searchCatalog(trimmed, controller.signal, 1)
+        .then(result => {
+          if (activeQueryRef.current !== trimmed) return; // stale
+          setRemoteResults(result.data ?? []);
+          setRemoteHasMore(result.meta?.hasMore ?? false);
+          setRemotePage(1);
+        })
         .catch(error => {
-          if (error?.name !== 'AbortError') {
-            setRemoteResults([]);
-            setRemoteError('Live catalogue unavailable — showing local results.');
-          }
+          if (error?.name === 'AbortError') return;
+          setRemoteResults([]);
+          setRemoteError(handleApiError(error));
         })
         .finally(() => setRemoteLoading(false));
     }, 350);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [query, category]);
 
+  const handleLoadMore = useCallback(async () => {
+    const trimmed = query.trim();
+    if (!remoteHasMore || remoteLoadingMore || remoteLoading || !trimmed) return;
+    setRemoteLoadingMore(true);
+    const nextPage = remotePage + 1;
+    try {
+      const result = await searchCatalog(trimmed, undefined, nextPage);
+      if (activeQueryRef.current !== trimmed) return; // stale
+      setRemoteResults(prev => [...prev, ...(result.data ?? [])]);
+      setRemoteHasMore(result.meta?.hasMore ?? false);
+      setRemotePage(nextPage);
+    } catch {
+      // silently ignore load-more errors
+    } finally {
+      setRemoteLoadingMore(false);
+    }
+  }, [remoteHasMore, remoteLoadingMore, remoteLoading, remotePage, query]);
+
+  // Flatten into list items for FlashList
+  const listData: Card[] = !isEmpty && category === 'cards' ? cardResults : [];
+
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       {/* Search bar */}
       <View style={styles.searchRow}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={2}
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <View style={styles.inputWrap}>
@@ -175,7 +230,12 @@ export default function SearchScreen() {
             selectionColor={C.primary}
           />
           {query.length > 0 && (
-            <Pressable onPress={() => setQuery('')}>
+            <Pressable
+              onPress={() => setQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Feather name="x" size={16} color={C.mutedForeground} />
             </Pressable>
           )}
@@ -195,65 +255,56 @@ export default function SearchScreen() {
         ))}
       </View>
 
-      <FlatList
-        keyboardShouldPersistTaps="handled"
-        data={!isEmpty && category === 'cards' ? cardResults : []}
+      <FlashList
+        data={listData}
         keyExtractor={item => item.id}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: tabH + 24 }}
         showsVerticalScrollIndicator={false}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.4}
         ListHeaderComponent={() => (
           <View>
-            {/* Empty state — trending */}
+            {/* Empty state — trending from real market movers */}
             {isEmpty && (
               <View>
-                <Text style={styles.sectionTitle}>Trending Searches</Text>
-                <View style={styles.trendingTags}>
-                  {TRENDING_SEARCHES.map(t => (
-                    <Pressable
-                      key={t}
-                      onPress={() => setQuery(t)}
-                      style={[styles.trendingTag, { backgroundColor: C.card }]}
-                    >
-                      <Feather name="trending-up" size={13} color={C.primary} />
-                      <Text style={styles.trendingTagText}>{t}</Text>
-                    </Pressable>
-                  ))}
-                </View>
+                {trendingMovers.length > 0 && (
+                  <>
+                    <Text style={styles.sectionTitle}>Trending Searches</Text>
+                    <View style={styles.trendingTags}>
+                      {trendingMovers.slice(0, 6).map(m => (
+                        <Pressable
+                          key={m.card.id}
+                          onPress={() => setQuery(m.card.name)}
+                          style={[styles.trendingTag, { backgroundColor: C.card }]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Search for ${m.card.name}`}
+                        >
+                          <Feather name="trending-up" size={13} color={C.primary} />
+                          <Text style={styles.trendingTagText}>{m.card.name}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
 
-                <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Trending Cards</Text>
-                {trendingMovers.map(m => (
-                  <CardResultRow
-                    key={m.card.id}
-                    card={m.card}
-                    onPress={() => router.push(`/card/${m.card.id}`)}
-                  />
-                ))}
+                    <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Trending Cards</Text>
+                    {trendingMovers.map(m => (
+                      <CardResultRow
+                        key={m.card.id}
+                        card={m.card}
+                        onPress={() => router.push(`/card/${m.card.id}`)}
+                      />
+                    ))}
+                  </>
+                )}
               </View>
             )}
 
-            {/* Set results */}
+            {/* Set results — no local catalog; show empty state */}
             {!isEmpty && category === 'sets' && (
-              <View>
-                <Text style={styles.sectionTitle}>Sets ({setResults.length})</Text>
-                {setResults.map(s => (
-                  <View key={s.id} style={[styles.resultRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.setIcon, { backgroundColor: C.muted }]}>
-                      <Feather name="package" size={20} color={C.primary} />
-                    </View>
-                    <View style={styles.resultInfo}>
-                      <Text style={styles.resultName}>{s.name}</Text>
-                      <Text style={styles.resultSet}>
-                        {s.series ?? s.tcg} · {s.totalCards} cards
-                      </Text>
-                      <Text style={styles.resultRarity}>
-                        {new Date(s.releaseDate).getFullYear()}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
-                {setResults.length === 0 && (
-                  <Text style={styles.noResults}>No sets found for "{query}"</Text>
-                )}
+              <View style={styles.emptyState}>
+                <Feather name="package" size={40} color={C.muted} />
+                <Text style={styles.emptyTitle}>Set search coming soon</Text>
+                <Text style={styles.emptyBody}>Try searching by card name instead</Text>
               </View>
             )}
 
@@ -271,16 +322,28 @@ export default function SearchScreen() {
             {/* Cards result header */}
             {!isEmpty && category === 'cards' && (
               <View>
-                <Text style={styles.sectionTitle}>{remoteLoading ? 'Searching live catalogue…' : `Cards (${cardResults.length})`}</Text>
-                {remoteError ? <Text style={styles.liveError}>{remoteError}</Text> : null}
-                {!remoteError && remoteResults.length > 0 ? <Text style={styles.liveSource}>Live catalogue and pricing · JustTCG</Text> : null}
+                <Text style={styles.sectionTitle}>
+                  {remoteLoading ? 'Searching live catalogue…' : `Cards (${cardResults.length}${remoteHasMore ? '+' : ''})`}
+                </Text>
+                {remoteError ? (
+                  <View style={styles.errorRow}>
+                    <Feather name="wifi-off" size={14} color={C.warning} />
+                    <Text style={styles.liveError}>{remoteError}</Text>
+                  </View>
+                ) : null}
+                {!remoteError && remoteResults.length > 0 ? (
+                  <Text style={styles.liveSource}>Live catalogue and pricing · JustTCG</Text>
+                ) : null}
               </View>
+            )}
+
+            {/* Skeleton while loading first page */}
+            {remoteLoading && listData.length === 0 && (
+              <SearchListSkeleton count={5} />
             )}
           </View>
         )}
         renderItem={({ item }) => {
-          // Find the original CatalogCard so the detail page receives the full
-          // card data immediately and doesn't need a second API call.
           const catalogSource = remoteResults.find(r => r.id === item.id);
           return (
             <CardResultRow
@@ -294,8 +357,15 @@ export default function SearchScreen() {
             />
           );
         }}
+        ListFooterComponent={() => (
+          remoteLoadingMore ? (
+            <View style={{ padding: 16, alignItems: 'center' }}>
+              <ActivityIndicator color={C.primary} size="small" />
+            </View>
+          ) : null
+        )}
         ListEmptyComponent={() =>
-          !isEmpty && category === 'cards' ? (
+          !isEmpty && category === 'cards' && !remoteLoading ? (
             <View style={styles.emptyState}>
               <Feather name="search" size={40} color={C.muted} />
               <Text style={styles.emptyTitle}>No cards found</Text>
@@ -419,7 +489,8 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   liveSource: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.positive, marginBottom: 10 },
-  liveError: { fontSize: 12, fontFamily: 'Inter_500Medium', color: '#E6A817', marginBottom: 10 },
+  liveError: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.warning, marginBottom: 10, flex: 1 },
+  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   emptyBody: {

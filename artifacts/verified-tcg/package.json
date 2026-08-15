@@ -77,8 +77,12 @@
   },
   "dependencies": {
     "@expo-google-fonts/rajdhani": "^0.4.1",
+    "@shopify/flash-list": "^2.3.2",
     "expo-camera": "^17.0.10",
     "expo-device": "^8.0.10",
-    "expo-notifications": "^0.32.17"
+    "expo-file-system": "^19.0.23",
+    "expo-network": "^57.0.1",
+    "expo-notifications": "^0.32.17",
+    "expo-sharing": "^14.0.8"
   }
 }

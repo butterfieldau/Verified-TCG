@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import LandingPage from '@/pages/landing';
 import PrivacyPolicy from '@/pages/privacy';
+import SubscriptionTerms from '@/pages/subscription-terms';
 import {
   Route,
   Switch,
@@ -21,6 +22,7 @@ function Router() {
       <Switch>
         <Route path="/" component={LandingPage} />
         <Route path="/privacy" component={PrivacyPolicy} />
+        <Route path="/subscription-terms" component={SubscriptionTerms} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>

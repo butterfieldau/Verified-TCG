@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -81,7 +82,13 @@ export default function ContactSupportScreen() {
   if (submitted) {
     return (
       <View style={[styles.successContainer, { backgroundColor: C.background, paddingTop: topPad }]}>
-        <Pressable onPress={() => router.back()} style={[styles.backBtn, { alignSelf: 'flex-start', marginLeft: 20 }]}>
+        <Pressable
+          onPress={() => router.back()}
+          style={[styles.backBtn, { alignSelf: 'flex-start', marginLeft: 20 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={2}
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <View style={styles.successContent}>
@@ -94,7 +101,9 @@ export default function ContactSupportScreen() {
           </Text>
           <Pressable
             onPress={() => router.back()}
-            style={[styles.doneBtn, { backgroundColor: C.primary }]}
+            style={[styles.doneBtn, { backgroundColor: '#CC1826' }]}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Help"
           >
             <Text style={[styles.doneBtnText, { color: '#FFFFFF' }]}>Back to Help</Text>
           </Pressable>
@@ -104,15 +113,23 @@ export default function ContactSupportScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: C.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+    <ScrollView
       contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: 48 }]}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <Text style={styles.title}>Contact Support</Text>
@@ -134,6 +151,7 @@ export default function ContactSupportScreen() {
             placeholder="Display name"
             placeholderTextColor={C.mutedForeground}
             returnKeyType="next"
+            accessibilityLabel="Your name"
           />
         </View>
 
@@ -148,6 +166,7 @@ export default function ContactSupportScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             returnKeyType="next"
+            accessibilityLabel="Email address"
           />
         </View>
 
@@ -156,6 +175,9 @@ export default function ContactSupportScreen() {
           <Pressable
             onPress={() => setCategoryOpen(!categoryOpen)}
             style={[styles.input, styles.selectRow, { backgroundColor: C.card, borderColor: C.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={category ? `Category: ${category}` : 'Category — select one'}
+            accessibilityHint="Opens a list of support categories"
           >
             <Text style={[styles.selectText, { color: category ? C.foreground : C.mutedForeground }]}>
               {category || 'Select a category'}
@@ -194,6 +216,7 @@ export default function ContactSupportScreen() {
             placeholderTextColor={C.mutedForeground}
             returnKeyType="next"
             maxLength={120}
+            accessibilityLabel="Subject"
           />
         </View>
 
@@ -209,6 +232,7 @@ export default function ContactSupportScreen() {
             numberOfLines={6}
             textAlignVertical="top"
             maxLength={2000}
+            accessibilityLabel="Message"
           />
           <Text style={styles.charCount}>{message.length}/2000</Text>
         </View>
@@ -223,10 +247,13 @@ export default function ContactSupportScreen() {
         <Pressable
           onPress={handleSubmit}
           disabled={!isValid || submitting}
+          accessibilityRole="button"
+          accessibilityLabel="Send Message"
+          accessibilityHint="Submits your support request"
           style={({ pressed }) => [
             styles.submitBtn,
             {
-              backgroundColor: isValid ? C.primary : C.muted,
+              backgroundColor: isValid ? '#CC1826' : C.muted,
               opacity: pressed ? 0.85 : 1,
             },
           ]}
@@ -244,6 +271,7 @@ export default function ContactSupportScreen() {
         </Pressable>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

@@ -28,15 +28,18 @@ import {
   postCommentsTable,
   followsTable,
   usersTable,
+  userBlocksTable,
 } from "@workspace/db";
 import {
   and,
   desc,
   eq,
   inArray,
+  notInArray,
   sql,
 } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { createNotification } from "./notifications.js";
 
 const communityRouter = Router();
 
@@ -61,7 +64,21 @@ communityRouter.get(
       const followedIds = followed.map((r) => r.followeeId);
 
       // Include own posts in the feed too
-      const feedUserIds = [...new Set([...followedIds, userId])];
+      const feedUserIdsRaw = [...new Set([...followedIds, userId])];
+
+      // Bidirectional block exclusion — remove any blocked/blocking users from the feed
+      // (own userId is never in blocks so always stays)
+      const [blockedByMe, blockedMe] = await Promise.all([
+        db.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockerUserId, userId)),
+        db.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockedUserId, userId)),
+      ]);
+      const blockedIdsSet = new Set([
+        ...blockedByMe.map((r) => r.id),
+        ...blockedMe.map((r) => r.id),
+      ]);
+      const feedUserIds = feedUserIdsRaw.filter((id) => !blockedIdsSet.has(id));
 
       if (feedUserIds.length === 0) {
         res.json({ feed: [], page, hasMore: false });
@@ -278,9 +295,9 @@ communityRouter.post(
     const postId = String(req.params["id"] ?? "");
 
     try {
-      // Verify post exists
+      // Verify post exists and get author
       const [post] = await db
-        .select({ id: postsTable.id })
+        .select({ id: postsTable.id, userId: postsTable.userId })
         .from(postsTable)
         .where(eq(postsTable.id, postId))
         .limit(1);
@@ -290,15 +307,35 @@ communityRouter.post(
         return;
       }
 
-      await db
+      const inserted = await db
         .insert(postLikesTable)
         .values({ postId, userId })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ userId: postLikesTable.userId });
 
       const [countRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(postLikesTable)
         .where(eq(postLikesTable.postId, postId));
+
+      // Notify the post author only when a new like row was created and the liker is not the author
+      if (inserted.length > 0 && post.userId !== userId) {
+        db.select({ username: usersTable.username })
+          .from(usersTable)
+          .where(eq(usersTable.id, userId))
+          .limit(1)
+          .then(([likerRow]) => {
+            if (!likerRow) return;
+            return createNotification({
+              userId: post.userId,
+              type: "community",
+              title: "Someone liked your post",
+              body: `${likerRow.username} liked your post.`,
+              metadata: { postId, likerUsername: likerRow.username },
+            });
+          })
+          .catch((err) => console.error("[community] like notification:", err));
+      }
 
       res.json({ ok: true, likeCount: Number(countRow?.count ?? 0) });
     } catch (err) {
@@ -419,9 +456,9 @@ communityRouter.post(
     }
 
     try {
-      // Verify post exists
+      // Verify post exists and get author
       const [post] = await db
-        .select({ id: postsTable.id })
+        .select({ id: postsTable.id, userId: postsTable.userId })
         .from(postsTable)
         .where(eq(postsTable.id, postId))
         .limit(1);
@@ -431,16 +468,28 @@ communityRouter.post(
         return;
       }
 
-      const [comment] = await db
-        .insert(postCommentsTable)
-        .values({ postId, userId, body: body.trim() })
-        .returning();
+      const [[comment], [author]] = await Promise.all([
+        db
+          .insert(postCommentsTable)
+          .values({ postId, userId, body: body.trim() })
+          .returning(),
+        db
+          .select({ username: usersTable.username, displayName: usersTable.displayName })
+          .from(usersTable)
+          .where(eq(usersTable.id, userId))
+          .limit(1),
+      ]);
 
-      const [author] = await db
-        .select({ username: usersTable.username, displayName: usersTable.displayName })
-        .from(usersTable)
-        .where(eq(usersTable.id, userId))
-        .limit(1);
+      // Notify the post author (skip if the commenter is the author)
+      if (post.userId !== userId && author) {
+        createNotification({
+          userId: post.userId,
+          type: "community",
+          title: "New comment on your post",
+          body: `${author.username} commented on your post.`,
+          metadata: { postId, commenterUsername: author.username },
+        }).catch((err) => console.error("[community] comment notification:", err));
+      }
 
       res.status(201).json({
         id: comment!.id,

@@ -16,6 +16,10 @@ import eventsRouter from "./events";
 import notificationsRouter from "./notifications";
 import collectorsRouter from "./collectors";
 import communityRouter from "./community";
+import exportRouter from "./export";
+import blockReportRouter from "./block-report";
+import activityRouter from "./activity";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -36,5 +40,9 @@ router.use(eventsRouter);
 router.use(notificationsRouter);
 router.use(collectorsRouter);
 router.use(communityRouter);
+router.use(exportRouter);
+router.use(blockReportRouter);
+router.use(activityRouter);
+router.use(adminRouter);
 
 export default router;

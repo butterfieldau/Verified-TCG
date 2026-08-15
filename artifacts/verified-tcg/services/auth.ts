@@ -217,6 +217,9 @@ export const ALL_STORAGE_KEYS = [
   // Home-screen dismissal banners
   '@verified_tcg/event_banner_dismissed_event_id',
   '@verified_tcg/trade_matches_dismissed_count',
+  // Onboarding TCG game selections (must be cleared on sign-out so the
+  // next account holder's choices are not mistakenly pushed to the server)
+  '@verified_tcg/preferred_tcgs',
 ] as const;
 
 export async function signOut(): Promise<void> {
@@ -255,6 +258,34 @@ export async function getAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Fetch the current user's full profile from the server.
+ *
+ * Calls GET /api/auth/user with the stored access token and returns the
+ * server's authoritative user object (including all profile fields that
+ * may have been edited on another device or via the web app).
+ *
+ * Returns null if the network is unavailable, the session has expired, or
+ * no session exists — callers should fall back gracefully to cached data.
+ *
+ * The persisted session in AsyncStorage is NOT updated here; the returned
+ * data is intended for updating in-memory state only.
+ */
+export async function fetchCurrentUser(): Promise<AuthSession['user'] | null> {
+  const session = await restoreSession();
+  if (!session) return null;
+  try {
+    const response = await request('/api/auth/user', {
+      accessToken: session.access_token,
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as AuthSession['user'];
+  } catch {
+    // Network unavailable — caller falls back to cached session data
+    return null;
+  }
+}
+
+/**
  * Upgrade the authenticated user's subscription to Pro.
  *
  * Calls POST /api/subscription/upgrade on the server which sets
@@ -280,6 +311,53 @@ export async function upgradeToPro(): Promise<{ subscription_tier: string; is_fo
   const result = (await response.json()) as { subscription_tier: string; is_founding_member: boolean };
 
   // Update the cached session so the new tier is available on next restore
+  const updatedSession: AuthSession = {
+    ...session,
+    user: {
+      ...session.user,
+      user_metadata: {
+        ...(session.user.user_metadata ?? {}),
+        subscription_tier: result.subscription_tier,
+        is_founding_member: result.is_founding_member,
+      },
+    },
+  };
+  await persist(updatedSession);
+
+  return result;
+}
+
+/**
+ * Restore Purchases — required by Apple App Store Review Guidelines §3.1.1.
+ *
+ * Re-fetches the user's current subscription_tier from the server so that
+ * after a reinstall / device switch the Pro status can be confirmed without
+ * requiring a new purchase.
+ *
+ * @returns { subscription_tier, is_founding_member, restored }
+ *   `restored` is true when the server confirmed an active Pro subscription.
+ */
+export async function restorePurchases(): Promise<{
+  subscription_tier: string;
+  is_founding_member: boolean;
+  restored: boolean;
+}> {
+  const session = await restoreSession();
+  if (!session) throw new Error('You must be signed in to restore purchases.');
+
+  const response = await request('/api/subscription/restore', {
+    method: 'POST',
+    accessToken: session.access_token,
+  });
+  if (!response.ok) return parseError(response);
+
+  const result = (await response.json()) as {
+    subscription_tier: string;
+    is_founding_member: boolean;
+    restored: boolean;
+  };
+
+  // Sync the cached session with the authoritative tier from the server
   const updatedSession: AuthSession = {
     ...session,
     user: {

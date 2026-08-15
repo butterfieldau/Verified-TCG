@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { collectionItemsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { logActivity } from "./activity.js";
 
 const router = Router();
 
@@ -29,6 +30,42 @@ function rowToItem(row: typeof collectionItemsTable.$inferSelect) {
 // ── GET /api/collection ───────────────────────────────────────────────────────
 
 router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
+  const pageParam = req.query["page"];
+  const limitParam = req.query["limit"];
+
+  // Paginated mode when either param is provided
+  const isPaginated = pageParam !== undefined || limitParam !== undefined;
+
+  if (isPaginated) {
+    const limit = Math.min(Math.max(parseInt(String(limitParam ?? "20"), 10) || 20, 1), 100);
+    const page = Math.max(parseInt(String(pageParam ?? "1"), 10) || 1, 1);
+    const offset = (page - 1) * limit;
+
+    const [countResult, rows] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(collectionItemsTable)
+        .where(eq(collectionItemsTable.userId, req.userId!)),
+      db
+        .select()
+        .from(collectionItemsTable)
+        .where(eq(collectionItemsTable.userId, req.userId!))
+        .orderBy(collectionItemsTable.createdAt)
+        .limit(limit)
+        .offset(offset),
+    ]);
+
+    const total = countResult[0]?.count ?? 0;
+    return res.json({
+      items: rows.map(rowToItem),
+      total,
+      page,
+      limit,
+      hasMore: offset + limit < total,
+    });
+  }
+
+  // Non-paginated (backward-compatible) — return full list as array
   const rows = await db
     .select()
     .from(collectionItemsTable)
@@ -189,6 +226,12 @@ router.post("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     })
     .returning();
 
+  // Log activity — fire-and-forget
+  const cardName = (body.card as Record<string, unknown>)?.name as string | undefined;
+  logActivity(req.userId!, "card_added", body.cardId as string, cardName ?? null, {
+    cardImageUrl: ((body.card as Record<string, unknown>)?.image as string | undefined) ?? null,
+  });
+
   return res.status(201).json(rowToItem(row));
 });
 
@@ -237,6 +280,12 @@ router.patch("/collection/:id", requireActiveUser, async (req: AuthRequest, res)
     .where(and(eq(collectionItemsTable.id, id), eq(collectionItemsTable.userId, req.userId!)))
     .returning();
 
+  // Log activity — fire-and-forget
+  const rowCard = row.cardData as Record<string, unknown> | null;
+  logActivity(req.userId!, "collection_updated", row.cardId, rowCard?.name as string ?? null, {
+    cardImageUrl: (rowCard?.image as string | undefined) ?? null,
+  });
+
   return res.json(rowToItem(row));
 });
 
@@ -254,6 +303,9 @@ router.delete("/collection/:id", requireActiveUser, async (req: AuthRequest, res
   if (deleted.length === 0) {
     return res.status(404).json({ message: "Item not found" });
   }
+
+  // Log activity — fire-and-forget (entity name not available after deletion)
+  logActivity(req.userId!, "card_removed", id, null);
 
   return res.json({ message: "Deleted" });
 });

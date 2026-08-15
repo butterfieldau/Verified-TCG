@@ -22,6 +22,7 @@ import { db } from "@workspace/db";
 import { wishlistItemsTable } from "@workspace/db";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import type { InferInsertModel } from "drizzle-orm";
+import { logActivity } from "./activity.js";
 
 const wishlistRouter = Router();
 
@@ -252,6 +253,11 @@ wishlistRouter.post("/wishlist", requireActiveUser, async (req: AuthRequest, res
     : [...existing, item];
   cache.set(userId, updated);
 
+  // Log activity — fire-and-forget
+  logActivity(userId, "wishlist_added", item.cardId, item.card?.name ?? null, {
+    cardImageUrl: item.card?.image ?? null,
+  });
+
   res.status(201).json({ ok: true, item });
 });
 
@@ -324,7 +330,12 @@ wishlistRouter.delete("/wishlist/:id", requireActiveUser, async (req: AuthReques
   // Update cache after confirmed DB write
   await hydrateIfNeeded(userId);
   const existing = cache.get(userId) ?? [];
+  // Capture item name BEFORE removing from cache so logActivity can use it
+  const removedItem = existing.find((i) => i.id === id);
   cache.set(userId, existing.filter((i) => i.id !== id));
+
+  // Log activity — fire-and-forget
+  logActivity(userId, "wishlist_removed", id, removedItem?.card?.name ?? null);
 
   res.json({ ok: true, removed: result.length });
 });

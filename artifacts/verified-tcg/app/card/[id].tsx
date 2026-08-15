@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -32,16 +33,13 @@ import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
 import { fetchGradedPrices } from '@/services/gradedPricing';
-import { MOCK_LISTINGS } from '@/services/listings';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, CollectionItem, WatchlistItem } from '@/types';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import {
-  getMockPricingPlus,
   GRADERS,
-  type PricePoint,
 } from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
 import {
@@ -188,7 +186,12 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={panelStyles.overlay}
     >
-      <Pressable style={panelStyles.backdrop} onPress={onClose} />
+      <Pressable
+        style={panelStyles.backdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      />
       <View style={[panelStyles.panel, { backgroundColor: C2.card }]}>
         <View style={panelStyles.handle} />
         <Text style={panelStyles.title}>Add to Wishlist</Text>
@@ -217,9 +220,13 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
               style={[
                 panelStyles.gradeChip,
                 grade === g
-                  ? { backgroundColor: C2.primary }
+                  ? { backgroundColor: '#CC1826' }
                   : { backgroundColor: C2.muted },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Grade ${g}`}
+              accessibilityState={{ selected: grade === g }}
+              hitSlop={{ top: 4, bottom: 4 }}
             >
               <Text style={[
                 panelStyles.gradeChipText,
@@ -254,12 +261,16 @@ function WishlistPanel({ card, onClose, onAdd }: WishlistPanelProps) {
           <Pressable
             onPress={onClose}
             style={[panelStyles.cancelBtn, { backgroundColor: C2.muted }]}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
             <Text style={[panelStyles.cancelBtnText, { color: C2.foreground }]}>Cancel</Text>
           </Pressable>
           <Pressable
             onPress={handleConfirm}
-            style={[panelStyles.confirmBtn, { backgroundColor: C2.primary }]}
+            style={[panelStyles.confirmBtn, { backgroundColor: '#CC1826' }]}
+            accessibilityRole="button"
+            accessibilityLabel="Add to Wishlist"
           >
             <Feather name="heart" size={15} color="#FFF" />
             <Text style={panelStyles.confirmBtnText}>Add to Wishlist</Text>
@@ -372,17 +383,6 @@ const panelStyles = StyleSheet.create({
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
 
-// Helper — keeps raw stat rows DRY across preview/locked content
-function RAW_STAT_ROWS(p: ReturnType<typeof getMockPricingPlus>) {
-  return [
-    { label: '7-Day Avg',    value: `$${p.rawStats.avg7d.toLocaleString('en-AU')}` },
-    { label: '30-Day Avg',   value: `$${p.rawStats.avg30d.toLocaleString('en-AU')}` },
-    { label: '90-Day Avg',   value: `$${p.rawStats.avg90d.toLocaleString('en-AU')}` },
-    { label: '52-Week High', value: `$${p.rawStats.high52w.toLocaleString('en-AU')}` },
-    { label: '52-Week Low',  value: `$${p.rawStats.low52w.toLocaleString('en-AU')}` },
-    { label: 'Sales Vol.',   value: `${p.rawStats.salesVolume} sold/30d` },
-  ];
-}
 
 /** Card aspect ratio: 2.5 wide × 3.5 tall */
 const CARD_W = W - 40;
@@ -746,6 +746,8 @@ export default function CardDetailScreen() {
   const [catalogError, setCatalogError] = useState(false);
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
+  const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
+  const [historyRequiresUpgrade, setHistoryRequiresUpgrade] = useState(false);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -815,6 +817,7 @@ export default function CardDetailScreen() {
     const controller = new AbortController();
     setGradedLoading(true);
     setLiveGradedPrices({});
+    setGradedRequiresUpgrade(false);
     fetchGradedPrices(
       resolvedCard.id,
       resolvedCard.name,
@@ -822,7 +825,10 @@ export default function CardDetailScreen() {
       resolvedCard.tcg,
       controller.signal,
     )
-      .then(prices => setLiveGradedPrices(prices))
+      .then(result => {
+        setLiveGradedPrices(result.prices);
+        setGradedRequiresUpgrade(result.requiresUpgrade);
+      })
       .catch(() => {})
       .finally(() => setGradedLoading(false));
     return () => controller.abort();
@@ -837,10 +843,12 @@ export default function CardDetailScreen() {
     const controller = new AbortController();
     setPriceHistoryLoading(true);
     setPriceHistory([]);
+    setHistoryRequiresUpgrade(false);
     fetchPriceHistory(resolvedCard.id, gradeKeyFromTab(priceTab), selectedPeriod, controller.signal)
       .then(result => {
         setPriceHistory(result.points);
         setPriceHistoryUpdatedAt(result.updatedAt);
+        setHistoryRequiresUpgrade(result.requiresUpgrade ?? false);
       })
       .catch(() => {})
       .finally(() => setPriceHistoryLoading(false));
@@ -909,7 +917,12 @@ export default function CardDetailScreen() {
         <Text style={{ color: C.mutedForeground, marginTop: 8, fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center' }}>
           This card couldn't be loaded. Try searching again.
         </Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 24, backgroundColor: C.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}>
+        <Pressable
+          onPress={() => router.back()}
+          style={{ marginTop: 24, backgroundColor: '#CC1826', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, minHeight: 44, justifyContent: 'center' }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Text style={{ color: '#FFF', fontFamily: 'Inter_700Bold', fontSize: 15 }}>Go Back</Text>
         </Pressable>
       </View>
@@ -919,14 +932,8 @@ export default function CardDetailScreen() {
   // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
   const card = rawCard;
 
-  const cardListings = MOCK_LISTINGS.filter(l => l.card.id === card.id);
-  // For live catalog cards, don't substitute random mock listings from other cards
-  const allListings = isCatalogCard
-    ? []
-    : (cardListings.length > 0 ? cardListings : MOCK_LISTINGS.slice(0, 2));
   // Passport records only exist for local mock cards
   const hasPassport = !isCatalogCard && getCardPassport(card.id) !== null;
-  const pricingPlus = getMockPricingPlus(card.id, card.price.raw);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -998,17 +1005,39 @@ export default function CardDetailScreen() {
       >
         {/* Nav */}
         <View style={styles.nav}>
-          <Pressable onPress={() => router.back()} style={styles.navBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.navBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={2}
+          >
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
           <View style={styles.navRight}>
             <Pressable
               onPress={handleWishlistToggle}
               style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
+              accessibilityRole="button"
+              accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
+              hitSlop={2}
             >
               <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
             </Pressable>
-            <Pressable style={styles.navBtn}>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => {
+                const url = `https://verifiedtcg.com/cards/${card.id}`;
+                Share.share({
+                  title: `${card.name} — Verified TCG`,
+                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: $${card.price.raw.toLocaleString('en-AU')} AUD\n${url}`,
+                  url,
+                }).catch(() => {});
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Share this card"
+              hitSlop={2}
+            >
               <Feather name="share-2" size={20} color={C.foreground} />
             </Pressable>
           </View>
@@ -1040,6 +1069,8 @@ export default function CardDetailScreen() {
               onPress={goToPrev}
               style={styles.swipeArrowLeft}
               hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Previous card"
             >
               <View style={styles.swipeArrowInner}>
                 <Feather name="chevron-left" size={20} color="rgba(255,255,255,0.9)" />
@@ -1051,6 +1082,8 @@ export default function CardDetailScreen() {
               onPress={goToNext}
               style={styles.swipeArrowRight}
               hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Next card"
             >
               <View style={styles.swipeArrowInner}>
                 <Feather name="chevron-right" size={20} color="rgba(255,255,255,0.9)" />
@@ -1126,6 +1159,9 @@ export default function CardDetailScreen() {
                   styles.priceTab,
                   priceTab === t && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
                 ]}
+                accessibilityRole="tab"
+                accessibilityLabel={`${t} price: $${price.toLocaleString('en-AU')}`}
+                accessibilityState={{ selected: priceTab === t }}
               >
                 <Text style={[styles.priceTabLabel, priceTab === t && { color: C.primary }]}>{t}</Text>
                 <Text style={[styles.priceTabValue, priceTab === t && { color: C.foreground }]}>
@@ -1180,8 +1216,12 @@ export default function CardDetailScreen() {
                   }}
                   style={[
                     styles.rangeChip,
-                    isSelected && { backgroundColor: C.primary, borderColor: C.primary },
+                    isSelected && { backgroundColor: '#CC1826', borderColor: '#CC1826' },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={locked ? `${period} — Pro only` : period}
+                  accessibilityState={{ selected: isSelected }}
+                  hitSlop={{ top: 8, bottom: 8 }}
                 >
                   {locked && <Feather name="lock" size={9} color={C.mutedForeground} style={{ marginRight: 3 }} />}
                   <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
@@ -1193,25 +1233,47 @@ export default function CardDetailScreen() {
           </ScrollView>
 
           {/* SVG line chart */}
-          <View style={styles.chartAreaWrap}>
-            <PriceLineChart
-              points={priceHistory}
-              width={W - 40 - 36}
-              height={120}
-              loading={priceHistoryLoading}
-            />
-          </View>
+          {historyRequiresUpgrade ? (
+            <Pressable
+              onPress={() => router.push('/pro-subscription')}
+              style={[styles.chartAreaWrap, {
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: `${C.primary}11`, borderRadius: 12, gap: 6,
+              }]}
+              accessibilityRole="button"
+              accessibilityLabel="Upgrade to Pro to see price history"
+            >
+              <Feather name="lock" size={20} color={C.primary} />
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.primary }}>
+                Pro feature
+              </Text>
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' }}>
+                Upgrade to view price history
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.chartAreaWrap}>
+              <PriceLineChart
+                points={priceHistory}
+                width={W - 40 - 36}
+                height={120}
+                loading={priceHistoryLoading}
+              />
+            </View>
+          )}
 
           {/* Source footer */}
-          <View style={styles.chartFooter}>
-            <Feather name="info" size={10} color={C.mutedForeground} />
-            <Text style={styles.chartFooterText}>
-              Prices from eBay sold listings
-              {priceHistoryUpdatedAt
-                ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
-                : ''}
-            </Text>
-          </View>
+          {!historyRequiresUpgrade && (
+            <View style={styles.chartFooter}>
+              <Feather name="info" size={10} color={C.mutedForeground} />
+              <Text style={styles.chartFooterText}>
+                Prices from eBay sold listings
+                {priceHistoryUpdatedAt
+                  ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
+                  : ''}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── View Listings on eBay ────────────────────────────────────── */}
@@ -1221,6 +1283,8 @@ export default function CardDetailScreen() {
             Linking.openURL(url).catch(() => {});
           }}
           style={styles.ebayBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${card.name} listings on eBay`}
         >
           <Feather name="external-link" size={14} color="#FFF" />
           <Text style={styles.ebayBtnText}>View Listings on eBay</Text>
@@ -1235,37 +1299,39 @@ export default function CardDetailScreen() {
             <Text style={styles.sectionTitle}>Market Stats</Text>
           </View>
 
-          {/* Always-visible: market estimate */}
+          {/* Always-visible: market estimate from live catalog price */}
           <View style={styles.rawStatRow}>
             <Text style={styles.rawStatLabel}>Market Estimate</Text>
             <Text style={styles.rawStatValue}>
-              ${pricingPlus.rawStats.marketEstimate.toLocaleString('en-AU')} AUD
+              ${card.price.raw.toLocaleString('en-AU')} AUD
             </Text>
           </View>
 
-          {/* Pro-gated stats — preview shows labels with blurred values */}
+          {/* Pro-gated advanced stats — shown once real history API data is available */}
           <ProFeaturePreview
             featureTitle="Advanced Raw Stats"
             description="7-day, 30-day, 90-day averages, highs, lows and sales volume for serious collectors."
             ctaLabel="Unlock with Pro"
             previewContent={
               <View style={styles.rawGatedPreview}>
-                {RAW_STAT_ROWS(pricingPlus).map(row => (
+                {[
+                  { label: '7-Day Avg', value: '—' },
+                  { label: '30-Day Avg', value: '—' },
+                  { label: '52-Week High', value: '—' },
+                  { label: '52-Week Low', value: '—' },
+                ].map(row => (
                   <View key={row.label} style={styles.rawStatRow}>
                     <Text style={styles.rawStatLabel}>{row.label}</Text>
-                    <Text style={styles.rawStatValue}>{row.value}</Text>
+                    <Text style={[styles.rawStatValue, { color: C.mutedForeground }]}>{row.value}</Text>
                   </View>
                 ))}
               </View>
             }
             lockedContent={
-              <View>
-                {RAW_STAT_ROWS(pricingPlus).map(row => (
-                  <View key={row.label} style={styles.rawStatRow}>
-                    <Text style={styles.rawStatLabel}>{row.label}</Text>
-                    <Text style={styles.rawStatValue}>{row.value}</Text>
-                  </View>
-                ))}
+              <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground }]}>
+                  Advanced stats require price history to accumulate. Check back after a few days.
+                </Text>
               </View>
             }
           />
@@ -1287,6 +1353,27 @@ export default function CardDetailScreen() {
                   color={C.primary}
                   style={{ marginVertical: 14, alignSelf: 'center' }}
                 />
+              ) : gradedRequiresUpgrade ? (
+                <>
+                  {GRADERS.map(grader => (
+                    <View key={grader.key} style={styles.gradedRow}>
+                      <Text style={styles.gradedLabel}>{grader.label}</Text>
+                      <View style={styles.gradedBlurred}>
+                        <Text style={styles.gradedBlurText}>••••</Text>
+                        <Feather name="lock" size={12} color={C.mutedForeground} />
+                      </View>
+                    </View>
+                  ))}
+                  <Pressable
+                    onPress={() => router.push('/pro-subscription')}
+                    style={styles.gradedCta}
+                    accessibilityRole="button"
+                    accessibilityLabel="Upgrade to Pro to unlock graded pricing"
+                  >
+                    <Feather name="zap" size={13} color="#FFF" />
+                    <Text style={styles.gradedCtaText}>Upgrade to Pro</Text>
+                  </Pressable>
+                </>
               ) : Object.keys(liveGradedPrices).length === 0 ? (
                 <Text style={[styles.gradedLabel, { textAlign: 'center', paddingVertical: 12, color: C.mutedForeground }]}>
                   Graded price data unavailable
@@ -1331,6 +1418,8 @@ export default function CardDetailScreen() {
               <Pressable
                 onPress={() => router.push('/pro-subscription')}
                 style={styles.gradedCta}
+                accessibilityRole="button"
+                accessibilityLabel="Unlock graded pricing with Pro"
               >
                 <Feather name="zap" size={13} color="#FFF" />
                 <Text style={styles.gradedCtaText}>Unlock graded pricing</Text>
@@ -1339,7 +1428,7 @@ export default function CardDetailScreen() {
           )}
         </View>
 
-        {/* Recent Sales — full section gated via ProFeaturePreview */}
+        {/* Recent Sales — Pro feature, populated from price history snapshots */}
         <View style={{ marginBottom: 24 }}>
           <ProFeaturePreview
             featureTitle="Recent Sales"
@@ -1348,29 +1437,17 @@ export default function CardDetailScreen() {
             previewContent={
               <View style={[styles.card, { backgroundColor: C.card }]}>
                 <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                {pricingPlus.recentSales.slice(0, 2).map(sale => (
-                  <View key={sale.id} style={styles.saleRow}>
-                    <View style={styles.saleLeft}>
-                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
-                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
-                    </View>
-                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
-                  </View>
-                ))}
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
+                  Sales data accumulates as this card is viewed over time
+                </Text>
               </View>
             }
             lockedContent={
               <View style={[styles.card, { backgroundColor: C.card }]}>
                 <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                {pricingPlus.recentSales.map(sale => (
-                  <View key={sale.id} style={styles.saleRow}>
-                    <View style={styles.saleLeft}>
-                      <Text style={styles.saleGrade}>{sale.gradeLabel}</Text>
-                      <Text style={styles.saleMeta}>{sale.marketplace} · {sale.daysAgo}d ago</Text>
-                    </View>
-                    <Text style={styles.salePrice}>${sale.soldPrice.toLocaleString('en-AU')}</Text>
-                  </View>
-                ))}
+                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
+                  Sales data accumulates as this card is viewed over time
+                </Text>
               </View>
             }
           />
@@ -1382,6 +1459,9 @@ export default function CardDetailScreen() {
             onPress={handleAddToCollection}
             style={[styles.primaryBtn, isOwned && { backgroundColor: C.muted }]}
             disabled={isOwned}
+            accessibilityRole="button"
+            accessibilityLabel={isOwned ? 'Already in collection' : 'Add to Collection'}
+            accessibilityState={{ disabled: isOwned }}
           >
             <Feather name={isOwned ? 'check' : 'plus'} size={18} color="#FFFFFF" />
             <Text style={styles.primaryBtnText}>{isOwned ? 'In Collection' : 'Add to Collection'}</Text>
@@ -1394,6 +1474,9 @@ export default function CardDetailScreen() {
                 ? { backgroundColor: `${C.primary}22`, borderColor: C.primary }
                 : { backgroundColor: C.card, borderColor: C.border },
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
+            accessibilityState={{ selected: isWatched }}
           >
             <Feather
               name="heart"
@@ -1410,6 +1493,8 @@ export default function CardDetailScreen() {
         {hasPassport && <Pressable
           onPress={() => router.push(`/card-passport/${card.id}` as any)}
           style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
+          accessibilityRole="button"
+          accessibilityLabel="Card Passport — ownership history, grading record and provenance"
         >
           <View style={[styles.passportIcon, { backgroundColor: '#D4AF3722' }]}>
             <Feather name="book-open" size={14} color="#D4AF37" />
@@ -1421,55 +1506,15 @@ export default function CardDetailScreen() {
           <Feather name="chevron-right" size={16} color="#D4AF37" />
         </Pressable>}
 
-        {/* For Sale listings */}
+        {/* For Sale listings — marketplace coming soon */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Cards For Sale</Text>
-            {allListings.length > 0 && (
-              <Text style={styles.sectionCount}>{allListings.length} listing{allListings.length !== 1 ? 's' : ''}</Text>
-            )}
           </View>
-          {allListings.length === 0 ? (
-            <View style={[styles.emptyListings, { backgroundColor: C.card }]}>
-              <Feather name="shopping-bag" size={28} color={C.mutedForeground} />
-              <Text style={styles.emptyListingsText}>No marketplace listings yet</Text>
-            </View>
-          ) : (
-            allListings.map(listing => (
-              <Pressable key={listing.id} style={[styles.listingRow, { backgroundColor: C.card }]}>
-                <View style={styles.listingLeft}>
-                  <Text style={styles.listingSellerName}>{listing.sellerName}</Text>
-                  <View style={styles.listingMeta}>
-                    {listing.grading && (
-                      <GradeBadge grade={listing.grading.grade} company={listing.grading.company} size="sm" />
-                    )}
-                    {listing.isVerifiedSeller && (
-                      <View style={styles.verifiedTag}>
-                        <Feather name="shield" size={11} color={C.positive} />
-                        <Text style={[styles.verifiedTagText, { color: C.positive }]}>Verified</Text>
-                      </View>
-                    )}
-                    {listing.sellerRating && (
-                      <View style={styles.ratingRow}>
-                        <Feather name="star" size={11} color="#F59E0B" />
-                        <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.listingWatchers}>
-                    {listing.watchCount} watching · {listing.views} views
-                  </Text>
-                </View>
-                <View style={styles.listingRight}>
-                  <Text style={styles.listingPrice}>${listing.askingPrice.toLocaleString('en-AU')}</Text>
-                  <Text style={styles.listingCurrency}>AUD</Text>
-                  <Pressable style={styles.buyBtn}>
-                    <Text style={styles.buyBtnText}>Buy</Text>
-                  </Pressable>
-                </View>
-              </Pressable>
-            ))
-          )}
+          <View style={[styles.emptyListings, { backgroundColor: C.card }]}>
+            <Feather name="shopping-bag" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyListingsText}>Marketplace coming soon</Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -1659,7 +1704,7 @@ const styles = StyleSheet.create({
     gap: 8,
     height: 52,
     borderRadius: 14,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: white text on #FF1E2D only 3.84:1; #CC1826 gives 5.25:1
   },
   primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   wishlistBtn: {
@@ -1705,11 +1750,13 @@ const styles = StyleSheet.create({
   listingPrice: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
   listingCurrency: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   buyBtn: {
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: #CC1826 gives 5.25:1 with white text
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 10,
     marginTop: 4,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   buyBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
   passportBanner: {
@@ -1885,10 +1932,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826', // WCAG AA: #CC1826 gives 5.25:1 with white text
     borderRadius: 10,
     paddingVertical: 10,
     marginTop: 12,
+    minHeight: 44,
   },
   gradedCtaText: {
     fontSize: 13,

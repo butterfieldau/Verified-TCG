@@ -14,23 +14,25 @@
 
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, followsTable, postsTable, postLikesTable } from "@workspace/db";
+import { usersTable, followsTable, postsTable, postLikesTable, userBlocksTable } from "@workspace/db";
 import {
   and,
   desc,
   eq,
   ilike,
+  notInArray,
   or,
   sql,
   ne,
 } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { createNotification } from "./notifications.js";
 
 const collectorsRouter = Router();
 
 // ── GET /api/collectors/search ────────────────────────────────────────────────
 
-collectorsRouter.get("/collectors/search", async (req, res) => {
+collectorsRouter.get("/collectors/search", async (req: AuthRequest, res) => {
   const q = typeof req.query["q"] === "string" ? req.query["q"].trim() : "";
   if (!q || q.length < 2) {
     res.json({ collectors: [] });
@@ -39,6 +41,41 @@ collectorsRouter.get("/collectors/search", async (req, res) => {
 
   try {
     const pattern = `%${q}%`;
+
+    // Resolve requester ID from optional bearer token
+    let requesterId: string | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      try {
+        const jwt = await import("jsonwebtoken");
+        const payload = jwt.default.verify(authHeader.slice(7), process.env.SESSION_SECRET!) as { sub: string };
+        requesterId = payload.sub;
+      } catch { /* ignore */ }
+    }
+
+    // Bidirectional block exclusion when the requester is authenticated
+    let blockedIds: string[] = [];
+    if (requesterId) {
+      const [blockedByMe, blockedMe] = await Promise.all([
+        db.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockerUserId, requesterId)),
+        db.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
+          .where(eq(userBlocksTable.blockedUserId, requesterId)),
+      ]);
+      blockedIds = [...new Set([...blockedByMe.map((r) => r.id), ...blockedMe.map((r) => r.id)])];
+    }
+
+    const nameFilter = and(
+      eq(usersTable.profilePublic, true),
+      or(
+        ilike(usersTable.username, pattern),
+        ilike(usersTable.displayName, pattern),
+      ),
+    );
+    const whereClause = blockedIds.length > 0
+      ? and(nameFilter, notInArray(usersTable.id, blockedIds))
+      : nameFilter;
+
     const rows = await db
       .select({
         id: usersTable.id,
@@ -52,15 +89,7 @@ collectorsRouter.get("/collectors/search", async (req, res) => {
         profilePublic: usersTable.profilePublic,
       })
       .from(usersTable)
-      .where(
-        and(
-          eq(usersTable.profilePublic, true),
-          or(
-            ilike(usersTable.username, pattern),
-            ilike(usersTable.displayName, pattern),
-          ),
-        ),
-      )
+      .where(whereClause)
       .orderBy(usersTable.displayName)
       .limit(20);
 
@@ -107,9 +136,10 @@ collectorsRouter.get(
         .from(postsTable)
         .where(eq(postsTable.userId, collector.id));
 
-      // Decode the bearer token once — used for both follow-check and ownership check
+      // Decode the bearer token once — used for follow-check, ownership check, and block-check
       let requesterId: string | null = null;
       let isFollowing = false;
+      let isBlocked = false;
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         try {
@@ -118,17 +148,30 @@ collectorsRouter.get(
           const payload = jwt.default.verify(authHeader.slice(7), secret) as { sub: string };
           requesterId = payload.sub;
 
-          const [followRow] = await db
-            .select({ followerId: followsTable.followerId })
-            .from(followsTable)
-            .where(
-              and(
-                eq(followsTable.followerId, requesterId),
-                eq(followsTable.followeeId, collector.id),
-              ),
-            )
-            .limit(1);
-          isFollowing = !!followRow;
+          const [followRow, blockRow] = await Promise.all([
+            db
+              .select({ followerId: followsTable.followerId })
+              .from(followsTable)
+              .where(
+                and(
+                  eq(followsTable.followerId, requesterId),
+                  eq(followsTable.followeeId, collector.id),
+                ),
+              )
+              .limit(1),
+            db
+              .select({ blockerUserId: userBlocksTable.blockerUserId })
+              .from(userBlocksTable)
+              .where(
+                and(
+                  eq(userBlocksTable.blockerUserId, requesterId),
+                  eq(userBlocksTable.blockedUserId, collector.id),
+                ),
+              )
+              .limit(1),
+          ]);
+          isFollowing = !!followRow[0];
+          isBlocked = !!blockRow[0];
         } catch {
           // ignore invalid tokens on public endpoints
         }
@@ -159,6 +202,7 @@ collectorsRouter.get(
         followingCount: Number(followingCountRow?.count ?? 0),
         postCount: Number(postCountRow?.count ?? 0),
         isFollowing,
+        isBlocked,
       });
     } catch (err) {
       console.error("[collectors] GET /api/collectors/:username:", err);
@@ -327,16 +371,36 @@ collectorsRouter.post(
         return;
       }
 
-      await db
+      const inserted = await db
         .insert(followsTable)
         .values({ followerId, followeeId: followee.id })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ followerId: followsTable.followerId });
 
       // Follower count for the followee
       const [countRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(followsTable)
         .where(eq(followsTable.followeeId, followee.id));
+
+      // Notify the followee only when a new follow row was created
+      if (inserted.length > 0) {
+        db.select({ username: usersTable.username })
+          .from(usersTable)
+          .where(eq(usersTable.id, followerId))
+          .limit(1)
+          .then(([followerRow]) => {
+            if (!followerRow) return;
+            return createNotification({
+              userId: followee.id,
+              type: "follower",
+              title: "New follower",
+              body: `${followerRow.username} started following you.`,
+              metadata: { followerUsername: followerRow.username },
+            });
+          })
+          .catch((err) => console.error("[collectors] follow notification:", err));
+      }
 
       res.json({ ok: true, followerCount: Number(countRow?.count ?? 0) });
     } catch (err) {

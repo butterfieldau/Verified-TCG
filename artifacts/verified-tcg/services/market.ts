@@ -1,7 +1,6 @@
 import type { Card, MarketMover, PriceRecord, PortfolioDataPoint, PortfolioRange } from '@/types';
 import { catalogCardToAppCard } from './catalogApi';
 import type { CatalogCard } from './catalogApi';
-import { MOCK_CARDS } from './cards';
 
 // Resolve the API base URL the same way catalogApi.ts does.
 const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -131,57 +130,3 @@ export async function fetchRefreshedPrices(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 1200));
 }
 
-// ── Market tab mock data (out of scope for task #20 replacement) ──────────────
-
-export interface WatchedEntry {
-  card: typeof MOCK_CARDS[number];
-  watchers: number;
-  price: number;
-}
-
-const MOCK_MOST_WATCHED: WatchedEntry[] = [
-  { card: MOCK_CARDS[1], watchers: 1247, price: 1450 },
-  { card: MOCK_CARDS[0], watchers: 892,  price: 580  },
-  { card: MOCK_CARDS[4], watchers: 634,  price: 680  },
-];
-
-export function getMostWatched(): WatchedEntry[] {
-  return MOCK_MOST_WATCHED;
-}
-
-export interface RecentSale {
-  card: typeof MOCK_CARDS[number];
-  soldPrice: number;
-  soldAt: string;
-  grade: string | null;
-}
-
-const MOCK_RECENT_SALES: RecentSale[] = [
-  { card: MOCK_CARDS[1], soldPrice: 1420, soldAt: '2h ago', grade: 'PSA 10'  },
-  { card: MOCK_CARDS[0], soldPrice: 565,  soldAt: '4h ago', grade: 'PSA 10'  },
-  { card: MOCK_CARDS[3], soldPrice: 870,  soldAt: '6h ago', grade: 'BGS 9.5' },
-  { card: MOCK_CARDS[8], soldPrice: 48,   soldAt: '8h ago', grade: null       },
-];
-
-export function getRecentSales(): RecentSale[] {
-  return MOCK_RECENT_SALES;
-}
-
-export interface SetRelease {
-  id: string;
-  name: string;
-  tcg: string;
-  releaseDate: string;
-  cards: number;
-  highlight: string;
-}
-
-const MOCK_NEW_RELEASES: SetRelease[] = [
-  { id: 'sv-pe',  name: 'Prismatic Evolutions', tcg: 'Pokémon',  releaseDate: 'Jan 2025', cards: 170, highlight: 'Umbreon ex Alt Art'  },
-  { id: 'op-09',  name: 'The Four Emperors',     tcg: 'One Piece', releaseDate: 'Dec 2024', cards: 121, highlight: 'Luffy SEC'            },
-  { id: 'sv-mh3', name: 'Modern Horizons 3',      tcg: 'MTG',       releaseDate: 'Jun 2024', cards: 303, highlight: 'Nadu, Winged Wisdom'  },
-];
-
-export function getNewReleases(): SetRelease[] {
-  return MOCK_NEW_RELEASES;
-}

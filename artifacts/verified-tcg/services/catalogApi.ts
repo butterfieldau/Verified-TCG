@@ -95,9 +95,11 @@ export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promis
   }
 }
 
-export async function searchCatalog(query: string, signal?: AbortSignal): Promise<CatalogResponse> {
+export async function searchCatalog(query: string, signal?: AbortSignal, page: number = 1): Promise<CatalogResponse> {
   if (!API_BASE || API_BASE === '/api') throw new Error('The catalog API is not configured for this build.');
-  const params = new URLSearchParams({ q: query, limit: '20' });
+  const limit = 20;
+  const offset = (page - 1) * limit;
+  const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
   const response = await fetch(`${API_BASE}/catalog/cards?${params.toString()}`, { signal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error ?? `Catalog request failed (${response.status})`);

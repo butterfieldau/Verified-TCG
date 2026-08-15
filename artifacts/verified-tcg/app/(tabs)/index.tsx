@@ -21,6 +21,7 @@ import { useApp } from '@/context/AppContext';
 import { getMarketMovers, getTrendingCards, getRecentlyAddedCards } from '@/services/market';
 import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
+import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
 
@@ -55,7 +56,7 @@ function getGreeting() {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
+  const { user, isAuthenticated, portfolio, portfolioRange, setPortfolioRange, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated, unreadNotificationCount } = useApp();
 
   // TCG filter for Market Movers + Trending
   const [tcgFilter, setTcgFilter] = useState<TcgFilter>('all');
@@ -66,27 +67,34 @@ export default function HomeScreen() {
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [sectionsLoading, setSectionsLoading] = useState(true);
 
+  // Recent activity — real server data for signed-in users
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+
   useEffect(() => {
     setSectionsLoading(true);
+    setActivityLoading(true);
     Promise.all([
       getMarketMovers(),
       getTrendingCards(),
       getRecentlyAddedCards(),
+      fetchRecentActivity(10),
     ])
-      .then(([m, t, r]) => {
+      .then(([m, t, r, a]) => {
         setMovers(m);
         setTrending(t);
         setRecentCards(r);
+        setActivity(a);
       })
       .catch(() => {})
-      .finally(() => setSectionsLoading(false));
+      .finally(() => { setSectionsLoading(false); setActivityLoading(false); });
   }, []);
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    // Also refresh catalog sections on pull-to-refresh
-    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards()])
-      .then(([m, t, r]) => { setMovers(m); setTrending(t); setRecentCards(r); })
+    // Also refresh catalog sections and activity on pull-to-refresh
+    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards(), fetchRecentActivity(10)])
+      .then(([m, t, r, a]) => { setMovers(m); setTrending(t); setRecentCards(r); setActivity(a); })
       .catch(() => {});
   }, [refreshPrices]);
 
@@ -172,7 +180,13 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <Logo variant="white" width={110} height={48} />
         <View style={styles.headerRight}>
-          <Pressable style={styles.iconBtn} onPress={() => router.push('/notifications')}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => router.push('/notifications')}
+            accessibilityRole="button"
+            accessibilityLabel={unreadNotificationCount > 0 ? `Notifications, ${unreadNotificationCount} unread` : 'Notifications'}
+            hitSlop={3}
+          >
             <Feather name="bell" size={20} color={C.foreground} />
             {unreadNotificationCount > 0 && (
               <View style={styles.notifBadge}>
@@ -182,7 +196,13 @@ export default function HomeScreen() {
               </View>
             )}
           </Pressable>
-          <Pressable style={styles.avatar}>
+          <Pressable
+            style={styles.avatar}
+            onPress={() => router.push('/(tabs)/profile')}
+            accessibilityRole="button"
+            accessibilityLabel="View profile"
+            hitSlop={3}
+          >
             <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
           </Pressable>
         </View>
@@ -195,13 +215,20 @@ export default function HomeScreen() {
       </View>
 
       {/* ── Search bar ── */}
-      <Pressable style={styles.searchBar} onPress={() => router.push('/search')}>
+      <Pressable
+        style={styles.searchBar}
+        onPress={() => router.push('/search')}
+        accessibilityRole="search"
+        accessibilityLabel="Search cards, sets or products"
+      >
         <Feather name="search" size={16} color={C.mutedForeground} />
         <Text style={styles.searchPlaceholder}>Search cards, sets or products</Text>
         <Pressable
           style={styles.scanShortcut}
           onPress={() => router.push('/(tabs)/scan')}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Scan a card"
         >
           <Feather name="camera" size={16} color={C.primary} />
         </Pressable>
@@ -260,11 +287,15 @@ export default function HomeScreen() {
             <Pressable
               key={r}
               onPress={() => setPortfolioRange(r)}
+              accessibilityRole="button"
+              accessibilityLabel={`${r} range`}
+              accessibilityState={{ selected: portfolioRange === r }}
+              hitSlop={{ top: 10, bottom: 10 }}
               style={[
                 styles.rangeBtn,
                 {
-                  backgroundColor: portfolioRange === r ? C.primary : 'transparent',
-                  borderColor: portfolioRange === r ? C.primary : C.border,
+                  backgroundColor: portfolioRange === r ? '#CC1826' : 'transparent',
+                  borderColor: portfolioRange === r ? '#CC1826' : C.border,
                 },
               ]}
             >
@@ -286,6 +317,8 @@ export default function HomeScreen() {
         <Pressable
           onPress={() => router.push('/event-mode' as any)}
           style={styles.eventBanner}
+          accessibilityRole="button"
+          accessibilityLabel={`Live event: ${MOCK_EVENT.name} at ${MOCK_EVENT.venue}. Tap to enter.`}
         >
           {/* Accent stripe */}
           <View style={styles.eventBannerAccent} />
@@ -297,8 +330,10 @@ export default function HomeScreen() {
               </View>
               <Pressable
                 onPress={e => { e.stopPropagation(); dismissEventBanner(); }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 style={styles.dismissBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss event banner"
               >
                 <Feather name="x" size={14} color={C.mutedForeground} />
               </Pressable>
@@ -343,13 +378,20 @@ export default function HomeScreen() {
               </View>
             </View>
             <View style={styles.sectionHeaderRight}>
-              <Pressable onPress={() => router.push('/trade-match' as any)}>
+              <Pressable
+                onPress={() => router.push('/trade-match' as any)}
+                accessibilityRole="link"
+                accessibilityLabel="See all trade matches"
+                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+              >
                 <Text style={styles.seeAll}>See all</Text>
               </Pressable>
               <Pressable
                 onPress={() => dismissTradeMatches()}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 style={{ marginLeft: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss trade matches"
               >
                 <Feather name="x" size={14} color={C.mutedForeground} />
               </Pressable>
@@ -366,6 +408,8 @@ export default function HomeScreen() {
                 key={match.id}
                 onPress={() => router.push('/trade-match' as any)}
                 style={[styles.tradeMatchCard, { backgroundColor: C.card }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Trade match: you want ${match.youWant.name}, they want ${match.theyWant.name}. ${match.matchPercent}% match with @${match.collector.username}`}
               >
                 {/* Match % */}
                 <View style={[styles.tradeMatchPill, { backgroundColor: matchColor(match.matchPercent) + '22' }]}>
@@ -421,6 +465,8 @@ export default function HomeScreen() {
             <Pressable
               onPress={() => router.push('/trade-match' as any)}
               style={[styles.tradeMatchViewAll, { backgroundColor: C.card, borderColor: C.border }]}
+              accessibilityRole="button"
+              accessibilityLabel={`View all trade matches, ${MOCK_TRADE_MATCHES.length - 2} more`}
             >
               <Feather name="arrow-right" size={20} color={C.primary} />
               <Text style={[styles.tradeMatchViewAllText, { color: C.primary }]}>
@@ -438,6 +484,8 @@ export default function HomeScreen() {
             key={a.label}
             onPress={() => handleQuickAction(a.action)}
             style={({ pressed }) => [styles.action, { opacity: pressed ? 0.7 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={a.label}
           >
             <View style={[styles.actionIcon, { backgroundColor: C.card }]}>
               <Feather name={a.icon as any} size={20} color={C.foreground} />
@@ -458,11 +506,15 @@ export default function HomeScreen() {
           <Pressable
             key={f.id}
             onPress={() => setTcgFilter(f.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Filter by ${f.label}`}
+            accessibilityState={{ selected: tcgFilter === f.id }}
+            hitSlop={{ top: 6, bottom: 6 }}
             style={[
               styles.tcgFilterPill,
               {
-                backgroundColor: tcgFilter === f.id ? C.primary : C.card,
-                borderColor: tcgFilter === f.id ? C.primary : C.border,
+                backgroundColor: tcgFilter === f.id ? '#CC1826' : C.card,
+                borderColor: tcgFilter === f.id ? '#CC1826' : C.border,
               },
             ]}
           >
@@ -482,7 +534,12 @@ export default function HomeScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Market Movers</Text>
-          <Pressable onPress={() => router.push('/(tabs)/market')}>
+          <Pressable
+            onPress={() => router.push('/(tabs)/market')}
+            accessibilityRole="link"
+            accessibilityLabel="See all market movers"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
             <Text style={styles.seeAll}>See all</Text>
           </Pressable>
         </View>
@@ -501,6 +558,8 @@ export default function HomeScreen() {
                 key={m.card.id}
                 style={{ gap: 8 }}
                 onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${m.card.name} from ${m.card.setName}`}
               >
                 <CardThumbnail card={m.card} compact />
                 <View>
@@ -530,7 +589,12 @@ export default function HomeScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>New Arrivals</Text>
-          <Pressable onPress={() => router.push('/search')}>
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="link"
+            accessibilityLabel="Browse all new arrivals"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
             <Text style={styles.seeAll}>Browse all</Text>
           </Pressable>
         </View>
@@ -549,6 +613,8 @@ export default function HomeScreen() {
                 key={card.id}
                 style={{ gap: 8 }}
                 onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
               >
                 <CardThumbnail card={card} compact />
                 <View>
@@ -568,7 +634,12 @@ export default function HomeScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Trending</Text>
-          <Pressable onPress={() => router.push('/search')}>
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="link"
+            accessibilityLabel="See all trending cards"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
             <Text style={styles.seeAll}>See all</Text>
           </Pressable>
         </View>
@@ -587,6 +658,8 @@ export default function HomeScreen() {
                 key={card.id}
                 style={{ gap: 8 }}
                 onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
               >
                 <CardThumbnail card={card} compact />
                 <View>
@@ -612,6 +685,49 @@ export default function HomeScreen() {
           </ScrollView>
         )}
       </View>
+
+      {/* ── Recent Activity (signed-in users only) ── */}
+      {isAuthenticated && (activityLoading || activity.length > 0) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Activity</Text>
+          </View>
+          {activityLoading ? (
+            <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+          ) : (
+            <View style={[styles.activityCard, { backgroundColor: C.card }]}>
+              {activity.map((item, idx) => (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.activityRow,
+                    idx < activity.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.border },
+                  ]}
+                >
+                  <View style={[styles.activityDot, { backgroundColor: `${C.primary}22` }]}>
+                    <Feather
+                      name={
+                        item.type === 'card_added' ? 'plus-circle' :
+                        item.type === 'card_removed' ? 'minus-circle' :
+                        item.type === 'wishlist_added' ? 'heart' :
+                        item.type === 'wishlist_removed' ? 'heart' :
+                        item.type === 'price_alert_fired' ? 'bell' :
+                        'edit-2'
+                      }
+                      size={14}
+                      color={C.primary}
+                    />
+                  </View>
+                  <View style={styles.activityContent}>
+                    <Text style={styles.activityDesc} numberOfLines={1}>{item.description}</Text>
+                    <Text style={styles.activityTime}>{item.timeAgo}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -705,7 +821,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
   },
-  scanShortcut: { padding: 2 },
+  scanShortcut: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   // ── Event Banner ──
   eventBanner: {
@@ -799,7 +915,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: C.primary,
+    backgroundColor: '#CC1826',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -1019,6 +1135,38 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
     paddingVertical: 8,
+  },
+
+  // ── Recent Activity ──
+  activityCard: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 12,
+  },
+  activityDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityContent: { flex: 1 },
+  activityDesc: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: C.foreground,
+    marginBottom: 2,
+  },
+  activityTime: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
   },
 
   // ── TCG Filter Pills ──

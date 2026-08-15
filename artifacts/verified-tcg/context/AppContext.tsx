@@ -49,11 +49,13 @@ import {
 } from '@/services/notifications';
 import {
   configureForegroundNotifications,
-  requestAndRegisterPushToken,
+  registerPushTokenIfPermitted,
 } from '@/services/pushRegistration';
+import { syncPreferredTcgsAfterSignIn } from '@/services/tcgPreferences';
 import { fetchMyActiveParticipation } from '@/services/eventsApi';
 import {
   restoreSession,
+  fetchCurrentUser,
   signInWithPassword,
   signInWithOAuth,
   signOut as authSignOut,
@@ -63,6 +65,7 @@ import {
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
+import { clearRecentScans } from '@/services/scanStatePersistence';
 
 // API base for server-side quota sync — same pattern as other service files
 const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -162,6 +165,8 @@ interface AppActions {
   markAllNotificationsRead: () => void;
   /** Pull fresh notifications from the server (call on pull-to-refresh). */
   refreshNotifications: () => Promise<void>;
+  /** Re-sync wishlist with the server (call on pull-to-refresh). */
+  refreshWishlist: () => Promise<void>;
   // ── Subscription ──────────────────────────────────────────────────────────
   setSubscriptionTier: (tier: SubscriptionTier) => void;
   incrementScanCount: () => void;
@@ -204,6 +209,7 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
+const COLLECTION_CACHE_KEY = '@verified_tcg/collection_cache';
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -523,10 +529,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadCollection = useCallback(async () => {
     const gen = ++loadGeneration.current; // capture before first await
     setCollectionLoading(true);
+
+    // Show cached collection immediately so the screen isn't blank while fetching
+    try {
+      const cached = await AsyncStorage.getItem(COLLECTION_CACHE_KEY);
+      if (cached && gen === loadGeneration.current) {
+        const { items } = JSON.parse(cached) as { items: CollectionItem[]; timestamp: string };
+        if (Array.isArray(items) && items.length > 0) {
+          setCollection(items);
+        }
+      }
+    } catch { /* ignore cache read errors */ }
+
     try {
       const serverItems = await fetchCollection();
       // If a newer loadCollection started after this one, discard this result.
       if (gen !== loadGeneration.current) return;
+
+      // Persist the fresh list so the next cold launch has it immediately
+      AsyncStorage.setItem(
+        COLLECTION_CACHE_KEY,
+        JSON.stringify({ items: serverItems, timestamp: new Date().toISOString() }),
+      ).catch(() => {});
 
       setCollection(prev => {
         // 1. Exclude server items that have been optimistically deleted but
@@ -552,7 +576,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return [...filteredServer, ...stillPending];
       });
     } catch {
-      // Network error or unauthenticated — keep current local state
+      // Network error or unauthenticated — keep current local state (or cached data shown above)
     } finally {
       // Only the latest generation clears the loading flag.
       if (gen === loadGeneration.current) setCollectionLoading(false);
@@ -613,6 +637,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loadCollection();
       loadNotifications();
 
+      // Fetch fresh profile data from the server so edits made on another
+      // device or via the web app are reflected without requiring sign-out.
+      // Runs fire-and-forget after the cached session is already applied so
+      // the UI is never blocked; network errors fall back to the cached data.
+      //
+      // Guard: capture the restored user's ID so the response can be discarded
+      // if a sign-out → sign-in sequence completes before it resolves (avoids
+      // overwriting user B's in-memory profile with user A's stale server data).
+      const restoredUserId = session.user.id;
+      fetchCurrentUser().then(fresh => {
+        if (!fresh) return;
+        // Discard if a different user (or no user) is now authenticated.
+        if (currentUserIdRef.current !== restoredUserId) return;
+        setUser(userFromSession({ user: fresh }));
+        // Sync entitlement state in both directions — always derive from the
+        // fresh server value so a downgrade (Pro → free) is also reflected.
+        const freshMeta = fresh.user_metadata ?? {};
+        setSubscriptionTierState(freshMeta.subscription_tier === 'pro' ? 'pro' : 'free');
+        setFoundingMemberClaimed(freshMeta.is_founding_member === true);
+      }).catch(() => {});
+
       // NOTE: Push token registration is NOT triggered on cold session restore.
       // It runs only after an explicit sign-in (see signIn callback) so the
       // OS permission prompt appears contextually — not on every app launch.
@@ -625,6 +670,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (typeof count === 'number') setScansUsed(count);
         }).catch(() => {});
       }
+
+      // Sync TCG preferences bidirectionally: push local if present, else hydrate
+      // from server. Passes the server value so a reinstall/new-device case works.
+      syncPreferredTcgsAfterSignIn(
+        session.access_token,
+        typeof meta.preferred_tcgs === 'string' ? meta.preferred_tcgs : null,
+      );
 
       // Restore active event participation so Trade Match and Event Mode reflect
       // real data immediately without requiring navigation to Event Mode first.
@@ -639,6 +691,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // to the foreground so changes made on another device are reflected.
   const isAuthenticatedRef = useRef(false);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  // Tracks the ID of the currently authenticated user so async profile
+  // fetches can verify they still belong to the active session before applying
+  // their result (guards against sign-out → sign-in race conditions).
+  const currentUserIdRef = useRef<string | null>(null);
+  useEffect(() => { currentUserIdRef.current = user?.id ?? null; }, [user]);
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
@@ -673,8 +731,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadCollection();
     loadNotifications();
 
-    // Request push token after a fresh sign-in (contextual, not cold-launch)
-    requestAndRegisterPushToken();
+    // Register push token silently if permission already granted — no prompt.
+    // The contextual prompt is shown in onboarding or at first price-alert creation.
+    registerPushTokenIfPermitted();
 
     // Sync wishlist with server after sign-in
     setWatchlist(snapshot => {
@@ -691,6 +750,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (typeof count === 'number') setScansUsed(count);
       }).catch(() => {});
     }
+
+    // Sync TCG preferences bidirectionally: push local if present, else hydrate
+    // from server. Passes the server value so a reinstall/new-device case works.
+    syncPreferredTcgsAfterSignIn(
+      session.access_token,
+      typeof meta.preferred_tcgs === 'string' ? meta.preferred_tcgs : null,
+    );
   }, [loadCollection, loadNotifications]);
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
@@ -701,13 +767,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Run the same post-sign-in initialization as email/password sign-in
     loadCollection();
     loadNotifications();
-    requestAndRegisterPushToken();
+    registerPushTokenIfPermitted();
+    // Sync TCG preferences bidirectionally after OAuth sign-in
+    const oauthMeta = session.user.user_metadata ?? {};
+    syncPreferredTcgsAfterSignIn(
+      session.access_token,
+      typeof oauthMeta.preferred_tcgs === 'string' ? oauthMeta.preferred_tcgs : null,
+    );
     return true;
   }, [loadCollection, loadNotifications]);
 
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
+    // Clear collection cache so the next user doesn't see stale data
+    AsyncStorage.removeItem(COLLECTION_CACHE_KEY).catch(() => {});
+    // Clear scan history so it never leaks to the next user regardless of
+    // which tabs are mounted (tabs are lazily mounted in Expo).
+    clearRecentScans().catch(() => {});
     // Reset all in-memory state so the next user starts completely fresh
     setUser(null);
     setIsAuthenticated(false);
@@ -728,6 +805,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteAccount = useCallback(async (password: string) => {
     await authDeleteAccount(password);
+    // Clear scan history so it never leaks to the next user.
+    clearRecentScans().catch(() => {});
     // Reset all in-memory state after successful deletion
     setUser(null);
     setIsAuthenticated(false);
@@ -1135,6 +1214,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,
         markNotificationRead, markAllNotificationsRead, refreshNotifications,
+        refreshWishlist: async () => {
+          const canonical = await syncWishlistToServer(watchlist);
+          setWatchlist(canonical);
+        },
         subscriptionTier, scansUsed, scanLimit, scanResetDate,
         setSubscriptionTier, incrementScanCount, syncScanCount, resetScanCount, devSetScansUsed,
         selectedIcon, setSelectedIcon,

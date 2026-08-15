@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireProUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
 
@@ -218,7 +219,7 @@ async function fetchAllGrades(
  * - Concurrent requests for the same card share a single in-flight fetch.
  * - Rate-limited to 20 requests per IP per minute.
  */
-router.get("/graded-prices", async (req, res) => {
+router.get("/graded-prices", requireProUser, async (req: AuthRequest, res) => {
   // ── Rate limiting ──
   const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
     ?? req.socket.remoteAddress

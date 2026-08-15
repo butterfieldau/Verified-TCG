@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -19,6 +22,9 @@ import {
   fetchCollectorProfile,
   followCollector,
   unfollowCollector,
+  blockCollector,
+  unblockCollector,
+  reportCollector,
   type PublicCollector,
 } from '@/services/communityApi';
 
@@ -29,6 +35,14 @@ type ProfileTab = 'about' | 'activity';
 const PROFILE_TABS: { label: string; value: ProfileTab }[] = [
   { label: 'About', value: 'about' },
   { label: 'Activity', value: 'activity' },
+];
+
+const REPORT_REASONS: { value: string; label: string }[] = [
+  { value: 'spam', label: 'Spam or fake account' },
+  { value: 'harassment', label: 'Harassment or bullying' },
+  { value: 'fraud', label: 'Fraud or suspicious activity' },
+  { value: 'inappropriate', label: 'Inappropriate content' },
+  { value: 'other', label: 'Other' },
 ];
 
 // Deterministic avatar colour from username
@@ -65,6 +79,189 @@ const TCG_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+// ── Report modal ──────────────────────────────────────────────────────────────
+
+function ReportModal({
+  visible,
+  username,
+  displayName,
+  onClose,
+}: {
+  visible: boolean;
+  username: string;
+  displayName: string;
+  onClose: () => void;
+}) {
+  const [selectedReason, setSelectedReason] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!selectedReason) return;
+    Alert.alert(
+      'Submit Report',
+      `Report @${username} for "${REPORT_REASONS.find(r => r.value === selectedReason)?.label}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Submit',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              await reportCollector(username, selectedReason, note.trim() || undefined);
+              onClose();
+              Alert.alert(
+                'Report Submitted',
+                'Thank you for your report. Our team will review it shortly.',
+              );
+            } catch {
+              Alert.alert('Error', 'Failed to submit report. Please try again.');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleClose = () => {
+    setSelectedReason(null);
+    setNote('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+      <View style={reportStyles.overlay}>
+        <Pressable style={reportStyles.backdrop} onPress={handleClose} />
+        <View style={[reportStyles.sheet, { backgroundColor: C.card }]}>
+          <View style={reportStyles.handle} />
+          <Text style={reportStyles.title}>Report @{username}</Text>
+          <Text style={reportStyles.subtitle}>
+            Why are you reporting {displayName}?
+          </Text>
+
+          <View style={reportStyles.reasons}>
+            {REPORT_REASONS.map(r => (
+              <Pressable
+                key={r.value}
+                onPress={() => setSelectedReason(r.value)}
+                style={[
+                  reportStyles.reasonRow,
+                  selectedReason === r.value && { backgroundColor: `${C.primary}14` },
+                ]}
+              >
+                <View style={[
+                  reportStyles.radio,
+                  { borderColor: selectedReason === r.value ? C.primary : C.border },
+                ]}>
+                  {selectedReason === r.value && (
+                    <View style={[reportStyles.radioDot, { backgroundColor: C.primary }]} />
+                  )}
+                </View>
+                <Text style={[
+                  reportStyles.reasonText,
+                  selectedReason === r.value && { color: C.foreground },
+                ]}>
+                  {r.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={reportStyles.noteLabel}>
+            Additional notes <Text style={reportStyles.optional}>(optional)</Text>
+          </Text>
+          <TextInput
+            style={[reportStyles.noteInput, { backgroundColor: C.muted, color: C.foreground }]}
+            value={note}
+            onChangeText={setNote}
+            placeholder="Describe the issue..."
+            placeholderTextColor={C.mutedForeground}
+            multiline
+            maxLength={500}
+            numberOfLines={3}
+          />
+
+          <View style={reportStyles.actions}>
+            <Pressable
+              onPress={handleClose}
+              style={[reportStyles.cancelBtn, { backgroundColor: C.muted }]}
+            >
+              <Text style={[reportStyles.cancelBtnText, { color: C.foreground }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSubmit}
+              disabled={!selectedReason || submitting}
+              style={[
+                reportStyles.submitBtn,
+                { backgroundColor: selectedReason ? C.destructive : C.muted },
+              ]}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={reportStyles.submitBtnText}>Submit Report</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const reportStyles = StyleSheet.create({
+  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'flex-end', zIndex: 200 },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+  sheet: {
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, paddingBottom: 40,
+  },
+  handle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center', marginBottom: 20,
+  },
+  title: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginBottom: 6 },
+  subtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginBottom: 16 },
+  reasons: { gap: 2, marginBottom: 16 },
+  reasonRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 11, paddingHorizontal: 10, borderRadius: 10,
+  },
+  radio: {
+    width: 20, height: 20, borderRadius: 10, borderWidth: 2,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  radioDot: { width: 10, height: 10, borderRadius: 5 },
+  reasonText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground, flex: 1 },
+  noteLabel: {
+    fontSize: 12, fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8,
+  },
+  optional: { fontSize: 11, fontFamily: 'Inter_400Regular', textTransform: 'none', letterSpacing: 0 },
+  noteInput: {
+    borderRadius: 12, padding: 12, fontSize: 14, fontFamily: 'Inter_400Regular',
+    minHeight: 80, textAlignVertical: 'top', marginBottom: 20,
+  },
+  actions: { flexDirection: 'row', gap: 10 },
+  cancelBtn: {
+    flex: 1, height: 50, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  cancelBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  submitBtn: {
+    flex: 2, height: 50, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  submitBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFF' },
+});
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+
 export default function CollectorProfileScreen() {
   const insets = useSafeAreaInsets();
   const { username } = useLocalSearchParams<{ username: string }>();
@@ -81,6 +278,12 @@ export default function CollectorProfileScreen() {
   const [followerCount, setFollowerCount] = useState(0);
   const [followLoading, setFollowLoading] = useState(false);
 
+  // Three-dot menu state — isBlocked is initialised from the API response
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
+  const [reportVisible, setReportVisible] = useState(false);
+
   const isOwnProfile = isAuthenticated && user?.username === username;
 
   const load = useCallback(async () => {
@@ -92,6 +295,7 @@ export default function CollectorProfileScreen() {
       setCollector(data);
       setIsFollowing(data.isFollowing ?? false);
       setFollowerCount(data.followerCount ?? 0);
+      setIsBlocked((data as any).isBlocked ?? false);
     } catch (err: any) {
       setError(err?.message ?? 'Failed to load profile');
     } finally {
@@ -123,10 +327,49 @@ export default function CollectorProfileScreen() {
     }
   };
 
+  const handleBlock = () => {
+    setMenuVisible(false);
+    const actionLabel = isBlocked ? 'Unblock' : 'Block';
+    Alert.alert(
+      `${actionLabel} @${username}`,
+      isBlocked
+        ? `Unblock @${username}? They will be able to appear in your search results and community feed again.`
+        : `Block @${username}? They won't appear in your search results, community feed, or event matches.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: actionLabel,
+          style: 'destructive',
+          onPress: async () => {
+            setBlockLoading(true);
+            try {
+              if (isBlocked) {
+                await unblockCollector(username!);
+                setIsBlocked(false);
+              } else {
+                await blockCollector(username!);
+                setIsBlocked(true);
+              }
+            } catch {
+              Alert.alert('Error', `Failed to ${actionLabel.toLowerCase()} this collector.`);
+            } finally {
+              setBlockLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleReport = () => {
+    setMenuVisible(false);
+    setTimeout(() => setReportVisible(true), 300);
+  };
+
   if (loading) {
     return (
       <View style={[styles.screen, { paddingTop: topPad + 8 }]}>
-        <Header />
+        <Header username={username ?? ''} isAuthenticated={isAuthenticated} isOwnProfile={false} showMenu={false} onMenuPress={() => {}} />
         <View style={styles.center}>
           <ActivityIndicator color={C.primary} />
         </View>
@@ -137,7 +380,7 @@ export default function CollectorProfileScreen() {
   if (error || !collector) {
     return (
       <View style={[styles.screen, { paddingTop: topPad + 8 }]}>
-        <Header />
+        <Header username={username ?? ''} isAuthenticated={isAuthenticated} isOwnProfile={false} showMenu={false} onMenuPress={() => {}} />
         <View style={styles.center}>
           <Feather name="alert-circle" size={32} color={C.mutedForeground} />
           <Text style={styles.errorText}>{error ?? 'Collector not found'}</Text>
@@ -156,7 +399,13 @@ export default function CollectorProfileScreen() {
         style={[styles.screen, { backgroundColor: C.background }]}
         contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: 48 }]}
       >
-        <Header />
+        <Header
+          username={username ?? ''}
+          isAuthenticated={isAuthenticated}
+          isOwnProfile={isOwnProfile}
+          showMenu={!isOwnProfile && isAuthenticated}
+          onMenuPress={() => setMenuVisible(true)}
+        />
         <View style={[styles.profileCard, { backgroundColor: C.card }]}>
           <View style={styles.avatarRow}>
             <View style={[styles.avatar, { backgroundColor: avatarColor(collector.initials) }]}>
@@ -175,6 +424,25 @@ export default function CollectorProfileScreen() {
             </Text>
           </View>
         </View>
+
+        {/* Three-dot menu modal */}
+        {menuVisible && (
+          <ThreeDotMenu
+            username={collector.username}
+            displayName={collector.displayName}
+            isBlocked={isBlocked}
+            blockLoading={blockLoading}
+            onBlock={handleBlock}
+            onReport={handleReport}
+            onClose={() => setMenuVisible(false)}
+          />
+        )}
+        <ReportModal
+          visible={reportVisible}
+          username={collector.username}
+          displayName={collector.displayName}
+          onClose={() => setReportVisible(false)}
+        />
       </ScrollView>
     );
   }
@@ -189,7 +457,13 @@ export default function CollectorProfileScreen() {
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: 48 }]}
       showsVerticalScrollIndicator={false}
     >
-      <Header />
+      <Header
+        username={username ?? ''}
+        isAuthenticated={isAuthenticated}
+        isOwnProfile={isOwnProfile}
+        showMenu={!isOwnProfile && isAuthenticated}
+        onMenuPress={() => setMenuVisible(true)}
+      />
 
       {/* Profile card */}
       <View style={[styles.profileCard, { backgroundColor: C.card }]}>
@@ -369,18 +643,156 @@ export default function CollectorProfileScreen() {
           </View>
         </View>
       )}
+
+      {/* Three-dot menu modal */}
+      {menuVisible && (
+        <ThreeDotMenu
+          username={collector.username}
+          displayName={collector.displayName}
+          isBlocked={isBlocked}
+          blockLoading={blockLoading}
+          onBlock={handleBlock}
+          onReport={handleReport}
+          onClose={() => setMenuVisible(false)}
+        />
+      )}
+
+      <ReportModal
+        visible={reportVisible}
+        username={collector.username}
+        displayName={collector.displayName}
+        onClose={() => setReportVisible(false)}
+      />
     </ScrollView>
   );
 }
 
-function Header() {
+// ── Three-dot context menu ────────────────────────────────────────────────────
+
+function ThreeDotMenu({
+  username,
+  displayName,
+  isBlocked,
+  blockLoading,
+  onBlock,
+  onReport,
+  onClose,
+}: {
+  username: string;
+  displayName: string;
+  isBlocked: boolean;
+  blockLoading: boolean;
+  onBlock: () => void;
+  onReport: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={menuStyles.overlay}>
+        <Pressable style={menuStyles.backdrop} onPress={onClose} />
+        <View style={[menuStyles.menu, { backgroundColor: C.card }]}>
+          <Text style={menuStyles.menuTitle}>@{username}</Text>
+
+          <Pressable
+            onPress={onBlock}
+            disabled={blockLoading}
+            style={({ pressed }) => [
+              menuStyles.menuItem,
+              menuStyles.menuBorder,
+              { backgroundColor: pressed ? C.muted : 'transparent' },
+            ]}
+          >
+            {blockLoading ? (
+              <ActivityIndicator size="small" color={C.destructive} />
+            ) : (
+              <Feather name={isBlocked ? 'user-check' : 'user-x'} size={18} color={C.destructive} />
+            )}
+            <Text style={[menuStyles.menuItemText, { color: C.destructive }]}>
+              {isBlocked ? `Unblock @${username}` : `Block @${username}`}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onReport}
+            style={({ pressed }) => [
+              menuStyles.menuItem,
+              { backgroundColor: pressed ? C.muted : 'transparent' },
+            ]}
+          >
+            <Feather name="flag" size={18} color={C.destructive} />
+            <Text style={[menuStyles.menuItemText, { color: C.destructive }]}>
+              Report @{username}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [
+              menuStyles.cancelItem,
+              { backgroundColor: pressed ? C.muted : `${C.muted}88` },
+            ]}
+          >
+            <Text style={menuStyles.cancelText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const menuStyles = StyleSheet.create({
+  overlay: {
+    flex: 1, justifyContent: 'flex-end', padding: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  backdrop: { ...StyleSheet.absoluteFillObject },
+  menu: {
+    borderRadius: 16, overflow: 'hidden', marginBottom: 8,
+  },
+  menuTitle: {
+    fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground,
+    textAlign: 'center', paddingVertical: 14, paddingHorizontal: 20,
+  },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingVertical: 16, paddingHorizontal: 20,
+  },
+  menuBorder: { borderTopWidth: 1, borderTopColor: C.border },
+  menuItemText: { fontSize: 16, fontFamily: 'Inter_500Medium' },
+  cancelItem: {
+    alignItems: 'center', paddingVertical: 16,
+    borderTopWidth: 1, borderTopColor: C.border,
+  },
+  cancelText: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+});
+
+// ── Shared sub-components ─────────────────────────────────────────────────────
+
+function Header({
+  isAuthenticated,
+  isOwnProfile,
+  showMenu,
+  onMenuPress,
+}: {
+  username: string;
+  isAuthenticated: boolean;
+  isOwnProfile: boolean;
+  showMenu: boolean;
+  onMenuPress: () => void;
+}) {
   return (
     <View style={styles.header}>
       <Pressable onPress={() => router.back()} style={styles.backBtn}>
         <Feather name="arrow-left" size={20} color={C.foreground} />
       </Pressable>
       <Text style={styles.headerTitle}>Collector Profile</Text>
-      <View style={{ width: 40 }} />
+      {showMenu ? (
+        <Pressable onPress={onMenuPress} style={styles.menuBtn}>
+          <Feather name="more-horizontal" size={20} color={C.foreground} />
+        </Pressable>
+      ) : (
+        <View style={{ width: 40 }} />
+      )}
     </View>
   );
 }
@@ -408,6 +820,14 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuBtn: {
     width: 40,
     height: 40,
     borderRadius: 12,
@@ -538,6 +958,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 19,
   },
 });

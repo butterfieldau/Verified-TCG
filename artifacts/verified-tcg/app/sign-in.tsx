@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -11,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
@@ -68,14 +68,19 @@ export default function SignInScreen() {
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
       {/* Back button */}
-      <Pressable onPress={() => router.back()} style={styles.back}>
+      <Pressable
+        onPress={() => router.back()}
+        style={styles.back}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Feather name="arrow-left" size={22} color={C.foreground} />
       </Pressable>
 
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         contentContainerStyle={[styles.content, { paddingBottom: botPad + 40 }]}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
         <Logo variant="white" width={130} height={58} style={styles.logo} />
 
@@ -108,6 +113,9 @@ export default function SignInScreen() {
           <Pressable
             onPress={() => router.push('/forgot-password')}
             style={styles.forgotRow}
+            accessibilityRole="link"
+            accessibilityLabel="Forgot password"
+            accessibilityHint="Opens the password reset screen"
           >
             <Text style={styles.forgotText}>Forgot password?</Text>
           </Pressable>
@@ -132,19 +140,27 @@ export default function SignInScreen() {
               key={s.label}
               onPress={() => handleOAuthSignIn(s.provider)}
               style={({ pressed }) => [styles.socialBtn, { opacity: pressed ? 0.7 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Sign in with ${s.label}`}
             >
               <Feather name={s.icon as any} size={18} color={C.foreground} />
             </Pressable>
           ))}
         </View>
 
-        <Pressable onPress={() => router.push('/create-account')} style={styles.createRow}>
+        <Pressable
+          onPress={() => router.push('/create-account')}
+          style={styles.createRow}
+          accessibilityRole="link"
+          accessibilityLabel="Create an account"
+          accessibilityHint="Opens the account creation screen"
+        >
           <Text style={styles.createText}>
             Don't have an account?{' '}
             <Text style={styles.createLink}>Create one</Text>
           </Text>
         </Pressable>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
     </View>
   );
 }
