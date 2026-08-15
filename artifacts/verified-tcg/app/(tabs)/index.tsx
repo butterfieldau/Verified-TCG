@@ -571,6 +571,95 @@ export default function HomeScreen() {
         ))}
       </ScrollView>
 
+      {/* ── New Arrivals ─────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>New Arrivals</Text>
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="link"
+            accessibilityLabel="Browse all new arrivals"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Text style={styles.seeAll}>Browse all</Text>
+          </Pressable>
+        </View>
+        {sectionsLoading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : recentCards.length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {recentCards.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* ── Trending ─────────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Trending</Text>
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="link"
+            accessibilityLabel="See all trending cards"
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Text style={styles.seeAll}>See all</Text>
+          </Pressable>
+        </View>
+        {sectionsLoading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).length === 0 ? (
+          <Text style={styles.emptySection}>No data available right now</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                    {card.price.change7d !== undefined && (
+                      <Text style={[styles.moverChange, { color: (card.price.change7d ?? 0) >= 0 ? C.positive : C.negative }]}>
+                        {(card.price.change7d ?? 0) >= 0 ? '+' : ''}{card.price.change7d?.toFixed(1)}%
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
       {/* ── Gainers & Losers ─────────────────────────────────────────────── */}
       <View style={styles.glRow}>
 
@@ -870,94 +959,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* ── New Arrivals ─────────────────────────────────────────────────── */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>New Arrivals</Text>
-          <Pressable
-            onPress={() => router.push('/search')}
-            accessibilityRole="link"
-            accessibilityLabel="Browse all new arrivals"
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Text style={styles.seeAll}>Browse all</Text>
-          </Pressable>
-        </View>
-        {sectionsLoading ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
-          </ScrollView>
-        ) : recentCards.length === 0 ? (
-          <Text style={styles.emptySection}>No data available right now</Text>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {recentCards.map(card => (
-              <Pressable
-                key={card.id}
-                style={{ gap: 8 }}
-                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
-                accessibilityRole="button"
-                accessibilityLabel={`${card.name} from ${card.setName}`}
-              >
-                <CardThumbnail card={card} compact />
-                <View>
-                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
-                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
-      </View>
-
-      {/* ── Trending ─────────────────────────────────────────────────────── */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Trending</Text>
-          <Pressable
-            onPress={() => router.push('/search')}
-            accessibilityRole="link"
-            accessibilityLabel="See all trending cards"
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Text style={styles.seeAll}>See all</Text>
-          </Pressable>
-        </View>
-        {sectionsLoading ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
-          </ScrollView>
-        ) : trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).length === 0 ? (
-          <Text style={styles.emptySection}>No data available right now</Text>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).map(card => (
-              <Pressable
-                key={card.id}
-                style={{ gap: 8 }}
-                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
-                accessibilityRole="button"
-                accessibilityLabel={`${card.name} from ${card.setName}`}
-              >
-                <CardThumbnail card={card} compact />
-                <View>
-                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
-                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                    <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
-                    {card.price.change7d !== undefined && (
-                      <Text style={[styles.moverChange, { color: (card.price.change7d ?? 0) >= 0 ? C.positive : C.negative }]}>
-                        {(card.price.change7d ?? 0) >= 0 ? '+' : ''}{card.price.change7d?.toFixed(1)}%
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
-      </View>
 
     </ScrollView>
   );
