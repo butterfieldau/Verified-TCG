@@ -36,7 +36,7 @@ export default function MarketScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
 
-  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   // Stale-while-revalidate: cached movers render instantly; a background
