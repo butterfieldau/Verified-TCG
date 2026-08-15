@@ -27,6 +27,13 @@ import type { CollectionItem } from '@/types';
 import { canUseUnlimitedScanner } from '@/services/subscription';
 import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
 import { getAccessToken } from '@/services/auth';
+import {
+  type RecentScan,
+  loadRecentScans,
+  appendRecentScan,
+  clearRecentScans,
+  getScanGeneration,
+} from '@/services/scanStatePersistence';
 
 const C = colors.dark;
 const { width: W } = Dimensions.get('window');
@@ -130,7 +137,7 @@ async function recognizeCard(base64Image: string): Promise<ScanResult> {
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { addToCollection, addToWatchlist, subscriptionTier, scansUsed, scanLimit, scanResetDate, syncScanCount } = useApp();
+  const { user, addToCollection, addToWatchlist, subscriptionTier, scansUsed, scanLimit, scanResetDate, syncScanCount } = useApp();
 
   const isLimitExhausted = !canUseUnlimitedScanner(subscriptionTier) && scansUsed >= scanLimit;
 
@@ -144,6 +151,11 @@ export default function ScanScreen() {
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [confirmedAction, setConfirmedAction] = useState<string>('');
 
+  const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
+  // Incremented on each sign-out so stale async callbacks can detect they
+  // belong to an old session and discard their results.
+  const sessionIdRef = useRef(0);
+
   const cameraRef = useRef<CameraView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -151,6 +163,32 @@ export default function ScanScreen() {
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
+
+  // ── Recent scans ─────────────────────────────────────────────────────────
+
+  // Load persisted scans on first mount.  Discard the result if the session
+  // has already been invalidated (sign-out happened while the load was in
+  // flight) by comparing the captured sessionId to the current ref value.
+  useEffect(() => {
+    const mySession = sessionIdRef.current;
+    loadRecentScans()
+      .then(scans => {
+        if (sessionIdRef.current === mySession) setRecentScans(scans);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Wipe in-memory recent scans when the user signs out.
+  // AsyncStorage is already cleared by AppContext.signOut() — this only resets
+  // the React state so the tab doesn't show the previous user's list while
+  // still mounted.  The session ID is bumped so any in-flight load or append
+  // that completes after sign-out cannot repopulate the list.
+  useEffect(() => {
+    if (!user) {
+      sessionIdRef.current += 1;
+      setRecentScans([]);
+    }
+  }, [user]);
 
   const resetLabel = scanResetDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 
@@ -196,6 +234,14 @@ export default function ScanScreen() {
       if (!result.granted) return;
     }
 
+    // Capture both the React session ref AND the module-level scan generation
+    // BEFORE any await.  The module generation is the authoritative guard for
+    // AsyncStorage writes (it is incremented synchronously by clearRecentScans
+    // inside AppContext.signOut, before any React effects run).  The React ref
+    // guards in-memory state updates.
+    const sessionAtCapture = sessionIdRef.current;
+    const scanGenAtCapture = getScanGeneration();
+
     setScanState('capturing');
 
     try {
@@ -215,6 +261,13 @@ export default function ScanScreen() {
 
       const result = await recognizeCard(photo.base64);
 
+      // Discard all post-recognition work if sign-out ran while the
+      // network request was in flight.  The module generation advances
+      // synchronously inside clearRecentScans (called from AppContext.signOut)
+      // — this fires before any React effect, so the comparison is reliable
+      // even if the component's user-watcher effect hasn't run yet.
+      if (getScanGeneration() !== scanGenAtCapture) return;
+
       // Sync scan count from server-authoritative response.
       // The server atomically incremented the count (even on recognition failure),
       // so we always use the returned value rather than a local increment — this
@@ -232,6 +285,32 @@ export default function ScanScreen() {
         setScanState('low_confidence');
       } else {
         setScanState('match');
+      }
+
+      // Persist a recent-scan entry for every recognised card (including
+      // low-confidence matches) so the collector can revisit it.
+      //
+      // Pass scanGenAtCapture — the generation at scan-start — to
+      // appendRecentScan.  It compares this against the current generation
+      // at both the start and end of its async read, so a clear that ran at
+      // any point since scan-start causes the write to be aborted.
+      if (result.topMatch) {
+        const raw = result.topMatch.card;
+        const entry: RecentScan = {
+          cardId: String(raw.id ?? ''),
+          name: String(raw.name ?? ''),
+          setName: String(raw.set_name ?? raw.set ?? ''),
+          number: String(raw.number ?? ''),
+          imageUrl: raw.image_url ? String(raw.image_url) : undefined,
+          scannedAt: new Date().toISOString(),
+        };
+        appendRecentScan(entry, scanGenAtCapture)
+          .then(updated => {
+            // Guard the in-memory state update against the React session ref
+            // (covers the case where the effect has run and incremented it).
+            if (sessionIdRef.current === sessionAtCapture) setRecentScans(updated);
+          })
+          .catch(() => {});
       }
     } catch (err: unknown) {
       const e = err as Error & { code?: string; scansUsed?: number };
@@ -521,158 +600,79 @@ export default function ScanScreen() {
         </View>
       </Modal>
 
-      {/* Camera viewfinder */}
+      {/* ── Active state: viewfinder + capture controls + recent scans ───────── */}
       {isActiveView && (
-        <View style={styles.viewfinder}>
-          <View style={[styles.scanFrame, { width: FRAME_W, height: FRAME_H }]}>
-            {/* Live camera feed */}
-            {!isLimitExhausted && (
-              <CameraView
-                ref={cameraRef}
-                style={StyleSheet.absoluteFill}
-                facing={facing}
-                flash={flashEnabled ? 'on' : 'off'}
-              />
-            )}
+        <ScrollView
+          style={{ flex: 1 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          {/* Viewfinder */}
+          <View style={styles.viewfinder}>
+            <View style={[styles.scanFrame, { width: FRAME_W, height: FRAME_H }]}>
+              {/* Live camera feed */}
+              {!isLimitExhausted && (
+                <CameraView
+                  ref={cameraRef}
+                  style={StyleSheet.absoluteFill}
+                  facing={facing}
+                  flash={flashEnabled ? 'on' : 'off'}
+                />
+              )}
 
-            {/* Corner marks */}
-            <View style={[styles.corner, { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3 }]} />
-            <View style={[styles.corner, { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3 }]} />
-            <View style={[styles.corner, { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3 }]} />
-            <View style={[styles.corner, { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3 }]} />
+              {/* Corner marks */}
+              <View style={[styles.corner, { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3 }]} />
+              <View style={[styles.corner, { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3 }]} />
+              <View style={[styles.corner, { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3 }]} />
+              <View style={[styles.corner, { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3 }]} />
 
-            {/* Scan line during recognition */}
-            {scanState === 'recognizing' && (
-              <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineY }] }]} />
-            )}
+              {/* Scan line during recognition */}
+              {scanState === 'recognizing' && (
+                <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineY }] }]} />
+              )}
 
-            {/* Idle placeholder when limit exhausted */}
-            {isLimitExhausted && (
-              <View style={styles.idleCenter}>
-                <Feather name="camera-off" size={48} color={`${C.mutedForeground}55`} />
-              </View>
-            )}
-
-            {/* Dim overlay when limit exhausted */}
-            {isLimitExhausted && (
-              <View style={[styles.exhaustedOverlay, { pointerEvents: 'none' }]} />
-            )}
-
-            {/* Capturing / recognizing badge */}
-            {(scanState === 'capturing' || scanState === 'recognizing') && (
-              <View style={styles.scanningBadge}>
-                <View style={styles.scanDot} />
-                <Text style={styles.scanningText}>
-                  {scanState === 'capturing' ? 'CAPTURING' : 'IDENTIFYING'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <Text style={styles.hint}>
-            {isLimitExhausted
-              ? 'Scan limit reached for this month'
-              : scanState === 'idle'
-              ? 'Position card in frame, then tap capture'
-              : scanState === 'capturing'
-              ? 'Hold steady…'
-              : 'Identifying card…'}
-          </Text>
-
-          {/* Identifying spinner */}
-          {scanState === 'recognizing' && (
-            <ActivityIndicator size="small" color={C.primary} style={{ marginTop: 8 }} />
-          )}
-        </View>
-      )}
-
-      {/* Match result */}
-      {isMatchView && topMatch && (
-        <Animated.View style={[styles.matchPanel, { opacity: fadeAnim, transform: [{ scale: pulseAnim }] }]}>
-          {/* Low confidence warning */}
-          {scanState === 'low_confidence' && (
-            <View style={styles.lowConfBanner}>
-              <Feather name="alert-triangle" size={14} color="#F59E0B" />
-              <Text style={styles.lowConfText}>Low confidence — please verify</Text>
-            </View>
-          )}
-
-          <View style={styles.confidenceBadge}>
-            <Text style={[styles.confidenceNum, scanState === 'low_confidence' && { color: '#F59E0B' }]}>
-              {topMatch.confidence}%
-            </Text>
-            <Text style={styles.confidenceLabel}>MATCH</Text>
-          </View>
-
-          <View style={styles.matchCard}>
-            {/* Card image or initial fallback */}
-            {topMatch.card.image_url ? (
-              <Image
-                source={{ uri: String(topMatch.card.image_url) }}
-                style={styles.matchThumb}
-                contentFit="cover"
-              />
-            ) : (
-              <View style={[styles.matchThumb, { backgroundColor: '#1e293b', alignItems: 'center', justifyContent: 'center' }]}>
-                <Text style={styles.matchInitial}>{String(topMatch.card.name ?? '?')[0]}</Text>
-              </View>
-            )}
-            <View style={styles.matchInfo}>
-              <Text style={styles.matchName}>{String(topMatch.card.name ?? '')}</Text>
-              <Text style={styles.matchSet}>{String(topMatch.card.set_name ?? topMatch.card.set ?? '')}</Text>
-              {topMatch.card.number ? (
-                <Text style={styles.matchNumber}>#{String(topMatch.card.number)}</Text>
-              ) : null}
-            </View>
-          </View>
-
-          {/* All candidates if multiple */}
-          {(scanResult?.matches?.length ?? 0) > 1 && (
-            <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
-              {scanResult!.matches.slice(1).map((m, i) => (
-                <View key={i} style={styles.altChip}>
-                  <Text style={styles.altChipText} numberOfLines={1}>{String(m.card.name ?? '')}</Text>
-                  <Text style={styles.altChipConf}>{m.confidence}%</Text>
+              {/* Idle placeholder when limit exhausted */}
+              {isLimitExhausted && (
+                <View style={styles.idleCenter}>
+                  <Feather name="camera-off" size={48} color={`${C.mutedForeground}55`} />
                 </View>
-              ))}
-            </ScrollView>
-          )}
-        </Animated.View>
-      )}
+              )}
 
-      {/* Error state */}
-      {scanState === 'error' && (
-        <View style={styles.errorPanel}>
-          <Feather name="alert-circle" size={44} color={C.mutedForeground} style={{ marginBottom: 12 }} />
-          <Text style={styles.errorTitle}>Couldn't identify card</Text>
-          <Text style={styles.errorBody}>{errorMessage}</Text>
-        </View>
-      )}
+              {/* Dim overlay when limit exhausted */}
+              {isLimitExhausted && (
+                <View style={[styles.exhaustedOverlay, { pointerEvents: 'none' }]} />
+              )}
 
-      {/* Confirmed state */}
-      {scanState === 'confirmed' && topMatch && (
-        <View style={styles.confirmedPanel}>
-          <View style={styles.confirmedIconWrap}>
-            <Feather name="check-circle" size={52} color={C.positive} />
-          </View>
-          <Text style={styles.confirmedTitle}>{String(topMatch.card.name ?? '')}</Text>
-          <Text style={styles.confirmedSub}>
-            {confirmedAction === 'collection' ? 'Added to your collection' : confirmedAction === 'wishlist' ? 'Added to your wishlist' : 'Done!'}
-          </Text>
-          <View style={[styles.confirmedMeta, { backgroundColor: C.card }]}>
-            <Text style={styles.confirmedMetaText}>
-              {String(topMatch.card.set_name ?? topMatch.card.set ?? '')}
-              {topMatch.card.number ? ` · #${topMatch.card.number}` : ''}
+              {/* Capturing / recognizing badge */}
+              {(scanState === 'capturing' || scanState === 'recognizing') && (
+                <View style={styles.scanningBadge}>
+                  <View style={styles.scanDot} />
+                  <Text style={styles.scanningText}>
+                    {scanState === 'capturing' ? 'CAPTURING' : 'IDENTIFYING'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.hint}>
+              {isLimitExhausted
+                ? 'Scan limit reached for this month'
+                : scanState === 'idle'
+                ? 'Position card in frame, then tap capture'
+                : scanState === 'capturing'
+                ? 'Hold steady…'
+                : 'Identifying card…'}
             </Text>
-          </View>
-        </View>
-      )}
 
-      {/* Controls */}
-      <View style={styles.controls}>
-        {/* Idle / recognizing controls */}
-        {isActiveView && (
-          <View>
+            {/* Identifying spinner */}
+            {scanState === 'recognizing' && (
+              <ActivityIndicator size="small" color={C.primary} style={{ marginTop: 8 }} />
+            )}
+          </View>
+
+          {/* Capture controls */}
+          <View style={styles.controls}>
             <View style={styles.iconRow}>
               <Pressable
                 onPress={() => setFlashEnabled(f => !f)}
@@ -752,87 +752,215 @@ export default function ScanScreen() {
               </Pressable>
             )}
           </View>
-        )}
 
-        {/* Match actions */}
-        {isMatchView && (
-          <View style={styles.actionStack}>
-            <Pressable
-              onPress={handleConfirm}
-              style={styles.primaryActionBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Confirm match and save card"
-            >
-              <Feather name="check" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>That's the one — save it</Text>
-            </Pressable>
-            <Pressable
-              onPress={handleSearchManually}
-              style={styles.secondaryActionBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Not right? Search manually"
-            >
-              <Feather name="search" size={16} color={C.foreground} />
-              <Text style={styles.secondaryActionText}>Not right? Search manually</Text>
-            </Pressable>
-            <Pressable
-              onPress={tryAgain}
-              style={styles.ghostBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Scan again"
-            >
-              <Text style={styles.ghostBtnText}>Scan Again</Text>
-            </Pressable>
+          {/* ── Recent Scans ── shown in idle state only ────────────────────── */}
+          {scanState === 'idle' && recentScans.length > 0 && (
+            <View style={styles.recentSection}>
+              <Text style={styles.recentTitle}>Recent Scans</Text>
+              {recentScans.slice(0, 5).map((scan) => (
+                <Pressable
+                  key={`${scan.cardId}-${scan.scannedAt}`}
+                  onPress={() => router.push(`/card/${scan.cardId}`)}
+                  style={styles.recentRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${scan.name}`}
+                >
+                  {/* Thumbnail */}
+                  {scan.imageUrl ? (
+                    <Image
+                      source={{ uri: scan.imageUrl }}
+                      style={styles.recentThumb}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={[styles.recentThumb, styles.recentThumbFallback]}>
+                      <Text style={styles.recentThumbInitial}>
+                        {scan.name ? scan.name[0].toUpperCase() : '?'}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Card info */}
+                  <View style={styles.recentInfo}>
+                    <Text style={styles.recentName} numberOfLines={1}>{scan.name}</Text>
+                    <Text style={styles.recentMeta} numberOfLines={1}>
+                      {[scan.setName, scan.number ? `#${scan.number}` : ''].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+
+                  <Feather name="chevron-right" size={16} color={C.mutedForeground} />
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
+
+      {/* ── Match result ─────────────────────────────────────────────────────── */}
+      {isMatchView && topMatch && (
+        <Animated.View style={[styles.matchPanel, { opacity: fadeAnim, transform: [{ scale: pulseAnim }] }]}>
+          {/* Low confidence warning */}
+          {scanState === 'low_confidence' && (
+            <View style={styles.lowConfBanner}>
+              <Feather name="alert-triangle" size={14} color="#F59E0B" />
+              <Text style={styles.lowConfText}>Low confidence — please verify</Text>
+            </View>
+          )}
+
+          <View style={styles.confidenceBadge}>
+            <Text style={[styles.confidenceNum, scanState === 'low_confidence' && { color: '#F59E0B' }]}>
+              {topMatch.confidence}%
+            </Text>
+            <Text style={styles.confidenceLabel}>MATCH</Text>
           </View>
-        )}
 
-        {/* Error actions */}
-        {scanState === 'error' && (
-          <View style={styles.actionStack}>
-            <Pressable
-              onPress={handleSearchManually}
-              style={styles.primaryActionBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Search manually"
-            >
-              <Feather name="search" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Search Manually</Text>
-            </Pressable>
-            <Pressable
-              onPress={tryAgain}
-              style={styles.ghostBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Try scanning again"
-            >
-              <Text style={styles.ghostBtnText}>Try Again</Text>
-            </Pressable>
+          <View style={styles.matchCard}>
+            {/* Card image or initial fallback */}
+            {topMatch.card.image_url ? (
+              <Image
+                source={{ uri: String(topMatch.card.image_url) }}
+                style={styles.matchThumb}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={[styles.matchThumb, { backgroundColor: '#1e293b', alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={styles.matchInitial}>{String(topMatch.card.name ?? '?')[0]}</Text>
+              </View>
+            )}
+            <View style={styles.matchInfo}>
+              <Text style={styles.matchName}>{String(topMatch.card.name ?? '')}</Text>
+              <Text style={styles.matchSet}>{String(topMatch.card.set_name ?? topMatch.card.set ?? '')}</Text>
+              {topMatch.card.number ? (
+                <Text style={styles.matchNumber}>#{String(topMatch.card.number)}</Text>
+              ) : null}
+            </View>
           </View>
-        )}
 
-        {/* Confirmed actions */}
-        {scanState === 'confirmed' && (
-          <View style={styles.actionStack}>
-            {topMatch && (
+          {/* All candidates if multiple */}
+          {(scanResult?.matches?.length ?? 0) > 1 && (
+            <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
+              {scanResult!.matches.slice(1).map((m, i) => (
+                <View key={i} style={styles.altChip}>
+                  <Text style={styles.altChipText} numberOfLines={1}>{String(m.card.name ?? '')}</Text>
+                  <Text style={styles.altChipConf}>{m.confidence}%</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
+      )}
+
+      {/* ── Error state ──────────────────────────────────────────────────────── */}
+      {scanState === 'error' && (
+        <View style={styles.errorPanel}>
+          <Feather name="alert-circle" size={44} color={C.mutedForeground} style={{ marginBottom: 12 }} />
+          <Text style={styles.errorTitle}>Couldn't identify card</Text>
+          <Text style={styles.errorBody}>{errorMessage}</Text>
+        </View>
+      )}
+
+      {/* ── Confirmed state ──────────────────────────────────────────────────── */}
+      {scanState === 'confirmed' && topMatch && (
+        <View style={styles.confirmedPanel}>
+          <View style={styles.confirmedIconWrap}>
+            <Feather name="check-circle" size={52} color={C.positive} />
+          </View>
+          <Text style={styles.confirmedTitle}>{String(topMatch.card.name ?? '')}</Text>
+          <Text style={styles.confirmedSub}>
+            {confirmedAction === 'collection' ? 'Added to your collection' : confirmedAction === 'wishlist' ? 'Added to your wishlist' : 'Done!'}
+          </Text>
+          <View style={[styles.confirmedMeta, { backgroundColor: C.card }]}>
+            <Text style={styles.confirmedMetaText}>
+              {String(topMatch.card.set_name ?? topMatch.card.set ?? '')}
+              {topMatch.card.number ? ` · #${topMatch.card.number}` : ''}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* ── Controls for match / error / confirmed states ─────────────────────── */}
+      {!isActiveView && (
+        <View style={styles.controls}>
+          {/* Match actions */}
+          {isMatchView && (
+            <View style={styles.actionStack}>
               <Pressable
-                onPress={() => router.push(`/card/${topMatch.card.id}`)}
+                onPress={handleConfirm}
                 style={styles.primaryActionBtn}
                 accessibilityRole="button"
-                accessibilityLabel={`View details for ${String(topMatch.card.name ?? '')}`}
+                accessibilityLabel="Confirm match and save card"
               >
-                <Text style={styles.primaryActionText}>View Card Detail</Text>
+                <Feather name="check" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>That's the one — save it</Text>
               </Pressable>
-            )}
-            <Pressable
-              onPress={tryAgain}
-              style={styles.ghostBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Scan another card"
-            >
-              <Text style={styles.ghostBtnText}>Scan Another Card</Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
+              <Pressable
+                onPress={handleSearchManually}
+                style={styles.secondaryActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Not right? Search manually"
+              >
+                <Feather name="search" size={16} color={C.foreground} />
+                <Text style={styles.secondaryActionText}>Not right? Search manually</Text>
+              </Pressable>
+              <Pressable
+                onPress={tryAgain}
+                style={styles.ghostBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Scan again"
+              >
+                <Text style={styles.ghostBtnText}>Scan Again</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Error actions */}
+          {scanState === 'error' && (
+            <View style={styles.actionStack}>
+              <Pressable
+                onPress={handleSearchManually}
+                style={styles.primaryActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Search manually"
+              >
+                <Feather name="search" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>Search Manually</Text>
+              </Pressable>
+              <Pressable
+                onPress={tryAgain}
+                style={styles.ghostBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Try scanning again"
+              >
+                <Text style={styles.ghostBtnText}>Try Again</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Confirmed actions */}
+          {scanState === 'confirmed' && (
+            <View style={styles.actionStack}>
+              {topMatch && (
+                <Pressable
+                  onPress={() => router.push(`/card/${topMatch.card.id}`)}
+                  style={styles.primaryActionBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View details for ${String(topMatch.card.name ?? '')}`}
+                >
+                  <Text style={styles.primaryActionText}>View Card Detail</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={tryAgain}
+                style={styles.ghostBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Scan another card"
+              >
+                <Text style={styles.ghostBtnText}>Scan Another Card</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -1265,4 +1393,57 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sheetGhostBtnText: { fontSize: 14, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  // Recent scans
+  recentSection: {
+    marginTop: 24,
+    paddingBottom: 12,
+  },
+  recentTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  recentThumb: {
+    width: 44,
+    height: 62,
+    borderRadius: 7,
+  },
+  recentThumbFallback: {
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentThumbInitial: {
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+    color: 'rgba(255,255,255,0.7)',
+  },
+  recentInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  recentName: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  recentMeta: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
 });

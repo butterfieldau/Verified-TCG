@@ -65,6 +65,7 @@ import {
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
+import { clearRecentScans } from '@/services/scanStatePersistence';
 
 // API base for server-side quota sync — same pattern as other service files
 const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -781,6 +782,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     authSignOut().catch(() => {});
     // Clear collection cache so the next user doesn't see stale data
     AsyncStorage.removeItem(COLLECTION_CACHE_KEY).catch(() => {});
+    // Clear scan history so it never leaks to the next user regardless of
+    // which tabs are mounted (tabs are lazily mounted in Expo).
+    clearRecentScans().catch(() => {});
     // Reset all in-memory state so the next user starts completely fresh
     setUser(null);
     setIsAuthenticated(false);
@@ -801,6 +805,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteAccount = useCallback(async (password: string) => {
     await authDeleteAccount(password);
+    // Clear scan history so it never leaks to the next user.
+    clearRecentScans().catch(() => {});
     // Reset all in-memory state after successful deletion
     setUser(null);
     setIsAuthenticated(false);
