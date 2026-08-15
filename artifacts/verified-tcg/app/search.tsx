@@ -16,7 +16,7 @@ import { Feather } from '@expo/vector-icons';
 import { VerificationBadge } from '@/components/ui/Badge';
 import { Chip } from '@/components/ui/Chip';
 import { SearchListSkeleton } from '@/components/ui/SkeletonLoader';
-import { getMarketMoversCached } from '@/services/market';
+import { getMarketMovers } from '@/services/market';
 import type { MarketMover } from '@/types';
 import { handleApiError } from '@/services/errorHandler';
 import colors from '@/constants/colors';
@@ -136,10 +136,9 @@ export default function SearchScreen() {
 
   const isEmpty = query.trim().length === 0;
 
-  // Load trending cards — served instantly from cache on repeat visits,
-  // with a silent background refresh when the cache is stale.
+  // Load trending cards once (used in empty/idle state)
   useEffect(() => {
-    getMarketMoversCached(setTrendingMovers).then(setTrendingMovers).catch(() => {});
+    getMarketMovers().then(setTrendingMovers).catch(() => {});
   }, []);
 
   // Debounced search — resets pagination on new query
