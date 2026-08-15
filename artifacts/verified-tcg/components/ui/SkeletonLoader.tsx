@@ -164,6 +164,32 @@ export function NotificationListSkeleton({ count = 5 }: { count?: number }) {
   );
 }
 
+/** Skeleton for a single recent-activity row */
+export function ActivityRowSkeleton() {
+  return (
+    <View style={skeletonStyles.activityRow}>
+      {/* Icon dot */}
+      <SkeletonLoader width={32} height={32} borderRadius={16} />
+      {/* Text lines */}
+      <View style={skeletonStyles.rowInfo}>
+        <SkeletonLoader width="70%" height={13} />
+        <SkeletonLoader width="35%" height={10} style={skeletonStyles.mt4} />
+      </View>
+    </View>
+  );
+}
+
+/** Skeleton list for the Recent Activity card */
+export function RecentActivitySkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <View style={skeletonStyles.activityCard}>
+      {Array.from({ length: count }).map((_, i) => (
+        <ActivityRowSkeleton key={i} />
+      ))}
+    </View>
+  );
+}
+
 const skeletonStyles = StyleSheet.create({
   card: { gap: 4 },
   mt8: { marginTop: 8 },
@@ -195,5 +221,19 @@ const skeletonStyles = StyleSheet.create({
     alignItems: 'flex-start',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.04)',
+  },
+  activityCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
 });

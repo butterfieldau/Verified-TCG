@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  ActivityIndicator,
-  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -14,10 +12,10 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Chip } from '@/components/ui/Chip';
+import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
-import { getMarketMovers } from '@/services/market';
-import { resizeTcgPlayerUrl } from '@/services/catalogApi';
+import { getMarketMovers, getMarketMoversCached } from '@/services/market';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
 import type { MarketMover, TCGId } from '@/types';
@@ -41,10 +39,11 @@ export default function MarketScreen() {
   const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
+  // Stale-while-revalidate: cached movers render instantly; a background
+  // refresh (when stale) pushes fresh data in via the onUpdate callback.
   const loadMovers = useCallback(async () => {
-    setMoversLoading(true);
     try {
-      const data = await getMarketMovers();
+      const data = await getMarketMoversCached(fresh => setMovers(fresh));
       setMovers(data);
     } catch {
       // silently keep previous data
@@ -57,11 +56,18 @@ export default function MarketScreen() {
     loadMovers();
   }, [loadMovers]);
 
+  // Pull-to-refresh always hits the network (and rewrites the cache)
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await loadMovers();
-    setIsRefreshing(false);
-  }, [loadMovers]);
+    try {
+      const data = await getMarketMovers();
+      if (data.length > 0) setMovers(data);
+    } catch {
+      // keep previous data
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
 
   const filteredMovers =
     activeTCG === 'all' ? movers : movers.filter(m => m.card.tcg === activeTCG);
@@ -174,7 +180,7 @@ export default function MarketScreen() {
           >
             <View style={[styles.rankedThumb, { backgroundColor: m.card.gradientStart, overflow: 'hidden' }]}>
               {m.card.imageUrl
-                ? <Image source={{ uri: resizeTcgPlayerUrl(m.card.imageUrl, 437) ?? m.card.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                ? <CardImage uri={m.card.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
                 : <Text style={styles.rankedInitial}>{m.card.name[0]}</Text>}
             </View>
             <View style={styles.rankedInfo}>

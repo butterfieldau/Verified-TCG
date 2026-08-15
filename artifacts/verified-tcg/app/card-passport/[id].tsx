@@ -10,6 +10,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { CardImage } from '@/components/ui/CardImage';
 import colors from '@/constants/colors';
 import { getCardPassport } from '@/services/matching';
 
@@ -74,6 +75,15 @@ export default function CardPassportScreen() {
         <View style={styles.heroInner}>
           <Text style={styles.heroInitial}>{passport.cardName[0]}</Text>
         </View>
+        {!!passport.imageUrl && (
+          <CardImage
+            uri={passport.imageUrl}
+            resizeWidth={1000}
+            style={StyleSheet.absoluteFill}
+            contentFit="contain"
+            accessibilityLabel={`${passport.cardName} card image`}
+          />
+        )}
         {/* Passport badge */}
         <View style={[styles.passportBadge, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
           <Feather name="book-open" size={10} color="#FFFFFF" />

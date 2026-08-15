@@ -163,6 +163,10 @@ router.post("/auth/signin", authSignLimiter, async (req, res) => {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
+  if (user.suspendedAt) {
+    return res.status(403).json({ message: "Account suspended — contact support" });
+  }
+
   const refreshToken = makeRefreshToken();
   const accessToken = makeAccessToken(user.id, user.email, user.displayName);
   await createSession(user.id, refreshToken);
@@ -198,6 +202,10 @@ router.post("/auth/refresh", async (req, res) => {
 
   if (!user) {
     return res.status(401).json({ message: "User not found" });
+  }
+
+  if (user.suspendedAt) {
+    return res.status(403).json({ message: "Account suspended — contact support" });
   }
 
   // Rotate refresh token
@@ -249,6 +257,10 @@ router.get("/auth/user", async (req, res) => {
 
   if (!user) {
     return res.status(404).json({ message: "User not found" });
+  }
+
+  if (user.suspendedAt) {
+    return res.status(403).json({ message: "Account suspended — contact support" });
   }
 
   return res.json({
@@ -310,6 +322,21 @@ router.put("/auth/user", async (req, res) => {
   if (data.show_for_trade !== undefined) patch.showForTrade = data.show_for_trade;
   if (data.show_for_sale !== undefined) patch.showForSale = data.show_for_sale;
   if ("preferred_tcgs" in data) patch.preferredTcgs = data.preferred_tcgs ?? null;
+
+  // Check suspension before applying update
+  const [existing] = await db
+    .select({ id: usersTable.id, suspendedAt: usersTable.suspendedAt })
+    .from(usersTable)
+    .where(eq(usersTable.id, payload.sub))
+    .limit(1);
+
+  if (!existing) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  if (existing.suspendedAt) {
+    return res.status(403).json({ message: "Account suspended — contact support" });
+  }
 
   const [updated] = await db
     .update(usersTable)

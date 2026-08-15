@@ -55,16 +55,21 @@ export async function requireActiveUser(
     return;
   }
 
-  // Confirm user still exists — rejects tokens for deleted accounts regardless
-  // of the token's remaining TTL, and survives server restarts.
+  // Confirm user still exists and is not suspended — rejects tokens for deleted
+  // or suspended accounts regardless of the token's remaining TTL.
   const [user] = await db
-    .select({ id: usersTable.id })
+    .select({ id: usersTable.id, suspendedAt: usersTable.suspendedAt })
     .from(usersTable)
     .where(eq(usersTable.id, sub))
     .limit(1);
 
   if (!user) {
     res.status(401).json({ message: "Account not found or has been deleted" });
+    return;
+  }
+
+  if (user.suspendedAt) {
+    res.status(403).json({ message: "Account suspended — contact support" });
     return;
   }
 
@@ -105,13 +110,18 @@ export async function requireProUser(
   }
 
   const [user] = await db
-    .select({ id: usersTable.id, subscriptionTier: usersTable.subscriptionTier })
+    .select({ id: usersTable.id, subscriptionTier: usersTable.subscriptionTier, suspendedAt: usersTable.suspendedAt })
     .from(usersTable)
     .where(eq(usersTable.id, sub))
     .limit(1);
 
   if (!user) {
     res.status(401).json({ message: "Account not found or has been deleted" });
+    return;
+  }
+
+  if (user.suspendedAt) {
+    res.status(403).json({ message: "Account suspended — contact support" });
     return;
   }
 

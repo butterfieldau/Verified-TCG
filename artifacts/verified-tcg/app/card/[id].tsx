@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -29,6 +28,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
+import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
@@ -539,18 +539,14 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
       {showImage ? (
         <GestureDetector gesture={composed}>
           <Animated.View style={[imgStyles.imageWrap, animatedStyle]}>
-            <Image
-              source={{ uri: imageUrl }}
+            <CardImage
+              uri={imageUrl}
+              resizeWidth={1000}
               style={imgStyles.image}
-              resizeMode="contain"
+              contentFit="contain"
               onLoad={() => setImageLoaded(true)}
               onError={() => setImageError(true)}
             />
-            {!imageLoaded && (
-              <View style={imgStyles.spinner}>
-                <ActivityIndicator size="large" color="rgba(255,255,255,0.6)" />
-              </View>
-            )}
           </Animated.View>
         </GestureDetector>
       ) : (

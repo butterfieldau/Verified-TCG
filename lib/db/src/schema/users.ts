@@ -21,6 +21,7 @@ export const usersTable = pgTable("users", {
   showForSale: boolean("show_for_sale").notNull().default(true),
   /** Comma-separated list of TCG names the user selected during onboarding, e.g. "Pokémon,One Piece TCG". */
   preferredTcgs: text("preferred_tcgs"),
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

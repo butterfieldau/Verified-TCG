@@ -34,6 +34,8 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
   // Added: TCG game preferences selected during onboarding, stored comma-separated
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_tcgs TEXT`,
+  // Added: account suspension support — NULL means active, non-NULL means suspended
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ`,
 ];
 
 /**

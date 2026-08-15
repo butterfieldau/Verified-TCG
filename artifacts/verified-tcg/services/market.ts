@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Card, MarketMover, PriceRecord, PortfolioDataPoint, PortfolioRange } from '@/types';
 import { catalogCardToAppCard } from './catalogApi';
 import type { CatalogCard } from './catalogApi';
@@ -15,6 +16,106 @@ interface MarketMoverServerCard extends CatalogCard {
   trend: 'up' | 'down' | 'neutral';
 }
 
+// ── Stale-while-revalidate cache ──────────────────────────────────────────────
+//
+// Market/home data is cached in AsyncStorage so screens can render instantly
+// from the last-known data while a background refresh runs. Cached data is
+// served even past the TTL (stale) — the TTL only decides whether a background
+// refresh is triggered. The UI only blocks when no cache exists at all.
+
+const MARKET_CACHE_KEY = '@verified_tcg/market_cache';
+const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface MarketCacheSection<T> {
+  data: T;
+  updatedAt: number;
+}
+
+interface MarketCache {
+  movers?: MarketCacheSection<MarketMover[]>;
+  trending?: MarketCacheSection<Card[]>;
+  recentlyAdded?: MarketCacheSection<Card[]>;
+}
+
+async function readMarketCache(): Promise<MarketCache> {
+  try {
+    const raw = await AsyncStorage.getItem(MARKET_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as MarketCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+// All sections share one JSON blob, so read-modify-write cycles must be
+// serialized — otherwise concurrent section writes (e.g. Home fetching all
+// three feeds on cold start) would clobber each other, with the last write
+// discarding the other sections.
+let cacheWriteQueue: Promise<void> = Promise.resolve();
+
+function writeMarketCacheSection<K extends keyof MarketCache>(
+  key: K,
+  data: NonNullable<MarketCache[K]>['data'],
+): Promise<void> {
+  cacheWriteQueue = cacheWriteQueue.then(async () => {
+    try {
+      const cache = await readMarketCache();
+      cache[key] = { data, updatedAt: Date.now() } as MarketCache[K];
+      await AsyncStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // Cache writes are best-effort
+    }
+  });
+  return cacheWriteQueue;
+}
+
+/**
+ * Generic stale-while-revalidate wrapper.
+ * - Cache hit  → returns cached data immediately; if past TTL, refreshes in
+ *   the background and reports fresh data via `onUpdate`.
+ * - Cache miss → awaits the network fetch (the only blocking path).
+ * Empty fetch results never overwrite existing cached data.
+ */
+async function swrFetch<K extends keyof MarketCache, T extends NonNullable<MarketCache[K]>['data']>(
+  key: K,
+  fetcher: () => Promise<T>,
+  onUpdate?: (fresh: T) => void,
+): Promise<T> {
+  const cache = await readMarketCache();
+  const section = cache[key] as MarketCacheSection<T> | undefined;
+
+  if (section && Array.isArray(section.data) && section.data.length > 0) {
+    const isStale = Date.now() - section.updatedAt > MARKET_CACHE_TTL_MS;
+    if (isStale) {
+      // Background revalidation — never blocks the caller.
+      // (The base fetchers write the cache themselves on success.)
+      fetcher()
+        .then(fresh => {
+          if (fresh.length > 0) onUpdate?.(fresh);
+        })
+        .catch(() => {});
+    }
+    return section.data;
+  }
+
+  // No cache — block on the network just this once
+  return fetcher();
+}
+
+/** Cached variant of getMarketMovers — see swrFetch for semantics. */
+export function getMarketMoversCached(onUpdate?: (fresh: MarketMover[]) => void): Promise<MarketMover[]> {
+  return swrFetch('movers', getMarketMovers, onUpdate);
+}
+
+/** Cached variant of getTrendingCards — see swrFetch for semantics. */
+export function getTrendingCardsCached(onUpdate?: (fresh: Card[]) => void): Promise<Card[]> {
+  return swrFetch('trending', getTrendingCards, onUpdate);
+}
+
+/** Cached variant of getRecentlyAddedCards — see swrFetch for semantics. */
+export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void): Promise<Card[]> {
+  return swrFetch('recentlyAdded', getRecentlyAddedCards, onUpdate);
+}
+
 // ── Live API functions ────────────────────────────────────────────────────────
 
 /**
@@ -28,13 +129,15 @@ export async function getMarketMovers(): Promise<MarketMover[]> {
     const res = await fetch(`${API_BASE}/catalog/market-movers`);
     if (!res.ok) return [];
     const body = await res.json();
-    return (body.data as MarketMoverServerCard[]).map((card) => ({
+    const movers = (body.data as MarketMoverServerCard[]).map((card) => ({
       card: catalogCardToAppCard(card),
       currentPrice: card.market_price,
       priceChange: (card.market_price * card.price_change_7d) / 100,
       priceChangePercent: card.price_change_7d,
       trend: card.trend,
     }));
+    if (movers.length > 0) await writeMarketCacheSection('movers', movers);
+    return movers;
   } catch {
     return [];
   }
@@ -50,7 +153,9 @@ export async function getTrendingCards(): Promise<Card[]> {
     const res = await fetch(`${API_BASE}/catalog/trending`);
     if (!res.ok) return [];
     const body = await res.json();
-    return (body.data as CatalogCard[]).map(catalogCardToAppCard);
+    const cards = (body.data as CatalogCard[]).map(catalogCardToAppCard);
+    if (cards.length > 0) await writeMarketCacheSection('trending', cards);
+    return cards;
   } catch {
     return [];
   }
@@ -66,7 +171,9 @@ export async function getRecentlyAddedCards(): Promise<Card[]> {
     const res = await fetch(`${API_BASE}/catalog/recently-added`);
     if (!res.ok) return [];
     const body = await res.json();
-    return (body.data as CatalogCard[]).map(catalogCardToAppCard);
+    const cards = (body.data as CatalogCard[]).map(catalogCardToAppCard);
+    if (cards.length > 0) await writeMarketCacheSection('recentlyAdded', cards);
+    return cards;
   } catch {
     return [];
   }
