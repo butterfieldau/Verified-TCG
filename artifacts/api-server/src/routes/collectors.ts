@@ -14,12 +14,13 @@
 
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, followsTable, postsTable, postLikesTable, userBlocksTable } from "@workspace/db";
+import { usersTable, followsTable, postsTable, postLikesTable, userBlocksTable, wishlistItemsTable } from "@workspace/db";
 import {
   and,
   desc,
   eq,
   ilike,
+  isNull,
   notInArray,
   or,
   sql,
@@ -341,6 +342,68 @@ collectorsRouter.get(
     } catch (err) {
       console.error("[collectors] GET /api/collectors/:username/following:", err);
       res.status(500).json({ message: "Failed to load following" });
+    }
+  },
+);
+
+// ── GET /api/collectors/:username/wishlist ────────────────────────────────────
+
+collectorsRouter.get(
+  "/collectors/:username/wishlist",
+  async (req: AuthRequest, res) => {
+    const username = String(req.params["username"] ?? "");
+
+    try {
+      const [collector] = await db
+        .select({
+          id: usersTable.id,
+          username: usersTable.username,
+          displayName: usersTable.displayName,
+          profilePublic: usersTable.profilePublic,
+          showWishlist: usersTable.showWishlist,
+        })
+        .from(usersTable)
+        .where(eq(usersTable.username, username))
+        .limit(1);
+
+      if (!collector) {
+        res.status(404).json({ message: "Collector not found" });
+        return;
+      }
+
+      // Only visible when the profile is public and showWishlist is enabled
+      if (!collector.profilePublic || !collector.showWishlist) {
+        res.status(403).json({ message: "This wishlist is private" });
+        return;
+      }
+
+      const rows = await db
+        .select()
+        .from(wishlistItemsTable)
+        .where(
+          and(
+            eq(wishlistItemsTable.userId, collector.id),
+            isNull(wishlistItemsTable.deletedAt),
+          ),
+        );
+
+      const items = rows.map((row) => ({
+        id: row.itemId,
+        cardId: row.cardId,
+        card: row.cardData,
+        desiredGrade: row.desiredGrade ?? undefined,
+        targetPrice: row.targetPrice != null ? row.targetPrice / 100 : undefined,
+        addedAt: row.addedAt,
+      }));
+
+      res.json({
+        username: collector.username,
+        displayName: collector.displayName,
+        items,
+      });
+    } catch (err) {
+      console.error("[collectors] GET /api/collectors/:username/wishlist:", err);
+      res.status(500).json({ message: "Failed to load wishlist" });
     }
   },
 );
