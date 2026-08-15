@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,10 +15,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Logo } from '@/components/Logo';
+import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
+import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { useApp } from '@/context/AppContext';
-import { getMarketMovers, getTrendingCards, getRecentlyAddedCards } from '@/services/market';
-import { resizeTcgPlayerUrl } from '@/services/catalogApi';
+import {
+  getMarketMovers,
+  getTrendingCards,
+  getRecentlyAddedCards,
+  getMarketMoversCached,
+  getTrendingCardsCached,
+  getRecentlyAddedCardsCached,
+} from '@/services/market';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import colors from '@/constants/colors';
@@ -72,22 +79,33 @@ export default function HomeScreen() {
   const [activityLoading, setActivityLoading] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     setSectionsLoading(true);
     setActivityLoading(true);
+
+    // Stale-while-revalidate: cached data renders instantly; when a background
+    // refresh resolves, the onUpdate callbacks push fresh data into state.
+    // sectionsLoading only stays true when there is no cache at all.
     Promise.all([
-      getMarketMovers(),
-      getTrendingCards(),
-      getRecentlyAddedCards(),
-      fetchRecentActivity(10),
+      getMarketMoversCached(fresh => { if (!cancelled) setMovers(fresh); }),
+      getTrendingCardsCached(fresh => { if (!cancelled) setTrending(fresh); }),
+      getRecentlyAddedCardsCached(fresh => { if (!cancelled) setRecentCards(fresh); }),
     ])
-      .then(([m, t, r, a]) => {
+      .then(([m, t, r]) => {
+        if (cancelled) return;
         setMovers(m);
         setTrending(t);
         setRecentCards(r);
-        setActivity(a);
       })
       .catch(() => {})
-      .finally(() => { setSectionsLoading(false); setActivityLoading(false); });
+      .finally(() => { if (!cancelled) setSectionsLoading(false); });
+
+    fetchRecentActivity(10)
+      .then(a => { if (!cancelled) setActivity(a); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setActivityLoading(false); });
+
+    return () => { cancelled = true; };
   }, []);
 
   const onRefresh = useCallback(async () => {
@@ -424,7 +442,7 @@ export default function HomeScreen() {
                   <View style={styles.tradeMatchSide}>
                     <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color, overflow: 'hidden' }]}>
                       {match.youWant.imageUrl
-                        ? <Image source={{ uri: resizeTcgPlayerUrl(match.youWant.imageUrl, 437) ?? match.youWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        ? <CardImage uri={match.youWant.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
                         : <Text style={styles.tradeMatchInitial}>{match.youWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>YOU WANT</Text>
@@ -439,7 +457,7 @@ export default function HomeScreen() {
                   <View style={styles.tradeMatchSide}>
                     <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color, overflow: 'hidden' }]}>
                       {match.theyWant.imageUrl
-                        ? <Image source={{ uri: resizeTcgPlayerUrl(match.theyWant.imageUrl, 437) ?? match.theyWant.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        ? <CardImage uri={match.theyWant.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
                         : <Text style={styles.tradeMatchInitial}>{match.theyWant.name[0]}</Text>}
                     </View>
                     <Text style={styles.tradeMatchLabel}>THEY WANT</Text>
@@ -544,7 +562,9 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         {sectionsLoading ? (
-          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
         ) : movers.filter(m => tcgFilter === 'all' || m.card.tcg === tcgFilter).length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
@@ -599,7 +619,9 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         {sectionsLoading ? (
-          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
         ) : recentCards.length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
@@ -644,7 +666,9 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         {sectionsLoading ? (
-          <ActivityIndicator color={C.primary} style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
         ) : trending.filter(c => tcgFilter === 'all' || c.tcg === tcgFilter).length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (

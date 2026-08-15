@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -17,6 +16,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { GradeBadge } from '@/components/ui/Badge';
+import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CollectionListSkeleton } from '@/components/ui/SkeletonLoader';
@@ -27,7 +27,6 @@ import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId, CollectionItem } from '@/types';
 import { getSealedProducts, getSetProgress } from '@/services/collection';
-import { resizeTcgPlayerUrl } from '@/services/catalogApi';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
@@ -283,13 +282,11 @@ export default function CollectionScreen() {
             end={{ x: 1, y: 1 }}
             style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
           />
-          {!!item.card.imageUrl && (
-            <Image
-              source={{ uri: resizeTcgPlayerUrl(item.card.imageUrl, 437) ?? item.card.imageUrl }}
-              style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
-              resizeMode="cover"
-            />
-          )}
+          <CardImage
+            uri={item.card.imageUrl}
+            style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+            contentFit="cover"
+          />
           {item.grading && (
             <View style={styles.cardGrade}>
               <GradeBadge grade={item.grading.grade} company={item.grading.company} size="sm" />

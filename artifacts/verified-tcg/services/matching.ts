@@ -526,6 +526,7 @@ export interface CardPassport {
   certNumber: string;
   gradedAt: string;
   color: string;
+  imageUrl?: string;
   currentOwner: string;
   ownerVerified: boolean;
   population: number;
@@ -561,6 +562,7 @@ export const MOCK_CARD_PASSPORT: CardPassport = {
   certNumber: '88245612',
   gradedAt: '2025-04-15',
   color: '#1A1B4B',
+  imageUrl: 'https://images.pokemontcg.io/sv8pt5/161_hires.png',
   currentOwner: 'omar_tcg',
   ownerVerified: true,
   population: 847,
@@ -654,16 +656,19 @@ export function getCardPassport(cardId: string): CardPassport | null {
       cardName: 'Charizard ex', set: 'Obsidian Flames', number: '215/197',
       grade: 10, gradingCompany: 'PSA', certNumber: '77301284', gradedAt: '2024-06-22',
       color: '#E0540F', currentOwner: 'cardvault_au', ownerVerified: true, population: 2341,
+      imageUrl: 'https://images.pokemontcg.io/sv3/125_hires.png',
     },
     'pikachu-ex-151': {
       cardName: 'Pikachu ex', set: 'SV: 151', number: '172/165',
       grade: 10, gradingCompany: 'CGC', certNumber: '5823917', gradedAt: '2024-02-10',
       color: '#FFCC00', currentOwner: 'pikachumax', ownerVerified: true, population: 1890,
+      imageUrl: 'https://images.pokemontcg.io/sv3pt5/25_hires.png',
     },
     'rayquaza-vmax-es': {
       cardName: 'Rayquaza VMAX', set: 'Evolving Skies', number: '217/203',
       grade: '9.5', gradingCompany: 'BGS', certNumber: '0013426718', gradedAt: '2023-11-05',
       color: '#3AE374', currentOwner: 'cardking_syd', ownerVerified: false, population: 512,
+      imageUrl: 'https://images.pokemontcg.io/swsh7/218_hires.png',
     },
     'luffy-op01': {
       cardName: 'Monkey D. Luffy', set: 'Romance Dawn', number: 'OP01-060',
@@ -685,6 +690,7 @@ export function getCardPassport(cardId: string): CardPassport | null {
     certNumber: seed.certNumber!,
     gradedAt: seed.gradedAt!,
     color: seed.color!,
+    imageUrl: seed.imageUrl,
     currentOwner: seed.currentOwner!,
     ownerVerified: seed.ownerVerified!,
     population: seed.population!,

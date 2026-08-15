@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -22,8 +21,8 @@ import type { MarketMover } from '@/types';
 import { handleApiError } from '@/services/errorHandler';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
-import { catalogCardToAppCard, searchCatalog, resizeTcgPlayerUrl, type CatalogCard } from '@/services/catalogApi';
-import { proxyImageUrl } from '@/services/imageProxy';
+import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
+import { CardImage } from '@/components/ui/CardImage';
 
 const C = colors.dark;
 const SEARCH_PAGE_SIZE = 20;
@@ -38,8 +37,7 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
 
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
-  const imgUri = proxyImageUrl(resizeTcgPlayerUrl(card.imageUrl, 437) ?? card.imageUrl);
-  const showImage = !!imgUri && !imgError;
+  const showImage = !!card.imageUrl && !imgError;
 
   return (
     <Pressable
@@ -50,10 +48,10 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
     >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
-          <Image
-            source={{ uri: imgUri }}
+          <CardImage
+            uri={card.imageUrl}
             style={styles.resultThumbImage}
-            resizeMode="cover"
+            contentFit="cover"
             onError={() => setImgError(true)}
           />
         ) : (

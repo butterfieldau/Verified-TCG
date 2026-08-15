@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GradeBadge } from './Badge';
-import { resizeTcgPlayerUrl } from '@/services/catalogApi';
+import { CardImage } from './CardImage';
 import type { Card, CollectionItem } from '@/types';
 
 interface CardThumbnailProps {
@@ -28,11 +28,7 @@ export function CardThumbnail({
     ? (card.price.psa10 ?? card.price.raw)
     : card.price.raw;
 
-  // Thumbnails are at most 140 px wide — request 437x437 from the CDN instead
-  // of the full 1000x1000 used on the detail screen.  resizeTcgPlayerUrl only
-  // patches TCGPlayer URLs; pokemontcg.io and other hosts are returned as-is.
-  const thumbnailUrl = resizeTcgPlayerUrl(card.imageUrl, 437) ?? card.imageUrl;
-  const showImage = !!thumbnailUrl && !imageError;
+  const showImage = !!card.imageUrl && !imageError;
 
   return (
     <View style={[styles.card, { width, height }]}>
@@ -52,22 +48,16 @@ export function CardThumbnail({
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Real card artwork */}
+      {/* Real card artwork — expo-image handles blurhash placeholder,
+          disk caching and the blur→art crossfade internally */}
       {showImage && (
-        <Image
-          source={{ uri: thumbnailUrl }}
+        <CardImage
+          uri={card.imageUrl}
           style={[StyleSheet.absoluteFill, styles.cardImage]}
-          resizeMode="cover"
+          contentFit="cover"
           onLoad={() => setImageLoaded(true)}
           onError={() => setImageError(true)}
         />
-      )}
-
-      {/* Loading spinner — shown while image is in flight */}
-      {showImage && !imageLoaded && !imageError && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
-        </View>
       )}
 
       {/* Overlay text/badges are hidden once a real image loads cleanly */}
@@ -119,11 +109,6 @@ const styles = StyleSheet.create({
   },
   cardImage: {
     borderRadius: 12,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   numberBadge: {
     position: 'absolute',
