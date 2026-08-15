@@ -676,6 +676,9 @@ export default function ScanScreen() {
                 {topMatch.card.number ? (
                   <Text style={styles.matchNumber}>#{String(topMatch.card.number)}</Text>
                 ) : null}
+                {typeof topMatch.card.price === 'number' && topMatch.card.price > 0 ? (
+                  <Text style={styles.matchPrice}>${topMatch.card.price.toFixed(2)} USD</Text>
+                ) : null}
               </View>
             </View>
             {scanState === 'low_confidence' && scanResult?.extracted && (() => {
@@ -1448,6 +1451,7 @@ const styles = StyleSheet.create({
   matchName: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
   matchSet: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   matchNumber: { fontSize: 11, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}88` },
+  matchPrice: { fontSize: 16, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginTop: 2 },
   altsList: { marginTop: 4 },
   altChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
