@@ -1,0 +1,1896 @@
+Verified TCG — Production Owner Admin Dashboard
+
+Build a real production-ready Owner Admin Dashboard for Verified TCG.
+
+The current admin dashboard/mock dashboard is incomplete and should be replaced with a proper internal control centre for the owner of Verified TCG.
+
+This dashboard is for the platform owner and authorised administrators only.
+
+It must allow the owner to understand what is happening across Verified TCG and manage users, subscriptions, usage, reports, support, events and platform operations from one place.
+
+Do not build this as a visual prototype.
+
+Every visible button, filter, search field, table action, toggle, modal and form must work and persist against real backend data.
+
+Do not use fake statistics or mock user data in production.
+
+⸻
+
+1. IMPORTANT — ADMIN AUTHENTICATION
+
+Do NOT implement the dashboard by storing ADMIN_SECRET in localStorage.
+
+Do not expose an admin secret to client-side JavaScript.
+
+Replace the existing ADMIN_SECRET-only approach with proper server-side admin authentication.
+
+Preferred structure:
+
+Admin Login → Server Authentication → Secure Admin Session → Role/Permission Verification → Admin APIs
+
+Use secure server-managed authentication.
+
+Where appropriate:
+
+* Use secure session cookies
+* HttpOnly
+* Secure
+* SameSite protection
+* Session expiry
+* Server-side role checks
+* Rate limiting
+* Failed-login protection
+
+Every admin API route must independently verify that the current authenticated user has the required admin permission.
+
+Never trust the frontend alone.
+
+⸻
+
+2. ADMIN ROLES
+
+Prepare the architecture for:
+
+* OWNER
+* ADMIN
+* SUPPORT
+* MODERATOR
+
+For now the Owner can have access to everything.
+
+Only the Owner should be able to perform highly sensitive actions such as:
+
+* Permanently delete user accounts
+* Manually change subscription tiers
+* Grant Founding Pro
+* Suspend administrators
+* Change platform configuration
+* Access sensitive audit information
+
+Build permissions so additional staff accounts can be added later without rebuilding the dashboard.
+
+⸻
+
+3. ADMIN LOGIN
+
+Create a proper login screen for:
+
+/vtcg-web/
+
+The login screen should be clean and branded as:
+
+Verified TCG Admin
+
+Fields:
+
+Email / Admin Username
+
+Password
+
+Sign In
+
+Optional:
+
+Remember this device
+
+Forgot Password
+
+Include:
+
+* Loading state
+* Invalid credentials state
+* Rate limiting
+* Session expiration
+* Logout
+
+Do not expose whether a specific administrator account exists through overly detailed error messages.
+
+⸻
+
+4. DASHBOARD STRUCTURE
+
+Use a clean desktop-first admin interface.
+
+Fixed sidebar navigation.
+
+Recommended navigation:
+
+Overview
+
+Users
+
+Subscriptions
+
+Scans
+
+Collections
+
+Events
+
+Trade Match
+
+Community
+
+Reports
+
+Support
+
+Giveaways
+
+Card Data
+
+Notifications
+
+Activity Logs
+
+Platform
+
+The layout should also work reasonably on tablets.
+
+Admin pages do not need to be designed primarily for phones.
+
+⸻
+
+5. OVERVIEW DASHBOARD
+
+The Overview should provide an immediate understanding of the health of Verified TCG.
+
+Show live statistics from the actual database.
+
+Users
+
+Total Users
+
+Free Users
+
+Pro Users
+
+Founding Pro Users
+
+New Users Today
+
+New Users This Week
+
+New Users This Month
+
+Active Users Today
+
+Active Users 7 Days
+
+Active Users 30 Days
+
+⸻
+
+Revenue / Subscriptions
+
+Where subscription provider data is available show:
+
+Active Pro Subscribers
+
+New Pro Subscribers
+
+Cancelled Subscribers
+
+Trial Users if applicable
+
+Pro Conversion Rate
+
+Monthly Recurring Revenue
+
+Estimated Annual Recurring Revenue
+
+Subscription churn
+
+Do not fabricate revenue if payment integration is not connected.
+
+Instead show:
+
+Subscription revenue unavailable — provider not connected
+
+⸻
+
+Card Usage
+
+Total Cards Added
+
+Total Collection Items
+
+Cards Added Today
+
+Wishlist Items
+
+Cards For Trade
+
+Cards For Sale
+
+⸻
+
+Scanning
+
+Total Scans
+
+Scans Today
+
+Scans This Week
+
+Scans This Month
+
+Average Scans Per User
+
+Users At Free Scan Limit
+
+Top Scanners
+
+⸻
+
+Event Mode
+
+Active Events
+
+Current Event Mode Participants
+
+Trade Matches Generated
+
+Trade Matches Today
+
+⸻
+
+Community
+
+Posts Today
+
+Comments Today
+
+Reports Pending
+
+Blocked Users
+
+⸻
+
+6. DASHBOARD CHARTS
+
+Add useful charts.
+
+Examples:
+
+30-day user signups
+
+30-day active users
+
+30-day scans
+
+Free → Pro conversion
+
+Subscription growth
+
+Collection growth
+
+Event participation
+
+Trade matches generated
+
+Allow ranges where appropriate:
+
+7 Days
+
+30 Days
+
+90 Days
+
+12 Months
+
+Do not overfill the Overview screen.
+
+⸻
+
+7. USERS MANAGEMENT
+
+Create a complete Users section.
+
+Paginated table.
+
+Default:
+
+20–50 users per page.
+
+Columns:
+
+Avatar
+
+Display Name
+
+Username
+
+Email
+
+Country
+
+Account Tier
+
+Founding Member
+
+Join Date
+
+Last Active
+
+Collection Size
+
+Scans Used
+
+Account Status
+
+Possible tiers:
+
+FREE
+
+PRO
+
+FOUNDING PRO
+
+Possible statuses:
+
+ACTIVE
+
+SUSPENDED
+
+DELETED
+
+⸻
+
+8. USER SEARCH
+
+Allow searching by:
+
+Display name
+
+Username
+
+Email
+
+User ID
+
+⸻
+
+9. USER FILTERS
+
+Allow filtering by:
+
+Free
+
+Pro
+
+Founding Pro
+
+Active
+
+Suspended
+
+Country
+
+Join date
+
+Scan limit reached
+
+Event Mode user
+
+⸻
+
+10. USER SORTING
+
+Allow sorting by:
+
+Newest
+
+Oldest
+
+Name
+
+Last Active
+
+Collection Size
+
+Scan Usage
+
+⸻
+
+11. USER DETAIL PANEL
+
+Clicking a user opens a full user detail drawer/page.
+
+Show:
+
+User ID
+
+Avatar
+
+Display Name
+
+Username
+
+Email
+
+Account created
+
+Last login
+
+Last active
+
+Country
+
+Currency
+
+Profile visibility
+
+Selected TCGs
+
+Subscription status
+
+Subscription start date
+
+Subscription renewal date where available
+
+Founding Member status
+
+Scan usage
+
+Scan limit
+
+Collection count
+
+Wishlist count
+
+For Trade count
+
+For Sale count
+
+Events participated
+
+Reports received
+
+Reports submitted
+
+Blocked users count
+
+Support requests
+
+⸻
+
+12. USER ADMIN ACTIONS
+
+Authorised administrators should be able to:
+
+Edit display name where necessary
+
+Edit username where necessary
+
+Change account tier
+
+Grant Pro
+
+Remove Pro
+
+Grant Founding Pro
+
+Remove Founding Pro
+
+Reset scan quota
+
+Suspend account
+
+Unsuspend account
+
+Force logout all sessions
+
+Send password reset
+
+View user activity
+
+Delete account
+
+Actions must show confirmation.
+
+Example:
+
+Grant Verified Pro to @username?
+
+Then:
+
+Confirm
+
+Cancel
+
+⸻
+
+13. DANGEROUS ACTION PROTECTION
+
+Sensitive actions must require additional confirmation.
+
+Examples:
+
+Delete Account
+
+Suspend Account
+
+Remove Pro
+
+Reset User Data
+
+Where appropriate require:
+
+Type user’s username to confirm.
+
+Example:
+
+DELETE @omarcollects
+
+All sensitive admin actions must be recorded in the audit log.
+
+⸻
+
+14. SUBSCRIPTIONS
+
+Create a dedicated Subscriptions section.
+
+Show:
+
+Total Pro users
+
+Founding Pro
+
+New subscriptions
+
+Cancelled subscriptions
+
+Expired subscriptions
+
+Failed renewals where available
+
+Conversion rate
+
+⸻
+
+15. SUBSCRIPTION TABLE
+
+Columns:
+
+User
+
+Email
+
+Plan
+
+Status
+
+Subscription provider
+
+Started
+
+Next Renewal
+
+Cancelled Date
+
+Founding Member
+
+Amount
+
+Currency
+
+Possible status:
+
+ACTIVE
+
+CANCELLED
+
+EXPIRED
+
+PAST DUE
+
+TRIAL
+
+⸻
+
+16. MANUAL SUBSCRIPTION MANAGEMENT
+
+Owner should be able to manually:
+
+Grant Pro
+
+Remove Pro
+
+Grant Founding Pro
+
+Remove Founding Pro
+
+Set promotional access expiry
+
+Add an internal note
+
+Manual changes must be logged.
+
+Do not interfere incorrectly with App Store or Google Play billing state.
+
+Maintain a distinction between:
+
+Store subscription entitlement
+
+and
+
+Admin-granted entitlement
+
+⸻
+
+17. SCANS DASHBOARD
+
+Create a full scanning analytics section.
+
+Display:
+
+Total scans
+
+Today
+
+7 Days
+
+30 Days
+
+Average scans per user
+
+Free users at quota
+
+Failed scans
+
+Successful matches
+
+Manual corrections
+
+⸻
+
+18. SCAN CHART
+
+Show scan count per day.
+
+Ranges:
+
+7D
+
+30D
+
+90D
+
+⸻
+
+19. TOP SCANNERS
+
+Show:
+
+Username
+
+Tier
+
+Total scans
+
+Scans this month
+
+Free scan allowance used
+
+Last scan
+
+Allow clicking user to open profile.
+
+⸻
+
+20. SCAN ACTIVITY
+
+Where appropriate show anonymised/appropriate scanner activity such as:
+
+User
+
+Timestamp
+
+Card identified
+
+Match confidence
+
+Successful / Failed
+
+Manual correction
+
+Do not expose unnecessary private device data.
+
+⸻
+
+21. COLLECTION ANALYTICS
+
+Create an owner-level Collections section.
+
+Show:
+
+Total collection items
+
+Unique cards collected
+
+Total wishlist items
+
+Total For Trade items
+
+Total For Sale items
+
+Raw vs graded cards
+
+Popular grading companies
+
+Most collected TCGs
+
+Most collected sets
+
+Most added cards
+
+Do not display fake portfolio valuations.
+
+⸻
+
+22. EVENT MANAGEMENT
+
+Build a proper Events section.
+
+Owner can:
+
+Create Event
+
+Edit Event
+
+Publish Event
+
+Unpublish Event
+
+End Event
+
+Archive Event
+
+⸻
+
+23. EVENT FIELDS
+
+Events should support:
+
+Event name
+
+Venue
+
+City
+
+State/Region
+
+Country
+
+Start date/time
+
+End date/time
+
+Description
+
+Event image
+
+Event status
+
+Event Mode enabled
+
+Maximum participants if needed
+
+⸻
+
+24. EVENT ANALYTICS
+
+For every event show:
+
+Registered/participating users
+
+Event Mode users
+
+Trade Matches
+
+Messages/interactions where appropriate
+
+Reported users
+
+Most wanted cards
+
+Most traded cards
+
+⸻
+
+25. TRADE MATCH ADMIN
+
+Create Trade Match analytics.
+
+Show:
+
+Matches generated
+
+Matches today
+
+Matches per event
+
+Successful interactions where measurable
+
+Top wishlist cards
+
+Most available For Trade cards
+
+Users with most matches
+
+Do not expose private match information unnecessarily.
+
+⸻
+
+26. COMMUNITY MANAGEMENT
+
+Create a Community admin section if community functionality exists.
+
+Show:
+
+Posts
+
+Comments
+
+Reported posts
+
+Reported comments
+
+Active users
+
+Blocked users
+
+⸻
+
+27. REPORTS / MODERATION
+
+Reports section should show all user reports.
+
+Columns:
+
+Report ID
+
+Reporter
+
+Reported User
+
+Category
+
+Reason
+
+Description preview
+
+Date
+
+Status
+
+Assigned admin
+
+Possible statuses:
+
+PENDING
+
+UNDER REVIEW
+
+RESOLVED
+
+DISMISSED
+
+⸻
+
+28. REPORT DETAIL
+
+Opening a report should show:
+
+Reporter information
+
+Reported user
+
+Reason
+
+Full description
+
+Relevant linked content
+
+Previous reports against user
+
+Admin notes
+
+⸻
+
+29. MODERATION ACTIONS
+
+Authorised admins can:
+
+Mark Reviewed
+
+Resolve
+
+Dismiss
+
+Warn User
+
+Suspend User
+
+Block Content if applicable
+
+Add Admin Note
+
+Do not automatically delete users based on reports.
+
+⸻
+
+30. CONTACT / SUPPORT
+
+Replace the basic contact submissions table with a proper Support section.
+
+Support tickets should show:
+
+Ticket ID
+
+Name
+
+User account if logged in
+
+Email
+
+Category
+
+Subject
+
+Message
+
+Attachment
+
+Created date
+
+Status
+
+Assigned admin
+
+Possible statuses:
+
+NEW
+
+OPEN
+
+WAITING FOR USER
+
+RESOLVED
+
+CLOSED
+
+⸻
+
+31. SUPPORT TICKET DETAIL
+
+Opening ticket shows:
+
+Full message
+
+Attachments
+
+User account
+
+Previous support history
+
+Internal notes
+
+Status
+
+Assigned admin
+
+Allow administrators to update status.
+
+Where email/support reply integration does not yet exist, structure the backend so it can be added later.
+
+⸻
+
+32. GIVEAWAYS
+
+Create giveaway management.
+
+Owner should be able to:
+
+Create giveaway
+
+Edit giveaway
+
+Schedule giveaway
+
+Publish giveaway
+
+Close giveaway
+
+Select winner
+
+Archive giveaway
+
+⸻
+
+33. GIVEAWAY FIELDS
+
+Title
+
+Description
+
+Image
+
+Start date
+
+End date
+
+Eligibility
+
+Free users allowed
+
+Pro only
+
+Founding Pro only
+
+Country restrictions
+
+Terms URL
+
+Prize information
+
+⸻
+
+34. GIVEAWAY ENTRIES
+
+Show:
+
+Total entries
+
+Eligible entries
+
+Entry date
+
+Username
+
+Subscription tier
+
+Country
+
+Winner status
+
+Winner selection must be logged.
+
+Do not fake or manually manipulate random selection without recording it.
+
+⸻
+
+35. CARD DATA ADMIN
+
+Create a Card Data section.
+
+This is important because card databases inevitably contain errors.
+
+Allow owner/admin to search cards.
+
+Show:
+
+TCG
+
+Card name
+
+Set
+
+Number
+
+Year
+
+Rarity
+
+Image
+
+Data source
+
+Last updated
+
+⸻
+
+36. CARD DATA ISSUES
+
+Users or admins should eventually be able to flag:
+
+Wrong image
+
+Wrong card name
+
+Wrong set
+
+Wrong number
+
+Wrong pricing mapping
+
+Duplicate card
+
+Missing variant
+
+Incorrect grading mapping
+
+Create an admin queue for card-data issues.
+
+⸻
+
+37. PRICING / DATA PROVIDER HEALTH
+
+Create a basic data-provider status section.
+
+Examples:
+
+Card Database
+
+Pricing Provider
+
+eBay Integration
+
+Population Data
+
+Scanner Provider
+
+Show:
+
+Connected / Disconnected
+
+Last successful sync
+
+Last failed sync
+
+Last error
+
+Do not show API credentials.
+
+⸻
+
+38. NOTIFICATION MANAGEMENT
+
+Create admin notification tools.
+
+Owner should eventually be able to create:
+
+App announcement
+
+Push notification
+
+Pro-only notification
+
+Event notification
+
+Giveaway notification
+
+Maintenance notice
+
+⸻
+
+39. NOTIFICATION FORM
+
+Fields:
+
+Title
+
+Message
+
+Audience
+
+Optional deep link
+
+Schedule now/later
+
+Possible audiences:
+
+All Users
+
+Free Users
+
+Pro Users
+
+Founding Pro
+
+Event Participants
+
+Specific User
+
+Do not automatically send notifications during development.
+
+Provide preview and confirmation.
+
+⸻
+
+40. ACTIVITY LOGS / AUDIT LOG
+
+Create a full admin audit log.
+
+Record sensitive admin actions such as:
+
+Admin login
+
+Admin logout
+
+User suspended
+
+User unsuspended
+
+Tier changed
+
+Founding Pro granted
+
+Founding Pro removed
+
+Scan quota reset
+
+User deleted
+
+Event created
+
+Event edited
+
+Giveaway created
+
+Winner selected
+
+Report resolved
+
+Platform setting changed
+
+⸻
+
+41. AUDIT LOG FIELDS
+
+Timestamp
+
+Admin
+
+Action
+
+Target
+
+Target ID
+
+Before value
+
+After value
+
+IP/session metadata where legally/technically appropriate
+
+Reason / admin note
+
+Audit logs should not be editable by ordinary admins.
+
+⸻
+
+42. PLATFORM HEALTH
+
+Create a Platform section.
+
+Show:
+
+API status
+
+Database status
+
+Card API status
+
+Pricing API status
+
+Scanner status
+
+Notification service
+
+Subscription service
+
+Last health check
+
+⸻
+
+43. FEATURE FLAGS
+
+Add a simple feature flag framework.
+
+Potential flags:
+
+Scanner
+
+Event Mode
+
+Trade Match
+
+Community
+
+Giveaways
+
+Pricing Charts
+
+Population Data
+
+New User Registration
+
+Flags should allow controlled rollout later.
+
+Do not put security-sensitive configuration entirely client side.
+
+⸻
+
+44. PLATFORM SETTINGS
+
+Owner-only configuration.
+
+Examples:
+
+Free scan allowance
+
+Pro scan allowance
+
+Default currency
+
+Maintenance mode
+
+Event Mode enabled
+
+Trade Match enabled
+
+Community enabled
+
+Giveaways enabled
+
+Support email
+
+App minimum supported version
+
+Do not hard-code important business settings across multiple files.
+
+Store them centrally where appropriate.
+
+⸻
+
+45. FREE SCAN LIMIT
+
+Create a configurable value for free users.
+
+Initial target:
+
+30 scans
+
+The owner should be able to update this later without changing source code.
+
+⸻
+
+46. ADMIN UI / UX
+
+The dashboard should look clean, professional and modern.
+
+Not like a developer diagnostics page.
+
+Use:
+
+Clear sidebar
+
+Strong information hierarchy
+
+Clean cards
+
+Readable data tables
+
+Search
+
+Filters
+
+Pagination
+
+Drawer panels
+
+Modals
+
+Confirmation dialogs
+
+Success/error toast messages
+
+Loading skeletons
+
+Empty states
+
+⸻
+
+47. TABLE BEHAVIOUR
+
+Large tables must support:
+
+Pagination
+
+Search
+
+Filters
+
+Sorting
+
+Loading states
+
+Empty states
+
+Error states
+
+Do not load thousands of database records into the browser at once.
+
+Use server-side pagination where appropriate.
+
+⸻
+
+48. RESPONSIVENESS
+
+Primary target:
+
+Desktop browser.
+
+Also ensure it works appropriately on:
+
+Large laptop
+
+Small laptop
+
+Tablet
+
+Mobile may provide a simplified layout, but the admin dashboard is primarily desktop software.
+
+⸻
+
+49. REAL DATA ONLY
+
+Audit the existing dashboard for:
+
+Mock users
+
+Fake signups
+
+Fake revenue
+
+Fake scans
+
+Fake Pro subscriptions
+
+Fake reports
+
+Fake contact forms
+
+Hard-coded statistics
+
+Remove mock data from the production path.
+
+If a data source does not exist yet, show:
+
+No data available
+
+rather than inventing it.
+
+⸻
+
+50. BACKEND API
+
+Admin functionality must use protected backend admin endpoints.
+
+Example architecture:
+
+/api/admin/overview
+
+/api/admin/users
+
+/api/admin/users/:id
+
+/api/admin/subscriptions
+
+/api/admin/scans
+
+/api/admin/reports
+
+/api/admin/support
+
+/api/admin/events
+
+/api/admin/giveaways
+
+/api/admin/activity
+
+Do not expose unrestricted database operations directly from the browser.
+
+⸻
+
+51. SERVER-SIDE AUTHORISATION
+
+Every admin API must check authentication and authorisation server-side.
+
+Do not rely on:
+
+Hidden routes
+
+Frontend checks
+
+A React state variable
+
+localStorage
+
+Obscure URLs
+
+to protect admin access.
+
+⸻
+
+52. DATABASE
+
+Review the existing database and add sensible fields/tables only where necessary.
+
+Potential admin-related models include:
+
+AdminUsers
+
+AdminSessions
+
+AdminAuditLogs
+
+SupportTickets
+
+UserReports
+
+Events
+
+EventParticipants
+
+Giveaways
+
+GiveawayEntries
+
+FeatureFlags
+
+PlatformSettings
+
+Notifications
+
+CardDataIssues
+
+Do not duplicate existing tables unnecessarily.
+
+⸻
+
+53. SECURITY
+
+Review the admin implementation for:
+
+Broken access control
+
+Secrets exposed client-side
+
+Unprotected API endpoints
+
+SQL/query injection
+
+Improper input validation
+
+Unsafe file uploads
+
+Cross-site scripting
+
+CSRF where relevant
+
+Session fixation
+
+Brute-force admin login attempts
+
+Sensitive data in logs
+
+Do not expose stack traces to admin users in production unless behind a development/debug mode.
+
+⸻
+
+54. ADMIN SESSION
+
+Sessions should:
+
+Expire
+
+Be revocable
+
+Be invalidated on logout
+
+Be invalidated after password/security changes where appropriate
+
+Allow owner to force logout admin sessions later.
+
+⸻
+
+55. ACTIVITY TRACKING
+
+Track useful platform behaviour but avoid unnecessary surveillance.
+
+Useful metrics include:
+
+Registrations
+
+Logins
+
+Card additions
+
+Scans
+
+Wishlist actions
+
+Trade Match usage
+
+Event participation
+
+Subscription conversion
+
+Community activity
+
+Do not store unnecessary precise location histories.
+
+⸻
+
+56. ACCOUNT DELETION
+
+When a normal user deletes their account from the app, the admin dashboard should correctly reflect that state.
+
+Do not accidentally leave a fully active account in Admin while telling the user it was deleted.
+
+Follow the account deletion/anonymisation strategy implemented by the main app.
+
+⸻
+
+57. EXPORT
+
+Owner should eventually be able to export relevant tables to CSV.
+
+Examples:
+
+Users
+
+Subscriptions
+
+Scan Analytics
+
+Support Tickets
+
+Reports
+
+Event Participants
+
+Giveaway Entries
+
+Do not include sensitive authentication credentials in exports.
+
+⸻
+
+58. ERROR HANDLING
+
+Never show raw server errors such as:
+
+TypeError
+
+Database stack traces
+
+Secrets
+
+Query strings containing credentials
+
+Instead show:
+
+Something went wrong. Please try again.
+
+Provide useful server logging separately.
+
+⸻
+
+59. TESTING
+
+Add meaningful tests covering:
+
+Admin authentication
+
+Unauthorised admin API access
+
+Owner permission
+
+User listing
+
+User search
+
+User filters
+
+Tier modification
+
+Founding Pro modification
+
+Suspension
+
+Scan quota reset
+
+Support ticket loading
+
+Reports
+
+Audit logging
+
+Logout
+
+Session expiry
+
+⸻
+
+60. BUILD ORDER
+
+Implement this safely in phases.
+
+Phase A — Audit
+
+Inspect current /vtcg-web/, API and database.
+
+Identify:
+
+Working
+
+Mocked
+
+Broken
+
+Missing
+
+Security problems
+
+⸻
+
+Phase B — Secure Authentication
+
+Replace the ADMIN_SECRET/localStorage implementation.
+
+Implement proper server-side owner/admin authentication.
+
+⸻
+
+Phase C — Overview
+
+Build live statistics and charts.
+
+⸻
+
+Phase D — Users
+
+Complete user management.
+
+⸻
+
+Phase E — Subscriptions + Scans
+
+Build entitlement and usage administration.
+
+⸻
+
+Phase F — Support + Reports
+
+Build operational workflows.
+
+⸻
+
+Phase G — Events + Trade Match
+
+Create event administration and analytics.
+
+⸻
+
+Phase H — Giveaways + Community
+
+Add management tools.
+
+⸻
+
+Phase I — Platform Tools
+
+Audit logs
+
+Feature flags
+
+Platform status
+
+Platform settings
+
+Card data issue management
+
+⸻
+
+Phase J — Production Hardening
+
+Security audit
+
+Performance
+
+Testing
+
+Responsive design
+
+Error handling
+
+⸻
+
+FINAL ACCEPTANCE STANDARD
+
+Do not consider this task finished because the admin dashboard looks good.
+
+It is finished when the Owner can genuinely operate Verified TCG through it.
+
+A real owner should be able to:
+
+Log in securely
+
+Understand platform activity
+
+Find a user
+
+Inspect their account
+
+Manage Pro entitlement
+
+Manage Founding Pro
+
+See scan usage
+
+Reset quota
+
+Suspend a problematic user
+
+Review reports
+
+Read support messages
+
+Manage events
+
+Manage giveaways
+
+Monitor platform health
+
+See admin activity
+
+Log out securely
+
+without touching the database manually.
+
+Before finishing, audit every interactive element.
+
+If any button currently:
+
+Does nothing
+
+Uses mock data
+
+Only logs to console
+
+Displays fake results
+
+Uses an insecure secret
+
+or updates only frontend state
+
+then fix it before marking the dashboard complete.
+
+Preserve the existing Verified TCG branding and existing working architecture wherever possible.
+
+Do not rebuild the entire application unnecessarily.
+
+Build on what already exists and make it production-ready.
