@@ -174,7 +174,7 @@ export default function HomeScreen() {
   const previewMatches = MOCK_TRADE_MATCHES.slice(0, 2);
 
   function handleQuickAction(action: string) {
-    if (action === 'scan') router.push('/(tabs)/scan');
+    if (action === 'scan') router.push('/scan');
     else if (action === 'add-card') router.push('/add-card');
     else router.push('/search');
   }
@@ -242,7 +242,7 @@ export default function HomeScreen() {
         <Text style={styles.searchPlaceholder}>Search cards, sets or products</Text>
         <Pressable
           style={styles.scanShortcut}
-          onPress={() => router.push('/(tabs)/scan')}
+          onPress={() => router.push('/scan')}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
           accessibilityLabel="Scan a card"
