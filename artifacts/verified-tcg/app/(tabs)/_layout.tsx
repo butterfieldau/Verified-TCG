@@ -105,14 +105,6 @@ function ClassicTabLayout() {
             ),
         }}
       />
-      {/* Scan screen hidden from tab bar — accessed via Market header button */}
-      <Tabs.Screen
-        name="scan"
-        options={{
-          tabBarButton: () => null,
-          tabBarStyle: { display: 'none' },
-        }}
-      />
       <Tabs.Screen
         name="collection"
         options={{

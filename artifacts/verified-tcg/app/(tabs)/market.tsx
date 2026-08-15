@@ -95,7 +95,7 @@ export default function MarketScreen() {
         <View style={styles.headerButtons}>
           <Pressable
             style={styles.searchBtn}
-            onPress={() => router.push('/(tabs)/scan')}
+            onPress={() => router.push('/scan')}
             accessibilityRole="button"
             accessibilityLabel="Scan a card"
             hitSlop={1}
