@@ -53,6 +53,21 @@ router.post("/subscription/upgrade", async (req, res) => {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 
+  // Check suspension before mutating subscription
+  const [existing] = await db
+    .select({ id: usersTable.id, suspendedAt: usersTable.suspendedAt })
+    .from(usersTable)
+    .where(eq(usersTable.id, payload.sub))
+    .limit(1);
+
+  if (!existing) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  if (existing.suspendedAt) {
+    return res.status(403).json({ message: "Account suspended — contact support" });
+  }
+
   const [updated] = await db
     .update(usersTable)
     .set({ subscriptionTier: "pro", updatedAt: new Date() })

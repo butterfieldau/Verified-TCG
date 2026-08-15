@@ -15,6 +15,7 @@ import { Router, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import {
   usersTable,
+  userSessionsTable,
   scanUsageTable,
   userReportsTable,
   contactSubmissionsTable,
@@ -212,6 +213,7 @@ router.get("/admin/users", async (req: Request, res: Response) => {
         createdAt: usersTable.createdAt,
         avatarUrl: usersTable.avatarUrl,
         location: usersTable.location,
+        suspendedAt: usersTable.suspendedAt,
         scansThisMonth: scansSubquery,
       })
       .from(usersTable)
@@ -290,6 +292,75 @@ router.post("/admin/users/:userId/subscription", async (req: Request, res: Respo
     return res.json({ message: "User subscription updated successfully.", user: updated });
   } catch (err) {
     console.error("[admin] POST /admin/users/:userId/subscription error:", err);
+    return res.status(500).json({ message: "Database error. Please try again." });
+  }
+});
+
+// ── POST /api/admin/users/:id/suspend ────────────────────────────────────────
+
+router.post("/admin/users/:userId/suspend", async (req: Request, res: Response) => {
+  const userId = String(req.params["userId"]);
+  const { suspend } = req.body as { suspend?: boolean };
+
+  if (typeof suspend !== "boolean") {
+    return res.status(400).json({ message: "`suspend` must be a boolean." });
+  }
+
+  try {
+    const [updated] = await db
+      .update(usersTable)
+      .set({ suspendedAt: suspend ? new Date() : null, updatedAt: new Date() })
+      .where(eq(usersTable.id, userId))
+      .returning({
+        id: usersTable.id,
+        email: usersTable.email,
+        displayName: usersTable.displayName,
+        suspendedAt: usersTable.suspendedAt,
+      });
+
+    if (!updated) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // When suspending, immediately revoke all active sessions so existing tokens
+    // cannot be refreshed — suspension takes effect on the next API call.
+    if (suspend) {
+      await db.delete(userSessionsTable).where(eq(userSessionsTable.userId, userId));
+    }
+
+    const action = suspend ? "suspended" : "unsuspended";
+    console.log(`[admin] User ${updated.id} (${updated.email}) ${action}.`);
+
+    return res.json({
+      message: `User ${action} successfully.`,
+      user: { ...updated, suspendedAt: updated.suspendedAt?.toISOString() ?? null },
+    });
+  } catch (err) {
+    console.error("[admin] POST /admin/users/:userId/suspend error:", err);
+    return res.status(500).json({ message: "Database error. Please try again." });
+  }
+});
+
+// ── DELETE /api/admin/users/:id ───────────────────────────────────────────────
+
+router.delete("/admin/users/:userId", async (req: Request, res: Response) => {
+  const userId = String(req.params["userId"]);
+
+  try {
+    const [deleted] = await db
+      .delete(usersTable)
+      .where(eq(usersTable.id, userId))
+      .returning({ id: usersTable.id, email: usersTable.email });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    console.log(`[admin] User ${deleted.id} (${deleted.email}) permanently deleted.`);
+
+    return res.json({ message: "User permanently deleted." });
+  } catch (err) {
+    console.error("[admin] DELETE /admin/users/:userId error:", err);
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });

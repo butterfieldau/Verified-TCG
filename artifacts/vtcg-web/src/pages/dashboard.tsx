@@ -39,6 +39,8 @@ import {
   X,
   RotateCcw,
   Activity,
+  Ban,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -74,6 +76,7 @@ interface UserRow {
   avatarUrl?: string | null;
   location?: string | null;
   scansThisMonth: number;
+  suspendedAt?: string | null;
 }
 
 interface ScanData {
@@ -134,6 +137,19 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (resp.status === 401) throw new UnauthorizedError("Unauthorized");
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error((data as { message?: string }).message ?? "Request failed");
+  }
+  return resp.json() as Promise<T>;
+}
+
+async function apiDelete<T>(path: string): Promise<T> {
+  const resp = await fetch(`${API}${path}`, {
+    method: "DELETE",
+    credentials: "include",
   });
   if (resp.status === 401) throw new UnauthorizedError("Unauthorized");
   if (!resp.ok) {
@@ -523,20 +539,28 @@ function UserDetailPanel({
   onClose,
   onSessionExpired,
   onUpdated,
+  onDeleted,
 }: {
   user: UserRow;
   onClose: () => void;
   onSessionExpired: () => void;
   onUpdated: (updated: UserRow) => void;
+  onDeleted: (id: string) => void;
 }) {
   const { toast } = useToast();
   const [tier, setTier] = useState(user.subscriptionTier);
   const [founding, setFounding] = useState(user.isFoundingMember);
   const [saving, setSaving] = useState(false);
+  const [suspending, setSuspending] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const isSuspended = Boolean(user.suspendedAt);
 
   useEffect(() => {
     setTier(user.subscriptionTier);
     setFounding(user.isFoundingMember);
+    setShowDeleteConfirm(false);
   }, [user.id, user.subscriptionTier, user.isFoundingMember]);
 
   async function handleSave(e: React.FormEvent) {
@@ -564,6 +588,52 @@ function UserDetailPanel({
     }
   }
 
+  async function handleSuspend() {
+    setSuspending(true);
+    try {
+      const result = await apiPost<{ message: string; user: { suspendedAt: string | null } }>(
+        `/admin/users/${user.id}/suspend`,
+        { suspend: !isSuspended },
+      );
+      onUpdated({ ...user, suspendedAt: result.user.suspendedAt });
+      toast({ title: isSuspended ? "Account unsuspended" : "Account suspended", description: result.message });
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        onSessionExpired();
+      } else {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Action failed.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setSuspending(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await apiDelete<{ message: string }>(`/admin/users/${user.id}`);
+      toast({ title: "Account deleted", description: `${user.displayName}'s account has been permanently deleted.` });
+      onDeleted(user.id);
+      onClose();
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        onSessionExpired();
+      } else {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Delete failed.",
+          variant: "destructive",
+        });
+      }
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  }
+
   const initials = user.displayName.slice(0, 2).toUpperCase();
 
   return (
@@ -579,13 +649,18 @@ function UserDetailPanel({
 
         <div className="p-6 flex-1 space-y-6">
           <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center text-xl font-display font-bold text-primary shrink-0">
+            <div className={`h-14 w-14 rounded-full border flex items-center justify-center text-xl font-display font-bold shrink-0 ${isSuspended ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-primary/10 border-primary/30 text-primary"}`}>
               {initials}
             </div>
             <div className="min-w-0">
               <div className="font-bold text-lg truncate">{user.displayName}</div>
               <div className="text-sm text-muted-foreground truncate">@{user.username}</div>
               <div className="text-xs text-muted-foreground/70 truncate font-mono">{user.email}</div>
+              {isSuspended && (
+                <div className="inline-flex items-center gap-1 mt-1 bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold px-2 py-0.5 rounded-full">
+                  <Ban size={10} /> SUSPENDED
+                </div>
+              )}
             </div>
           </div>
 
@@ -596,6 +671,7 @@ function UserDetailPanel({
               ["Member since", <span key="date" className="font-medium">{fmtDate(user.createdAt)}</span>],
               ...(user.location ? [["Location", <span key="loc" className="font-medium">{user.location}</span>]] : []),
               ["Scans this month", <span key="scans" className="font-medium">{user.scansThisMonth}</span>],
+              ...(isSuspended ? [["Suspended", <span key="susp" className="font-medium text-amber-400">{fmtDate(user.suspendedAt!)}</span>]] : []),
             ].map(([label, value]) => (
               <div key={String(label)} className="flex items-center justify-between px-4 py-3 text-sm">
                 <span className="text-muted-foreground">{label}</span>
@@ -660,6 +736,67 @@ function UserDetailPanel({
               </button>
             </div>
           </form>
+
+          {/* Suspend / Unsuspend */}
+          <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+            <div className="text-xs font-bold text-muted-foreground tracking-wider">ACCOUNT ACTIONS</div>
+            <button
+              type="button"
+              disabled={suspending}
+              onClick={handleSuspend}
+              className={`w-full flex items-center gap-2.5 px-4 py-3 rounded-xl border text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                isSuspended
+                  ? "border-green-500/40 bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+              }`}
+            >
+              <Ban size={15} />
+              {suspending ? "Working…" : isSuspended ? "Unsuspend Account" : "Suspend Account"}
+              <span className="ml-auto text-xs font-normal opacity-70">
+                {isSuspended ? "Restore login access" : "Block login immediately"}
+              </span>
+            </button>
+
+            {/* Delete */}
+            {!showDeleteConfirm ? (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="w-full flex items-center gap-2.5 px-4 py-3 rounded-xl border border-negative/30 bg-negative/5 text-negative text-sm font-bold hover:bg-negative/15 transition-all"
+              >
+                <Trash2 size={15} />
+                Delete Account
+                <span className="ml-auto text-xs font-normal opacity-70">Permanent — cannot be undone</span>
+              </button>
+            ) : (
+              <div className="border border-negative/40 bg-negative/5 rounded-xl p-4 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle size={15} className="text-negative mt-0.5 shrink-0" />
+                  <div className="text-sm">
+                    <span className="font-bold text-negative">Permanently delete</span>
+                    <span className="text-muted-foreground"> {user.displayName}'s account? This cannot be undone.</span>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="flex-1 px-3 py-2 bg-card border border-border text-sm font-bold rounded-lg hover:bg-background transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleting}
+                    onClick={handleDelete}
+                    className="flex-1 px-3 py-2 bg-negative text-white text-sm font-bold rounded-lg hover:bg-negative/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {deleting ? "Deleting…" : "Yes, Delete"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>
@@ -716,6 +853,12 @@ function UsersSection({ onSessionExpired }: { onSessionExpired: () => void }) {
   function handleUpdated(updated: UserRow) {
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)));
     setSelected((s) => (s?.id === updated.id ? { ...s, ...updated } : s));
+  }
+
+  function handleDeleted(id: string) {
+    setUsers((prev) => prev.filter((u) => u.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+    setSelected(null);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
@@ -828,6 +971,7 @@ function UsersSection({ onSessionExpired }: { onSessionExpired: () => void }) {
           onClose={() => setSelected(null)}
           onSessionExpired={onSessionExpired}
           onUpdated={handleUpdated}
+          onDeleted={handleDeleted}
         />
       )}
     </div>
