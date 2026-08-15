@@ -1,553 +1,1177 @@
-import { useState } from 'react';
+/**
+ * Verified TCG — Owner Admin Dashboard
+ *
+ * Auth is handled via an HttpOnly server-side session cookie.
+ * The browser never stores the raw ADMIN_SECRET; it is sent once to the
+ * login endpoint which issues the session cookie and discards the secret.
+ *
+ * Sections: Overview · Users · Scans · Reports · Contact
+ */
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  LayoutDashboard, Layers, TrendingUp, User, Search, Bell,
-  Plus, CheckCircle, Filter, ChevronDown, ArrowUpRight, ArrowDownRight,
-  Trophy, ScanLine, CreditCard, Check, Settings,
-} from 'lucide-react';
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
+import {
+  Shield,
+  LayoutDashboard,
+  Users,
+  ScanLine,
+  Flag,
+  MessageSquare,
+  LogOut,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  CheckCircle,
+  Crown,
+  Star,
+  User,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
-const MOCK_CARDS = [
-  { id: 1, name: "Umbreon ex", set: "Prismatic Evolutions", tcg: "Pokémon", price: 1240, change: 8.4, grade: "PSA 10", color: "from-purple-900 to-indigo-900" },
-  { id: 2, name: "Charizard ex SIR", set: "Obsidian Flames", tcg: "Pokémon", price: 890, change: -2.1, grade: "Raw", color: "from-orange-900 to-red-900" },
-  { id: 3, name: "Luffy OP-01", set: "Romance Dawn", tcg: "One Piece", price: 340, change: 12.5, grade: "BGS 9.5", color: "from-red-900 to-amber-900" },
-  { id: 4, name: "Black Lotus", set: "Alpha", tcg: "MTG", price: 42000, change: 0.5, grade: "PSA 8", color: "from-zinc-900 to-black" },
-  { id: 5, name: "Floral Dragonmaiden", set: "The First Chapter", tcg: "Lorcana", price: 180, change: 4.2, grade: "Raw", color: "from-pink-900 to-rose-900" },
-  { id: 6, name: "Gengar VMAX", set: "Fusion Strike", tcg: "Pokémon", price: 410, change: -1.5, grade: "Raw", color: "from-fuchsia-900 to-purple-900" },
-  { id: 7, name: "Shanks Manga", set: "Romance Dawn", tcg: "One Piece", price: 1850, change: 2.8, grade: "PSA 10", color: "from-red-950 to-red-900" },
-  { id: 8, name: "Mox Sapphire", set: "Unlimited", tcg: "MTG", price: 3200, change: 1.1, grade: "BGS 8", color: "from-blue-900 to-cyan-900" },
-];
+// The API server is always mounted at /api regardless of this artifact's
+// BASE_URL path (/vtcg-web). Use an absolute path so requests don't become
+// /vtcg-web/api which is the wrong origin prefix.
+const API = "/api";
 
-const MOCK_MOVERS = [
-  { id: 1, name: "Lillie (Full Art)", set: "Ultra Prism", price: 540, change: 24.5 },
-  { id: 2, name: "Rayquaza VMAX", set: "Evolving Skies", price: 380, change: 18.2 },
-  { id: 3, name: "Nami (Parallel)", set: "Romance Dawn", price: 290, change: 15.4 },
-  { id: 4, name: "Mewtwo Star", set: "Holon Phantoms", price: 1200, change: -12.5 },
-  { id: 5, name: "Blue-Eyes White Dragon", set: "LOB", price: 850, change: -8.4 },
-];
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const MOCK_TRENDING = [
-  { id: 1, name: "Pikachu Illustrator", set: "CoroCoro", price: 4500000, change: 0.1 },
-  { id: 2, name: "The One Ring", set: "LOTR Tales of Middle-earth", price: 2100, change: 45.2 },
-  { id: 3, name: "Charizard", set: "Base Set", price: 15000, change: 5.5 },
-  { id: 4, name: "Goku (Secret Rare)", set: "Tournament Pack", price: 850, change: 12.0 },
-];
+interface StatsData {
+  totalUsers: number;
+  proUsers: number;
+  freeUsers: number;
+  foundingMembers: number;
+  signupsToday: number;
+  signupsThisWeek: number;
+  signupsThisMonth: number;
+  totalScans: number;
+  scansThisMonth: number;
+  proConversionRate: number;
+  dailySignups: { date: string; count: number }[];
+}
 
-const Sparkline = ({ data, color, height = 40 }: { data: number[], color: string, height?: number }) => {
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
-  const width = 100;
-  const step = width / (data.length - 1);
-  const points = data.map((d, i) => `${i * step},${height - ((d - min) / range) * height}`).join(' ');
+interface UserRow {
+  id: string;
+  email: string;
+  displayName: string;
+  username: string;
+  subscriptionTier: string;
+  isFoundingMember: boolean;
+  createdAt: string;
+  avatarUrl?: string | null;
+  location?: string | null;
+  scansThisMonth: number;
+}
+
+interface ScanData {
+  totalScans: number;
+  scansThisMonth: number;
+  usersAtQuota: number;
+  freeScanLimit: number;
+  monthlyData: { period: string; label: string; total: number }[];
+  topScanners: {
+    userId: string;
+    displayName: string;
+    username: string;
+    subscriptionTier: string;
+    totalScans: number;
+  }[];
+}
+
+interface ReportRow {
+  id: string;
+  reason: string;
+  note?: string | null;
+  createdAt: string;
+  reporterUserId: string;
+  reportedUserId: string;
+  reporterUsername?: string | null;
+  reporterDisplayName?: string | null;
+  reportedUsername?: string | null;
+  reportedDisplayName?: string | null;
+}
+
+interface ContactRow {
+  id: string;
+  name: string;
+  email: string;
+  category: string;
+  subject: string;
+  message: string;
+  submittedAt: string;
+}
+
+// ── Fetch helpers (all use credentials: "include" for the session cookie) ─────
+
+class UnauthorizedError extends Error {}
+
+async function apiFetch<T>(path: string): Promise<T> {
+  const resp = await fetch(`${API}${path}`, { credentials: "include" });
+  if (resp.status === 401) throw new UnauthorizedError("Unauthorized");
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error((data as { message?: string }).message ?? "Request failed");
+  }
+  return resp.json() as Promise<T>;
+}
+
+async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const resp = await fetch(`${API}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.status === 401) throw new UnauthorizedError("Unauthorized");
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error((data as { message?: string }).message ?? "Request failed");
+  }
+  return resp.json() as Promise<T>;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function fmtNum(n: number) {
+  return n.toLocaleString();
+}
+
+function fillDailySignups(
+  data: { date: string; count: number }[],
+  days = 30,
+): { label: string; count: number }[] {
+  const map = new Map(data.map((d) => [d.date, d.count]));
+  const result: { label: string; count: number }[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    result.push({
+      label: d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
+      count: map.get(key) ?? 0,
+    });
+  }
+  return result;
+}
+
+// ── Shared UI ─────────────────────────────────────────────────────────────────
+
+function TierBadge({ tier, founding }: { tier: string; founding: boolean }) {
+  if (tier === "pro" && founding) {
+    return (
+      <span className="inline-flex items-center gap-1 bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-bold px-2 py-0.5 rounded-full">
+        <Star size={10} /> FOUNDING PRO
+      </span>
+    );
+  }
+  if (tier === "pro") {
+    return (
+      <span className="inline-flex items-center gap-1 bg-primary/20 text-primary border border-primary/40 text-xs font-bold px-2 py-0.5 rounded-full">
+        <Crown size={10} /> PRO
+      </span>
+    );
+  }
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="overflow-visible">
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-400 border border-zinc-700 text-xs font-bold px-2 py-0.5 rounded-full">
+      <User size={10} /> FREE
+    </span>
   );
-};
+}
 
-const PortfolioChart = () => {
-  const data = [21000, 21500, 21200, 22000, 22800, 23500, 23100, 24000, 24850];
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min;
-  const width = 800;
-  const height = 160;
-  const step = width / (data.length - 1);
-
-  const d = data.map((val, i) => {
-    const x = i * step;
-    const y = height - ((val - min) / range) * height;
-    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-  }).join(' ');
-  const fillD = `${d} L ${width} ${height} L 0 ${height} Z`;
-
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent?: boolean;
+}) {
   return (
-    <div className="w-full h-40 mt-10 mb-2 relative">
-      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="overflow-visible">
-        <defs>
-          <linearGradient id="chart-gradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--positive))" stopOpacity="0.2" />
-            <stop offset="100%" stopColor="hsl(var(--positive))" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={fillD} fill="url(#chart-gradient)" />
-        <path d={d} fill="none" stroke="hsl(var(--positive))" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </div>
-  );
-};
-
-const DashboardView = () => {
-  const [range, setRange] = useState('1M');
-  return (
-    <div className="animate-in fade-in duration-300">
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="text-muted-foreground text-sm font-medium tracking-wider mb-2">PORTFOLIO VALUE</h2>
-          <div className="flex items-baseline gap-4">
-            <h1 className="font-display text-6xl font-bold text-foreground tracking-tight">$24,850<span className="text-3xl text-muted-foreground">.00</span></h1>
-            <div className="flex items-center text-positive bg-positive/10 px-3 py-1 rounded-full text-sm font-bold">
-              <TrendingUp size={16} className="mr-1.5" />
-              +$1,240 (+5.2%) today
-            </div>
-          </div>
-        </div>
-        <div className="flex bg-card border border-border rounded-lg p-1">
-          {['1D', '7D', '1M', '3M', '1Y', 'ALL'].map(r => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${range === r ? 'bg-border text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="text-xs font-bold text-muted-foreground tracking-wider mb-2">{label}</div>
+      <div
+        className={`font-display text-3xl font-bold leading-none ${accent ? "text-primary" : "text-foreground"}`}
+      >
+        {typeof value === "number" ? fmtNum(value) : value}
       </div>
-
-      <PortfolioChart />
-
-      <div className="grid grid-cols-4 gap-4 mt-8">
-        {[
-          { icon: ScanLine, label: "Scan Card", desc: "AI grade & ID" },
-          { icon: Plus, label: "Add Card", desc: "Manual entry" },
-          { icon: Search, label: "Check Price", desc: "Live market data" },
-          { icon: CheckCircle, label: "Verify", desc: "Auth services" },
-        ].map((action, i) => (
-          <button key={i} className="flex items-center p-4 bg-card hover:bg-card-alt border border-border rounded-xl transition-colors group text-left cursor-pointer">
-            <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(255,30,45,0.1)] group-hover:shadow-[0_0_20px_rgba(255,30,45,0.3)]">
-              <action.icon size={22} />
-            </div>
-            <div>
-              <div className="font-bold text-foreground">{action.label}</div>
-              <div className="text-xs text-muted-foreground">{action.desc}</div>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-6 mt-6">
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-border flex justify-between items-center">
-            <h3 className="font-display text-xl font-bold">MARKET MOVERS</h3>
-            <button className="text-xs text-primary font-bold hover:underline">VIEW ALL</button>
-          </div>
-          <div className="divide-y divide-border">
-            {MOCK_MOVERS.map(mover => (
-              <div key={mover.id} className="flex items-center justify-between p-4 hover:bg-card-alt transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded bg-gradient-to-br from-zinc-800 to-black border border-border flex items-center justify-center">
-                    <Layers size={16} className="text-white/40" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">{mover.name}</div>
-                    <div className="text-xs text-muted-foreground">{mover.set}</div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-display text-lg font-bold">${mover.price}</div>
-                  <div className={`text-xs font-bold flex items-center justify-end ${mover.change > 0 ? 'text-positive' : 'text-negative'}`}>
-                    {mover.change > 0 ? <ArrowUpRight size={14} className="mr-0.5" /> : <ArrowDownRight size={14} className="mr-0.5" />}
-                    {Math.abs(mover.change)}%
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-border flex justify-between items-center">
-            <h3 className="font-display text-xl font-bold">TRENDING NOW</h3>
-            <button className="text-xs text-primary font-bold hover:underline">VIEW ALL</button>
-          </div>
-          <div className="divide-y divide-border">
-            {MOCK_TRENDING.map(trend => (
-              <div key={trend.id} className="flex items-center justify-between p-4 hover:bg-card-alt transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded bg-gradient-to-br from-zinc-800 to-black border border-border flex items-center justify-center">
-                    <Layers size={16} className="text-white/40" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">{trend.name}</div>
-                    <div className="text-xs text-muted-foreground">{trend.set}</div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-display text-lg font-bold">${trend.price.toLocaleString()}</div>
-                  <div className={`text-xs font-bold flex items-center justify-end ${trend.change > 0 ? 'text-positive' : 'text-negative'}`}>
-                    {trend.change > 0 ? <ArrowUpRight size={14} className="mr-0.5" /> : <ArrowDownRight size={14} className="mr-0.5" />}
-                    {Math.abs(trend.change)}%
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const CollectionView = () => (
-  <div className="animate-in fade-in duration-300">
-    <div className="flex justify-between items-end mb-8">
-      <h1 className="font-display text-4xl font-bold">MY COLLECTION</h1>
-      <div className="flex gap-4">
-        {[
-          { label: 'TOTAL CARDS', value: '847', color: '' },
-          { label: 'TOTAL VALUE', value: '$24,850', color: 'text-positive' },
-          { label: 'HIGHEST VALUE', value: '$42,000', color: '' },
-        ].map(s => (
-          <div key={s.label} className="bg-card border border-border rounded-xl px-6 py-3 text-center min-w-[140px]">
-            <div className="text-xs font-bold text-muted-foreground mb-1 tracking-wider">{s.label}</div>
-            <div className={`font-display text-2xl font-bold ${s.color}`}>{s.value}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    <div className="flex gap-4 mb-6">
-      <div className="relative flex-1">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-        <input
-          type="text"
-          placeholder="Search cards, sets, or characters..."
-          className="w-full bg-card border border-border rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-primary transition-colors"
-        />
-      </div>
-      <button className="flex items-center gap-2 bg-card border border-border rounded-lg px-5 py-3 text-sm font-bold hover:bg-card-alt transition-colors">
-        <Filter size={16} /> ALL TCGs <ChevronDown size={14} />
-      </button>
-      <button className="flex items-center gap-2 bg-card border border-border rounded-lg px-5 py-3 text-sm font-bold hover:bg-card-alt transition-colors">
-        CONDITION <ChevronDown size={14} />
-      </button>
-      <button className="flex items-center gap-2 bg-card border border-border rounded-lg px-5 py-3 text-sm font-bold hover:bg-card-alt transition-colors">
-        GRADER <ChevronDown size={14} />
-      </button>
-    </div>
-
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-      {MOCK_CARDS.map(card => (
-        <div key={card.id} className="group cursor-pointer">
-          <div className={`aspect-[2.5/3.5] rounded-xl bg-gradient-to-br ${card.color} w-full relative overflow-hidden border border-border shadow-lg group-hover:border-primary/50 group-hover:shadow-[0_0_20px_rgba(255,30,45,0.2)] transition-all duration-300`}>
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-            <div className="absolute inset-0 flex items-center justify-center mix-blend-overlay">
-              <Layers size={48} className="text-white/20" />
-            </div>
-            <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm border border-white/10 text-xs font-bold px-2 py-1 rounded shadow-lg">
-              {card.grade}
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 p-4">
-              <div className="text-[10px] uppercase font-bold text-white/70 tracking-wider mb-1">{card.tcg}</div>
-            </div>
-          </div>
-          <div className="mt-4 px-1">
-            <div className="font-bold text-sm truncate">{card.name}</div>
-            <div className="text-xs text-muted-foreground truncate">{card.set}</div>
-            <div className="flex items-center justify-between mt-2">
-              <div className="font-display font-bold text-xl">${card.price.toLocaleString()}</div>
-              <div className={`text-xs font-bold flex items-center ${card.change > 0 ? 'text-positive' : 'text-negative'}`}>
-                {card.change > 0 ? <ArrowUpRight size={12} className="mr-0.5" /> : <ArrowDownRight size={12} className="mr-0.5" />}
-                {Math.abs(card.change)}%
-              </div>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-);
-
-const MarketView = () => {
-  const [activeTcg, setActiveTcg] = useState('All');
-  const tcgs = ['All', 'Pokémon', 'MTG', 'One Piece', 'Yu-Gi-Oh!', 'Lorcana'];
-
-  return (
-    <div className="animate-in fade-in duration-300">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h1 className="font-display text-4xl font-bold">LIVE MARKET</h1>
-          <p className="text-muted-foreground text-sm mt-1">Real-time data across all verified marketplaces.</p>
-        </div>
-        <div className="flex bg-card border border-border rounded-lg p-1">
-          {tcgs.map(tcg => (
-            <button
-              key={tcg}
-              onClick={() => setActiveTcg(tcg)}
-              className={`px-4 py-2 text-sm font-bold rounded-md transition-colors ${activeTcg === tcg ? 'bg-primary text-white shadow-[0_0_10px_rgba(255,30,45,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-border/50'}`}
-            >
-              {tcg}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-8">
-        <div>
-          <div className="flex items-center gap-3 mb-4 text-positive">
-            <div className="p-2 bg-positive/10 rounded-lg">
-              <TrendingUp size={24} />
-            </div>
-            <h3 className="font-display text-2xl font-bold">TOP GAINERS</h3>
-          </div>
-          <div className="space-y-3">
-            {MOCK_CARDS.filter(c => c.change > 0).map((card, i) => (
-              <div key={card.id} className="flex items-center bg-card border border-border rounded-xl p-4 hover:border-positive/30 hover:bg-card-alt transition-colors cursor-pointer group">
-                <div className="text-xl font-display font-bold text-border group-hover:text-positive/50 transition-colors w-8 text-center">{i + 1}</div>
-                <div className="h-14 w-14 rounded bg-gradient-to-br from-zinc-800 to-black border border-border flex items-center justify-center shrink-0 ml-2 shadow-inner">
-                  <Layers size={20} className="text-white/40" />
-                </div>
-                <div className="ml-4 flex-1">
-                  <div className="font-bold text-sm">{card.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{card.tcg} • {card.set}</div>
-                </div>
-                <div className="w-24 px-4">
-                  <Sparkline data={[10, 12, 11, 15, 14, 18, 20]} color="hsl(var(--positive))" height={24} />
-                </div>
-                <div className="text-right ml-2 min-w-[80px]">
-                  <div className="font-display text-lg font-bold">${card.price.toLocaleString()}</div>
-                  <div className="text-xs font-bold text-positive mt-0.5">+{card.change}%</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <div className="flex items-center gap-3 mb-4 text-negative">
-            <div className="p-2 bg-negative/10 rounded-lg">
-              <TrendingUp size={24} className="rotate-180" />
-            </div>
-            <h3 className="font-display text-2xl font-bold">TOP LOSERS</h3>
-          </div>
-          <div className="space-y-3">
-            {[...MOCK_MOVERS].reverse().map((mover, i) => (
-              <div key={mover.id} className="flex items-center bg-card border border-border rounded-xl p-4 hover:border-negative/30 hover:bg-card-alt transition-colors cursor-pointer group">
-                <div className="text-xl font-display font-bold text-border group-hover:text-negative/50 transition-colors w-8 text-center">{i + 1}</div>
-                <div className="h-14 w-14 rounded bg-gradient-to-br from-zinc-800 to-black border border-border flex items-center justify-center shrink-0 ml-2 shadow-inner">
-                  <Layers size={20} className="text-white/40" />
-                </div>
-                <div className="ml-4 flex-1">
-                  <div className="font-bold text-sm">{mover.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{mover.set}</div>
-                </div>
-                <div className="w-24 px-4">
-                  <Sparkline data={[20, 18, 19, 15, 16, 12, 10]} color="hsl(var(--negative))" height={24} />
-                </div>
-                <div className="text-right ml-2 min-w-[80px]">
-                  <div className="font-display text-lg font-bold">${mover.price.toLocaleString()}</div>
-                  <div className="text-xs font-bold text-negative mt-0.5">{mover.change}%</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      {sub && <div className="text-xs text-muted-foreground mt-1.5">{sub}</div>}
     </div>
   );
-};
+}
 
-const ProfileView = () => (
-  <div className="animate-in fade-in duration-300 max-w-5xl mx-auto">
-    <h1 className="font-display text-4xl font-bold mb-8">PROFILE</h1>
-
-    <div className="bg-card border border-border rounded-2xl p-8 mb-8 flex items-center gap-8 relative overflow-hidden shadow-lg">
-      <div className="absolute top-0 right-0 w-96 h-96 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
-      <div className="relative z-10 shrink-0">
-        <div className="h-32 w-32 rounded-full border-4 border-card outline outline-2 outline-primary bg-primary/20 flex items-center justify-center text-5xl font-display font-bold text-primary shadow-[0_0_30px_rgba(255,30,45,0.3)]">
-          JS
-        </div>
-      </div>
-      <div className="flex-1 relative z-10">
-        <div className="flex items-center gap-4 mb-2">
-          <h2 className="text-3xl font-bold tracking-tight">Jason Santos</h2>
-          <div className="bg-gradient-to-r from-amber-500 to-yellow-300 text-black text-xs font-bold px-2.5 py-1 rounded flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.4)]">
-            <Check size={14} strokeWidth={4} /> VERIFIED PRO
-          </div>
-        </div>
-        <div className="text-muted-foreground font-medium mb-4 text-sm">@jsantos_collects</div>
-        <p className="text-sm max-w-lg leading-relaxed text-foreground/90">Vintage Pokémon and sealed MTG collector. Building the ultimate master set. Open to high-end trades. Always looking for pristine condition early eras.</p>
-      </div>
-      <div className="relative z-10 self-start">
-        <button className="bg-border hover:bg-white hover:text-black text-xs font-bold px-4 py-2 rounded transition-colors flex items-center gap-2">
-          <Settings size={14} /> EDIT PROFILE
-        </button>
-      </div>
+function SkeletonCard() {
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 animate-pulse">
+      <div className="h-3 bg-border rounded w-24 mb-3" />
+      <div className="h-8 bg-border rounded w-16" />
     </div>
+  );
+}
 
-    <div className="grid grid-cols-3 gap-6 mb-8">
-      {[
-        { icon: Layers, label: 'COLLECTION VALUE', value: '$24,850' },
-        { icon: Trophy, label: 'GRADED CARDS', value: '142' },
-        { icon: ScanLine, label: 'SUCCESSFUL TRADES', value: '18' },
-      ].map(s => (
-        <div key={s.label} className="bg-card border border-border rounded-xl p-6 hover:border-primary/30 transition-colors">
-          <div className="flex items-center gap-3 text-muted-foreground mb-3 text-xs font-bold tracking-wider">
-            <s.icon size={16} /> {s.label}
-          </div>
-          <div className="font-display text-4xl font-bold">{s.value}</div>
-        </div>
-      ))}
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-2.5 bg-negative/10 border border-negative/30 text-negative rounded-xl px-4 py-3 text-sm mb-6">
+      <AlertTriangle size={15} className="shrink-0" /> {message}
     </div>
+  );
+}
 
-    <div className="grid grid-cols-2 gap-8">
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h3 className="font-display text-xl font-bold mb-6">SUBSCRIPTION & USAGE</h3>
-        <div className="mb-8">
-          <div className="flex justify-between text-sm mb-3">
-            <span className="font-bold text-foreground">AI Scan Quota</span>
-            <span className="text-muted-foreground font-medium">45 / 100 used</span>
-          </div>
-          <div className="h-2.5 w-full bg-border rounded-full overflow-hidden">
-            <div className="h-full bg-primary w-[45%] rounded-full relative">
-              <div className="absolute inset-0 bg-white/20"></div>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-3 font-medium">Resets in 12 days</p>
-        </div>
-        <div className="flex items-center justify-between p-5 bg-background border border-border rounded-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary/10 rounded-lg text-primary">
-              <CreditCard size={20} />
-            </div>
-            <div>
-              <div className="font-bold text-sm">Pro Plan</div>
-              <div className="text-xs text-muted-foreground mt-0.5">$9.99/month</div>
-            </div>
-          </div>
-          <button className="text-xs font-bold bg-border hover:bg-white hover:text-black transition-colors px-4 py-2 rounded">
-            MANAGE
-          </button>
-        </div>
-      </div>
+// ── Login screen ──────────────────────────────────────────────────────────────
 
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h3 className="font-display text-xl font-bold mb-6">SETTINGS</h3>
-        <div className="space-y-6">
-          {[
-            { id: 'push', label: 'Push Notifications', desc: 'Price alerts and trade offers', defaultChecked: true },
-            { id: 'email', label: 'Email Digest', desc: 'Weekly market summaries', defaultChecked: false },
-            { id: 'public', label: 'Public Profile', desc: 'Allow others to see your showcase', defaultChecked: true },
-          ].map(setting => (
-            <div key={setting.id} className="flex items-center justify-between">
-              <div>
-                <div className="font-bold text-sm">{setting.label}</div>
-                <div className="text-xs text-muted-foreground mt-1">{setting.desc}</div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" className="sr-only peer" defaultChecked={setting.defaultChecked} />
-                <div className="w-10 h-6 bg-border rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary shadow-inner"></div>
-              </label>
-            </div>
-          ))}
-          <div className="flex items-center justify-between pt-2">
-            <div>
-              <div className="font-bold text-sm text-muted-foreground">Dark Mode</div>
-              <div className="text-xs text-muted-foreground mt-1">Locked to theme</div>
-            </div>
-            <label className="relative inline-flex items-center opacity-50 cursor-not-allowed">
-              <input type="checkbox" className="sr-only peer" checked readOnly />
-              <div className="w-10 h-6 bg-primary rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:translate-x-full"></div>
+function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const [secret, setSecret] = useState("");
+  const [show, setShow] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!secret.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      // POST the secret once; the API issues an HttpOnly cookie and discards the secret.
+      await apiPost("/admin/auth/login", { secret: secret.trim() });
+      setSecret(""); // clear from memory immediately after sending
+      onAuthenticated();
+    } catch (err) {
+      if (err instanceof UnauthorizedError || (err instanceof Error && err.message === "Invalid admin secret.")) {
+        setError("Invalid secret. Access denied.");
+      } else {
+        setError("Could not connect to the API. Check that the server is running.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-10 justify-center">
+          <div className="h-10 w-10 bg-primary rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(255,30,45,0.4)]">
+            <Shield size={20} className="text-white" strokeWidth={2.5} />
+          </div>
+          <div>
+            <div className="font-display text-xl font-bold tracking-wide leading-none">VERIFIED TCG</div>
+            <div className="text-xs text-muted-foreground mt-0.5 tracking-widest">ADMIN DASHBOARD</div>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-muted-foreground mb-2 tracking-wider">
+              ADMIN SECRET
             </label>
+            <div className="relative">
+              <input
+                type={show ? "text" : "password"}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder="Enter your admin secret…"
+                autoFocus
+                autoComplete="current-password"
+                className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm pr-10 focus:outline-none focus:border-primary transition-colors font-mono placeholder:text-muted-foreground/40"
+              />
+              <button
+                type="button"
+                onClick={() => setShow((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label={show ? "Hide secret" : "Show secret"}
+              >
+                {show ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
-        </div>
+
+          {error && (
+            <div className="flex items-start gap-2.5 bg-negative/10 border border-negative/30 text-negative rounded-xl px-4 py-3 text-sm">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading || !secret.trim()}
+            className="w-full py-3 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-[0_0_15px_rgba(255,30,45,0.3)]"
+          >
+            {loading ? "Verifying…" : "Enter Dashboard"}
+          </button>
+        </form>
       </div>
     </div>
-  </div>
-);
+  );
+}
 
-const Sidebar = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (t: string) => void }) => {
-  const nav = [
-    { name: 'Dashboard', icon: LayoutDashboard },
-    { name: 'Collection', icon: Layers },
-    { name: 'Market', icon: TrendingUp },
-    { name: 'Profile', icon: User },
-  ];
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 
+const NAV_ITEMS = [
+  { id: "overview", label: "Overview", Icon: LayoutDashboard },
+  { id: "users", label: "Users", Icon: Users },
+  { id: "scans", label: "Scans", Icon: ScanLine },
+  { id: "reports", label: "Reports", Icon: Flag },
+  { id: "contact", label: "Contact", Icon: MessageSquare },
+];
+
+function Sidebar({
+  active,
+  onNav,
+  onLogout,
+}: {
+  active: string;
+  onNav: (id: string) => void;
+  onLogout: () => void;
+}) {
   return (
-    <div className="w-[240px] bg-sidebar border-r border-border h-full flex flex-col shrink-0">
-      <div className="p-6 flex items-center gap-3">
-        <div className="h-8 w-8 bg-primary rounded flex items-center justify-center text-white font-bold shadow-[0_0_15px_rgba(255,30,45,0.4)]">
-          <CheckCircle size={18} strokeWidth={3} />
+    <aside className="w-60 shrink-0 bg-card border-r border-border h-full flex flex-col">
+      <div className="p-6 flex items-center gap-3 border-b border-border">
+        <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(255,30,45,0.35)]">
+          <Shield size={16} className="text-white" strokeWidth={2.5} />
         </div>
-        <span className="font-display font-bold text-xl tracking-wide">VERIFIED TCG</span>
+        <div>
+          <div className="font-display text-sm font-bold tracking-wide leading-none">VERIFIED TCG</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 tracking-wider">ADMIN</div>
+        </div>
       </div>
 
-      <nav className="flex-1 px-4 py-4 space-y-2 mt-4">
-        {nav.map(item => (
+      <nav className="flex-1 px-3 py-4 space-y-0.5">
+        {NAV_ITEMS.map(({ id, label, Icon }) => (
           <button
-            key={item.name}
-            onClick={() => setActiveTab(item.name)}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-all duration-200 ${
-              activeTab === item.name
-                ? 'bg-primary/10 text-primary shadow-inner'
-                : 'text-muted-foreground hover:bg-card hover:text-foreground'
+            key={id}
+            onClick={() => onNav(id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              active === id
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-background hover:text-foreground"
             }`}
           >
-            <item.icon size={18} className={activeTab === item.name ? 'text-primary' : ''} />
-            {item.name.toUpperCase()}
+            <Icon size={16} />
+            {label}
           </button>
         ))}
       </nav>
 
-      <div className="p-4 mt-auto">
-        <div className="bg-card border border-border p-5 rounded-xl relative overflow-hidden group cursor-pointer hover:border-primary/50 transition-colors">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="text-xs font-bold text-primary mb-2 flex items-center gap-1.5"><Check size={14} /> PRO STATUS</div>
-          <div className="text-sm font-medium mb-4 text-foreground/80 leading-tight">Upgrade for unlimited AI scanning & market alerts.</div>
-          <button className="w-full bg-primary text-white text-xs font-bold py-2.5 rounded shadow-[0_0_15px_rgba(255,30,45,0.3)] hover:bg-primary/90 transition-colors relative z-10">
-            UPGRADE NOW
+      <div className="p-3 border-t border-border">
+        <button
+          onClick={onLogout}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold text-muted-foreground hover:bg-background hover:text-negative transition-all"
+        >
+          <LogOut size={16} />
+          Sign Out
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+
+function OverviewSection({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [data, setData] = useState<StatsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<StatsData>("/admin/stats")
+      .then(setData)
+      .catch((err) => {
+        if (err instanceof UnauthorizedError) onSessionExpired();
+        else setError("Failed to load statistics.");
+      })
+      .finally(() => setLoading(false));
+  }, [onSessionExpired]);
+
+  const chartData = data ? fillDailySignups(data.dailySignups) : [];
+
+  return (
+    <div className="p-8 max-w-6xl">
+      <h1 className="font-display text-2xl font-bold mb-1">Overview</h1>
+      <p className="text-sm text-muted-foreground mb-8">Live platform statistics — updated on each page load.</p>
+
+      {error && <ErrorBanner message={error} />}
+
+      <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3">USERS</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+        {loading ? (
+          Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : data ? (
+          <>
+            <StatCard label="TOTAL USERS" value={data.totalUsers} />
+            <StatCard label="PRO USERS" value={data.proUsers} accent />
+            <StatCard label="FREE USERS" value={data.freeUsers} />
+            <StatCard label="FOUNDING PRO" value={data.foundingMembers} />
+            <StatCard label="SIGNUPS TODAY" value={data.signupsToday} />
+            <StatCard label="SIGNUPS THIS WEEK" value={data.signupsThisWeek} />
+            <StatCard label="SIGNUPS THIS MONTH" value={data.signupsThisMonth} />
+            <StatCard
+              label="PRO CONVERSION"
+              value={`${data.proConversionRate}%`}
+              sub={`${data.proUsers} of ${data.totalUsers} users`}
+              accent
+            />
+          </>
+        ) : null}
+      </div>
+
+      <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3">SCANNING</h2>
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : data ? (
+          <>
+            <StatCard label="TOTAL SCANS" value={data.totalScans} />
+            <StatCard label="SCANS THIS MONTH" value={data.scansThisMonth} />
+            <StatCard label="REVENUE" value="—" sub="Provider not connected" />
+          </>
+        ) : null}
+      </div>
+
+      <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3">30-DAY SIGNUPS</h2>
+      <div className="bg-card border border-border rounded-xl p-6 mb-8">
+        {loading ? (
+          <div className="h-48 flex items-center justify-center">
+            <div className="text-sm text-muted-foreground animate-pulse">Loading chart…</div>
+          </div>
+        ) : chartData.length === 0 ? (
+          <div className="h-48 flex items-center justify-center">
+            <div className="text-sm text-muted-foreground">No signup data yet.</div>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                interval={4}
+              />
+              <YAxis
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--card))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "8px",
+                  fontSize: 12,
+                }}
+                labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 700 }}
+                itemStyle={{ color: "hsl(var(--primary))" }}
+              />
+              <Bar dataKey="count" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} name="Signups" />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {data && (
+        <div className="bg-card border border-border rounded-xl p-6">
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-sm font-bold">Pro Conversion Rate</span>
+            <span className="text-sm font-bold text-primary">{data.proConversionRate}%</span>
+          </div>
+          <div className="h-2.5 w-full bg-border rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-700"
+              style={{ width: `${Math.min(100, data.proConversionRate)}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground mt-2">
+            <span>{data.proUsers} Pro users</span>
+            <span>{data.totalUsers} total users</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── User detail panel ─────────────────────────────────────────────────────────
+
+function UserDetailPanel({
+  user,
+  onClose,
+  onSessionExpired,
+  onUpdated,
+}: {
+  user: UserRow;
+  onClose: () => void;
+  onSessionExpired: () => void;
+  onUpdated: (updated: UserRow) => void;
+}) {
+  const { toast } = useToast();
+  const [tier, setTier] = useState(user.subscriptionTier);
+  const [founding, setFounding] = useState(user.isFoundingMember);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setTier(user.subscriptionTier);
+    setFounding(user.isFoundingMember);
+  }, [user.id, user.subscriptionTier, user.isFoundingMember]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const result = await apiPost<{ message: string; user: UserRow }>(
+        `/admin/users/${user.id}/subscription`,
+        { subscription_tier: tier, is_founding_member: founding },
+      );
+      onUpdated({ ...user, ...result.user });
+      toast({ title: "Saved", description: result.message });
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        onSessionExpired();
+      } else {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Update failed.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const initials = user.displayName.slice(0, 2).toUpperCase();
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed right-0 top-0 bottom-0 w-[420px] bg-background border-l border-border z-50 flex flex-col overflow-y-auto shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-background">
+          <span className="text-sm font-bold text-muted-foreground tracking-wider">USER DETAIL</span>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X size={18} />
           </button>
         </div>
+
+        <div className="p-6 flex-1 space-y-6">
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center text-xl font-display font-bold text-primary shrink-0">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-lg truncate">{user.displayName}</div>
+              <div className="text-sm text-muted-foreground truncate">@{user.username}</div>
+              <div className="text-xs text-muted-foreground/70 truncate font-mono">{user.email}</div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl divide-y divide-border">
+            {[
+              ["User ID", <span key="id" className="font-mono text-xs text-muted-foreground/70 truncate max-w-[200px]">{user.id}</span>],
+              ["Current tier", <TierBadge key="tier" tier={user.subscriptionTier} founding={user.isFoundingMember} />],
+              ["Member since", <span key="date" className="font-medium">{fmtDate(user.createdAt)}</span>],
+              ...(user.location ? [["Location", <span key="loc" className="font-medium">{user.location}</span>]] : []),
+              ["Scans this month", <span key="scans" className="font-medium">{user.scansThisMonth}</span>],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between px-4 py-3 text-sm">
+                <span className="text-muted-foreground">{label}</span>
+                {value}
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSave} className="bg-card border border-border rounded-xl p-5 space-y-5">
+            <div className="text-xs font-bold text-muted-foreground tracking-wider">UPDATE SUBSCRIPTION</div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {(["free", "pro"] as const).map((t) => (
+                <label
+                  key={t}
+                  className={`flex items-center gap-2.5 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    tier === t ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <input type="radio" name="tier" value={t} checked={tier === t} onChange={() => setTier(t)} className="sr-only" />
+                  {t === "pro" ? (
+                    <Crown size={15} className={tier === "pro" ? "text-primary" : "text-muted-foreground"} />
+                  ) : (
+                    <User size={15} className={tier === "free" ? "text-primary" : "text-muted-foreground"} />
+                  )}
+                  <span className="text-sm font-bold uppercase">{t}</span>
+                  {tier === t && <CheckCircle size={14} className="ml-auto text-primary" />}
+                </label>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between p-3.5 bg-background border border-border rounded-xl">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 bg-amber-500/10 rounded-lg">
+                  <Star size={14} className="text-amber-400" />
+                </div>
+                <div>
+                  <div className="text-sm font-bold">Founding Member</div>
+                  <div className="text-xs text-muted-foreground">Early supporter badge</div>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer ml-4">
+                <input type="checkbox" className="sr-only peer" checked={founding} onChange={(e) => setFounding(e.target.checked)} />
+                <div className="w-10 h-6 bg-border rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 shadow-inner" />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => { setTier(user.subscriptionTier); setFounding(user.isFoundingMember); }}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RotateCcw size={13} /> Reset
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2 bg-primary text-white text-sm font-bold rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-[0_0_10px_rgba(255,30,45,0.2)]"
+              >
+                {saving ? "Saving…" : <><CheckCircle size={14} /> Save Changes</>}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Users section ─────────────────────────────────────────────────────────────
+
+function UsersSection({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [tier, setTier] = useState("all");
+  const [sort, setSort] = useState("date");
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<UserRow | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const LIMIT = 20;
+
+  const load = useCallback(
+    (q: string, t: string, s: string, p: number) => {
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams({ page: String(p), limit: String(LIMIT), sort: s });
+      if (q.trim()) params.set("q", q.trim());
+      if (t !== "all") params.set("tier", t);
+
+      apiFetch<{ users: UserRow[]; total: number; page: number }>(`/admin/users?${params}`)
+        .then((data) => { setUsers(data.users); setTotal(data.total); })
+        .catch((err) => {
+          if (err instanceof UnauthorizedError) onSessionExpired();
+          else setError("Failed to load users.");
+        })
+        .finally(() => setLoading(false));
+    },
+    [onSessionExpired],
+  );
+
+  useEffect(() => { load(search, tier, sort, page); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleSearchChange(val: string) {
+    setSearch(val);
+    setPage(1);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => load(val, tier, sort, 1), 300);
+  }
+
+  function handleTierChange(val: string) { setTier(val); setPage(1); load(search, val, sort, 1); }
+  function handleSortChange(val: string) { setSort(val); setPage(1); load(search, tier, val, 1); }
+  function handlePage(next: number) { setPage(next); load(search, tier, sort, next); }
+
+  function handleUpdated(updated: UserRow) {
+    setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)));
+    setSelected((s) => (s?.id === updated.id ? { ...s, ...updated } : s));
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+
+  return (
+    <div className="p-8 max-w-6xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="font-display text-2xl font-bold mb-1">Users</h1>
+          <p className="text-sm text-muted-foreground">
+            {total > 0 ? `${fmtNum(total)} total users` : "Manage all collector accounts"}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-3 mb-5">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search by name, email, or username…"
+            className="w-full bg-card border border-border rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors placeholder:text-muted-foreground/50"
+          />
+        </div>
+        <select value={tier} onChange={(e) => handleTierChange(e.target.value)} className="bg-card border border-border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors">
+          <option value="all">All Tiers</option>
+          <option value="free">Free</option>
+          <option value="pro">Pro</option>
+          <option value="founding_pro">Founding Pro</option>
+        </select>
+        <select value={sort} onChange={(e) => handleSortChange(e.target.value)} className="bg-card border border-border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors">
+          <option value="date">Newest First</option>
+          <option value="name">Name A–Z</option>
+        </select>
+      </div>
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="bg-card border border-border rounded-xl overflow-hidden mb-4">
+        <div className="grid grid-cols-[1fr_1fr_1fr_120px_100px_36px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
+          <span>USER</span><span>EMAIL</span><span>TIER</span><span>JOINED</span><span>SCANS / MO</span><span />
+        </div>
+
+        {loading ? (
+          Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_1fr_120px_100px_36px] gap-4 px-5 py-4 border-b border-border animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-border shrink-0" />
+                <div className="space-y-1.5"><div className="h-3 bg-border rounded w-24" /><div className="h-2.5 bg-border rounded w-16" /></div>
+              </div>
+              <div className="h-3 bg-border rounded w-32 self-center" />
+              <div className="h-5 bg-border rounded-full w-16 self-center" />
+              <div className="h-3 bg-border rounded w-20 self-center" />
+              <div className="h-3 bg-border rounded w-8 self-center" />
+              <div />
+            </div>
+          ))
+        ) : users.length === 0 ? (
+          <div className="py-16 text-center">
+            <Users size={32} className="text-muted-foreground mx-auto mb-3 opacity-50" />
+            <p className="text-sm text-muted-foreground">
+              {search || tier !== "all" ? "No users match your filters." : "No users yet."}
+            </p>
+          </div>
+        ) : (
+          users.map((user) => (
+            <button
+              key={user.id}
+              onClick={() => setSelected(user)}
+              className="w-full grid grid-cols-[1fr_1fr_1fr_120px_100px_36px] gap-4 px-5 py-3.5 border-b border-border hover:bg-background transition-colors text-left items-center"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-xs font-bold text-primary shrink-0">
+                  {user.displayName.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate">{user.displayName}</div>
+                  <div className="text-xs text-muted-foreground truncate">@{user.username}</div>
+                </div>
+              </div>
+              <div className="text-sm text-muted-foreground truncate">{user.email}</div>
+              <TierBadge tier={user.subscriptionTier} founding={user.isFoundingMember} />
+              <div className="text-sm text-muted-foreground">{fmtDate(user.createdAt)}</div>
+              <div className="text-sm text-muted-foreground">{user.scansThisMonth}</div>
+              <ChevronRight size={16} className="text-muted-foreground" />
+            </button>
+          ))
+        )}
+      </div>
+
+      {!loading && total > LIMIT && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Page {page} of {totalPages} · {fmtNum(total)} users</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => handlePage(page - 1)} disabled={page <= 1} className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background transition-colors">
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <button onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background transition-colors">
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selected && (
+        <UserDetailPanel
+          user={selected}
+          onClose={() => setSelected(null)}
+          onSessionExpired={onSessionExpired}
+          onUpdated={handleUpdated}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Scans section ─────────────────────────────────────────────────────────────
+
+function ScansSection({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [data, setData] = useState<ScanData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<ScanData>("/admin/scan-usage")
+      .then(setData)
+      .catch((err) => {
+        if (err instanceof UnauthorizedError) onSessionExpired();
+        else setError("Failed to load scan data.");
+      })
+      .finally(() => setLoading(false));
+  }, [onSessionExpired]);
+
+  return (
+    <div className="p-8 max-w-6xl">
+      <h1 className="font-display text-2xl font-bold mb-1">Scans</h1>
+      <p className="text-sm text-muted-foreground mb-8">Scanning analytics and usage by user.</p>
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : data ? (
+          <>
+            <StatCard label="TOTAL SCANS" value={data.totalScans} />
+            <StatCard label="SCANS THIS MONTH" value={data.scansThisMonth} />
+            <StatCard label="FREE USERS AT QUOTA" value={data.usersAtQuota} sub={`${data.freeScanLimit} scan limit`} accent={data.usersAtQuota > 0} />
+          </>
+        ) : null}
+      </div>
+
+      <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3">MONTHLY SCANS</h2>
+      <div className="bg-card border border-border rounded-xl p-6 mb-8">
+        {loading ? (
+          <div className="h-48 flex items-center justify-center"><div className="text-sm text-muted-foreground animate-pulse">Loading chart…</div></div>
+        ) : !data || data.monthlyData.length === 0 ? (
+          <div className="h-48 flex items-center justify-center"><div className="text-sm text-muted-foreground">No scan data yet.</div></div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={data.monthlyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: 12 }} labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 700 }} itemStyle={{ color: "hsl(var(--primary))" }} />
+              <Bar dataKey="total" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} name="Scans" />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3">TOP SCANNERS</h2>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[28px_1fr_140px_100px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
+          <span>#</span><span>USER</span><span>TIER</span><span>TOTAL SCANS</span>
+        </div>
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-[28px_1fr_140px_100px] gap-4 px-5 py-3.5 border-b border-border animate-pulse">
+              {Array.from({ length: 4 }).map((_, j) => <div key={j} className="h-3 bg-border rounded w-12" />)}
+            </div>
+          ))
+        ) : !data || data.topScanners.length === 0 ? (
+          <div className="py-12 text-center">
+            <Activity size={28} className="text-muted-foreground mx-auto mb-3 opacity-50" />
+            <p className="text-sm text-muted-foreground">No scan data yet.</p>
+          </div>
+        ) : (
+          data.topScanners.map((scanner, idx) => (
+            <div key={scanner.userId} className="grid grid-cols-[28px_1fr_140px_100px] gap-4 px-5 py-3.5 border-b border-border items-center">
+              <span className="text-sm text-muted-foreground font-mono">{idx + 1}</span>
+              <div>
+                <div className="text-sm font-semibold">{scanner.displayName}</div>
+                <div className="text-xs text-muted-foreground">@{scanner.username}</div>
+              </div>
+              <TierBadge tier={scanner.subscriptionTier} founding={false} />
+              <div className="text-sm font-bold">{fmtNum(scanner.totalScans)}</div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
-};
+}
 
-const Topbar = () => (
-  <header className="h-20 border-b border-border bg-background flex items-center justify-between px-8 shrink-0">
-    <div className="relative w-96">
-      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-      <input
-        type="text"
-        placeholder="Search cards, sets, users..."
-        className="w-full bg-card border border-border rounded-lg pl-12 pr-4 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
-      />
-    </div>
-    <div className="flex items-center gap-6">
-      <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-card">
-        <Bell size={22} />
-        <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-primary border-2 border-background"></span>
-      </button>
-      <div className="flex items-center gap-3 pl-6 border-l border-border">
-        <div className="text-right">
-          <div className="text-sm font-bold">Jason Santos</div>
-          <div className="text-xs text-primary font-bold">PRO MEMBER</div>
-        </div>
-        <div className="h-10 w-10 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center text-sm font-bold text-primary cursor-pointer shadow-[0_0_10px_rgba(255,30,45,0.2)]">
-          JS
-        </div>
-      </div>
-    </div>
-  </header>
-);
+// ── Reports section ───────────────────────────────────────────────────────────
 
-export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState('Dashboard');
+function ReportsSection({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReportRow | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ reports: ReportRow[] }>("/admin/reports")
+      .then((data) => setReports(data.reports))
+      .catch((err) => {
+        if (err instanceof UnauthorizedError) onSessionExpired();
+        else setError("Failed to load reports.");
+      })
+      .finally(() => setLoading(false));
+  }, [onSessionExpired]);
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden font-sans selection:bg-primary/30">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        <Topbar />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-8 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-          {activeTab === 'Dashboard' && <DashboardView />}
-          {activeTab === 'Collection' && <CollectionView />}
-          {activeTab === 'Market' && <MarketView />}
-          {activeTab === 'Profile' && <ProfileView />}
-        </main>
+    <div className="p-8 max-w-5xl">
+      <h1 className="font-display text-2xl font-bold mb-1">Reports</h1>
+      <p className="text-sm text-muted-foreground mb-8">All user-submitted reports. {reports.length > 0 ? `${reports.length} total.` : ""}</p>
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[1fr_1fr_1fr_140px_100px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
+          <span>REPORTER</span><span>REPORTED USER</span><span>REASON</span><span>DATE</span><span>STATUS</span>
+        </div>
+
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_1fr_140px_100px] gap-4 px-5 py-4 border-b border-border animate-pulse">
+              {Array.from({ length: 5 }).map((_, j) => <div key={j} className="h-3 bg-border rounded w-24" />)}
+            </div>
+          ))
+        ) : reports.length === 0 ? (
+          <div className="py-16 text-center">
+            <Flag size={32} className="text-muted-foreground mx-auto mb-3 opacity-50" />
+            <p className="text-sm text-muted-foreground">No reports yet.</p>
+          </div>
+        ) : (
+          reports.map((r) => (
+            <button key={r.id} onClick={() => setSelected(r)} className="w-full grid grid-cols-[1fr_1fr_1fr_140px_100px] gap-4 px-5 py-3.5 border-b border-border hover:bg-background transition-colors text-left items-center">
+              <div className="text-sm font-medium truncate">
+                {r.reporterDisplayName ?? r.reporterUserId.slice(0, 8)}
+                {r.reporterUsername && <span className="text-muted-foreground ml-1">@{r.reporterUsername}</span>}
+              </div>
+              <div className="text-sm font-medium truncate">
+                {r.reportedDisplayName ?? r.reportedUserId.slice(0, 8)}
+                {r.reportedUsername && <span className="text-muted-foreground ml-1">@{r.reportedUsername}</span>}
+              </div>
+              <div className="text-sm text-muted-foreground capitalize truncate">{r.reason}</div>
+              <div className="text-sm text-muted-foreground">{fmtDate(r.createdAt)}</div>
+              <span className="text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full">PENDING</span>
+            </button>
+          ))
+        )}
       </div>
+
+      {selected && (
+        <>
+          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setSelected(null)} />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl z-50 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <span className="text-xs font-bold text-muted-foreground tracking-wider">REPORT DETAIL</span>
+              <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-muted-foreground mb-1">Reporter</div>
+                  <div className="text-sm font-bold">{selected.reporterDisplayName ?? "Unknown"}</div>
+                  {selected.reporterUsername && <div className="text-xs text-muted-foreground">@{selected.reporterUsername}</div>}
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-muted-foreground mb-1">Reported User</div>
+                  <div className="text-sm font-bold">{selected.reportedDisplayName ?? "Unknown"}</div>
+                  {selected.reportedUsername && <div className="text-xs text-muted-foreground">@{selected.reportedUsername}</div>}
+                </div>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="text-xs text-muted-foreground mb-1">Reason</div>
+                <div className="text-sm font-semibold capitalize">{selected.reason}</div>
+              </div>
+              {selected.note && (
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-muted-foreground mb-1">Note from reporter</div>
+                  <div className="text-sm text-foreground/90 leading-relaxed">{selected.note}</div>
+                </div>
+              )}
+              <div className="text-xs text-muted-foreground text-right">Reported {fmtDate(selected.createdAt)}</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Contact section ───────────────────────────────────────────────────────────
+
+function ContactSection({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [submissions, setSubmissions] = useState<ContactRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ContactRow | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ submissions: ContactRow[] }>("/admin/contact")
+      .then((data) => setSubmissions(data.submissions))
+      .catch((err) => {
+        if (err instanceof UnauthorizedError) onSessionExpired();
+        else setError("Failed to load contact submissions.");
+      })
+      .finally(() => setLoading(false));
+  }, [onSessionExpired]);
+
+  return (
+    <div className="p-8 max-w-5xl">
+      <h1 className="font-display text-2xl font-bold mb-1">Contact</h1>
+      <p className="text-sm text-muted-foreground mb-8">All contact form submissions. {submissions.length > 0 ? `${submissions.length} total.` : ""}</p>
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[1fr_1fr_2fr_140px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
+          <span>NAME</span><span>EMAIL</span><span>SUBJECT</span><span>DATE</span>
+        </div>
+
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_2fr_140px] gap-4 px-5 py-4 border-b border-border animate-pulse">
+              {Array.from({ length: 4 }).map((_, j) => <div key={j} className="h-3 bg-border rounded w-24" />)}
+            </div>
+          ))
+        ) : submissions.length === 0 ? (
+          <div className="py-16 text-center">
+            <MessageSquare size={32} className="text-muted-foreground mx-auto mb-3 opacity-50" />
+            <p className="text-sm text-muted-foreground">No contact submissions yet.</p>
+          </div>
+        ) : (
+          submissions.map((s) => (
+            <button key={s.id} onClick={() => setSelected(s)} className="w-full grid grid-cols-[1fr_1fr_2fr_140px] gap-4 px-5 py-3.5 border-b border-border hover:bg-background transition-colors text-left items-center">
+              <div className="text-sm font-medium truncate">{s.name}</div>
+              <div className="text-sm text-muted-foreground truncate">{s.email}</div>
+              <div className="text-sm text-muted-foreground truncate">
+                <span className="font-medium text-foreground/80">{s.subject}</span>{" — "}{s.message.slice(0, 60)}{s.message.length > 60 ? "…" : ""}
+              </div>
+              <div className="text-sm text-muted-foreground">{fmtDate(s.submittedAt)}</div>
+            </button>
+          ))
+        )}
+      </div>
+
+      {selected && (
+        <>
+          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setSelected(null)} />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl bg-background border border-border rounded-2xl shadow-2xl z-50 p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <span className="text-xs font-bold text-muted-foreground tracking-wider">CONTACT SUBMISSION</span>
+              <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-muted-foreground mb-1">Name</div>
+                  <div className="text-sm font-bold">{selected.name}</div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-muted-foreground mb-1">Email</div>
+                  <div className="text-sm font-bold">{selected.email}</div>
+                </div>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="text-xs text-muted-foreground mb-1">Category</div>
+                <div className="text-sm font-semibold capitalize">{selected.category}</div>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="text-xs text-muted-foreground mb-1">Subject</div>
+                <div className="text-sm font-semibold">{selected.subject}</div>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="text-xs text-muted-foreground mb-1">Message</div>
+                <div className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{selected.message}</div>
+              </div>
+              <div className="text-xs text-muted-foreground text-right">Submitted {fmtDate(selected.submittedAt)}</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Main dashboard ────────────────────────────────────────────────────────────
+
+type AuthState = "checking" | "unauthenticated" | "authenticated";
+
+export default function AdminDashboard() {
+  const [authState, setAuthState] = useState<AuthState>("checking");
+  const [section, setSection] = useState("overview");
+
+  // On mount: silently check whether an existing session cookie is valid.
+  useEffect(() => {
+    apiFetch("/admin/auth/me")
+      .then(() => setAuthState("authenticated"))
+      .catch(() => setAuthState("unauthenticated"));
+  }, []);
+
+  const handleSessionExpired = useCallback(() => {
+    setAuthState("unauthenticated");
+  }, []);
+
+  async function handleLogout() {
+    try {
+      await apiPost("/admin/auth/logout", {});
+    } catch {
+      // ignore errors — clear auth state regardless
+    }
+    setAuthState("unauthenticated");
+  }
+
+  // While we probe the session, show a minimal loading screen so there's no flash.
+  if (authState === "checking") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex items-center gap-3 text-muted-foreground animate-pulse">
+          <Shield size={20} />
+          <span className="text-sm font-medium">Checking session…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === "unauthenticated") {
+    return <LoginScreen onAuthenticated={() => setAuthState("authenticated")} />;
+  }
+
+  return (
+    <div className="flex h-screen bg-background overflow-hidden text-foreground">
+      <Sidebar active={section} onNav={setSection} onLogout={handleLogout} />
+      <main className="flex-1 overflow-y-auto">
+        {section === "overview" && <OverviewSection onSessionExpired={handleSessionExpired} />}
+        {section === "users"    && <UsersSection    onSessionExpired={handleSessionExpired} />}
+        {section === "scans"    && <ScansSection    onSessionExpired={handleSessionExpired} />}
+        {section === "reports"  && <ReportsSection  onSessionExpired={handleSessionExpired} />}
+        {section === "contact"  && <ContactSection  onSessionExpired={handleSessionExpired} />}
+      </main>
     </div>
   );
 }

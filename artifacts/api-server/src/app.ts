@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { rateLimit } from "express-rate-limit";
@@ -104,6 +105,7 @@ app.use(
 );
 
 app.use(cors(corsOptions));
+app.use(cookieParser());
 
 // Scan endpoint accepts base64-encoded card images; allow up to 12 MB.
 // Avatar upload endpoint accepts base64 images up to 8 MB.
