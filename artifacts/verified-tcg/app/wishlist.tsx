@@ -527,6 +527,7 @@ export default function WishlistScreen() {
   const {
     watchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem,
     subscriptionTier, activeAlertCount, refreshWishlist,
+    user,
   } = useApp();
   const [sortBy, setSortBy] = useState<'added' | 'value' | 'change'>('added');
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -621,9 +622,16 @@ export default function WishlistScreen() {
                       w.targetPrice ? ` — target $${w.targetPrice.toLocaleString()} AUD` : ''
                     }`,
                 );
+                const shareUrl = user?.username
+                  ? `https://verifiedtcg.com/c/${user.username}/wishlist`
+                  : null;
+                const message = shareUrl
+                  ? `My Verified TCG Wishlist:\n${shareUrl}\n\n${lines.join('\n')}`
+                  : `My Verified TCG Wishlist:\n\n${lines.join('\n')}`;
                 Share.share({
                   title: 'My Verified TCG Wishlist',
-                  message: `My Verified TCG Wishlist:\n\n${lines.join('\n')}`,
+                  message,
+                  url: shareUrl ?? undefined,
                 }).catch(() => {});
               }}
               style={styles.shareBtn}

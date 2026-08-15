@@ -7,6 +7,7 @@ import NotFound from '@/pages/not-found';
 import LandingPage from '@/pages/landing';
 import PrivacyPolicy from '@/pages/privacy';
 import SubscriptionTerms from '@/pages/subscription-terms';
+import CollectorWishlistPage from '@/pages/collector-wishlist';
 import {
   Route,
   Switch,
@@ -23,6 +24,7 @@ function Router() {
         <Route path="/" component={LandingPage} />
         <Route path="/privacy" component={PrivacyPolicy} />
         <Route path="/subscription-terms" component={SubscriptionTerms} />
+        <Route path="/c/:username/wishlist" component={CollectorWishlistPage} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>

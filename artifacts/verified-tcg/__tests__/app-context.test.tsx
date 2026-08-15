@@ -14,6 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 jest.mock('../services/auth', () => ({
   restoreSession: jest.fn(() => Promise.resolve(null)),
+  fetchCurrentUser: jest.fn(() => Promise.resolve(null)),
   signOut: jest.fn(() => Promise.resolve()),
   signInWithPassword: jest.fn(),
   signInWithOAuth: jest.fn(() => Promise.resolve(null)),
@@ -92,6 +93,7 @@ jest.mock('../services/profile', () => ({
 // ── Import under test (after mocks) ──────────────────────────────────────────
 import { AppProvider, useApp } from '../context/AppContext';
 import type { AppContextType } from '../context/AppContext';
+import { restoreSession, fetchCurrentUser } from '../services/auth';
 
 // ── Test helper: mount the provider and capture context values ────────────────
 
@@ -229,5 +231,155 @@ describe('AppContext — signOut resets state', () => {
     act(() => { getValue().signOut(); });
     expect(getValue().user).toBeNull();
     unmount();
+  });
+});
+
+// ── Session restore on mount (reinstall / device-switch scenario) ─────────────
+//
+// After a reinstall AsyncStorage is cleared, but the user can sign back in with
+// their credentials.  Once a session exists in storage, AppContext must read the
+// subscription_tier from session.user.user_metadata and set subscriptionTier
+// accordingly — without the user needing to re-purchase.
+
+/** Build a minimal AuthSession that restoreSession() can return. */
+function makeProSession(subscriptionTier: 'pro' | 'free' = 'pro', isFoundingMember = false) {
+  return {
+    access_token: 'tok-access',
+    refresh_token: 'tok-refresh',
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    user: {
+      id: 'user-abc',
+      email: 'pro@example.com',
+      user_metadata: {
+        display_name: 'Pro Collector',
+        username: 'procollector',
+        subscription_tier: subscriptionTier,
+        is_founding_member: isFoundingMember,
+      },
+    },
+  };
+}
+
+/**
+ * Flush all pending microtasks and macrotasks so that nested fire-and-forget
+ * promise chains (e.g. fetchCurrentUser inside the session-restore effect)
+ * are guaranteed to have resolved before the assertion runs.
+ *
+ * Multiple rounds are needed because React's useEffect for ref updates commits
+ * after the render caused by the first state change, and that commit must happen
+ * before the inner fetchCurrentUser().then() guard can pass.
+ */
+async function flushPromises(rounds = 3) {
+  for (let i = 0; i < rounds; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    await act(async () => {
+      await new Promise<void>(r => setTimeout(r, 0));
+    });
+  }
+}
+
+/**
+ * Mount the AppProvider, wait for all pending async effects (including the
+ * session-restore useEffect) to settle, then return the context accessor.
+ *
+ * Pass `extraFlush: true` when the test depends on a nested promise chain
+ * inside the session-restore effect (e.g. fetchCurrentUser).
+ */
+async function mountProviderAsync({ extraFlush = false } = {}) {
+  const ctxRef = { current: null as AppContextType | null };
+
+  function Spy() {
+    const ctx = useApp();
+    ctxRef.current = ctx;
+    return null;
+  }
+
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => {
+    tree = renderer.create(
+      <AppProvider>
+        <Spy />
+      </AppProvider>,
+    );
+  });
+
+  // Second flush resolves nested fire-and-forget chains (fetchCurrentUser etc.)
+  if (extraFlush) await flushPromises();
+
+  return {
+    getValue: () => ctxRef.current!,
+    unmount: () => act(() => { tree.unmount(); }),
+  };
+}
+
+describe('AppContext — Pro tier restored from session on mount', () => {
+  beforeEach(() => {
+    // Reset mocks before each test so restoreSession can be re-configured
+    (restoreSession as jest.Mock).mockReset().mockResolvedValue(null);
+    (fetchCurrentUser as jest.Mock).mockReset().mockResolvedValue(null);
+  });
+
+  it('sets subscriptionTier to "pro" when the cached session carries subscription_tier = "pro"', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+
+    const { getValue, unmount } = await mountProviderAsync();
+
+    expect(getValue().subscriptionTier).toBe('pro');
+    unmount();
+  });
+
+  it('keeps subscriptionTier as "free" when the cached session carries subscription_tier = "free"', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('free'));
+
+    const { getValue, unmount } = await mountProviderAsync();
+
+    expect(getValue().subscriptionTier).toBe('free');
+    unmount();
+  });
+
+  it('keeps subscriptionTier as "free" when there is no cached session (fresh reinstall)', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(null);
+
+    const { getValue, unmount } = await mountProviderAsync();
+
+    expect(getValue().subscriptionTier).toBe('free');
+    unmount();
+  });
+
+  it('sets isAuthenticated to true when a valid session is restored', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+
+    const { getValue, unmount } = await mountProviderAsync();
+
+    expect(getValue().isAuthenticated).toBe(true);
+    unmount();
+  });
+
+  it('populates the user from the restored session', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+
+    const { getValue, unmount } = await mountProviderAsync();
+
+    expect(getValue().user).not.toBeNull();
+    expect(getValue().user?.email).toBe('pro@example.com');
+    unmount();
+  });
+
+  it('calls fetchCurrentUser after restoring a session so the server tier is re-synced', async () => {
+    // Any valid session triggers a fetchCurrentUser call for live-sync
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+    (fetchCurrentUser as jest.Mock).mockResolvedValue(null); // network unavailable — falls back
+
+    await mountProviderAsync();
+
+    expect(fetchCurrentUser as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call fetchCurrentUser when there is no session (fresh reinstall)', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(null);
+
+    await mountProviderAsync();
+
+    expect(fetchCurrentUser as jest.Mock).not.toHaveBeenCalled();
   });
 });

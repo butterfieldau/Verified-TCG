@@ -40,7 +40,7 @@ const MAX_IMAGE_B64_BYTES = 8 * 1024 * 1024; // 8 MB
 // ── OpenAI client ──────────────────────────────────────────────────────────
 
 const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1",
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? "placeholder",
 });
 
@@ -130,8 +130,13 @@ async function extractCardInfo(base64Image: string, mimeType: string): Promise<{
   number: string;
   rawText: string;
 }> {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  if (!apiKey || apiKey === "placeholder") {
+    throw new Error("Card recognition is not configured — missing API key.");
+  }
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-nano",
+    model: "gpt-4o-mini",
     max_completion_tokens: 256,
     messages: [
       {
@@ -345,10 +350,17 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
       return;
     }
 
-    // 5. Search catalog for matches
-    const catalogResults = await searchCatalog(extracted.name, extracted.setName);
+    // 5. Detect whether GPT could read any text at all.
+    //    Both name and setName being empty is a strong signal the image was
+    //    blurry, too dark, or the card was out of frame — not just a catalog miss.
+    const imageUnreadable = extracted.name.trim() === "" && extracted.setName.trim() === "";
 
-    // 6. Score and rank matches
+    // 6. Search catalog for matches (skip the catalog call when GPT read nothing)
+    const catalogResults = imageUnreadable
+      ? []
+      : await searchCatalog(extracted.name, extracted.setName);
+
+    // 7. Score and rank matches
     const matches = catalogResults
       .map((card) => ({ card, confidence: scoreMatch(card, extracted) }))
       .sort((a, b) => b.confidence - a.confidence)
@@ -358,7 +370,7 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
     const hasMatch = topMatch !== undefined && topMatch.confidence >= 20;
     const scansRemaining = isFreeTier ? Math.max(0, FREE_SCAN_LIMIT - newScanCount) : null;
 
-    // 7. Return results
+    // 8. Return results
     res.json({
       extracted: {
         name: extracted.name,
@@ -368,6 +380,10 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
       matches: hasMatch ? matches.map(({ card, confidence }) => ({ card, confidence })) : [],
       topMatch: hasMatch ? { card: topMatch.card, confidence: topMatch.confidence } : null,
       lowConfidence: hasMatch && topMatch.confidence < 50,
+      // imageUnreadable = true means GPT returned no text at all — the image
+      // was likely blurry, too dark, or the card was partially out of frame.
+      // Clients should show a more specific message than "no match found".
+      imageUnreadable,
       scansUsed: newScanCount,
       scanLimit: isFreeTier ? FREE_SCAN_LIMIT : null,
       scansRemaining,
