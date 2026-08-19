@@ -20,7 +20,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import { registerPushToken } from './notifications';
+import { registerPushToken, fetchNotificationPreferences } from './notifications';
 
 /**
  * Configure how notifications are presented while the app is in the foreground.
@@ -37,9 +37,26 @@ export function configureForegroundNotifications(): void {
   });
 }
 
-/** Shared helper that acquires and registers the push token when permission is granted. */
+/** Shared helper that acquires and registers the push token when permission is granted.
+ *  Before registering, checks the server-side collector preference: if the collector
+ *  has explicitly opted out (source=collector_preference, pushEnabled=false), the token
+ *  registration is skipped so the opt-out is never silently re-enabled on token refresh.
+ */
 async function registerTokenIfGranted(granted: boolean): Promise<void> {
   if (!granted) return;
+
+  // Guard against silent re-opt-in: check the server preference first.
+  // If the server has an explicit collector opt-out, do not register the token.
+  try {
+    const pref = await fetchNotificationPreferences();
+    if (pref && pref.source === 'collector_preference' && pref.pushEnabled === false) {
+      // Collector has explicitly opted out — respect that decision.
+      return;
+    }
+  } catch {
+    // If we can't reach the server, fall through and register normally.
+    // The server-side register-push-token handler also guards opt-outs.
+  }
 
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const easConfigId = (Constants.easConfig as Record<string, string> | undefined)?.['projectId'];

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -19,6 +19,7 @@ import { useApp } from '@/context/AppContext';
 import { useSettings } from '@/context/SettingsContext';
 import type { NotificationPrefs, PrivacyPrefs } from '@/services/settingsStore';
 import { CURRENCY_CONFIGS } from '@/utils/currency';
+import { fetchNotificationPreferences, setPushPreference } from '@/services/notifications';
 
 const C = colors.dark;
 
@@ -102,12 +103,67 @@ export default function SettingsScreen() {
   const {
     appearance,
     currency,
+    masterPushEnabled,
     notifications,
     privacy,
+    setMasterPushEnabled,
     updateNotificationPref,
     updatePrivacyPref,
   } = useSettings();
+  const [pushPrefSaving, setPushPrefSaving] = useState(false);
+  const [pushPrefError, setPushPrefError] = useState<string | null>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setPushPrefError(null);
+      return;
+    }
+    let active = true;
+    setPushPrefError(null);
+    fetchNotificationPreferences()
+      .then(pref => {
+        if (active && pref) setMasterPushEnabled(pref.pushEnabled);
+      })
+      .catch(() => {
+        if (active) setPushPrefError('Could not load the saved push preference.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated, setMasterPushEnabled]);
+
+  /**
+   * Toggle the master push preference. Persists to server immediately and
+   * updates local state. Shows a visible Alert on failure so the collector
+   * knows the toggle did not take effect.
+   */
+  const handleMasterPushToggle = async (value: boolean) => {
+    if (pushPrefSaving) return;
+    if (!isAuthenticated) {
+      Alert.alert('Account required', 'Sign in to change your push notification preference.');
+      return;
+    }
+    // Optimistic local update so the toggle responds instantly
+    setPushPrefError(null);
+    setMasterPushEnabled(value);
+    setPushPrefSaving(true);
+    try {
+      await setPushPreference(value);
+    } catch (err) {
+      // Revert optimistic update and inform the collector
+      setMasterPushEnabled(!value);
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setPushPrefError('The saved push preference could not be updated.');
+      Alert.alert(
+        'Could not save preference',
+        `The notification setting could not be saved to the server.\n\n${message}\n\nYour change has been reverted.`,
+        [{ text: 'OK' }],
+      );
+    } finally {
+      setPushPrefSaving(false);
+    }
+  };
 
   const requireAccount = (destination?: string) => {
     if (isAuthenticated && destination) router.push(destination as any);
@@ -185,6 +241,15 @@ export default function SettingsScreen() {
       <View style={[styles.card, { backgroundColor: C.card }]}>
         <ToggleRow
           icon="bell"
+          label="Enable Push Notifications"
+          value={masterPushEnabled}
+          onChange={handleMasterPushToggle}
+        />
+        {pushPrefError && (
+          <Text style={styles.pushPreferenceError}>{pushPrefError}</Text>
+        )}
+        <ToggleRow
+          icon="trending-up"
           label="Price Alerts"
           value={notifications.priceAlerts}
           onChange={v => updateNotificationPref('priceAlerts', v)}
@@ -357,6 +422,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginBottom: 10,
     marginTop: 22,
+  },
+  pushPreferenceError: {
+    color: C.negative,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
   },
   card: { borderRadius: 16, overflow: 'hidden' },
   row: {

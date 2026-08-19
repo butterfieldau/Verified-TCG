@@ -24,6 +24,8 @@ import adminAuthRouter from "./adminAuth";
 import adminTeamRouter from "./adminTeam";
 import collectionSellRouter from "./collectionSell";
 import pricingRouter from "./pricing";
+import adminGovernanceRouter from "./adminGovernance";
+import collectorAnnouncementsRouter from "./collectorAnnouncements";
 
 const router: IRouter = Router();
 
@@ -55,5 +57,7 @@ router.use(activityRouter);
 router.use(adminAuthRouter);
 router.use(adminTeamRouter);
 router.use(adminRouter);
+router.use(adminGovernanceRouter);
+router.use(collectorAnnouncementsRouter);
 
 export default router;

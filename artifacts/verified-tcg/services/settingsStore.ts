@@ -34,6 +34,13 @@ export interface PrivacyPrefs {
 export interface AppSettings {
   appearance: AppearanceMode;
   currency: CurrencyCode;
+  /**
+   * Master push-notification toggle — collector-controlled opt-in/opt-out.
+   * When false, push token registrations do NOT re-enable push delivery.
+   * Default is true (opt-in) for new installs; loaded from server on sign-in.
+   * Stored locally so the UI reflects the last-known state without a round-trip.
+   */
+  masterPushEnabled: boolean;
   notifications: NotificationPrefs;
   privacy: PrivacyPrefs;
 }
@@ -41,6 +48,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: 'dark',
   currency: 'AUD',
+  masterPushEnabled: true,
   notifications: {
     priceAlerts: true,
     tradeMatches: true,
@@ -71,6 +79,7 @@ export async function loadSettings(): Promise<AppSettings> {
     return {
       appearance: parsed.appearance ?? DEFAULT_SETTINGS.appearance,
       currency: parsed.currency ?? DEFAULT_SETTINGS.currency,
+      masterPushEnabled: parsed.masterPushEnabled ?? DEFAULT_SETTINGS.masterPushEnabled,
       notifications: { ...DEFAULT_SETTINGS.notifications, ...(parsed.notifications ?? {}) },
       privacy: { ...DEFAULT_SETTINGS.privacy, ...(parsed.privacy ?? {}) },
     };

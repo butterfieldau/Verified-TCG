@@ -14,11 +14,65 @@ import { ErrorBanner, fmtDate } from "@/components/admin-ui";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth";
 
+// Mirror of the backend permission baselines in
+// artifacts/api-server/src/lib/adminPermissions.ts (permissionsByRole).
+// The backend clamps any submitted permission set to a role's baseline, so
+// these lists must stay aligned to avoid silently dropped selections.
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  admin: ["dashboard:read", "users:read", "users:manage", "users:delete", "analytics:read", "reports:read", "reports:moderate", "contact:read"],
-  support: ["dashboard:read", "users:read", "contact:read"],
-  moderator: ["dashboard:read", "users:read", "reports:read", "reports:moderate"],
-  analyst: ["dashboard:read", "users:read", "analytics:read", "reports:read"],
+  admin: [
+    "dashboard:read",
+    "users:read",
+    "users:manage",
+    "users:delete",
+    "analytics:read",
+    "reports:read",
+    "reports:moderate",
+    "contact:read",
+    "notifications:read",
+    "notifications:manage",
+    "support:read",
+    "support:manage",
+    "privacy:read",
+    "privacy:manage",
+    "privacy:approve",
+    "privacy:export",
+    "privacy:delete",
+    "retention:read",
+    "retention:manage",
+    "notes:read",
+    "notes:manage",
+    "announcements:read",
+    "announcements:manage",
+    "audit:read",
+  ],
+  support: [
+    "dashboard:read",
+    "users:read",
+    "contact:read",
+    "support:read",
+    "support:manage",
+    "privacy:read",
+    "privacy:manage",
+    "notes:read",
+    "announcements:read",
+  ],
+  moderator: [
+    "dashboard:read",
+    "users:read",
+    "reports:read",
+    "reports:moderate",
+    "notes:read",
+    "announcements:read",
+  ],
+  analyst: [
+    "dashboard:read",
+    "users:read",
+    "analytics:read",
+    "reports:read",
+    "notifications:read",
+    "audit:read",
+    "announcements:read",
+  ],
 };
 
 interface TeamResponse {

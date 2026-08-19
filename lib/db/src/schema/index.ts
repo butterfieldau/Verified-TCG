@@ -16,3 +16,4 @@ export * from "./user-reports";
 export * from "./activity-log";
 export * from "./admin";
 export * from "./pricing";
+export * from "./governance";

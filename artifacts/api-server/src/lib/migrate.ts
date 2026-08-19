@@ -17,6 +17,11 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
+import {
+  GOVERNANCE_COLUMN_MIGRATIONS,
+  GOVERNANCE_CONSTRAINT_MIGRATIONS,
+  GOVERNANCE_TABLE_MIGRATIONS,
+} from "./governanceMigrations";
 
 const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
 
@@ -43,6 +48,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_release_date TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
+  ...GOVERNANCE_COLUMN_MIGRATIONS,
 ];
 
 /**
@@ -259,6 +265,7 @@ const TABLE_MIGRATIONS: string[] = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  ...GOVERNANCE_TABLE_MIGRATIONS,
 ];
 
 /**
@@ -376,15 +383,22 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
    SELECT gen_random_uuid(), 'Brisbane Card Expo', 'Brisbane Convention Centre', 'Brisbane, QLD', 'Oct 5, 2026', true, NOW()
    WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Brisbane Card Expo')`,
+  ...GOVERNANCE_CONSTRAINT_MIGRATIONS,
 ];
 
 export async function runMigrations(): Promise<void> {
+  await runMigrationsWithDatabase(db);
+}
+
+export async function runMigrationsWithDatabase(
+  migrationDb: Pick<typeof db, "execute"> = db,
+): Promise<void> {
   logger.info("Verifying database schema");
 
-  const result = await db.execute<{ table_name: string }>(sql`
+  const result = await migrationDb.execute<{ table_name: string }>(sql`
     SELECT table_name
     FROM information_schema.tables
-    WHERE table_schema = 'public'
+    WHERE table_schema = current_schema()
       AND table_name = ANY(ARRAY[${sql.raw(REQUIRED_TABLES.map(t => `'${t}'`).join(", "))}])
   `);
 
@@ -402,21 +416,21 @@ export async function runMigrations(): Promise<void> {
 
   // Apply forward table migrations (CREATE TABLE IF NOT EXISTS)
   for (const statement of TABLE_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: TABLE_MIGRATIONS.length }, "Table migrations applied");
 
   // Apply forward column migrations
   for (const statement of COLUMN_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: COLUMN_MIGRATIONS.length }, "Column migrations applied");
 
   // Apply forward constraint/index migrations (idempotent, post-table)
   for (const statement of CONSTRAINT_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: CONSTRAINT_MIGRATIONS.length }, "Constraint migrations applied");

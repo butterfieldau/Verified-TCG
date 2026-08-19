@@ -1,4 +1,5 @@
 import {
+  integer,
   pgTable,
   text,
   timestamp,
@@ -20,6 +21,12 @@ export const pushTokensTable = pgTable("push_tokens", {
   /** Expo push token — format: ExponentPushToken[xxxxxx] */
   token: text("token").notNull().unique(),
 
+  /** active | stale | invalid | revoked */
+  status: text("status").notNull().default("active"),
+  failureCount: integer("failure_count").notNull().default(0),
+  lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+  lastFailureReason: text("last_failure_reason"),
+  lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, contactSubmissionsTable } from "@workspace/db";
+import { db, contactSubmissionsTable, supportCasesTable } from "@workspace/db";
 
 const router = Router();
 
@@ -112,12 +112,17 @@ router.post("/support/contact", async (req, res) => {
   // to find and reply to any submission, regardless of email delivery status.
   // Return 500 on failure so the UI never promises a reply it cannot guarantee.
   try {
-    await db.insert(contactSubmissionsTable).values({
-      name:     cleanName,
-      email:    cleanEmail,
-      category: cleanCategory,
-      subject:  cleanSubject,
-      message:  cleanMessage,
+    await db.transaction(async (tx) => {
+      const [submission] = await tx.insert(contactSubmissionsTable).values({
+        name:     cleanName,
+        email:    cleanEmail,
+        category: cleanCategory,
+        subject:  cleanSubject,
+        message:  cleanMessage,
+      }).returning({ id: contactSubmissionsTable.id });
+      await tx.insert(supportCasesTable).values({
+        submissionId: submission!.id,
+      });
     });
   } catch (err) {
     console.error("[SUPPORT] DB write failed:", (err as Error)?.message ?? "unknown");
@@ -172,7 +177,7 @@ router.post("/support/contact", async (req, res) => {
 
   return res.status(200).json({
     success: true,
-    message: "We've received your message and will get back to you within 24 hours.",
+    message: "Your message has been recorded for the support team.",
   });
 });
 

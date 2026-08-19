@@ -12,7 +12,11 @@
 import { Router } from "express";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { db } from "@workspace/db";
-import { notificationsTable, pushTokensTable } from "@workspace/db";
+import {
+  notificationPreferencesTable,
+  notificationsTable,
+  pushTokensTable,
+} from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 const notificationsRouter = Router();
@@ -20,7 +24,7 @@ const notificationsRouter = Router();
 // ── GET /api/notifications ────────────────────────────────────────────────────
 
 notificationsRouter.get(
-  "/api/notifications",
+  "/notifications",
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
@@ -61,7 +65,7 @@ notificationsRouter.get(
 // ── GET /api/notifications/count ──────────────────────────────────────────────
 
 notificationsRouter.get(
-  "/api/notifications/count",
+  "/notifications/count",
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
@@ -87,7 +91,7 @@ notificationsRouter.get(
 // ── PATCH /api/notifications/:id/read ────────────────────────────────────────
 
 notificationsRouter.patch(
-  "/api/notifications/:id/read",
+  "/notifications/:id/read",
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
@@ -121,7 +125,7 @@ notificationsRouter.patch(
 // ── POST /api/notifications/read-all ─────────────────────────────────────────
 
 notificationsRouter.post(
-  "/api/notifications/read-all",
+  "/notifications/read-all",
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
@@ -147,7 +151,7 @@ notificationsRouter.post(
 // ── POST /api/notifications/register-push-token ───────────────────────────────
 
 notificationsRouter.post(
-  "/api/notifications/register-push-token",
+  "/notifications/register-push-token",
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
@@ -159,18 +163,136 @@ notificationsRouter.post(
     }
 
     try {
-      await db
-        .insert(pushTokensTable)
-        .values({ userId, token: token.trim() })
-        .onConflictDoUpdate({
-          target: pushTokensTable.token,
-          set: { userId, updatedAt: new Date() },
-        });
+      await db.transaction(async (tx) => {
+        // Upsert the push token itself
+        await tx
+          .insert(pushTokensTable)
+          .values({
+            userId,
+            token: token.trim(),
+            status: "active",
+            lastValidatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: pushTokensTable.token,
+            set: {
+              userId,
+              status: "active",
+              failureCount: 0,
+              lastFailureAt: null,
+              lastFailureReason: null,
+              lastValidatedAt: new Date(),
+              updatedAt: new Date(),
+            },
+          });
+
+        // Only default to opt-in when no explicit collector preference exists.
+        // Both an explicit opt-in and an explicit opt-out remain authoritative.
+        const [existing] = await tx
+          .select({ pushEnabled: notificationPreferencesTable.pushEnabled, source: notificationPreferencesTable.source })
+          .from(notificationPreferencesTable)
+          .where(eq(notificationPreferencesTable.userId, userId))
+          .limit(1);
+
+        const hasExplicitCollectorPreference = existing?.source === "collector_preference";
+
+        if (!hasExplicitCollectorPreference) {
+          // Either no row yet (first registration) or a non-collector-preference row:
+          // upsert with opt-in, but only when it won't override an explicit opt-out.
+          await tx
+            .insert(notificationPreferencesTable)
+            .values({
+              userId,
+              pushEnabled: true,
+              source: "push_token_registration",
+            })
+            .onConflictDoUpdate({
+              target: notificationPreferencesTable.userId,
+              set: {
+                pushEnabled: true,
+                source: "push_token_registration",
+                optedOutAt: null,
+                updatedAt: new Date(),
+              },
+            });
+        }
+        // Explicit collector opt-in or opt-out rows remain authoritative.
+      });
 
       res.json({ ok: true });
     } catch (err) {
       console.error("[notifications] POST /api/notifications/register-push-token:", err);
       res.status(500).json({ message: "Failed to register push token" });
+    }
+  },
+);
+
+// ── GET /api/notifications/preferences ───────────────────────────────────────
+
+notificationsRouter.get(
+  "/notifications/preferences",
+  requireActiveUser,
+  async (req: AuthRequest, res) => {
+    const userId = req.userId!;
+    try {
+      const [row] = await db
+        .select()
+        .from(notificationPreferencesTable)
+        .where(eq(notificationPreferencesTable.userId, userId))
+        .limit(1);
+
+      if (!row) {
+        // No preference row yet — default opt-in (first registration will create it)
+        res.json({ pushEnabled: true, source: null, optedOutAt: null });
+        return;
+      }
+
+      res.json({
+        pushEnabled: row.pushEnabled,
+        source: row.source,
+        optedOutAt: row.optedOutAt ?? null,
+      });
+    } catch (err) {
+      console.error("[notifications] GET /api/notifications/preferences:", err);
+      res.status(500).json({ message: "Failed to load notification preferences" });
+    }
+  },
+);
+
+// ── POST /api/notifications/push-preference ───────────────────────────────────
+
+notificationsRouter.post(
+  "/notifications/push-preference",
+  requireActiveUser,
+  async (req: AuthRequest, res) => {
+    const userId = req.userId!;
+    const { enabled } = req.body as { enabled?: unknown };
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ message: "enabled must be a boolean" });
+      return;
+    }
+    try {
+      await db
+        .insert(notificationPreferencesTable)
+        .values({
+          userId,
+          pushEnabled: enabled,
+          source: "collector_preference",
+          optedOutAt: enabled ? null : new Date(),
+        })
+        .onConflictDoUpdate({
+          target: notificationPreferencesTable.userId,
+          set: {
+            pushEnabled: enabled,
+            source: "collector_preference",
+            optedOutAt: enabled ? null : new Date(),
+            updatedAt: new Date(),
+          },
+        });
+      res.json({ ok: true, pushEnabled: enabled });
+    } catch (err) {
+      console.error("[notifications] POST /api/notifications/push-preference:", err);
+      res.status(500).json({ message: "Failed to update notification preference" });
     }
   },
 );

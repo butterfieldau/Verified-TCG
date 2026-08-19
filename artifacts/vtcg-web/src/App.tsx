@@ -17,6 +17,9 @@ import ContactPage from '@/pages/contact';
 import TeamPage from '@/pages/team';
 import SessionsPage from '@/pages/sessions';
 import ActivatePage from '@/pages/activate';
+import NotificationsPage from '@/pages/notifications';
+import RequestsPage from '@/pages/requests';
+import AnnouncementsPage from '@/pages/announcements';
 
 import {
   Route,
@@ -93,7 +96,16 @@ function Router() {
           {() => <ProtectedRoute component={ReportsPage} permission="reports:read" />}
         </Route>
         <Route path="/contact">
-          {() => <ProtectedRoute component={ContactPage} permission="contact:read" />}
+          {() => <ProtectedRoute component={ContactPage} permission="support:read" />}
+        </Route>
+        <Route path="/notifications">
+          {() => <ProtectedRoute component={NotificationsPage} permission="notifications:read" />}
+        </Route>
+        <Route path="/requests">
+          {() => <ProtectedRoute component={RequestsPage} permission="privacy:read" />}
+        </Route>
+        <Route path="/announcements">
+          {() => <ProtectedRoute component={AnnouncementsPage} permission="announcements:read" />}
         </Route>
         <Route path="/team">
           {() => <ProtectedRoute component={TeamPage} permission="team:read" requireOwner />}

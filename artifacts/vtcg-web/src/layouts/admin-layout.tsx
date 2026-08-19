@@ -16,6 +16,9 @@ import {
   Users,
   UsersRound,
   X,
+  Bell,
+  Archive,
+  Megaphone,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth";
 import { apiFetch, apiPost } from "@/lib/api";
@@ -26,7 +29,10 @@ const NAV_ITEMS = [
   { path: "/users", label: "Users", icon: Users, permission: "users:read" },
   { path: "/scans", label: "Scans", icon: ScanLine, permission: "analytics:read" },
   { path: "/reports", label: "Reports", icon: Flag, permission: "reports:read" },
-  { path: "/contact", label: "Contact", icon: MessageSquare, permission: "contact:read" },
+  { path: "/contact", label: "Support", icon: MessageSquare, permission: "support:read" },
+  { path: "/notifications", label: "Campaigns", icon: Bell, permission: "notifications:read" },
+  { path: "/requests", label: "Requests", icon: Archive, permission: "privacy:read" },
+  { path: "/announcements", label: "Announcements", icon: Megaphone, permission: "announcements:read" },
   { path: "/team", label: "Admin team", icon: UsersRound, permission: "team:read", owner: true },
   { path: "/sessions", label: "Sessions", icon: Laptop, permission: "sessions:read", owner: true },
 ];
