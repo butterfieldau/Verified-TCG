@@ -20,3 +20,4 @@ export * from "./governance";
 export * from "./trust-operations";
 export * from "./admin-operations";
 export * from "./admin-operational-notes";
+export * from "./telemetry";

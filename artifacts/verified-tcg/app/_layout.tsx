@@ -8,6 +8,8 @@ import { AppProvider } from '@/context/AppContext';
 import { SettingsProvider } from '@/context/SettingsContext';
 import { NetworkProvider } from '@/context/NetworkContext';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { RuntimeConfigGate } from '@/components/RuntimeConfigGate';
+import { installVersionedApiFetch } from '@/services/platformRuntime';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -21,6 +23,8 @@ import {
 } from '@expo-google-fonts/rajdhani';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+
+installVersionedApiFetch();
 
 // Prevent the native splash screen from auto-hiding before assets are loaded.
 SplashScreen.preventAutoHideAsync();
@@ -105,10 +109,12 @@ export default function RootLayout() {
             <GestureHandlerRootView style={{ flex: 1 }}>
               <KeyboardProvider>
                 <SettingsProvider>
-                  <AppProvider>
-                    <OfflineBanner />
-                    <RootLayoutNav />
-                  </AppProvider>
+                  <RuntimeConfigGate>
+                    <AppProvider>
+                      <OfflineBanner />
+                      <RootLayoutNav />
+                    </AppProvider>
+                  </RuntimeConfigGate>
                 </SettingsProvider>
               </KeyboardProvider>
             </GestureHandlerRootView>

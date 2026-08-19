@@ -33,6 +33,7 @@ import {
   type AdminRequest,
 } from "../lib/adminSession";
 import { recordAdminAudit } from "../lib/adminAudit";
+import { recordTelemetry } from "../lib/telemetry";
 import { logger } from "../lib/logger";
 import { isPCConfigured, PROVIDER_KEY } from "../pricing/pricecharting";
 import { refreshPricingExplicit } from "../pricing/service";
@@ -155,12 +156,23 @@ router.get(
     });
     if (query) params.set("q", query);
     if (game) params.set("game", game);
+    // Sanitized integration observability: record only ok/failed, duration,
+    // numeric HTTP status, and a fixed operation enum. Never the query or body.
+    const startedAt = Date.now();
     try {
       const providerResponse = await fetch(`${JUSTTCG_BASE_URL}/cards?${params.toString()}`, {
         headers: { "x-api-key": key, accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
       });
       const body = (await providerResponse.json().catch(() => ({}))) as Record<string, unknown>;
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.justtcg.request",
+        status: providerResponse.ok ? "ok" : "failed",
+        statusCode: providerResponse.status,
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "cards" },
+      });
       if (!providerResponse.ok) {
         req.log.warn({ status: providerResponse.status }, "Admin catalogue provider request failed");
         res.status(502).json({ message: "Catalogue provider request failed." });
@@ -168,6 +180,13 @@ router.get(
       }
       res.json({ ...body, source: "JustTCG", authority: "external_read_only" });
     } catch (error) {
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.justtcg.request",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "cards" },
+      });
       req.log.warn({ err: error }, "Admin catalogue provider unavailable");
       res.status(503).json({ message: "Catalogue provider is temporarily unavailable." });
     }
@@ -591,7 +610,8 @@ router.post(
   },
 );
 
-async function runRefreshJob(jobId: string): Promise<void> {
+/** Exported narrowly for intelligence routes to retry/cancel refresh jobs. */
+export async function runRefreshJob(jobId: string): Promise<void> {
   // Atomically claim the job. If the job is no longer queued (e.g. cancelled,
   // or another worker beat us in the startup recovery race) this is a no-op.
   const [job] = await db

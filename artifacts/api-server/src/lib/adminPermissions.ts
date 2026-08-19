@@ -57,10 +57,16 @@ export const ADMIN_PERMISSIONS = [
   "collections:read",
   // Governance — audit log
   "audit:read",
+  // System observability
+  "system:read",
+  // Platform configuration
+  "configuration:read",
+  "configuration:manage",
 ] as const;
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
 
 const permissionsByRole: Record<AdminRole, AdminPermission[]> = {
+  // Owner has all permissions including configuration:manage
   owner: [...ADMIN_PERMISSIONS],
   admin: [
     "dashboard:read",
@@ -107,6 +113,10 @@ const permissionsByRole: Record<AdminRole, AdminPermission[]> = {
     "scanner:review",
     "collections:read",
     "audit:read",
+    // System observability
+    "system:read",
+    // Config: admin can read but not manage
+    "configuration:read",
   ],
   support: [
     "dashboard:read",
@@ -155,6 +165,8 @@ const permissionsByRole: Record<AdminRole, AdminPermission[]> = {
     "collections:read",
     "audit:read",
     "announcements:read",
+    // Analyst can read system observability
+    "system:read",
   ],
 };
 

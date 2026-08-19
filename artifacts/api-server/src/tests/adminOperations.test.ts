@@ -2,7 +2,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import supertest from "supertest";
-import { eq, like } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 import {
   adminAccountsTable,
   adminAuditLogsTable,
@@ -26,13 +26,20 @@ const TAG = `__admin_ops_${Date.now()}__`;
 const PASSWORD = "Admin-operations-password-286";
 
 async function cleanup() {
-  await db.delete(scanAttemptsTable).where(like(scanAttemptsTable.extractedName, `${TAG}%`));
-  await db.delete(pricingOverridesTable).where(like(pricingOverridesTable.cardId, `${TAG}%`));
-  await db.delete(pricingRefreshJobsTable).where(like(pricingRefreshJobsTable.cardId, `${TAG}%`));
-  await db.delete(cardProviderMappingsTable).where(like(cardProviderMappingsTable.cardId, `${TAG}%`));
-  await db.delete(usersTable).where(like(usersTable.email, `${TAG}%`));
-  await db.delete(adminAccountsTable).where(like(adminAccountsTable.email, `${TAG}%`));
-  await db.delete(adminAuditLogsTable).where(like(adminAuditLogsTable.actorEmail, `${TAG}%`));
+  await db.execute(sql`ALTER TABLE admin_audit_logs DISABLE TRIGGER admin_audit_logs_append_only_mutation`);
+  await db.execute(sql`ALTER TABLE admin_audit_logs DISABLE TRIGGER admin_audit_logs_append_only_truncate`);
+  try {
+    await db.delete(scanAttemptsTable).where(like(scanAttemptsTable.extractedName, `${TAG}%`));
+    await db.delete(pricingOverridesTable).where(like(pricingOverridesTable.cardId, `${TAG}%`));
+    await db.delete(pricingRefreshJobsTable).where(like(pricingRefreshJobsTable.cardId, `${TAG}%`));
+    await db.delete(cardProviderMappingsTable).where(like(cardProviderMappingsTable.cardId, `${TAG}%`));
+    await db.delete(usersTable).where(like(usersTable.email, `${TAG}%`));
+    await db.delete(adminAccountsTable).where(like(adminAccountsTable.email, `${TAG}%`));
+    await db.delete(adminAuditLogsTable).where(like(adminAuditLogsTable.actorEmail, `${TAG}%`));
+  } finally {
+    await db.execute(sql`ALTER TABLE admin_audit_logs ENABLE TRIGGER admin_audit_logs_append_only_mutation`);
+    await db.execute(sql`ALTER TABLE admin_audit_logs ENABLE TRIGGER admin_audit_logs_append_only_truncate`);
+  }
 }
 
 before(async () => {

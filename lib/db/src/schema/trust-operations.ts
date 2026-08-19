@@ -198,12 +198,8 @@ export const adminAuditEventsTable = pgTable(
   "admin_audit_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    adminId: uuid("admin_id")
-      .notNull()
-      .references(() => adminAccountsTable.id, { onDelete: "restrict" }),
-    adminSessionId: uuid("admin_session_id").references(() => adminSessionsTable.id, {
-      onDelete: "set null",
-    }),
+    adminId: uuid("admin_id").notNull(),
+    adminSessionId: uuid("admin_session_id"),
     action: varchar("action", { length: 80 }).notNull(),
     category: varchar("category", { length: 32 }).notNull(),
     severity: varchar("severity", { length: 16 }).notNull().default("info"),

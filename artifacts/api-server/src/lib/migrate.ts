@@ -22,6 +22,10 @@ import {
   GOVERNANCE_CONSTRAINT_MIGRATIONS,
   GOVERNANCE_TABLE_MIGRATIONS,
 } from "./governanceMigrations";
+import {
+  TELEMETRY_TABLE_MIGRATIONS,
+  TELEMETRY_CONSTRAINT_MIGRATIONS,
+} from "./telemetryMigrations";
 
 const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
 
@@ -51,6 +55,7 @@ const COLUMN_MIGRATIONS: string[] = [
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
+  `ALTER TABLE user_reports ALTER COLUMN status SET DEFAULT 'open'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS priority VARCHAR(16) NOT NULL DEFAULT 'normal'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS severity VARCHAR(16) NOT NULL DEFAULT 'medium'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
@@ -385,6 +390,7 @@ const TABLE_MIGRATIONS: string[] = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   ...GOVERNANCE_TABLE_MIGRATIONS,
+  ...TELEMETRY_TABLE_MIGRATIONS,
   // user_reports MUST be created before moderation_notes (which FKs it) and
   // before any user_reports index. This CREATE carries the FULL normalized
   // operational shape so fresh databases are correct without relying on the
@@ -478,8 +484,8 @@ const TABLE_MIGRATIONS: string[] = [
   )`,
   `CREATE TABLE IF NOT EXISTS admin_audit_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
-    admin_session_id UUID REFERENCES admin_sessions(id) ON DELETE SET NULL,
+    admin_id UUID NOT NULL,
+    admin_session_id UUID,
     action VARCHAR(80) NOT NULL,
     category VARCHAR(32) NOT NULL,
     severity VARCHAR(16) NOT NULL DEFAULT 'info',
@@ -494,7 +500,7 @@ const TABLE_MIGRATIONS: string[] = [
   // ── TCG data operations: audit, scan outcomes, refresh work, overrides ────────
   `CREATE TABLE IF NOT EXISTS admin_audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    admin_id UUID,
     actor_email TEXT NOT NULL,
     action TEXT NOT NULL,
     resource_type TEXT NOT NULL,
@@ -716,6 +722,7 @@ const CONSTRAINT_MIGRATIONS: string[] = [
           'https://www.pricecharting.com/api', NOW(), NOW()
    WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
   ...GOVERNANCE_CONSTRAINT_MIGRATIONS,
+  ...TELEMETRY_CONSTRAINT_MIGRATIONS,
   // NOTE: user_reports is now created (with its full normalized shape) in
   // TABLE_MIGRATIONS, ahead of moderation_notes and its own indexes. The former
   // late bare CREATE here was removed to fix fresh-schema ordering.

@@ -27,13 +27,22 @@ import {
   Users,
   UsersRound,
   X,
+  LineChart,
+  Server,
+  ShieldCheck,
+  Settings,
 } from "lucide-react";
+import { Command } from "cmdk";
 import { useAuth } from "@/contexts/auth";
 import { apiFetch, apiPost } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 const NAV_ITEMS = [
   { path: "/overview", label: "Overview", icon: LayoutDashboard, permission: "dashboard:read" },
+  { path: "/analytics", label: "Analytics", icon: LineChart, permission: "analytics:read" },
+  { path: "/system", label: "System Health", icon: Server, permission: "system:read" },
+  { path: "/audit", label: "Audit Log", icon: ShieldCheck, permission: "audit:read" },
+  { path: "/settings", label: "Platform Settings", icon: Settings, permission: "configuration:read" },
   { path: "/operations", label: "Operations", icon: Activity, permission: "operations:read" },
   { path: "/users", label: "Users", icon: Users, permission: "users:read" },
   { path: "/subscriptions", label: "Subscriptions", icon: CreditCard, permission: "users:read" },
@@ -62,17 +71,26 @@ function GlobalSearch() {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [, setLocation] = useLocation();
-  const searchRef = useRef<HTMLDivElement>(null);
+  const { auth } = useAuth();
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setOpen(false);
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setOpen((open) => !open);
       }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", down);
+    return () => document.removeEventListener("keydown", down);
   }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setResults(null);
+      setSourceNote(null);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (query.trim().length < 2) {
@@ -82,22 +100,30 @@ function GlobalSearch() {
     }
     setLoading(true);
     const timeout = setTimeout(() => {
-      apiFetch<{
+          apiFetch<{
         results: {
           users?: {
             id: string;
             displayName: string;
             username: string;
-            email: string;
             subscriptionTier: string;
           }[];
-          reports?: { id: string; reason: string; status: string }[];
+          reports?: { id: string; reason: string; status: string; deepLink: string }[];
           support?: {
             id: string;
             subject: string;
-            email: string;
             category: string;
             status: string;
+            deepLink: string;
+          }[];
+          pricingMappings?: {
+            id: string;
+            cardId: string;
+            matchedName: string | null;
+            matchedSet: string | null;
+            status: string;
+            providerKey: string;
+            deepLink: string;
           }[];
         };
         dataAvailability: Record<string, { available: boolean; reason?: string }>;
@@ -108,7 +134,7 @@ function GlobalSearch() {
               type: "user",
               id: user.id,
               title: user.displayName,
-              subtitle: `@${user.username} · ${user.email} · ${user.subscriptionTier}`,
+              subtitle: `@${user.username} · ${user.subscriptionTier}`,
               path: `/users?id=${encodeURIComponent(user.id)}`,
             })),
             ...(data.results.reports ?? []).map((report) => ({
@@ -122,12 +148,19 @@ function GlobalSearch() {
               type: "support",
               id: support.id,
               title: support.subject,
-              subtitle: `${support.category} · ${support.email}`,
+              subtitle: `${support.category}`,
               path: `/contact?id=${encodeURIComponent(support.id)}`,
+            })),
+            ...(data.results.pricingMappings ?? []).map((mapping) => ({
+              type: "mapping",
+              id: mapping.id,
+              title: mapping.matchedName || mapping.cardId,
+              subtitle: `${mapping.matchedSet || 'Unknown set'} · ${mapping.providerKey} · ${mapping.status}`,
+              path: `/pricing?mappingId=${encodeURIComponent(mapping.id)}&status=${encodeURIComponent(mapping.status)}&q=${encodeURIComponent(mapping.cardId)}`,
             })),
           ];
           setResults(normalized);
-          const unavailable = ["cards", "events"].filter(
+          const unavailable = ["users", "reports", "support", "pricingMappings"].filter(
             (source) => data.dataAvailability[source]?.available === false,
           );
           setSourceNote(
@@ -142,85 +175,103 @@ function GlobalSearch() {
     return () => clearTimeout(timeout);
   }, [query]);
 
+  const navItems = NAV_ITEMS.filter(
+    (item) =>
+      (!item.owner || auth?.admin.role === "owner") &&
+      auth?.permissions.includes(item.permission),
+  );
+
   return (
-    <div className="relative flex-1 max-w-md mx-4 hidden sm:block" ref={searchRef}>
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => {
-            if (query.trim()) setOpen(true);
-          }}
-          placeholder="Global search..."
-          className="w-full bg-card border border-border rounded-lg pl-9 pr-4 py-1.5 text-sm focus:outline-none focus:border-primary transition-colors placeholder:text-muted-foreground/50"
-        />
-        {query && (
-          <button
-            onClick={() => {
-              setQuery("");
-              setOpen(false);
-              setResults(null);
-            }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            <X size={14} />
-          </button>
-        )}
+    <>
+      <div className="flex-1 max-w-md mx-4">
+        <button
+          onClick={() => setOpen(true)}
+          className="w-full bg-card border border-border rounded-lg px-3 sm:pl-9 sm:pr-4 py-1.5 text-sm hover:border-primary transition-colors flex items-center justify-center sm:justify-start gap-2 text-muted-foreground hover:text-foreground relative"
+        >
+          <Search size={15} className="sm:absolute sm:left-3 text-muted-foreground shrink-0" />
+          <span className="hidden sm:inline truncate">Search users, reports, and mappings...</span>
+          <kbd className="hidden sm:inline-flex ml-auto items-center gap-1 px-1.5 font-mono text-[10px] font-medium bg-background border border-border rounded opacity-50 shrink-0">
+            <span className="text-xs">⌘</span>K
+          </kbd>
+        </button>
       </div>
-      {open && query.trim().length >= 2 && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 max-h-96 overflow-y-auto">
-          {loading ? (
-            <div className="p-4 text-sm text-center text-muted-foreground">Searching...</div>
-          ) : results && results.length > 0 ? (
-            <div className="py-2">
-              {results.map((r, i) => (
-                <button
-                  key={`${r.type}-${r.id}-${i}`}
-                  onClick={() => {
+
+      <Command.Dialog
+        open={open}
+        onOpenChange={setOpen}
+        label="Global Command Menu"
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col focus:outline-none"
+      >
+        <div className="flex items-center border-b border-border px-3">
+          <Search className="text-muted-foreground shrink-0" size={18} />
+          <Command.Input
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search users, reports, mappings..."
+            className="flex-1 bg-transparent border-0 py-4 px-3 text-sm focus:outline-none placeholder:text-muted-foreground/50"
+          />
+          {loading && <div className="text-xs text-muted-foreground animate-pulse pr-2">Searching...</div>}
+        </div>
+        <Command.List className="max-h-96 overflow-y-auto p-2">
+          <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
+            {query.length > 0 && !loading ? "No results found." : "Type to search..."}
+          </Command.Empty>
+
+          {!query && (
+            <Command.Group heading="Navigation" className="text-xs font-semibold text-muted-foreground px-2 py-1.5">
+              {navItems.map((nav) => (
+                <Command.Item
+                  key={nav.path}
+                  onSelect={() => {
+                    setLocation(nav.path);
                     setOpen(false);
-                    setQuery("");
+                  }}
+                  className="flex items-center gap-3 px-3 py-2.5 text-sm text-foreground hover:bg-background rounded-lg cursor-pointer aria-selected:bg-primary/10 aria-selected:text-primary transition-colors mt-1"
+                >
+                  <nav.icon size={16} />
+                  {nav.label}
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
+
+          {results && results.length > 0 && (
+            <Command.Group heading="Search Results" className="text-xs font-semibold text-muted-foreground px-2 py-1.5">
+              {results.map((r, i) => (
+                <Command.Item
+                  key={`${r.type}-${r.id}-${i}`}
+                  onSelect={() => {
+                    setOpen(false);
                     if (r.path) {
                       setLocation(r.path);
-                    } else if (r.type === "user") {
-                      setLocation(`/users?id=${encodeURIComponent(r.id)}`);
-                    } else if (r.type === "report") {
-                      setLocation(`/reports?id=${encodeURIComponent(r.id)}`);
-                    } else if (r.type === "contact") {
-                      setLocation(`/contact?id=${encodeURIComponent(r.id)}`);
                     }
                   }}
-                  className="w-full text-left px-4 py-2.5 hover:bg-background transition-colors flex items-center justify-between border-b border-border/50 last:border-0"
+                  className="w-full text-left px-3 py-2.5 hover:bg-background aria-selected:bg-background rounded-lg transition-colors flex items-center justify-between cursor-pointer mt-1"
                 >
                   <div className="min-w-0 pr-3">
-                    <div className="text-sm font-bold truncate">{r.title}</div>
+                    <div className="text-sm font-bold truncate text-foreground">{r.title}</div>
                     <div className="text-xs text-muted-foreground truncate">{r.subtitle}</div>
                   </div>
                   <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider bg-background px-2 py-0.5 rounded border border-border shrink-0">
                     {r.type}
                   </span>
-                </button>
+                </Command.Item>
               ))}
-              {sourceNote && (
-                <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-                  {sourceNote}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-4 text-sm text-center text-muted-foreground">
-              No results found or search unavailable.
+            </Command.Group>
+          )}
+
+          {sourceNote && (
+            <div className="px-3 py-2 text-[10px] text-muted-foreground border-t border-border mt-2">
+              {sourceNote}
             </div>
           )}
-        </div>
-      )}
-    </div>
+        </Command.List>
+      </Command.Dialog>
+      <div className={open ? "fixed inset-0 z-40 bg-black/60" : "hidden"} />
+    </>
   );
 }
+
 export function AdminLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { auth, logout } = useAuth();

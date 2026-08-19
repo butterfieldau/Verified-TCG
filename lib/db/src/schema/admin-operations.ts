@@ -21,9 +21,7 @@ export const adminAuditLogsTable = pgTable(
   "admin_audit_logs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    adminId: uuid("admin_id").references(() => adminAccountsTable.id, {
-      onDelete: "set null",
-    }),
+    adminId: uuid("admin_id"),
     actorEmail: text("actor_email").notNull(),
     action: text("action").notNull(),
     resourceType: text("resource_type").notNull(),

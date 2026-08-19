@@ -25,6 +25,7 @@ import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { logger } from "../lib/logger.js";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 
@@ -204,8 +205,31 @@ async function searchCatalog(
   if (!query) return [];
 
   const params = new URLSearchParams({ q: query, limit: "5" });
-  const resp = await fetch(`${JUSTTCG_BASE_URL}/cards?${params.toString()}`, {
-    headers: { "x-api-key": key, accept: "application/json" },
+  // Sanitized integration observability: record only ok/failed, duration,
+  // numeric HTTP status, and a fixed operation enum. Never the query or body.
+  const startedAt = Date.now();
+  let resp: Response;
+  try {
+    resp = await fetch(`${JUSTTCG_BASE_URL}/cards?${params.toString()}`, {
+      headers: { "x-api-key": key, accept: "application/json" },
+    });
+  } catch (err) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.justtcg.request",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      metadata: { operation: "cards" },
+    });
+    throw err;
+  }
+  void recordTelemetry({
+    category: "integration",
+    action: "integration.justtcg.request",
+    status: resp.ok ? "ok" : "failed",
+    statusCode: resp.status,
+    durationMs: Date.now() - startedAt,
+    metadata: { operation: "cards" },
   });
 
   if (!resp.ok) return [];

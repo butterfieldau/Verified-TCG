@@ -5,3 +5,6 @@
 - [Pricing provider independence](pricing-provider-independence.md) — serve persisted mappings and quotes before catalog lookups so one provider outage cannot hide another provider's cached data.
 - [PriceCharting condition semantics](pricecharting-condition-semantics.md) — provider price fields are category-overloaded; never infer numeric card grades without durable category provenance.
 - [Trust operations truthfulness](trust-operations-truthfulness.md) — safety/event reviews must cover admin and consumer surfaces; unavailable capabilities stay explicit, never mocked.
+- [Append-only evidence ledgers](append-only-evidence-ledgers.md) — immutable audit rows retain pseudonymous actor IDs and reject database mutation, including account-lifecycle rewrites.
+- [App-version policy enforcement](app-version-policy-enforcement.md) — active version policies reject unversioned consumer requests; supported clients attach their build version centrally.
+- [Owner-control route boundaries](owner-control-route-boundaries.md) — maintenance/version gates target consumer routes, not verified provider lifecycle callbacks or recovery endpoints.

@@ -36,6 +36,13 @@ import {
   aggregateVerifiedMarketValue,
   type VerifiedMarketValue,
 } from "./engine.js";
+import { recordTelemetry } from "../lib/telemetry.js";
+
+/**
+ * Fixed operation enum for PriceCharting integration telemetry. Never
+ * includes URLs, query strings, card identifiers, or provider payloads.
+ */
+type PCOperation = "product_refresh" | "search" | "explicit_refresh";
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
@@ -109,7 +116,23 @@ export interface PricingResponse {
 
 const matchInFlight = new Map<string, Promise<void>>();
 
-async function recordProviderHealth(healthy: boolean, message?: string): Promise<void> {
+async function recordProviderHealth(
+  healthy: boolean,
+  message?: string,
+  operation?: PCOperation,
+): Promise<void> {
+  // Sanitized integration observability. Every external PriceCharting call
+  // outcome flows through this centralized path. We record only the fixed
+  // operation enum and the ok/failed status — never URLs, card inputs,
+  // provider payloads, credentials, or error text.
+  if (operation) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.pricecharting.request",
+      status: healthy ? "ok" : "failed",
+      metadata: { operation },
+    });
+  }
   const now = new Date();
   await db
     .insert(pricingProvidersTable)
@@ -301,17 +324,17 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
     // here would incorrectly stamp an old quote and history point as fresh.
     const detail = await priceChartingProvider.getProductDetail(providerProductId, { bypassCache: true });
     if (!detail) {
-      await recordProviderHealth(false, "PriceCharting product refresh failed");
+      await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
       return;
     }
     await persistProviderMetadata(cardId, detail);
     const prices = priceChartingProvider.normalizeQuotes(detail);
     await persistQuotes(cardId, providerProductId, prices);
-    await recordProviderHealth(true);
+    await recordProviderHealth(true, undefined, "product_refresh");
   })()
     .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Pricing refresh failed");
-      await recordProviderHealth(false, "PriceCharting product refresh failed").catch(() => {});
+      await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh").catch(() => {});
     })
     .finally(() => matchInFlight.delete(key));
 
@@ -337,10 +360,10 @@ async function runBackgroundMatch(
     const query = [input.name, input.set, input.game].filter(Boolean).join(" ");
     const products = await priceChartingProvider.searchProducts(query);
     if (!products) {
-      await recordProviderHealth(false, "PriceCharting search failed");
+      await recordProviderHealth(false, "PriceCharting search failed", "search");
       return;
     }
-    await recordProviderHealth(true);
+    await recordProviderHealth(true, undefined, "search");
 
     if (products.length === 0) {
       // Save unmatched result
@@ -409,9 +432,9 @@ async function runBackgroundMatch(
         await persistProviderMetadata(cardId, detail);
         const prices = priceChartingProvider.normalizeQuotes(detail);
         await persistQuotes(cardId, result.candidate.id, prices);
-        await recordProviderHealth(true);
+        await recordProviderHealth(true, undefined, "product_refresh");
       } else {
-        await recordProviderHealth(false, "PriceCharting product refresh failed");
+        await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
       }
     }
   })()
@@ -844,18 +867,18 @@ export async function refreshPricingExplicit(
       bypassCache: true,
     });
     if (!detail) {
-      await recordProviderHealth(false, "PriceCharting product refresh returned no data");
+      await recordProviderHealth(false, "PriceCharting product refresh returned no data", "explicit_refresh");
       return { status: "failed", error: "Provider returned no data for this product" };
     }
     await persistProviderMetadata(cardId, detail);
     const prices = priceChartingProvider.normalizeQuotes(detail);
     await persistQuotes(cardId, providerProductId, prices);
-    await recordProviderHealth(true);
+    await recordProviderHealth(true, undefined, "explicit_refresh");
     return { status: "succeeded" };
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 300) : "Unknown error during refresh";
     logger.error({ err, cardId, providerProductId }, "Explicit pricing refresh failed");
-    await recordProviderHealth(false, "PriceCharting explicit refresh failed").catch(() => {});
+    await recordProviderHealth(false, "PriceCharting explicit refresh failed", "explicit_refresh").catch(() => {});
     return { status: "failed", error: message };
   }
 }

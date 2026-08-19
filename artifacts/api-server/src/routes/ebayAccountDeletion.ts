@@ -1,6 +1,5 @@
 import { Router, type Request, type Response } from "express";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import express from "express";
 
 const router = Router();
 
@@ -58,8 +57,8 @@ router.get("/ebay/account-deletion", (req: Request, res: Response) => {
  * right to delete their account. We verify the X-EBAY-SIGNATURE header,
  * log the event for audit purposes, and respond 200 OK.
  *
- * express.raw() is applied at the route level only — other routes continue
- * to use the global express.json() middleware without any impact.
+ * The app installs express.raw() for this exact route before its global JSON
+ * parser so signature verification always uses the original request bytes.
  *
  * Signature algorithm: HMAC-SHA256 of the raw request body bytes, keyed
  * with EBAY_VERIFICATION_TOKEN, base64-encoded.
@@ -70,7 +69,6 @@ router.get("/ebay/account-deletion", (req: Request, res: Response) => {
  */
 router.post(
   "/ebay/account-deletion",
-  express.raw({ type: "application/json" }),
   (req: Request, res: Response) => {
     const missing = getMissingSecrets();
     if (missing.length > 0) {
@@ -79,15 +77,18 @@ router.post(
       });
     }
 
-    const rawBody          = req.body as Buffer;
+    const rawBody = req.body;
     const verificationToken = process.env.EBAY_VERIFICATION_TOKEN!;
-    const signatureHeader  = req.headers["x-ebay-signature"] as string | undefined;
+    const signatureHeader = req.get("x-ebay-signature");
 
     // Verify the signature when the header is present.
     // Missing signature is treated as invalid — legitimate eBay notifications
     // always include the header.
     if (!signatureHeader) {
       return res.status(403).json({ error: "Missing X-EBAY-SIGNATURE header" });
+    }
+    if (!Buffer.isBuffer(rawBody)) {
+      return res.status(403).json({ error: "Signature verification failed" });
     }
 
     try {
@@ -111,18 +112,24 @@ router.post(
       return res.status(403).json({ error: "Signature verification failed" });
     }
 
-    // Parse the event payload for logging. Failure here does not affect the
-    // 200 acknowledgement — eBay re-delivers on non-200, so we never want to
-    // reject a valid, verified notification due to a parse error.
-    let payload: unknown = "<unparseable>";
+    // Parsing failure does not affect acknowledgement: signature verification
+    // has already authenticated the exact bytes and eBay retries non-200s.
+    let payloadParsed = false;
     try {
-      payload = JSON.parse(rawBody.toString("utf8"));
+      JSON.parse(rawBody.toString("utf8"));
+      payloadParsed = true;
     } catch {
-      // keep the raw sentinel
+      // Keep payloadParsed false. Never log provider payloads or user details.
     }
 
-    // Structured log for audit trail — visible in server logs / deployment logs.
-    req.log?.info({ event: "ebay.account_deletion", payload }, "eBay account deletion notification received");
+    req.log?.info(
+      {
+        event: "ebay.account_deletion",
+        payloadBytes: rawBody.byteLength,
+        payloadParsed,
+      },
+      "eBay account deletion notification received",
+    );
 
     return res.status(200).send();
   },

@@ -11,6 +11,7 @@ import { eq, and, gt, sql } from "drizzle-orm";
 import { clearUserWishlists } from "./wishlist.js";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { authSignLimiter, authRecoverLimiter } from "../lib/rateLimiters.js";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 
@@ -136,6 +137,15 @@ router.post("/auth/signup", authSignLimiter, async (req, res) => {
   const accessToken = makeAccessToken(user.id, user.email, user.displayName);
   await createSession(user.id, refreshToken);
 
+  // Record account_created telemetry event (no PII in metadata)
+  void recordTelemetry({
+    category: "analytics",
+    action: "account_created",
+    userId: user.id,
+    status: "ok",
+    metadata: { subscriptionTier: user.subscriptionTier },
+  });
+
   return res.status(201).json(sessionResponse(user, accessToken, refreshToken));
 });
 
@@ -170,6 +180,15 @@ router.post("/auth/signin", authSignLimiter, async (req, res) => {
   const refreshToken = makeRefreshToken();
   const accessToken = makeAccessToken(user.id, user.email, user.displayName);
   await createSession(user.id, refreshToken);
+
+  // Record session_started telemetry event
+  void recordTelemetry({
+    category: "analytics",
+    action: "session_started",
+    userId: user.id,
+    status: "ok",
+    metadata: { subscriptionTier: user.subscriptionTier },
+  });
 
   return res.json(sessionResponse(user, accessToken, refreshToken));
 });
@@ -346,6 +365,26 @@ router.put("/auth/user", async (req, res) => {
 
   if (!updated) {
     return res.status(404).json({ message: "User not found" });
+  }
+
+  // Record profile_updated telemetry event
+  void recordTelemetry({
+    category: "analytics",
+    action: "profile_updated",
+    userId: updated.id,
+    status: "ok",
+  });
+  if (
+    Boolean(updated.favouriteTcg) ||
+    Boolean(updated.collectorSince) ||
+    Boolean(updated.preferredTcgs)
+  ) {
+    void recordTelemetry({
+      category: "analytics",
+      action: "profile_completed",
+      userId: updated.id,
+      status: "ok",
+    });
   }
 
   return res.json({
@@ -551,32 +590,49 @@ async function sendPasswordResetEmail(toEmail: string, plainToken: string): Prom
     return;
   }
 
-  const { error } = await resend.emails.send({
-    from: FROM_EMAIL,
-    to: toEmail,
-    subject: "Reset your Verified TCG password",
-    html: `
-      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-        <h2 style="color: #1a1a2e;">Reset your password</h2>
-        <p>We received a request to reset the password for your Verified TCG account.</p>
-        <p>Tap the button below to choose a new password. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.</p>
-        <a href="${deepLink}"
-           style="display:inline-block;padding:14px 28px;background:#6c63ff;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">
-          Reset Password
-        </a>
-        <p style="color:#888;font-size:13px;">
-          If the button doesn't work, open your Verified TCG app and use this link:<br>
-          <code>${deepLink}</code>
-        </p>
-        <p style="color:#888;font-size:13px;">
-          If you didn't request a password reset, you can safely ignore this email.
-        </p>
-      </div>
-    `,
+  // Sanitized integration observability for the actual outbound Resend call.
+  // Records only ok/failed, duration, and a fixed operation enum — never the
+  // recipient, subject/body, credentials, headers, or provider error text.
+  const startedAt = Date.now();
+  let deliveryFailed = false;
+  try {
+    const { error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: toEmail,
+      subject: "Reset your Verified TCG password",
+      html: `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+          <h2 style="color: #1a1a2e;">Reset your password</h2>
+          <p>We received a request to reset the password for your Verified TCG account.</p>
+          <p>Tap the button below to choose a new password. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.</p>
+          <a href="${deepLink}"
+             style="display:inline-block;padding:14px 28px;background:#6c63ff;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">
+            Reset Password
+          </a>
+          <p style="color:#888;font-size:13px;">
+            If the button doesn't work, open your Verified TCG app and use this link:<br>
+            <code>${deepLink}</code>
+          </p>
+          <p style="color:#888;font-size:13px;">
+            If you didn't request a password reset, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    });
+    deliveryFailed = Boolean(error);
+  } catch {
+    deliveryFailed = true;
+  }
+
+  void recordTelemetry({
+    category: "integration",
+    action: "integration.resend.request",
+    status: deliveryFailed ? "failed" : "ok",
+    durationMs: Date.now() - startedAt,
+    metadata: { operation: "password_reset" },
   });
 
-  if (error) {
-    console.error("[password-reset] Resend delivery error:", error.name, error.message);
+  if (deliveryFailed) {
     throw new Error("Failed to send reset email.");
   }
 }

@@ -7,6 +7,7 @@ import {
   Lock,
   Package,
 } from "lucide-react";
+import packageMetadata from "../../package.json";
 
 interface WishlistCard {
   id: string;
@@ -55,7 +56,9 @@ export default function CollectorWishlistPage() {
     setStatus("loading");
     setData(null);
 
-    fetch(`${getApiBase()}/collectors/${encodeURIComponent(username)}/wishlist`)
+    fetch(`${getApiBase()}/collectors/${encodeURIComponent(username)}/wishlist`, {
+      headers: { "x-app-version": packageMetadata.version },
+    })
       .then(async (res) => {
         if (cancelled) return;
         if (res.status === 404) { setStatus("not_found"); return; }

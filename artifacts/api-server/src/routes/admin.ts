@@ -33,6 +33,7 @@ import {
   activityLogTable,
   adminAccountsTable,
   adminOperationalNotesTable,
+  cardProviderMappingsTable,
 } from "@workspace/db";
 import {
   eq,
@@ -1328,9 +1329,9 @@ router.get(
 );
 
 // ── GET /api/admin/search ──────────────────────────────────────────────────────
-// Permission-scoped global search across users, reports and support.
-// Categories the caller cannot read are omitted; unsupported sources (cards,
-// events — no durable generic search store) are surfaced via availability meta.
+// Permission-scoped global search across users, reports, support, events,
+// and pricing mappings/cards when corresponding permissions allow.
+// UUID queries on users search by ID directly.
 
 router.get(
   "/admin/search",
@@ -1346,11 +1347,26 @@ router.get(
       const canReadUsers = hasPermission(req, "users:read");
       const canReadReports = hasPermission(req, "reports:read");
       const canReadContact = hasPermission(req, "contact:read");
-      const like = `%${q}%`;
+      const canReadPricing = hasPermission(req, "pricing:read");
+      const likePattern = `%${q}%`;
+      const isUuid = UUID_RE.test(q);
 
       const results: Record<string, unknown[]> = {};
 
       if (canReadUsers) {
+        // Support UUID search by user ID in addition to text fields
+        const userWhere = isUuid
+          ? or(
+              eq(usersTable.id, q),
+              ilike(usersTable.email, likePattern),
+              ilike(usersTable.displayName, likePattern),
+              ilike(usersTable.username, likePattern),
+            )
+          : or(
+              ilike(usersTable.email, likePattern),
+              ilike(usersTable.displayName, likePattern),
+              ilike(usersTable.username, likePattern),
+            );
         results["users"] = await db
           .select({
             id: usersTable.id,
@@ -1359,15 +1375,10 @@ router.get(
             username: usersTable.username,
             subscriptionTier: usersTable.subscriptionTier,
             suspendedAt: usersTable.suspendedAt,
+            deepLink: sql<string>`'/api/admin/users/' || ${usersTable.id} || '/detail'`,
           })
           .from(usersTable)
-          .where(
-            or(
-              ilike(usersTable.email, like),
-              ilike(usersTable.displayName, like),
-              ilike(usersTable.username, like),
-            ),
-          )
+          .where(userWhere)
           .limit(20);
       }
 
@@ -1378,12 +1389,13 @@ router.get(
             reason: userReportsTable.reason,
             status: userReportsTable.status,
             createdAt: userReportsTable.createdAt,
+            deepLink: sql<string>`'/api/admin/reports/' || ${userReportsTable.id}`,
           })
           .from(userReportsTable)
           .where(
             or(
-              ilike(userReportsTable.reason, like),
-              ilike(userReportsTable.note, like),
+              ilike(userReportsTable.reason, likePattern),
+              ilike(userReportsTable.note, likePattern),
             ),
           )
           .orderBy(desc(userReportsTable.createdAt))
@@ -1400,17 +1412,42 @@ router.get(
             subject: contactSubmissionsTable.subject,
             status: contactSubmissionsTable.status,
             submittedAt: contactSubmissionsTable.submittedAt,
+            deepLink: sql<string>`'/api/admin/contact/' || ${contactSubmissionsTable.id}`,
           })
           .from(contactSubmissionsTable)
           .where(
             or(
-              ilike(contactSubmissionsTable.name, like),
-              ilike(contactSubmissionsTable.email, like),
-              ilike(contactSubmissionsTable.subject, like),
-              ilike(contactSubmissionsTable.message, like),
+              ilike(contactSubmissionsTable.name, likePattern),
+              ilike(contactSubmissionsTable.email, likePattern),
+              ilike(contactSubmissionsTable.subject, likePattern),
+              ilike(contactSubmissionsTable.message, likePattern),
             ),
           )
           .orderBy(desc(contactSubmissionsTable.submittedAt))
+          .limit(20);
+      }
+
+      if (canReadPricing) {
+        // Search supported events (telemetry action names)
+        results["pricingMappings"] = await db
+          .select({
+            id: cardProviderMappingsTable.id,
+            cardId: cardProviderMappingsTable.cardId,
+            matchedName: cardProviderMappingsTable.matchedName,
+            matchedSet: cardProviderMappingsTable.matchedSet,
+            status: cardProviderMappingsTable.status,
+            providerKey: cardProviderMappingsTable.providerKey,
+            deepLink: sql<string>`'/api/admin/pricing/mappings?q=' || ${cardProviderMappingsTable.cardId}`,
+          })
+          .from(cardProviderMappingsTable)
+          .where(
+            or(
+              ilike(cardProviderMappingsTable.cardId, likePattern),
+              ilike(cardProviderMappingsTable.matchedName, likePattern),
+              ilike(cardProviderMappingsTable.providerProductName, likePattern),
+            ),
+          )
+          .orderBy(desc(cardProviderMappingsTable.updatedAt))
           .limit(20);
       }
 
@@ -1419,7 +1456,7 @@ router.get(
         results,
         dataAvailability: {
           users: canReadUsers
-            ? { available: true }
+            ? { available: true, supportsUuidSearch: true }
             : { available: false, reason: "Requires users:read." },
           reports: canReadReports
             ? { available: true }
@@ -1427,13 +1464,16 @@ router.get(
           support: canReadContact
             ? { available: true }
             : { available: false, reason: "Requires contact:read." },
+          pricingMappings: canReadPricing
+            ? { available: true }
+            : { available: false, reason: "Requires pricing:read." },
           cards: {
             available: false,
-            reason: "No durable generic search store for cards.",
+            reason: "Card search is available through provider-backed pricing mappings only.",
           },
           events: {
             available: false,
-            reason: "No durable generic search store for events.",
+            reason: "No durable generic event search source is configured.",
           },
         },
       });

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db, contactSubmissionsTable, supportCasesTable } from "@workspace/db";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 
@@ -142,6 +143,11 @@ router.post("/support/contact", async (req, res) => {
   if (RESEND_API_KEY) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    // Sanitized integration observability for the actual outbound Resend call.
+    // Records only ok/failed, duration, numeric HTTP status, and a fixed
+    // operation enum — never the recipient, subject/body, credentials, or
+    // provider response body.
+    const startedAt = Date.now();
     try {
       const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -165,10 +171,25 @@ router.post("/support/contact", async (req, res) => {
         }),
         signal: controller.signal,
       });
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.resend.request",
+        status: emailRes.ok ? "ok" : "failed",
+        statusCode: emailRes.status,
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "support_notification" },
+      });
       if (!emailRes.ok) {
         console.warn("[SUPPORT] Resend notification failed, status:", emailRes.status);
       }
     } catch {
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.resend.request",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "support_notification" },
+      });
       console.warn("[SUPPORT] Resend notification did not complete (non-fatal; submission is stored).");
     } finally {
       clearTimeout(timeout);

@@ -40,6 +40,11 @@ import ScannerReviewPage from '@/pages/scanner-review';
 import CollectionIntelligencePage from '@/pages/collection-intelligence';
 import SubscriptionsPage from '@/pages/subscriptions';
 
+import AnalyticsPage from '@/pages/analytics';
+import SystemPage from '@/pages/system';
+import AuditPage from '@/pages/audit';
+import SettingsPage from '@/pages/settings';
+
 const queryClient = new QueryClient();
 
 function ProtectedRoute({
@@ -96,6 +101,19 @@ function Router() {
         <Route path="/overview">
           {() => <ProtectedRoute component={OverviewPage} permission="dashboard:read" />}
         </Route>
+        <Route path="/analytics">
+          {() => <ProtectedRoute component={AnalyticsPage} permission="analytics:read" />}
+        </Route>
+        <Route path="/system">
+          {() => <ProtectedRoute component={SystemPage} permission="system:read" />}
+        </Route>
+        <Route path="/audit">
+          {() => <ProtectedRoute component={AuditPage} permission="audit:read" />}
+        </Route>
+        <Route path="/settings">
+          {() => <ProtectedRoute component={SettingsPage} permission="configuration:read" />}
+        </Route>
+
         <Route path="/operations">
           {() => <ProtectedRoute component={OperationsPage} permission="operations:read" />}
         </Route>

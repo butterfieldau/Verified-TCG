@@ -78,8 +78,10 @@ export default function PricingOperationsPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [mappings, setMappings] = useState<Mapping[]>([]);
   const [jobs, setJobs] = useState<RefreshJob[]>([]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("review_required");
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialMappingId = initialParams.get("mappingId");
+  const [query, setQuery] = useState(initialParams.get("q") || "");
+  const [status, setStatus] = useState(initialParams.get("status") || "review_required");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
@@ -110,6 +112,10 @@ export default function PricingOperationsPage() {
       setProviders(providerData.providers);
       setOverview(overviewData);
       setMappings(mappingData.mappings);
+      if (initialMappingId) {
+        const linkedMapping = mappingData.mappings.find((mapping) => mapping.id === initialMappingId);
+        if (linkedMapping) setSelected(linkedMapping);
+      }
       setJobs(jobData.jobs);
     } catch (err) {
       if (err instanceof UnauthorizedError) void logout();

@@ -1,3 +1,5 @@
+import packageMetadata from "../../package.json";
+
 const API = "/api";
 
 export class ApiError extends Error {
@@ -23,6 +25,7 @@ async function request<T>(
   includeCsrf = false,
 ): Promise<T> {
   const headers = new Headers(init.headers);
+  headers.set("x-app-version", packageMetadata.version);
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
   if (includeCsrf) {
     const csrf = getCsrfToken();

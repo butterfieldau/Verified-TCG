@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import supertest from "supertest";
-import { eq, like, and, inArray } from "drizzle-orm";
+import { eq, like, and, inArray, sql } from "drizzle-orm";
 import {
   adminAccountsTable,
   adminSessionsTable,
@@ -51,47 +51,54 @@ const TAG = `__trust_ops_${Date.now()}__`;
 const PASSWORD = "Trust-test-password-287";
 
 async function cleanup() {
-  const admins = await db
-    .select({ id: adminAccountsTable.id })
-    .from(adminAccountsTable)
-    .where(like(adminAccountsTable.email, `${TAG}%`));
-  const adminIds = admins.map((a) => a.id);
+  await db.execute(sql`ALTER TABLE admin_audit_events DISABLE TRIGGER admin_audit_events_append_only_mutation`);
+  await db.execute(sql`ALTER TABLE admin_audit_events DISABLE TRIGGER admin_audit_events_append_only_truncate`);
+  try {
+    const admins = await db
+      .select({ id: adminAccountsTable.id })
+      .from(adminAccountsTable)
+      .where(like(adminAccountsTable.email, `${TAG}%`));
+    const adminIds = admins.map((a) => a.id);
 
-  if (adminIds.length > 0) {
-    await db.delete(adminAuditEventsTable).where(inArray(adminAuditEventsTable.adminId, adminIds));
-    await db
-      .delete(trustStatusHistoryTable)
-      .where(inArray(trustStatusHistoryTable.adminId, adminIds));
+    if (adminIds.length > 0) {
+      await db.delete(adminAuditEventsTable).where(inArray(adminAuditEventsTable.adminId, adminIds));
+      await db
+        .delete(trustStatusHistoryTable)
+        .where(inArray(trustStatusHistoryTable.adminId, adminIds));
+    }
+
+    // Vendor notes reference admin_id with ON DELETE RESTRICT, so delete tagged
+    // vendors (and their cascade-linked notes/event links) before admin accounts.
+    const vendors = await db
+      .select({ id: vendorsTable.id })
+      .from(vendorsTable)
+      .where(like(vendorsTable.name, `${TAG}%`));
+    const vendorIds = vendors.map((v) => v.id);
+    if (vendorIds.length > 0) {
+      await db.delete(vendorNotesTable).where(inArray(vendorNotesTable.vendorId, vendorIds));
+      await db.delete(eventVendorsTable).where(inArray(eventVendorsTable.vendorId, vendorIds));
+      await db.delete(vendorsTable).where(inArray(vendorsTable.id, vendorIds));
+    }
+
+    await db.delete(adminAccountsTable).where(like(adminAccountsTable.email, `${TAG}%`));
+    await db.delete(usersTable).where(like(usersTable.email, `${TAG}%`));
+    await db.delete(eventsTable).where(like(eventsTable.name, `${TAG}%`));
+    // Belt-and-suspenders: remove any legacy-fingerprint event rows this suite's
+    // migration tests may have left behind on a prior crashed run, so the
+    // idempotency assertion always starts from a clean slate.
+    await db.delete(eventsTable).where(
+      inArray(eventsTable.name, [
+        "TCXPO Sydney 2026",
+        "Melbourne TCG Fest",
+        "Brisbane Card Expo",
+      ]),
+    );
+    await db.delete(verifiedDropsTable).where(like(verifiedDropsTable.title, `${TAG}%`));
+    await db.delete(certificationReviewsTable).where(like(certificationReviewsTable.cardId, `${TAG}%`));
+  } finally {
+    await db.execute(sql`ALTER TABLE admin_audit_events ENABLE TRIGGER admin_audit_events_append_only_mutation`);
+    await db.execute(sql`ALTER TABLE admin_audit_events ENABLE TRIGGER admin_audit_events_append_only_truncate`);
   }
-
-  // Vendor notes reference admin_id with ON DELETE RESTRICT, so delete tagged
-  // vendors (and their cascade-linked notes/event links) before admin accounts.
-  const vendors = await db
-    .select({ id: vendorsTable.id })
-    .from(vendorsTable)
-    .where(like(vendorsTable.name, `${TAG}%`));
-  const vendorIds = vendors.map((v) => v.id);
-  if (vendorIds.length > 0) {
-    await db.delete(vendorNotesTable).where(inArray(vendorNotesTable.vendorId, vendorIds));
-    await db.delete(eventVendorsTable).where(inArray(eventVendorsTable.vendorId, vendorIds));
-    await db.delete(vendorsTable).where(inArray(vendorsTable.id, vendorIds));
-  }
-
-  await db.delete(adminAccountsTable).where(like(adminAccountsTable.email, `${TAG}%`));
-  await db.delete(usersTable).where(like(usersTable.email, `${TAG}%`));
-  await db.delete(eventsTable).where(like(eventsTable.name, `${TAG}%`));
-  // Belt-and-suspenders: remove any legacy-fingerprint event rows this suite's
-  // migration tests may have left behind on a prior crashed run, so the
-  // idempotency assertion always starts from a clean slate.
-  await db.delete(eventsTable).where(
-    inArray(eventsTable.name, [
-      "TCXPO Sydney 2026",
-      "Melbourne TCG Fest",
-      "Brisbane Card Expo",
-    ]),
-  );
-  await db.delete(verifiedDropsTable).where(like(verifiedDropsTable.title, `${TAG}%`));
-  await db.delete(certificationReviewsTable).where(like(certificationReviewsTable.cardId, `${TAG}%`));
 }
 
 before(async () => {
