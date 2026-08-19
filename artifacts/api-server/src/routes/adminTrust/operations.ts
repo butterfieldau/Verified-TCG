@@ -1,6 +1,6 @@
 /**
  * GET /admin/operations/summary  — attention counts + recent audit + capability declarations
- * GET /admin/activity            — paginated immutable audit log
+ * GET /admin/operations/activity — paginated immutable audit log
  */
 
 import { Router } from "express";
@@ -41,7 +41,8 @@ operationsRouter.get(
         db
           .select({ cnt: count() })
           .from(userReportsTable)
-          .where(inArray(userReportsTable.status, ["new", "under_review"])),
+          // Include legacy "new"/"under_review" values alongside canonical vocabulary
+          .where(inArray(userReportsTable.status, ["open", "in_review", "escalated", "new", "under_review"])),
         db
           .select({ cnt: count() })
           .from(postsTable)
@@ -117,7 +118,7 @@ operationsRouter.get(
 // ── GET /admin/activity ───────────────────────────────────────────────────────
 
 operationsRouter.get(
-  "/admin/activity",
+  "/admin/operations/activity",
   requireAdminPermission("operations:read"),
   async (req: AdminRequest, res): Promise<void> => {
     const q = req.query as Record<string, string | undefined>;

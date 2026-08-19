@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import {
   Activity,
@@ -6,6 +6,7 @@ import {
   BadgeDollarSign,
   Bell,
   Calendar,
+  CreditCard,
   DatabaseZap,
   Flag,
   HeartPulse,
@@ -20,6 +21,7 @@ import {
   PanelLeft,
   ScanLine,
   ScanSearch,
+  Search,
   Shield,
   Store,
   Users,
@@ -34,6 +36,7 @@ const NAV_ITEMS = [
   { path: "/overview", label: "Overview", icon: LayoutDashboard, permission: "dashboard:read" },
   { path: "/operations", label: "Operations", icon: Activity, permission: "operations:read" },
   { path: "/users", label: "Users", icon: Users, permission: "users:read" },
+  { path: "/subscriptions", label: "Subscriptions", icon: CreditCard, permission: "users:read" },
   { path: "/community", label: "Community", icon: HeartPulse, permission: "community:read" },
   { path: "/reports", label: "Reports", icon: Flag, permission: "reports:read" },
   { path: "/trust", label: "Trust & Safety", icon: Shield, permission: "trust:read" },
@@ -44,7 +47,7 @@ const NAV_ITEMS = [
   { path: "/pricing", label: "Pricing", icon: BadgeDollarSign, permission: "pricing:read" },
   { path: "/scanner-review", label: "Scanner review", icon: ScanSearch, permission: "scanner:read" },
   { path: "/collection-intelligence", label: "Data quality", icon: DatabaseZap, permission: "collections:read" },
-  { path: "/contact", label: "Support", icon: MessageSquare, permission: "support:read" },
+  { path: "/contact", label: "Support", icon: MessageSquare, permission: "contact:read" },
   { path: "/notifications", label: "Campaigns", icon: Bell, permission: "notifications:read" },
   { path: "/requests", label: "Requests", icon: Archive, permission: "privacy:read" },
   { path: "/announcements", label: "Announcements", icon: Megaphone, permission: "announcements:read" },
@@ -52,6 +55,172 @@ const NAV_ITEMS = [
   { path: "/sessions", label: "Sessions", icon: Laptop, permission: "sessions:read", owner: true },
 ];
 
+function GlobalSearch() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<{ type: string; id: string; title: string; subtitle: string; path?: string }[] | null>(null);
+  const [sourceNote, setSourceNote] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [, setLocation] = useLocation();
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults(null);
+      setSourceNote(null);
+      return;
+    }
+    setLoading(true);
+    const timeout = setTimeout(() => {
+      apiFetch<{
+        results: {
+          users?: {
+            id: string;
+            displayName: string;
+            username: string;
+            email: string;
+            subscriptionTier: string;
+          }[];
+          reports?: { id: string; reason: string; status: string }[];
+          support?: {
+            id: string;
+            subject: string;
+            email: string;
+            category: string;
+            status: string;
+          }[];
+        };
+        dataAvailability: Record<string, { available: boolean; reason?: string }>;
+      }>(`/admin/search?q=${encodeURIComponent(query)}`)
+        .then((data) => {
+          const normalized = [
+            ...(data.results.users ?? []).map((user) => ({
+              type: "user",
+              id: user.id,
+              title: user.displayName,
+              subtitle: `@${user.username} · ${user.email} · ${user.subscriptionTier}`,
+              path: `/users?id=${encodeURIComponent(user.id)}`,
+            })),
+            ...(data.results.reports ?? []).map((report) => ({
+              type: "report",
+              id: report.id,
+              title: report.reason.replaceAll("_", " "),
+              subtitle: `Report · ${report.status.replaceAll("_", " ")}`,
+              path: `/reports?id=${encodeURIComponent(report.id)}`,
+            })),
+            ...(data.results.support ?? []).map((support) => ({
+              type: "support",
+              id: support.id,
+              title: support.subject,
+              subtitle: `${support.category} · ${support.email}`,
+              path: `/contact?id=${encodeURIComponent(support.id)}`,
+            })),
+          ];
+          setResults(normalized);
+          const unavailable = ["cards", "events"].filter(
+            (source) => data.dataAvailability[source]?.available === false,
+          );
+          setSourceNote(
+            unavailable.length > 0
+              ? `${unavailable.map((value) => value[0]!.toUpperCase() + value.slice(1)).join(" and ")} search unavailable`
+              : null,
+          );
+        })
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [query]);
+
+  return (
+    <div className="relative flex-1 max-w-md mx-4 hidden sm:block" ref={searchRef}>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            if (query.trim()) setOpen(true);
+          }}
+          placeholder="Global search..."
+          className="w-full bg-card border border-border rounded-lg pl-9 pr-4 py-1.5 text-sm focus:outline-none focus:border-primary transition-colors placeholder:text-muted-foreground/50"
+        />
+        {query && (
+          <button
+            onClick={() => {
+              setQuery("");
+              setOpen(false);
+              setResults(null);
+            }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      {open && query.trim().length >= 2 && (
+        <div className="absolute top-full left-0 right-0 mt-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 max-h-96 overflow-y-auto">
+          {loading ? (
+            <div className="p-4 text-sm text-center text-muted-foreground">Searching...</div>
+          ) : results && results.length > 0 ? (
+            <div className="py-2">
+              {results.map((r, i) => (
+                <button
+                  key={`${r.type}-${r.id}-${i}`}
+                  onClick={() => {
+                    setOpen(false);
+                    setQuery("");
+                    if (r.path) {
+                      setLocation(r.path);
+                    } else if (r.type === "user") {
+                      setLocation(`/users?id=${encodeURIComponent(r.id)}`);
+                    } else if (r.type === "report") {
+                      setLocation(`/reports?id=${encodeURIComponent(r.id)}`);
+                    } else if (r.type === "contact") {
+                      setLocation(`/contact?id=${encodeURIComponent(r.id)}`);
+                    }
+                  }}
+                  className="w-full text-left px-4 py-2.5 hover:bg-background transition-colors flex items-center justify-between border-b border-border/50 last:border-0"
+                >
+                  <div className="min-w-0 pr-3">
+                    <div className="text-sm font-bold truncate">{r.title}</div>
+                    <div className="text-xs text-muted-foreground truncate">{r.subtitle}</div>
+                  </div>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider bg-background px-2 py-0.5 rounded border border-border shrink-0">
+                    {r.type}
+                  </span>
+                </button>
+              ))}
+              {sourceNote && (
+                <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
+                  {sourceNote}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-4 text-sm text-center text-muted-foreground">
+              No results found or search unavailable.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 export function AdminLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { auth, logout } = useAuth();
@@ -143,7 +312,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           {navItems.map((item) => {
-            const active = location === item.path;
+            const active = location === item.path || location.startsWith(item.path + "?");
             return (
               <Link
                 key={item.path}
@@ -201,25 +370,30 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           >
             <PanelLeft size={18} />
           </button>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 md:w-48 xl:w-64">
             <div className="truncate text-sm font-bold">Admin Command Centre</div>
             <div className="hidden text-xs text-muted-foreground sm:block">Secure platform operations</div>
           </div>
-          <span className="hidden rounded-md border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground sm:inline-flex">
-            {import.meta.env.PROD ? "Production" : "Development"}
-          </span>
-          <Link
-            href="/overview"
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold ${
-              healthy === false
-                ? "border-negative/30 bg-negative/10 text-negative"
-                : "border-positive/30 bg-positive/10 text-positive"
-            }`}
-            aria-label="Open platform health overview"
-          >
-            {healthy === false ? <Activity size={14} /> : <HeartPulse size={14} />}
-            <span className="hidden sm:inline">{healthy === false ? "Needs attention" : "Platform healthy"}</span>
-          </Link>
+
+          <GlobalSearch />
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className="hidden rounded-md border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground sm:inline-flex">
+              {import.meta.env.PROD ? "Production" : "Development"}
+            </span>
+            <Link
+              href="/overview"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold ${
+                healthy === false
+                  ? "border-negative/30 bg-negative/10 text-negative"
+                  : "border-positive/30 bg-positive/10 text-positive"
+              }`}
+              aria-label="Open platform health overview"
+            >
+              {healthy === false ? <Activity size={14} /> : <HeartPulse size={14} />}
+              <span className="hidden sm:inline">{healthy === false ? "Needs attention" : "Platform healthy"}</span>
+            </Link>
+          </div>
         </header>
         <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
       </div>

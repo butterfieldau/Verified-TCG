@@ -317,7 +317,7 @@ async function createTestReport(reporterUserId: string, reportedUserId: string) 
       reporterUserId,
       reportedUserId,
       reason: "test report reason",
-      status: "new",
+      status: "open",
       priority: "normal",
       severity: "medium",
       evidenceRefs: [],
@@ -844,10 +844,10 @@ describe("Reports operations", () => {
     const owner = await createAdmin("reports-outcome-owner3");
     const { agent, csrf } = await login(owner);
 
-    for (const status of ["under_review", "escalated", "dismissed", "actioned"] as const) {
+    for (const status of ["in_review", "escalated", "dismissed", "resolved"] as const) {
       await db
         .update(userReportsTable)
-        .set({ status: "new", resolvedAt: null, resolvedByAdminId: null })
+        .set({ status: "open", resolvedAt: null, resolvedByAdminId: null, resolution: null, resolutionReason: null })
         .where(eq(userReportsTable.id, report.id));
 
       const res = await agent
@@ -866,7 +866,7 @@ describe("Reports operations", () => {
     await db.delete(usersTable).where(eq(usersTable.id, reported.id));
   });
 
-  test("POST /admin/reports/:id/assign self-assigns with reason and writes history for new→under_review", async () => {
+  test("POST /admin/reports/:id/assign self-assigns with reason and writes history for open→in_review", async () => {
     const reporter = await createTestUser("report-assign-r1");
     const reported = await createTestUser("report-assign-r2");
     const report = await createTestReport(reporter.id, reported.id);
@@ -880,11 +880,11 @@ describe("Reports operations", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.assignedAdminId, owner.id);
 
-    // Assign from "new" to an admin auto-transitions to under_review — history should appear
+    // Assign from "open" to an admin auto-transitions to in_review — history should appear
     const hist = await getHistory("report", report.id);
-    assert.equal(hist.length, 1, "should have 1 history row for new→under_review");
-    assert.equal(hist[0]!.fromStatus, "new");
-    assert.equal(hist[0]!.toStatus, "under_review");
+    assert.equal(hist.length, 1, "should have 1 history row for open→in_review");
+    assert.equal(hist[0]!.fromStatus, "open");
+    assert.equal(hist[0]!.toStatus, "in_review");
 
     await db.delete(userReportsTable).where(eq(userReportsTable.id, report.id));
     await db.delete(usersTable).where(eq(usersTable.id, reporter.id));
@@ -1019,18 +1019,18 @@ describe("Reports operations", () => {
       .where(eq(usersTable.id, reported.id));
     assert.ok(updatedUser?.suspendedAt);
 
-    // Report is actioned
+    // Report is resolved (canonical vocabulary)
     const [updatedReport] = await db
       .select({ status: userReportsTable.status })
       .from(userReportsTable)
       .where(eq(userReportsTable.id, report.id));
-    assert.equal(updatedReport?.status, "actioned");
+    assert.equal(updatedReport?.status, "resolved");
 
-    // Status history row written for report (new → actioned)
+    // Status history row written for report (open → resolved)
     const hist = await getHistory("report", report.id);
     assert.ok(hist.length >= 1, "should have report status history row");
     const lastHist = hist[hist.length - 1]!;
-    assert.equal(lastHist.toStatus, "actioned");
+    assert.equal(lastHist.toStatus, "resolved");
     assert.equal(lastHist.reason, "clear fraud evidence");
 
     await db.delete(userReportsTable).where(eq(userReportsTable.id, report.id));
@@ -1070,7 +1070,7 @@ describe("Reports operations", () => {
       .select({ status: userReportsTable.status })
       .from(userReportsTable)
       .where(eq(userReportsTable.id, report.id));
-    assert.equal(reportAfter?.status, "new", "report status must be unchanged");
+    assert.equal(reportAfter?.status, "open", "report status must be unchanged");
 
     // No report status-history row was written by this denied attempt.
     const hist = await getHistory("report", report.id);
@@ -2221,21 +2221,23 @@ describe("Drop status transitions", () => {
 // Audit activity
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("GET /admin/activity", () => {
+describe("GET /admin/operations/activity", () => {
   test("requires operations:read permission", async () => {
     const analyst = await createAdmin("activity-analyst", "analyst", [
       "dashboard:read",
       "users:read",
     ]);
     const { agent } = await login(analyst);
-    const res = await agent.get("/api/admin/activity");
+    // Audit log endpoint moved to /admin/operations/activity; dashboard-read-only
+    // admins should be denied because it requires operations:read.
+    const res = await agent.get("/api/admin/operations/activity");
     assert.equal(res.status, 403, JSON.stringify(res.body));
   });
 
   test("returns paginated immutable audit activity", async () => {
     const owner = await createAdmin("activity-owner");
     const { agent } = await login(owner);
-    const res = await agent.get("/api/admin/activity?limit=5");
+    const res = await agent.get("/api/admin/operations/activity?limit=5");
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.ok(Array.isArray(res.body.activity));
     assert.ok(typeof res.body.total === "number");
@@ -2429,7 +2431,7 @@ describe("GET /admin/reports/:id includes status history", () => {
     const o1 = await agent
       .post(`/api/admin/reports/${report.id}/outcome`)
       .set("X-CSRF-Token", csrf)
-      .send({ status: "under_review", reason: "beginning review" });
+      .send({ status: "in_review", reason: "beginning review" });
     assert.equal(o1.status, 200, JSON.stringify(o1.body));
 
     const o2 = await agent

@@ -22,8 +22,10 @@ import {
   userSessionsTable,
   moderationNotesTable,
   trustStatusHistoryTable,
+  adminOperationalNotesTable,
+  adminAccountsTable,
 } from "@workspace/db";
-import { eq, desc, asc, and, or, isNull, ne, count, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, isNull, ne, count, sql, ilike, inArray } from "drizzle-orm";
 import {
   requireAdminPermission,
   requireRecentAdminAuth,
@@ -34,56 +36,137 @@ import { paramStr, paginationParams, writeAudit, writeStatusHistory } from "./he
 
 export const reportsRouter = Router();
 
-const VALID_OUTCOMES = ["new", "under_review", "actioned", "dismissed", "escalated"] as const;
+// Canonical task-285 queue status vocabulary. Maps from the older trust-route
+// vocabulary: "new" → "open", "under_review" → "in_review", "actioned" → "resolved".
+const VALID_OUTCOMES = ["open", "in_review", "resolved", "dismissed", "escalated"] as const;
+
+// Legacy status values that may exist in older rows. Treated as "open" by all
+// unresolved filters and attention queries; the UI should never write them.
+const LEGACY_UNRESOLVED = ["new", "under_review"] as const;
+
+const QUEUE_STATUSES = ["open", "in_review", "resolved", "dismissed", "escalated"] as const;
+type QueueStatus = (typeof QUEUE_STATUSES)[number];
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function loadReportNotes(
+  ids: string[],
+): Promise<Map<string, Array<{ id: string; authorAdminId: string; authorDisplayName: string | null; body: string; createdAt: Date }>>> {
+  const grouped = new Map<string, Array<{ id: string; authorAdminId: string; authorDisplayName: string | null; body: string; createdAt: Date }>>();
+  if (ids.length === 0) return grouped;
+  const rows = await db
+    .select({
+      id: adminOperationalNotesTable.id,
+      subjectId: adminOperationalNotesTable.subjectId,
+      authorAdminId: adminOperationalNotesTable.authorAdminId,
+      authorDisplayName: adminAccountsTable.displayName,
+      body: adminOperationalNotesTable.body,
+      createdAt: adminOperationalNotesTable.createdAt,
+    })
+    .from(adminOperationalNotesTable)
+    .leftJoin(adminAccountsTable, eq(adminOperationalNotesTable.authorAdminId, adminAccountsTable.id))
+    .where(
+      and(
+        eq(adminOperationalNotesTable.subjectType, "report"),
+        inArray(adminOperationalNotesTable.subjectId, ids),
+      ),
+    )
+    .orderBy(desc(adminOperationalNotesTable.createdAt));
+  for (const row of rows) {
+    const current = grouped.get(row.subjectId) ?? [];
+    current.push({ id: row.id, authorAdminId: row.authorAdminId, authorDisplayName: row.authorDisplayName ?? null, body: row.body, createdAt: row.createdAt });
+    grouped.set(row.subjectId, current);
+  }
+  return grouped;
+}
 
 // ── GET /admin/reports ────────────────────────────────────────────────────────
+// Full task-285 contract: id filter, status=unresolved, status validation,
+// operational notes enrichment. This handler is canonical for the reports queue.
 
 reportsRouter.get(
   "/admin/reports",
   requireAdminPermission("reports:read"),
   async (req: AdminRequest, res): Promise<void> => {
     const q = req.query as Record<string, string | undefined>;
-    const { page, limit, offset } = paginationParams(q);
-    const status = q.status?.trim();
-    const assignedTo = q.assignedTo?.trim();
-    const search = q.search?.trim();
+    const page = Math.max(1, parseInt(q["page"] ?? "1") || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(q["limit"] ?? "20") || 20));
+    const offset = (page - 1) * limit;
+    const statusFilter = q["status"]?.trim();
+    const searchTerm = q["q"]?.trim() ?? q["search"]?.trim();
+    const reportId = q["id"]?.trim();
+    const assignedTo = q["assignedTo"]?.trim();
 
     try {
       const conditions = [];
-      if (status) conditions.push(eq(userReportsTable.status, status));
+
+      // id lookup — return exactly that report (used after PATCH to refresh)
+      if (reportId) {
+        if (!UUID_RE.test(reportId)) {
+          res.status(400).json({ message: "Invalid report id." });
+          return;
+        }
+        conditions.push(eq(userReportsTable.id, reportId));
+      }
+
+      // status filter — supports "unresolved" as a compound alias
+      if (statusFilter && statusFilter !== "all") {
+        if (statusFilter === "unresolved") {
+          // Include legacy "new"/"under_review" from older trust-route submissions
+          conditions.push(inArray(userReportsTable.status, ["open", "in_review", "escalated", "new", "under_review"]));
+        } else if (!QUEUE_STATUSES.includes(statusFilter as QueueStatus)) {
+          res.status(400).json({ message: "Invalid status filter." });
+          return;
+        } else {
+          conditions.push(eq(userReportsTable.status, statusFilter));
+        }
+      }
+
+      // assignment filter
       if (assignedTo === "me") {
         conditions.push(eq(userReportsTable.assignedAdminId, req.admin!.id));
       } else if (assignedTo === "unassigned") {
         conditions.push(isNull(userReportsTable.assignedAdminId));
       }
-      if (search) {
+
+      // full-text search
+      if (searchTerm) {
         conditions.push(
           or(
-            sql`(SELECT username FROM users WHERE id = ${userReportsTable.reporterUserId} LIMIT 1) ILIKE ${"%" + search + "%"}`,
-            sql`(SELECT username FROM users WHERE id = ${userReportsTable.reportedUserId} LIMIT 1) ILIKE ${"%" + search + "%"}`,
+            ilike(userReportsTable.reason, `%${searchTerm}%`),
+            ilike(userReportsTable.note, `%${searchTerm}%`),
           )!,
         );
       }
 
       const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-      const [totalRow, reports] = await Promise.all([
+      const [[totalRow], reports] = await Promise.all([
         db.select({ cnt: count() }).from(userReportsTable).where(where),
         db
           .select({
             id: userReportsTable.id,
             reason: userReportsTable.reason,
             note: userReportsTable.note,
-            status: userReportsTable.status,
-            priority: userReportsTable.priority,
-            severity: userReportsTable.severity,
-            assignedAdminId: userReportsTable.assignedAdminId,
-            resolutionReason: userReportsTable.resolutionReason,
-            escalatedAt: userReportsTable.escalatedAt,
             createdAt: userReportsTable.createdAt,
             updatedAt: userReportsTable.updatedAt,
             reporterUserId: userReportsTable.reporterUserId,
             reportedUserId: userReportsTable.reportedUserId,
+            status: userReportsTable.status,
+            priority: userReportsTable.priority,
+            severity: userReportsTable.severity,
+            assignedAdminId: userReportsTable.assignedAdminId,
+            resolution: userReportsTable.resolution,
+            resolutionReason: userReportsTable.resolutionReason,
+            escalatedAt: userReportsTable.escalatedAt,
+            escalationReason: userReportsTable.escalationReason,
+            firstResponseAt: userReportsTable.firstResponseAt,
+            resolvedAt: userReportsTable.resolvedAt,
+            assignedAdminDisplayName: sql<string | null>`(
+              SELECT display_name FROM admin_accounts
+              WHERE id = ${userReportsTable.assignedAdminId} LIMIT 1
+            )`,
             reporterUsername: sql<string | null>`(SELECT username FROM users WHERE id = ${userReportsTable.reporterUserId} LIMIT 1)`,
             reporterDisplayName: sql<string | null>`(SELECT display_name FROM users WHERE id = ${userReportsTable.reporterUserId} LIMIT 1)`,
             reportedUsername: sql<string | null>`(SELECT username FROM users WHERE id = ${userReportsTable.reportedUserId} LIMIT 1)`,
@@ -96,7 +179,15 @@ reportsRouter.get(
           .offset(offset),
       ]);
 
-      res.json({ reports, total: Number(totalRow[0]?.cnt ?? 0), page, limit });
+      const notes = await loadReportNotes(reports.map((r) => r.id));
+
+      res.json({
+        reports: reports.map((r) => ({ ...r, notes: notes.get(r.id) ?? [] })),
+        total: Number(totalRow?.cnt ?? 0),
+        page,
+        limit,
+        filter: { status: statusFilter ?? "all" },
+      });
     } catch (err) {
       req.log.error({ err }, "admin reports list failed");
       res.status(500).json({ message: "Database error. Please try again." });
@@ -226,8 +317,8 @@ reportsRouter.post(
         return;
       }
 
-      // Determine the new status: assigning → under_review, unassigning → keep existing
-      const newStatus = targetAdminId ? "under_review" : existing.status;
+      // Determine the new status: assigning → in_review, unassigning → keep existing
+      const newStatus = targetAdminId ? "in_review" : existing.status;
       const statusChanged = newStatus !== existing.status;
 
       await db.transaction(async (tx) => {
@@ -236,11 +327,14 @@ reportsRouter.post(
           .set({
             assignedAdminId: targetAdminId,
             status: newStatus,
+            firstResponseAt: targetAdminId && !existing.status.match(/^(in_review|resolved|dismissed|escalated)$/)
+              ? new Date()
+              : undefined,
             updatedAt: new Date(),
           })
           .where(eq(userReportsTable.id, reportId));
 
-        // Write status history if status auto-transitioned (new → under_review)
+        // Write status history if status auto-transitioned (open → in_review)
         if (statusChanged) {
           await writeStatusHistory(tx as unknown as typeof db, {
             domain: "report",
@@ -366,7 +460,7 @@ reportsRouter.post(
     }
 
     try {
-      const isResolved = ["actioned", "dismissed"].includes(status!);
+      const isResolved = ["resolved", "dismissed"].includes(status!);
       const isEscalated = status === "escalated";
 
       const result = await db.transaction(async (tx) => {
@@ -498,20 +592,21 @@ reportsRouter.post(
         await tx
           .update(userReportsTable)
           .set({
-            status: "actioned",
+            status: "resolved",
             resolutionReason: reason!.trim(),
+            resolution: "Reported collector suspended.",
             resolvedAt: now,
             resolvedByAdminId: req.admin!.id,
             updatedAt: now,
           })
           .where(eq(userReportsTable.id, reportId));
 
-        // Write report status history for the actioned transition
+        // Write report status history for the resolved transition
         await writeStatusHistory(tx as unknown as typeof db, {
           domain: "report",
           recordId: reportId,
           fromStatus: report.status,
-          toStatus: "actioned",
+          toStatus: "resolved",
           reason: reason!.trim(),
           adminId: req.admin!.id,
         });
@@ -526,7 +621,7 @@ reportsRouter.post(
           targetId: targetUserId,
           reason: reason!.trim(),
           previousState: { suspendedAt: null, reportStatus: report.status },
-          newState: { suspendedAt: now.toISOString(), reportStatus: "actioned" },
+          newState: { suspendedAt: now.toISOString(), reportStatus: "resolved" },
           requestId: req.id as string | undefined,
         });
 
@@ -551,7 +646,7 @@ reportsRouter.post(
         "Admin suspended user via report",
       );
       res.json({
-        message: "User suspended and report actioned.",
+        message: "User suspended and report resolved.",
         targetUserId: result.targetUserId,
         reportId,
       });

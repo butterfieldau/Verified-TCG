@@ -38,6 +38,7 @@ import CataloguePage from '@/pages/catalogue';
 import PricingOperationsPage from '@/pages/pricing-operations';
 import ScannerReviewPage from '@/pages/scanner-review';
 import CollectionIntelligencePage from '@/pages/collection-intelligence';
+import SubscriptionsPage from '@/pages/subscriptions';
 
 const queryClient = new QueryClient();
 
@@ -101,6 +102,9 @@ function Router() {
         <Route path="/users">
           {() => <ProtectedRoute component={UsersPage} permission="users:read" />}
         </Route>
+        <Route path="/subscriptions">
+          {() => <ProtectedRoute component={SubscriptionsPage} permission="users:read" />}
+        </Route>
         <Route path="/community">
           {() => <ProtectedRoute component={CommunityPage} permission="community:read" />}
         </Route>
@@ -132,7 +136,7 @@ function Router() {
           {() => <ProtectedRoute component={VendorsPage} permission="vendors:read" />}
         </Route>
         <Route path="/contact">
-          {() => <ProtectedRoute component={ContactPage} permission="support:read" />}
+          {() => <ProtectedRoute component={ContactPage} permission="contact:read" />}
         </Route>
         <Route path="/notifications">
           {() => <ProtectedRoute component={NotificationsPage} permission="notifications:read" />}

@@ -41,7 +41,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_tcgs TEXT`,
   // Added: account suspension support — NULL means active, non-NULL means suspended
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ`,
-  // Added: acquisition currency for collection items (task 283 — default AUD preserves existing data)
+  // Added: acquisition currency for collection items (default AUD preserves existing data)
   `ALTER TABLE collection_items ADD COLUMN IF NOT EXISTS acquired_currency TEXT NOT NULL DEFAULT 'AUD'`,
   // PriceCharting product metadata used by provider-neutral market insights
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_sales_volume INTEGER`,
@@ -49,17 +49,31 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
-  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status VARCHAR(24) NOT NULL DEFAULT 'new'`,
+  // user_reports operational workflow columns — queue status uses 'open' convention
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS priority VARCHAR(16) NOT NULL DEFAULT 'normal'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS severity VARCHAR(16) NOT NULL DEFAULT 'medium'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution TEXT`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_reason TEXT`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_note TEXT`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolved_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS escalation_reason TEXT`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+  // contact_submissions operational workflow columns for the support queue
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolution TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolution_reason TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS escalation_reason TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
   `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderation_status VARCHAR(24) NOT NULL DEFAULT 'visible'`,
   `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderation_reason TEXT`,
   `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderated_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
@@ -94,7 +108,7 @@ const USER_REPORTS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS user_reports (
     reported_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     reason TEXT NOT NULL,
     note TEXT,
-    status VARCHAR(24) NOT NULL DEFAULT 'new',
+    status TEXT NOT NULL DEFAULT 'open',
     priority VARCHAR(16) NOT NULL DEFAULT 'normal',
     severity VARCHAR(16) NOT NULL DEFAULT 'medium',
     assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
@@ -708,6 +722,17 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // NOTE: No operational data is ever seeded here. Migrations are strictly
   // schema-only (additive DDL). Fresh deployments start with zero events, and
   // real operational rows are created exclusively through admin/consumer APIs.
+  // Normalized internal notes for report/support operational workflows.
+  `CREATE TABLE IF NOT EXISTS admin_operational_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_type TEXT NOT NULL,
+    subject_id UUID NOT NULL,
+    author_admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS admin_operational_notes_subject_idx
+     ON admin_operational_notes (subject_type, subject_id, created_at)`,
 ];
 
 /**
@@ -823,4 +848,25 @@ export async function runMigrationsWithDatabase(
   if (legacyRemoved > 0) {
     logger.warn({ count: legacyRemoved }, "Removed legacy fabricated seed events");
   }
+
+  // Normalize legacy user_reports status vocabulary to canonical task-285 values.
+  // Idempotent: only touches rows that still carry the old trust-route statuses.
+  //   "new"         → "open"      (schema default before reconciliation)
+  //   "under_review" → "in_review" (trust-route assignment auto-status)
+  //   "actioned"    → "resolved"  (trust-route suspension outcome)
+  // The ALTER TABLE default is already changed in the DDL but ADD COLUMN IF NOT
+  // EXISTS cannot retroactively change an existing column default, so we run an
+  // explicit UPDATE on first startup after the code change and on subsequent
+  // restarts (zero rows matched = no-op cost).
+  await migrationDb.execute(sql`
+    UPDATE user_reports
+    SET status = CASE status
+      WHEN 'new'          THEN 'open'
+      WHEN 'under_review' THEN 'in_review'
+      WHEN 'actioned'     THEN 'resolved'
+    END
+    WHERE status IN ('new', 'under_review', 'actioned')
+  `);
+
+  logger.info("Legacy user_reports status values normalized");
 }

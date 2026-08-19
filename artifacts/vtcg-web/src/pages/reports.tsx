@@ -1,352 +1,528 @@
-import { useState, useEffect } from "react";
-import { Flag, X, ShieldAlert } from "lucide-react";
-import { useReports, useReport, useAssignReport, useReportNotes, useReportOutcome, useSuspendUser } from "@/hooks/use-reports";
+import { useState, useEffect, useCallback } from "react";
+import { Flag, X, ChevronLeft, ChevronRight, MessageSquare, CheckCircle, ShieldAlert, UserPlus, Clock } from "lucide-react";
+import { apiFetch, apiPatch, UnauthorizedError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
-import { ErrorBanner, fmtDate } from "@/components/admin-ui";
+import { fmtDate, ErrorBanner } from "@/components/admin-ui";
+import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 
+interface OperationalNote {
+  id: string;
+  authorAdminId: string;
+  authorDisplayName: string | null;
+  body: string;
+  createdAt: string;
+}
+
+interface ReportRow {
+  id: string;
+  reason: string;
+  note?: string | null;
+  createdAt: string;
+  reporterUserId: string;
+  reportedUserId: string;
+  reporterUsername?: string | null;
+  reporterDisplayName?: string | null;
+  reportedUsername?: string | null;
+  reportedDisplayName?: string | null;
+  status: string;
+  assignedAdminId?: string | null;
+  assignedAdminDisplayName?: string | null;
+  resolution?: string | null;
+  resolutionReason?: string | null;
+  escalatedAt?: string | null;
+  escalationReason?: string | null;
+  firstResponseAt?: string | null;
+  resolvedAt?: string | null;
+  notes?: OperationalNote[];
+}
+
 export default function ReportsPage() {
-  const { auth } = useAuth();
-  const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [assignFilter, setAssignFilter] = useState("");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { logout } = useAuth();
+  const [locationStr] = useLocation();
+  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReportRow | null>(null);
 
-  const canManage = auth?.permissions.includes("reports:moderate");
-  const canManageUsers = auth?.permissions.includes("users:manage");
+  const params = new URLSearchParams(window.location.search);
+  const [statusFilter, setStatusFilter] = useState(params.get("status") || "all");
+  const [search, setSearch] = useState(params.get("q") || "");
+  const [page, setPage] = useState(parseInt(params.get("page") || "1", 10));
+  const LIMIT = 20;
 
-  const { data: reportsData, isLoading: loadingReports, error: reportsError } = useReports({
-    page, limit: 20, search: debouncedSearch, status: statusFilter, assignedTo: assignFilter
-  });
+  const updateUrl = useCallback((s: string, q: string, p: number, id?: string | null) => {
+    const urlParams = new URLSearchParams();
+    if (s !== "all") urlParams.set("status", s);
+    if (q) urlParams.set("q", q);
+    if (p > 1) urlParams.set("page", String(p));
+    if (id) urlParams.set("id", id);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setDebouncedSearch(search);
+    const newSearch = urlParams.toString();
+    const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+    window.history.replaceState(null, "", newUrl);
+  }, []);
+
+  const load = useCallback((s: string, q: string, p: number, id?: string | null) => {
+    setLoading(true);
+    setError(null);
+    const qParams = new URLSearchParams({ page: String(p), limit: String(LIMIT) });
+    if (s !== "all") qParams.set("status", s);
+    if (q) qParams.set("q", q);
+    const requestedId =
+      id === undefined ? new URLSearchParams(window.location.search).get("id") : id;
+    if (requestedId) qParams.set("id", requestedId);
+
+    apiFetch<{ reports: ReportRow[]; total?: number; page?: number }>(`/admin/reports?${qParams}`)
+      .then((data) => {
+        setReports(data.reports || []);
+        setTotal(data.total || data.reports?.length || 0);
+      })
+      .catch((err) => {
+        if (err instanceof UnauthorizedError) logout();
+        else setError("Failed to load reports.");
+      })
+      .finally(() => setLoading(false));
+  }, [logout]);
+
+  useEffect(() => {
+    const currentParams = new URLSearchParams(window.location.search);
+    const specificId = currentParams.get("id");
+
+    if (specificId && !selected) {
+      // Open specifically requested report
+      const found = reports.find(r => r.id === specificId);
+      if (found) setSelected(found);
+    }
+  }, [reports, selected]);
+
+  useEffect(() => {
+    load(statusFilter, search, page);
+  }, [load, statusFilter, search, page]);
+
+  function handleStatusChange(val: string) {
+    setStatusFilter(val);
     setPage(1);
-  };
+    updateUrl(val, search, 1);
+  }
+
+  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setSearch(e.target.value);
+    setPage(1);
+    updateUrl(statusFilter, e.target.value, 1);
+  }
+
+  function handlePageChange(next: number) {
+    setPage(next);
+    updateUrl(statusFilter, search, next);
+  }
+
+  function reloadQueue() {
+    load(statusFilter, search, page, null);
+  }
+
+  function openReport(report: ReportRow) {
+    setSelected(report);
+    updateUrl(statusFilter, search, page, report.id);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto w-full">
-      <h1 className="font-display text-2xl font-bold mb-1">Reports</h1>
-      <p className="text-sm text-muted-foreground mb-8">Investigate user reports and take moderation action.</p>
-
-      {reportsError && <ErrorBanner message="Failed to load reports." />}
-
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <form onSubmit={handleSearch} className="flex-1 flex gap-2 flex-wrap sm:flex-nowrap">
-          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none">
-            <option value="">All Statuses</option>
-            <option value="new">New</option>
-            <option value="under_review">Under Review</option>
-            <option value="actioned">Actioned</option>
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-bold mb-1">Reports</h1>
+          <p className="text-sm text-muted-foreground">
+            {total > 0 ? `${total} reported items` : "Operational incident queue"}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Search reports..."
+            value={search}
+            onChange={handleSearchChange}
+            className="bg-card border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary transition-colors min-w-[200px]"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => handleStatusChange(e.target.value)}
+            className="bg-card border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary transition-colors min-w-[150px]"
+          >
+            <option value="all">All Statuses</option>
+            <option value="unresolved">All Unresolved</option>
+            <option value="open">Open</option>
+            <option value="in_review">In Review</option>
+            <option value="resolved">Resolved</option>
             <option value="dismissed">Dismissed</option>
             <option value="escalated">Escalated</option>
           </select>
-          <select value={assignFilter} onChange={e => { setAssignFilter(e.target.value); setPage(1); }} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none">
-            <option value="">All Assignments</option>
-            <option value="me">Assigned to me</option>
-            <option value="unassigned">Unassigned</option>
-          </select>
-          <input type="text" placeholder="Search usernames..." value={search} onChange={e => setSearch(e.target.value)} className="w-full sm:flex-1 bg-card border border-border rounded-lg px-4 py-2 text-sm outline-none focus:border-primary" />
-          <button type="submit" className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold w-full sm:w-auto">Search</button>
-        </form>
+        </div>
       </div>
 
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="hidden sm:grid grid-cols-[1.5fr_1.5fr_1fr_120px_120px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
-          <span>REPORTER</span><span>REPORTED USER</span><span>REASON</span><span>DATE</span><span>STATUS</span>
-        </div>
+      {error && <ErrorBanner message={error} />}
 
-        {loadingReports ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex flex-col sm:grid sm:grid-cols-[1.5fr_1.5fr_1fr_120px_120px] gap-4 px-5 py-4 border-b border-border animate-pulse">
-              {Array.from({ length: 5 }).map((_, j) => <div key={j} className="h-3 bg-border rounded w-full" />)}
-            </div>
-          ))
-        ) : reportsData?.reports?.length === 0 ? (
-          <div className="py-16 text-center">
-            <Flag size={32} className="text-muted-foreground mx-auto mb-3 opacity-50" />
-            <p className="text-sm text-muted-foreground">No reports match your filters.</p>
+      <div className="hidden overflow-hidden rounded-xl border border-border bg-card md:block mb-4">
+        <div>
+          <div className="grid grid-cols-[1.5fr_1.5fr_1fr_120px_100px] gap-4 px-5 py-3 border-b border-border text-xs font-bold text-muted-foreground tracking-wider">
+            <span>REPORTER</span><span>REPORTED USER</span><span>REASON</span><span>DATE</span><span>STATUS</span>
           </div>
-        ) : (
-          reportsData?.reports?.map((r: any) => (
-            <button key={r.id} onClick={() => setSelectedId(r.id)} className="w-full flex flex-col sm:grid sm:grid-cols-[1.5fr_1.5fr_1fr_120px_120px] gap-2 sm:gap-4 px-5 py-4 sm:py-3.5 border-b border-border hover:bg-background transition-colors text-left sm:items-center">
-              <div className="text-sm font-medium truncate">
-                <span className="sm:hidden font-bold text-muted-foreground text-xs mr-2 uppercase">Reporter:</span>
-                {r.reporterDisplayName ?? r.reporterUserId.slice(0, 8)}
-                {r.reporterUsername && <span className="text-muted-foreground ml-1">@{r.reporterUsername}</span>}
+
+          {loading ? (
+            Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="grid grid-cols-[1.5fr_1.5fr_1fr_120px_100px] gap-4 px-5 py-4 border-b border-border animate-pulse">
+                {Array.from({ length: 5 }).map((_, j) => <div key={j} className="h-3 bg-border rounded w-24" />)}
               </div>
-              <div className="text-sm font-medium truncate">
-                <span className="sm:hidden font-bold text-muted-foreground text-xs mr-2 uppercase">Reported:</span>
-                {r.reportedDisplayName ?? r.reportedUserId.slice(0, 8)}
-                {r.reportedUsername && <span className="text-muted-foreground ml-1">@{r.reportedUsername}</span>}
-              </div>
-              <div className="text-sm text-muted-foreground capitalize truncate">
-                <span className="sm:hidden font-bold text-muted-foreground text-xs mr-2 uppercase">Reason:</span>
-                {r.reason}
-              </div>
-              <div className="text-sm text-muted-foreground tabular-nums">
-                <span className="sm:hidden font-bold text-muted-foreground text-xs mr-2 uppercase">Date:</span>
-                {fmtDate(r.createdAt)}
-              </div>
-              <div className="flex items-center gap-2 mt-2 sm:mt-0">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase truncate ${
-                  r.status === 'new' ? 'bg-primary/20 text-primary border border-primary/30' :
-                  r.status === 'actioned' ? 'bg-positive/20 text-positive border border-positive/30' :
-                  r.status === 'escalated' ? 'bg-negative/20 text-negative border border-negative/30' :
-                  'bg-amber-500/20 text-amber-500 border border-amber-500/30'
-                }`}>
-                  {r.status}
-                </span>
-                {r.assignedAdminId === auth?.admin.id && <span className="w-2 h-2 rounded-full bg-primary" title="Assigned to you" />}
-              </div>
-            </button>
-          ))
-        )}
-        <div className="p-4 bg-background flex justify-between">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="text-xs font-bold disabled:opacity-50">PREV</button>
-          <button onClick={() => setPage(p => p + 1)} disabled={reportsData?.reports?.length < 20} className="text-xs font-bold disabled:opacity-50">NEXT</button>
+            ))
+          ) : reports.length === 0 ? (
+            <div className="py-16 text-center">
+              <Flag size={32} className="text-muted-foreground mx-auto mb-3 opacity-50" />
+              <p className="text-sm text-muted-foreground">
+                {statusFilter !== "all" || search ? "No reports match." : "No reports yet."}
+              </p>
+            </div>
+          ) : (
+            reports.map((r) => {
+              const status = r.status || "open";
+              return (
+                <button key={r.id} onClick={() => openReport(r)} className="w-full grid grid-cols-[1.5fr_1.5fr_1fr_120px_100px] gap-4 px-5 py-3.5 border-b border-border hover:bg-background transition-colors text-left items-center">
+                  <div className="text-sm font-medium truncate">
+                    {r.reporterDisplayName ?? r.reporterUserId.slice(0, 8)}
+                    {r.reporterUsername && <span className="text-muted-foreground ml-1">@{r.reporterUsername}</span>}
+                  </div>
+                  <div className="text-sm font-medium truncate">
+                    {r.reportedDisplayName ?? r.reportedUserId.slice(0, 8)}
+                    {r.reportedUsername && <span className="text-muted-foreground ml-1">@{r.reportedUsername}</span>}
+                  </div>
+                  <div className="text-sm text-muted-foreground capitalize truncate">{r.reason}</div>
+                  <div className="text-sm text-muted-foreground tabular-nums">{fmtDate(r.createdAt)}</div>
+                  <ReportStatusBadge status={status} />
+                </button>
+              );
+            })
+          )}
         </div>
       </div>
 
-      {selectedId && <ReportDetailModal reportId={selectedId} onClose={() => setSelectedId(null)} currentAdminId={auth?.admin.id!} canManage={!!canManage} canManageUsers={!!canManageUsers} />}
+      <div className="space-y-3 md:hidden mb-4">
+        {loading ? (
+          Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl border border-border bg-card" />)
+        ) : reports.length === 0 ? (
+          <div className="rounded-xl border border-border bg-card py-14 text-center">
+            <Flag size={30} className="mx-auto mb-3 text-muted-foreground opacity-50" />
+            <p className="text-sm text-muted-foreground">No reports yet.</p>
+          </div>
+        ) : reports.map((report) => (
+          <button key={report.id} onClick={() => openReport(report)} className="w-full rounded-xl border border-border bg-card p-4 text-left">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Reported user</div>
+                <div className="truncate text-sm font-bold">{report.reportedDisplayName ?? report.reportedUserId.slice(0, 8)}</div>
+                {report.reportedUsername && <div className="truncate text-xs text-muted-foreground">@{report.reportedUsername}</div>}
+              </div>
+              <ReportStatusBadge status={report.status || "open"} />
+            </div>
+            <div className="mt-3 flex items-end justify-between gap-3 border-t border-border pt-3">
+              <div>
+                <div className="text-xs capitalize">{report.reason}</div>
+                <div className="text-xs text-muted-foreground">By {report.reporterDisplayName ?? report.reporterUserId.slice(0, 8)}</div>
+              </div>
+              <div className="shrink-0 text-xs text-muted-foreground">{fmtDate(report.createdAt)}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {!loading && total > LIMIT && (
+        <div className="flex flex-col sm:flex-row items-center justify-between text-sm gap-4">
+          <span className="text-muted-foreground">Page {page} of {totalPages} · {total} reports</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => handlePageChange(page - 1)} disabled={page <= 1} className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background transition-colors">
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <button onClick={() => handlePageChange(page + 1)} disabled={page >= totalPages} className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background transition-colors">
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selected && (
+        <ReportDrawer
+          report={selected}
+          onClose={() => {
+            setSelected(null);
+            // clear ?id= from url
+            const currentParams = new URLSearchParams(window.location.search);
+            if (currentParams.has("id")) {
+              currentParams.delete("id");
+              const newSearch = currentParams.toString();
+              const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+              window.history.replaceState(null, "", newUrl);
+              load(statusFilter, search, page, null);
+            }
+          }}
+          onReloadQueue={reloadQueue}
+        />
+      )}
     </div>
   );
 }
+function ReportStatusBadge({ status }: { status: string }) {
+  const norm = status.toLowerCase();
+  if (norm === "resolved") {
+    return <span className="text-[10px] font-bold bg-positive/10 text-positive border border-positive/30 px-2 py-0.5 rounded uppercase tracking-wider inline-flex w-fit">RESOLVED</span>;
+  }
+  if (norm === "in_review") {
+    return <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/30 px-2 py-0.5 rounded uppercase tracking-wider inline-flex w-fit">IN REVIEW</span>;
+  }
+  if (norm === "dismissed") {
+    return <span className="text-[10px] font-bold bg-background text-muted-foreground border border-border px-2 py-0.5 rounded uppercase tracking-wider inline-flex w-fit">DISMISSED</span>;
+  }
+  if (norm === "escalated") {
+    return <span className="text-[10px] font-bold bg-negative/10 text-negative border border-negative/30 px-2 py-0.5 rounded uppercase tracking-wider inline-flex w-fit">ESCALATED</span>;
+  }
+  return <span className="text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/30 px-2 py-0.5 rounded uppercase tracking-wider inline-flex w-fit">OPEN</span>;
+}
 
-function ReportDetailModal({ reportId, onClose, currentAdminId, canManage, canManageUsers }: { reportId: string, onClose: () => void, currentAdminId: string, canManage: boolean, canManageUsers: boolean }) {
-  const { data, isLoading } = useReport(reportId);
-  const assign = useAssignReport();
-  const notes = useReportNotes();
-  const outcome = useReportOutcome();
-  const suspend = useSuspendUser();
+function ReportDrawer({ report, onClose, onReloadQueue }: { report: ReportRow; onClose: () => void; onReloadQueue: () => void }) {
+  const { auth, logout } = useAuth();
   const { toast } = useToast();
 
-  const [newNote, setNewNote] = useState("");
-  const [noteReason, setNoteReason] = useState("");
-  const [assignmentReason, setAssignmentReason] = useState("");
+  const [status, setStatus] = useState(report.status || "open");
+  const [note, setNote] = useState("");
+  const [resolution, setResolution] = useState(report.resolution || "");
+  const [resolutionReason, setResolutionReason] = useState(report.resolutionReason || "");
+  const [escalationReason, setEscalationReason] = useState(report.escalationReason || "");
+  const [assignedAdminId, setAssignedAdminId] = useState(report.assignedAdminId || "");
 
-  const [outcomeReason, setOutcomeReason] = useState("");
-  const [suspendReason, setSuspendReason] = useState("");
-  const [suspendConfirm, setSuspendConfirm] = useState("");
-  const [showSuspend, setShowSuspend] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const canModerate = Boolean(auth?.permissions.includes("reports:moderate"));
 
-  if (isLoading || !data) return null;
+  const isTerminal = status === "resolved" || status === "dismissed";
+  const isEscalated = status === "escalated";
 
-  const { report, notes: existingNotes, previousReportCount, relatedBlocks, statusHistory = [] } = data;
-  const isAssignedToMe = report.assignedAdminId === currentAdminId;
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (isTerminal && (!resolution || !resolutionReason)) {
+      toast({ title: "Validation Error", description: "Terminal states require a resolution and reason.", variant: "destructive" });
+      return;
+    }
+    if (isEscalated && !escalationReason) {
+      toast({ title: "Validation Error", description: "Escalated states require a reason.", variant: "destructive" });
+      return;
+    }
 
-  const handleAssign = () => {
-    const reason = assignmentReason.trim();
-    if (!reason) return;
+    setSaving(true);
+    try {
+      await apiPatch<{ id: string; status: string; notes: any[] }>(
+        `/admin/reports/${report.id}`,
+        {
+          status,
+          note: note || undefined,
+          assignedAdminId: assignedAdminId || null,
+          resolution: isTerminal ? resolution : undefined,
+          resolutionReason: isTerminal ? resolutionReason : undefined,
+          escalationReason: isEscalated ? escalationReason : undefined,
+        }
+      );
+      toast({ title: "Report updated", description: "Changes saved successfully." });
+      onReloadQueue();
+      onClose();
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logout();
+      else toast({ title: "Error", description: "Failed to update report.", variant: "destructive" });
+      setSaving(false);
+    }
+  }
 
-    assign.mutate({ id: report.id, assignTo: isAssignedToMe ? null : 'me', reason }, {
-      onSuccess: () => {
-        setAssignmentReason("");
-        toast({ title: isAssignedToMe ? "Unassigned report" : "Assigned to you" });
-      },
-      onError: (err: any) => toast({ title: "Failed to update assignment", description: err.message, variant: "destructive" })
-    });
-  };
+  function handleSelfAssign() {
+    setAssignedAdminId(auth?.admin.id || "");
+  }
 
-  const handleNote = () => {
-    notes.mutate({ id: report.id, note: newNote, reason: noteReason }, {
-      onSuccess: () => {
-        toast({ title: "Note added" });
-        setNewNote("");
-        setNoteReason("");
-      },
-      onError: (err: any) => toast({ title: "Failed to add note", description: err.message, variant: "destructive" })
-    });
-  };
-
-  const handleOutcome = (status: string) => {
-    outcome.mutate({ id: report.id, status, reason: outcomeReason }, {
-      onSuccess: () => {
-        toast({ title: "Report updated" });
-        setOutcomeReason("");
-      },
-      onError: (err: any) => toast({ title: "Failed to update report", description: err.message, variant: "destructive" })
-    });
-  };
-
-  const handleSuspend = () => {
-    suspend.mutate({ id: report.id, reason: suspendReason, confirmation: suspendConfirm }, {
-      onSuccess: () => {
-        toast({ title: "User suspended and report actioned" });
-        setShowSuspend(false);
-        setSuspendReason("");
-        setSuspendConfirm("");
-      },
-      onError: (err: any) => toast({ title: "Failed to suspend user", description: err.message, variant: "destructive" })
-    });
-  };
+  function handleUnassign() {
+    setAssignedAdminId("");
+  }
 
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] max-w-2xl bg-background border border-border rounded-2xl shadow-2xl z-50 p-6 flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5 shrink-0 border-b border-border pb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-muted-foreground tracking-wider">REPORT DETAIL</span>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${report.status === 'actioned' ? 'bg-positive/20 text-positive' : 'bg-primary/20 text-primary'}`}>{report.status}</span>
-          </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
+      <div className="fixed right-0 top-0 bottom-0 w-full max-w-[480px] bg-background border-l border-border z-50 flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-background z-10 shrink-0">
+          <span className="text-xs font-bold text-muted-foreground tracking-wider flex items-center gap-2">
+            <Flag size={14} /> REPORT DETAIL
+          </span>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors p-2 -mr-2">
+            <X size={18} />
+          </button>
         </div>
 
-        <div className="overflow-y-auto pr-2 space-y-6 flex-1">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="bg-card border border-border rounded-xl p-4">
-              <div className="text-[10px] font-bold text-muted-foreground uppercase mb-2">Reporter</div>
-              <div className="font-mono text-xs">{report.reporterUserId}</div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Assignee:</span>
+              <span className="text-sm font-semibold">
+                {assignedAdminId === auth?.admin.id
+                  ? "You"
+                  : assignedAdminId
+                    ? report.assignedAdminDisplayName || "Assigned administrator"
+                    : "Unassigned"}
+              </span>
             </div>
-            <div className="bg-card border border-negative/30 rounded-xl p-4">
-              <div className="text-[10px] font-bold text-negative uppercase mb-2">Reported User</div>
-              <div className="font-mono text-xs text-negative mb-2">{report.reportedUserId}</div>
-              <div className="flex gap-2">
-                <span className="text-[10px] font-bold bg-background border border-border px-2 py-1 rounded-md">{previousReportCount} previous reports</span>
-                <span className="text-[10px] font-bold bg-background border border-border px-2 py-1 rounded-md">{relatedBlocks.length} related blocks</span>
+            {canModerate && (assignedAdminId ? (
+               <button onClick={handleUnassign} className="text-xs bg-card border border-border px-2 py-1 rounded hover:bg-background">Unassign</button>
+            ) : (
+               <button onClick={handleSelfAssign} className="text-xs bg-primary/10 text-primary border border-primary/20 px-2 py-1 rounded hover:bg-primary/20 flex items-center gap-1"><UserPlus size={12} /> Assign to me</button>
+             ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Reporter</div>
+              <div className="text-sm font-bold truncate">{report.reporterDisplayName ?? "Unknown"}</div>
+              {report.reporterUsername && <div className="text-xs text-muted-foreground truncate">@{report.reporterUsername}</div>}
+              <div className="text-[10px] text-muted-foreground/60 font-mono mt-1 truncate">{report.reporterUserId}</div>
+            </div>
+            <div className="bg-negative/5 border border-negative/20 rounded-xl p-4">
+              <div className="text-[10px] font-bold text-negative uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <ShieldAlert size={12} /> Reported User
               </div>
+              <div className="text-sm font-bold truncate">{report.reportedDisplayName ?? "Unknown"}</div>
+              {report.reportedUsername && <div className="text-xs text-muted-foreground truncate">@{report.reportedUsername}</div>}
+              <div className="text-[10px] text-muted-foreground/60 font-mono mt-1 truncate">{report.reportedUserId}</div>
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-4">
-            <div className="text-[10px] font-bold text-muted-foreground uppercase mb-2">Report Context</div>
-            <div className="text-sm font-bold uppercase mb-2 inline-flex bg-background px-2 py-1 rounded border border-border">{report.reason}</div>
-            {report.note && <div className="text-sm bg-background p-3 rounded-md border border-border mt-2">{report.note}</div>}
-            {report.evidenceRefs?.length > 0 && (
-              <div className="mt-4">
-                <div className="text-[10px] font-bold text-muted-foreground uppercase mb-2">Evidence References</div>
-                <div className="space-y-2">
-                  {report.evidenceRefs.map((reference: string, index: number) => {
-                    const isUrl = /^https?:\/\//i.test(reference);
-                    return isUrl ? (
-                      <a
-                        key={`${reference}-${index}`}
-                        href={reference}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block break-all rounded-md border border-border bg-background px-3 py-2 text-xs text-primary hover:underline"
-                      >
-                        {reference}
-                      </a>
-                    ) : (
-                      <div key={`${reference}-${index}`} className="break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
-                        {reference}
-                      </div>
-                    );
-                  })}
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Reason</div>
+                <div className="text-sm font-semibold capitalize inline-flex px-3 py-1.5 bg-background border border-border rounded-lg">{report.reason}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Submitted</div>
+                <div className="text-sm font-medium">{new Date(report.createdAt).toLocaleString()}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border mt-2">
+              <div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1"><Clock size={10} /> First Response</div>
+                <div className="text-xs">{report.firstResponseAt ? new Date(report.firstResponseAt).toLocaleString() : "None"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1"><Clock size={10} /> Resolved</div>
+                <div className="text-xs">{report.resolvedAt ? new Date(report.resolvedAt).toLocaleString() : "None"}</div>
+              </div>
+            </div>
+
+            {report.note && (
+              <div className="pt-2 border-t border-border mt-2">
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <MessageSquare size={12} /> User Context Note
                 </div>
+                <div className="text-sm bg-background border border-border rounded-lg p-3 whitespace-pre-wrap">{report.note}</div>
               </div>
             )}
           </div>
 
-          <div className="space-y-4">
-            <h4 className="text-xs font-bold text-muted-foreground tracking-wider">MODERATION WORKFLOW</h4>
+          {canModerate ? (
+          <form onSubmit={handleSave} className="bg-card border border-border rounded-xl p-5 space-y-4">
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">RESOLUTION WORKFLOW</div>
 
-            <div className="flex flex-col gap-4 bg-card border border-border p-4 rounded-xl">
-              <div>
-                <div className="text-sm font-bold">Assignment</div>
-                <div className="text-xs text-muted-foreground">{report.assignedAdminId ? (isAssignedToMe ? "Assigned to you" : `Assigned to ${report.assignedAdminId}`) : "Unassigned"}</div>
-              </div>
-              {canManage && (
-                <div className="flex flex-col sm:flex-row gap-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors"
+              >
+                <option value="open">Open</option>
+                <option value="in_review">In Review</option>
+                <option value="resolved">Resolved</option>
+                <option value="dismissed">Dismissed</option>
+                <option value="escalated">Escalated</option>
+              </select>
+            </div>
+
+            {isTerminal && (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Resolution</label>
                   <input
                     type="text"
-                    value={assignmentReason}
-                    onChange={e => setAssignmentReason(e.target.value)}
-                    placeholder={`Business reason to ${isAssignedToMe ? "unassign" : "take ownership"}`}
-                    className="min-w-0 flex-1 text-sm bg-background border border-border rounded-lg px-3 py-2 outline-none focus:border-primary"
+                    value={resolution}
+                    onChange={(e) => setResolution(e.target.value)}
+                    placeholder="E.g., Suspended user, removed content..."
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary"
                   />
-                  <button
-                    onClick={handleAssign}
-                    disabled={!assignmentReason.trim() || assign.isPending}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-50 ${isAssignedToMe ? 'border border-border hover:bg-muted' : 'bg-primary text-white'}`}
-                  >
-                    {isAssignedToMe ? "Unassign" : "Assign to me"}
-                  </button>
                 </div>
-              )}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Resolution Reason</label>
+                  <textarea
+                    value={resolutionReason}
+                    onChange={(e) => setResolutionReason(e.target.value)}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary min-h-[60px]"
+                  />
+                </div>
+              </>
+            )}
+
+            {isEscalated && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Escalation Reason</label>
+                <textarea
+                  value={escalationReason}
+                  onChange={(e) => setEscalationReason(e.target.value)}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary min-h-[60px]"
+                />
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">Add Internal Note (Optional)</label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Log actions taken or context for other admins..."
+                className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-colors min-h-[60px] resize-none"
+              />
             </div>
 
-            {canManage && (
-              <div className="bg-card border border-border p-4 rounded-xl space-y-4">
-                <div className="text-sm font-bold">Notes & History</div>
-                {statusHistory.length > 0 && (
-                  <div className="mb-4">
-                    <div className="text-xs font-bold mb-2">Status History</div>
-                    <div className="space-y-2">
-                      {statusHistory.map((h: any) => (
-                        <div key={h.id} className="text-xs flex gap-2">
-                          <span className="text-muted-foreground tabular-nums whitespace-nowrap">{fmtDate(h.createdAt).split(',')[0]}</span>
-                          <span>
-                            <span className="font-bold uppercase">{h.fromStatus || 'none'} → {h.toStatus}</span>
-                            {h.reason && <span className="text-muted-foreground ml-1">({h.reason})</span>}
-                          </span>
-                        </div>
-                      ))}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? "Saving…" : <><CheckCircle size={15} /> Update Report</>}
+              </button>
+            </div>
+          </form>
+          ) : (
+            <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+              Your administrator permissions allow viewing reports, not moderating them.
+            </div>
+          )}
+
+          {report.notes && report.notes.length > 0 && (
+            <div className="space-y-3">
+              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Note History</div>
+              <div className="space-y-2">
+                {report.notes.map(n => (
+                  <div key={n.id} className="bg-card border border-border rounded-lg p-3 text-sm">
+                    <div className="flex justify-between items-center mb-1 text-xs text-muted-foreground">
+                      <span className="font-semibold">{n.authorDisplayName || "System"}</span>
+                      <span>{new Date(n.createdAt).toLocaleString()}</span>
                     </div>
+                    <div className="whitespace-pre-wrap">{n.body}</div>
                   </div>
-                )}
-
-                {existingNotes.length > 0 && (
-                  <div className="space-y-2 mb-4">
-                    {existingNotes.map((n: any) => (
-                      <div key={n.id} className="text-xs bg-background border border-border p-2 rounded-md">
-                        <span className="font-mono text-muted-foreground mr-2">{n.adminId.slice(0,8)}</span> {n.note}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  <input type="text" value={newNote} onChange={e => setNewNote(e.target.value)} placeholder="Add a private note..." className="flex-1 text-sm bg-background border border-border rounded-lg px-3 py-2 outline-none" />
-                  <input type="text" value={noteReason} onChange={e => setNoteReason(e.target.value)} placeholder="Business reason for note" className="flex-1 text-sm bg-background border border-border rounded-lg px-3 py-2 outline-none" />
-                  <button onClick={handleNote} disabled={!newNote || !noteReason || notes.isPending} className="self-end px-4 py-2 bg-secondary text-secondary-foreground text-xs font-bold rounded-lg disabled:opacity-50">Save Note</button>
-                </div>
+                ))}
               </div>
-            )}
-
-            {canManage && (
-              <div className="bg-card border border-border p-4 rounded-xl space-y-4">
-                <div className="text-sm font-bold">Resolution</div>
-                <textarea
-                  value={outcomeReason}
-                  onChange={e => setOutcomeReason(e.target.value)}
-                  placeholder="Reason for decision..."
-                  className="w-full text-sm bg-background border border-border rounded-lg px-3 py-2 outline-none min-h-[60px]"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={() => handleOutcome('dismissed')} disabled={!outcomeReason || outcome.isPending} className="px-4 py-2 border border-border text-xs font-bold rounded-lg hover:bg-muted disabled:opacity-50">Dismiss</button>
-                  <button onClick={() => handleOutcome('actioned')} disabled={!outcomeReason || outcome.isPending} className="px-4 py-2 bg-positive text-white text-xs font-bold rounded-lg disabled:opacity-50">Mark Actioned</button>
-                  <button onClick={() => handleOutcome('escalated')} disabled={!outcomeReason || outcome.isPending} className="px-4 py-2 bg-amber-500 text-white text-xs font-bold rounded-lg disabled:opacity-50">Escalate</button>
-                </div>
-              </div>
-            )}
-
-            {canManage && canManageUsers && (
-              <div className="border border-negative/30 bg-negative/5 p-4 rounded-xl">
-                <button onClick={() => setShowSuspend(!showSuspend)} className="text-sm font-bold text-negative flex items-center gap-2">
-                  <ShieldAlert size={16} /> Suspend Reported User
-                </button>
-                {showSuspend && (
-                  <div className="mt-4 space-y-3">
-                    <input type="text" value={suspendReason} onChange={e => setSuspendReason(e.target.value)} placeholder="Reason for suspension..." className="w-full text-sm bg-background border border-border rounded-lg px-3 py-2 outline-none" />
-                    <input type="text" value={suspendConfirm} onChange={e => setSuspendConfirm(e.target.value)} placeholder="Type SUSPEND to confirm" className="w-full text-sm bg-background border border-negative/50 rounded-lg px-3 py-2 outline-none focus:border-negative" />
-                    <button
-                      onClick={handleSuspend}
-                      disabled={suspend.isPending || !suspendReason || suspendConfirm !== 'SUSPEND'}
-                      className="w-full py-2 bg-negative text-white text-xs font-bold rounded-lg disabled:opacity-50"
-                    >
-                      Suspend User & Close Report
-                    </button>
-                    <p className="text-[10px] text-muted-foreground text-center">Requires recent password confirmation.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </>

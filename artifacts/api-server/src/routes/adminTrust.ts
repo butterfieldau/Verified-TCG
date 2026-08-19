@@ -6,7 +6,7 @@
  *
  * Routes covered:
  *  GET  /admin/operations/summary
- *  GET  /admin/activity
+ *  GET  /admin/operations/activity
  *  GET  /admin/community/posts
  *  GET  /admin/community/blocks
  *  POST /admin/community/posts/:id/moderate

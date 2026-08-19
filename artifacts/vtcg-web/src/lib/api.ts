@@ -79,7 +79,7 @@ export function apiDelete<T>(path: string, body?: unknown): Promise<T> {
     path,
     {
       method: "DELETE",
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
     true,
   );

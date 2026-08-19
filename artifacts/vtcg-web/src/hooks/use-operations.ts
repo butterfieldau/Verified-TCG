@@ -14,7 +14,7 @@ export function useActivity(params: { page: number; limit: number; category?: st
     queryKey: ['activity', params],
     queryFn: () => {
       const q = new URLSearchParams(Object.entries(params).filter(([_, v]) => v) as any).toString();
-      return apiFetch<any>(`/admin/activity?${q}`);
+      return apiFetch<any>(`/admin/operations/activity?${q}`);
     },
     refetchInterval: 15000,
   });
