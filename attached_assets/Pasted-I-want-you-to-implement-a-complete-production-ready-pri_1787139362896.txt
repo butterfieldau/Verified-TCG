@@ -1,0 +1,1450 @@
+I want you to implement a complete production-ready pricing system into the existing **Verified TCG** application.
+
+Do not simply add an API call and display a price.
+
+Build this as the foundation of a proprietary **Verified TCG Pricing Engine** that can later combine PriceCharting, eBay sold listings, JustTCG, PSA population data, CGC, BGS, TAG and other providers.
+
+The first live pricing provider to implement now is:
+
+**PriceCharting**
+
+Official documentation:
+https://www.pricecharting.com/api-documentation
+
+---
+
+# IMPORTANT: WORK WITH THE EXISTING APP
+
+Before modifying anything:
+
+1. Inspect the entire existing Verified TCG repository.
+2. Understand the existing architecture, screens, database, API server, authentication, collection system, card detail pages and design system.
+3. Reuse the existing components and architecture wherever appropriate.
+4. Do not rebuild the app from scratch.
+5. Do not remove existing functionality.
+6. Do not break scanning, collections, wishlist, for trade, for sale, Event Mode, authentication or navigation.
+7. Keep the existing Verified TCG brand and overall visual direction.
+8. Improve the Card Details / Pricing experience where required.
+
+The repository already contains an API/server layer. External pricing APIs must be accessed through our backend/server.
+
+**Never expose PriceCharting credentials inside the Expo/mobile client.**
+
+---
+
+# PHASE 1 — PRICECHARTING API
+
+Integrate the PriceCharting Prices API.
+
+Base URL:
+
+https://www.pricecharting.com
+
+The main endpoints we need are:
+
+GET /api/product
+
+and
+
+GET /api/products
+
+Authentication is provided using:
+
+`t=PRICECHARTING_TOKEN`
+
+The token MUST come from a Replit Secret/environment variable:
+
+`PRICECHARTING_TOKEN`
+
+Never:
+
+* hard-code the token
+* commit it to GitHub
+* expose it to the client
+* place it in Expo public environment variables
+* return it through our API
+* log it
+
+If the secret does not exist yet, build the entire implementation anyway and clearly tell me at the end:
+
+**"Add PRICECHARTING_TOKEN to Replit Secrets to activate live PriceCharting pricing."**
+
+Do not use fake production prices if the token is missing.
+
+---
+
+# PRICECHARTING IMPORTANT RULES
+
+PriceCharting prices are returned as integer numbers of cents.
+
+Example:
+
+`17244`
+
+means:
+
+`$172.44`
+
+Create proper conversion utilities so this is handled consistently.
+
+PriceCharting limits the API to approximately:
+
+**1 API request per second**
+
+Respect this limit.
+
+Implement:
+
+* server-side request queue
+* throttling
+* caching
+* retries for temporary failures
+* timeout handling
+* useful error states
+
+Do NOT call PriceCharting every time a user opens the same card.
+
+---
+
+# PRICECHARTING CARD PRICE FIELDS
+
+For trading cards, map these PriceCharting fields properly:
+
+`loose-price`
+= Ungraded / Raw
+
+`cib-price`
+= Grade 7 / 7.5
+
+`new-price`
+= Grade 8 / 8.5
+
+`graded-price`
+= Grade 9
+
+`box-only-price`
+= Grade 9.5
+
+`manual-only-price`
+= PSA 10
+
+`bgs-10-price`
+= BGS 10
+
+`condition-17-price`
+= CGC 10
+
+`condition-18-price`
+= SGC 10
+
+`sales-volume`
+= yearly sales volume where available
+
+Also store:
+
+* PriceCharting product ID
+* product name
+* console/category name
+* release date
+* genre
+* UPC if available
+* ePID if available
+* last successfully refreshed time
+* provider name
+
+Do not expose PriceCharting's confusing field names directly to the user.
+
+Normal users should see:
+
+Raw
+Grade 7
+Grade 8
+Grade 9
+Grade 9.5
+PSA 10
+BGS 10
+CGC 10
+SGC 10
+
+Only display grades where a valid price exists.
+
+---
+
+# CARD MATCHING
+
+This is extremely important.
+
+Do NOT simply search PriceCharting using the Pokémon/card name and accept the first result.
+
+That will cause incorrect prices.
+
+Create a PriceCharting matching service.
+
+When Verified has a card such as:
+
+Charizard
+Base Set
+4/102
+1999
+Holo
+
+construct a detailed search query containing as many reliable identifiers as available.
+
+Use:
+
+* card name
+* set name
+* card number
+* year
+* language
+* variant
+* rarity where useful
+
+Start with:
+
+GET /api/products?q=...
+
+This can return multiple possible matches.
+
+Score candidate matches locally.
+
+Create a match confidence score from 0–100.
+
+Suggested weighting:
+
+Card number exact match:
+very high importance
+
+Card/set exact match:
+very high importance
+
+Card name:
+high importance
+
+Year:
+medium importance
+
+Variant:
+high importance when available
+
+Language:
+high importance when applicable
+
+The system must strongly reject candidates from the wrong set.
+
+For example:
+
+Charizard #4 Base Set
+
+must not accidentally receive pricing for:
+
+Charizard #4 Base Set 2
+Celebrations Charizard
+Japanese Base Set Charizard
+Legendary Collection Charizard
+
+Once a strong match has been established, store the PriceCharting Product ID against our internal card.
+
+Future price refreshes should use:
+
+GET /api/product?id=PRICECHARTING_ID
+
+instead of searching again.
+
+---
+
+# MATCH CONFIDENCE
+
+Store:
+
+`pricecharting_product_id`
+
+`pricecharting_match_confidence`
+
+`pricecharting_match_method`
+
+Example:
+
+PriceCharting Match
+98%
+Exact card number + set + name
+
+Do not show the technical match information prominently to normal users.
+
+Use it internally to determine how much confidence Verified should place in the provider.
+
+If confidence is too low, do NOT silently assign a price.
+
+Set:
+
+`pricing_status = review_required`
+
+and exclude the questionable provider value from the Verified Market Value.
+
+Wrong pricing is worse than missing pricing.
+
+---
+
+# DATABASE ARCHITECTURE
+
+Do NOT design this database specifically around PriceCharting.
+
+Create a provider-independent pricing architecture.
+
+Something similar to:
+
+## pricing_providers
+
+* id
+* provider_name
+* enabled
+* priority
+* last_sync_at
+* status
+
+Providers can eventually include:
+
+* pricecharting
+* ebay
+* justtcg
+* psa
+* cgc
+* bgs
+* tag
+
+---
+
+## card_provider_mappings
+
+* id
+* card_id
+* provider
+* provider_product_id
+* match_confidence
+* match_method
+* verified
+* created_at
+* updated_at
+
+---
+
+## card_prices
+
+* id
+* card_id
+* provider
+* currency
+* condition
+* grade
+* grading_company
+* price
+* sales_volume
+* source_updated_at
+* fetched_at
+* confidence
+
+Examples:
+
+provider: pricecharting
+condition: raw
+
+provider: pricecharting
+grade: 10
+grading_company: PSA
+
+provider: pricecharting
+grade: 10
+grading_company: BGS
+
+---
+
+## price_snapshots
+
+Create our own historical snapshot table.
+
+This is important.
+
+PriceCharting's API only provides current prices.
+
+Verified TCG should begin storing its own price history.
+
+Fields:
+
+* card_id
+* provider
+* condition
+* grade
+* grading_company
+* price
+* currency
+* recorded_at
+
+When a legitimate fresh price is retrieved, save a snapshot according to sensible deduplication rules.
+
+Do not create hundreds of identical records every time somebody opens the screen.
+
+The goal is eventually to allow:
+
+7D
+30D
+90D
+1Y
+ALL
+
+pricing charts using Verified's own accumulated data.
+
+This begins building a proprietary Verified TCG pricing dataset.
+
+---
+
+# SERVER API
+
+Create clean internal endpoints for the mobile application.
+
+For example:
+
+GET /api/cards/:cardId/pricing
+
+GET /api/cards/:cardId/pricing/history
+
+POST /api/cards/:cardId/pricing/refresh
+
+GET /api/cards/:cardId/pricing/sources
+
+Do not make the app know how PriceCharting works.
+
+The app should ask OUR backend:
+
+"What is the pricing data for this card?"
+
+Our backend handles the providers.
+
+That allows us to add or remove providers later without changing the mobile app architecture.
+
+---
+
+# CACHING
+
+Build intelligent caching.
+
+Do not hit PriceCharting every time a user views a card.
+
+Suggested starting behaviour:
+
+Recently refreshed:
+serve database/cache immediately.
+
+Popular cards:
+refresh more frequently.
+
+Normal cards:
+refresh approximately every 12–24 hours.
+
+Cards with little activity:
+can refresh less often.
+
+Manual refresh:
+must still obey provider rate limits.
+
+If cached pricing exists, display it immediately while checking whether a refresh is required.
+
+The app should feel instant.
+
+---
+
+# CURRENCY
+
+Provider pricing may originate in USD.
+
+Verified TCG is intended to be global.
+
+Keep the provider's original:
+
+* price
+* currency
+
+separate from the user's display currency.
+
+Use the application's existing currency system if one already exists.
+
+If no global currency architecture exists, create one properly rather than hard-coding AUD.
+
+User preferences should eventually allow:
+
+AUD
+USD
+GBP
+EUR
+CAD
+NZD
+JPY
+
+For Omar's/testing environment, default to AUD where appropriate, but do not make the product Australia-only.
+
+Always clearly display the currency.
+
+Example:
+
+$2,940 AUD
+
+not simply:
+
+$2,940
+
+---
+
+# CARD DETAILS SCREEN — REDESIGN PRICING
+
+This is where I want Verified TCG to look stronger and more trustworthy than a normal collector app.
+
+Inspect the current Card Details page.
+
+Do not unnecessarily redesign the entire screen.
+
+Upgrade the pricing area.
+
+At the top of the pricing section show:
+
+# VERIFIED MARKET
+
+Example:
+
+$2,940 AUD
+
++8.4% 30D
+
+Then a subtle status underneath:
+
+**High confidence**
+
+or
+
+**Medium confidence**
+
+or
+
+**Low confidence**
+
+Do NOT make the page feel like a financial trading app.
+
+It is still a collector app.
+
+Keep it:
+
+* clean
+* minimal
+* high-end
+* modern
+* Apple-like
+* trustworthy
+* easy to understand
+
+Avoid clutter.
+
+---
+
+# CONDITION SELECTOR
+
+Immediately under Market Value add a segmented control:
+
+RAW | GRADED
+
+If RAW:
+
+Show the ungraded market value prominently.
+
+If GRADED:
+
+Show horizontally scrollable or well-designed grade choices:
+
+PSA 10
+BGS 10
+CGC 10
+SGC 10
+Grade 9.5
+Grade 9
+Grade 8
+Grade 7
+
+Only show grades where pricing data actually exists.
+
+Do not fill unavailable grades with $0.
+
+Use:
+
+—
+
+or hide them.
+
+---
+
+# VERIFIED MARKET VALUE™
+
+Build the architecture for a new internal field:
+
+`verified_market_value`
+
+At the moment, because PriceCharting is our first pricing provider:
+
+Verified Market Value can be based primarily on PriceCharting.
+
+But DO NOT hard-code the system to always equal PriceCharting.
+
+Build:
+
+`PricingEngine`
+
+It should accept multiple provider values.
+
+Future sources will include:
+
+PriceCharting
+eBay sold
+JustTCG
+PSA
+TAG
+BGS
+CGC
+
+Create an aggregation interface now.
+
+Example:
+
+PricingEngine.calculate({
+card,
+condition,
+grade,
+providers
+})
+
+Return something like:
+
+{
+marketValue,
+lowEstimate,
+highEstimate,
+confidenceScore,
+confidenceLabel,
+providerCount,
+reasons,
+updatedAt
+}
+
+Initially there may only be one live price source.
+
+That's fine.
+
+The architecture must be ready for more.
+
+---
+
+# VERIFIED CONFIDENCE SCORE
+
+This is one of the ways Verified TCG can differentiate itself.
+
+Create a confidence system from 0–100.
+
+Factors can include:
+
+* provider match confidence
+* number of pricing providers
+* sales volume
+* age of price data
+* whether providers agree
+* future recent-sale count
+* future price dispersion
+
+For now, do NOT falsely imply that we have eBay sales if they have not been integrated.
+
+With one provider, the confidence system should reflect the limitations.
+
+Example:
+
+VERIFIED MARKET
+$2,940 AUD
+
+Market confidence
+72%
+
+Updated 3 hours ago
+
+The information icon can explain:
+
+"Verified Market combines available pricing sources, recent market information and listing confidence to estimate current collector value."
+
+However, do not claim multiple sources until multiple sources actually exist.
+
+---
+
+# TRUST / SOURCE TRANSPARENCY
+
+Add a small:
+
+**Pricing sources**
+
+button or expandable area.
+
+When opened it can show:
+
+PriceCharting
+$2,940 AUD
+Updated 3h ago
+
+Future:
+
+PriceCharting
+$2,940
+
+eBay Recent Sales
+$3,020
+
+JustTCG
+$2,890
+
+Verified Market
+$2,970
+
+This transparency is intentional.
+
+I want users to trust Verified because we show WHY we reached a value.
+
+---
+
+# MARKET RANGE
+
+Where sufficient data is available, support:
+
+Market Value
+
+Estimated Range
+
+Example:
+
+$2,940
+
+Estimated market range
+$2,750 – $3,100
+
+Do not invent ranges when there is insufficient information.
+
+The PricingEngine should return null instead.
+
+---
+
+# PRICE HISTORY
+
+Add a clean chart to the card pricing screen.
+
+Controls:
+
+7D
+30D
+90D
+1Y
+ALL
+
+Initially there will not be enough historical snapshots.
+
+Handle this beautifully.
+
+Example empty state:
+
+**Building price history**
+
+Verified is tracking this card's market value. Price history will appear as more data is collected.
+
+Do NOT create fake historical data.
+
+---
+
+# MARKET INSIGHTS
+
+Under the chart create a compact Market Insights area.
+
+Potential values:
+
+Market Value
+$2,940
+
+Annual Sales Volume
+142
+
+Last Updated
+2h ago
+
+Market Confidence
+72%
+
+Do NOT display information we do not actually have.
+
+---
+
+# PRICE MOVEMENT
+
+When enough snapshot history exists calculate:
+
+24H
+7D
+30D
+90D
+1Y
+
+percentage movement.
+
+Example:
+
+30D
++8.4%
+
+If historical data does not exist yet:
+
+show `—`
+
+Do not fake it.
+
+---
+
+# "VERIFIED VALUE" DESIGN PRINCIPLE
+
+I don't want Verified TCG to be another app that displays:
+
+"$1,842"
+
+with no explanation.
+
+I want someone looking at an expensive card to immediately understand:
+
+* What is it worth?
+* Raw or graded?
+* Which grading company?
+* How fresh is the price?
+* What source was used?
+* How confident are we?
+* Is the market rising or falling?
+* How liquid is the card?
+* What is its realistic range?
+
+Do this without cluttering the screen.
+
+Progressively reveal advanced data.
+
+Top level should remain extremely simple.
+
+---
+
+# VISUAL HIERARCHY
+
+Suggested card details pricing layout:
+
+---
+
+VERIFIED MARKET
+
+$2,940 AUD       +8.4%
+
+High confidence • Updated 2h ago
+
+[ RAW ] [ GRADED ]
+
+---
+
+PRICE HISTORY
+
+[7D] [30D] [90D] [1Y] [ALL]
+
+```
+   graph
+```
+
+---
+
+MARKET INSIGHTS
+
+Market Value          $2,940
+Estimated Range       $2,750–$3,100
+Sales Volume          142/year
+Confidence            82%
+
+---
+
+GRADE VALUES
+
+PSA 10                $2,940
+BGS 10                $3,380
+CGC 10                $2,720
+Grade 9               $1,420
+Raw                    $845
+
+---
+
+PRICING SOURCES >
+
+---
+
+Do NOT blindly copy this wireframe.
+
+Use it as the information hierarchy and apply the existing Verified TCG design system.
+
+---
+
+# PRO FEATURE STRATEGY
+
+Keep basic market pricing accessible to free users.
+
+Free users should still see:
+
+* current raw market price
+* basic graded pricing
+* last updated
+* simple collection value
+
+Potential **Verified Pro** features:
+
+* full historical charts
+* 90D / 1Y / ALL history
+* deeper market insights
+* Verified Confidence detail
+* source comparison
+* advanced graded pricing
+* market movers
+* undervalued cards
+* price alerts
+* detailed collection analytics
+
+Do not cripple the free product.
+
+The free version needs to be good enough that users trust Verified and want to add their whole collection.
+
+Pro should provide depth rather than removing basic functionality.
+
+---
+
+# PRICE ALERT FOUNDATION
+
+Prepare the database architecture for future:
+
+"Notify me when this card reaches..."
+
+Example:
+
+Current:
+$2,940
+
+Target:
+$3,500
+
+Users will eventually be able to select:
+
+Above
+Below
+Percentage movement
+
+Do not necessarily build push notification delivery in this task unless the existing notification architecture makes it straightforward.
+
+But prepare the data model.
+
+---
+
+# COLLECTION VALUES
+
+Once PriceCharting pricing is working, connect live market value to cards already stored in user collections.
+
+Collection page should be capable of showing:
+
+TOTAL COLLECTION VALUE
+
+$24,850 AUD
+
+Today
++$184
+
+30 Days
++$1,420
+
+Only calculate movement when actual historical snapshots exist.
+
+Never generate fake percentage movements.
+
+For each collection item consider:
+
+quantity
+condition
+grading company
+grade
+purchase price
+
+Use the appropriate pricing record for the user's exact card configuration wherever possible.
+
+---
+
+# PROFIT / LOSS FOUNDATION
+
+If the user has entered a purchase price:
+
+Purchase Price
+$2,400
+
+Market Value
+$2,940
+
+Gain
++$540
+
+Return
++22.5%
+
+This will eventually become an important Pro feature.
+
+Build calculations cleanly and centrally.
+
+---
+
+# PERFORMANCE
+
+This must be efficient.
+
+Do NOT:
+
+call PriceCharting separately for every card whenever Collection loads.
+
+Instead:
+
+1. retrieve stored prices from our database
+2. display immediately
+3. determine which prices are stale
+4. queue background refreshes safely
+5. update stored market data
+6. refresh UI when appropriate
+
+Respect PriceCharting's 1-request-per-second rule at all times.
+
+---
+
+# ERROR HANDLING
+
+Handle:
+
+* missing API token
+* invalid token
+* API subscription unavailable
+* rate limits
+* product not found
+* weak match
+* missing price
+* API timeout
+* PriceCharting outage
+* network errors
+* database errors
+* stale cached pricing
+
+If PriceCharting temporarily fails but a previous price exists:
+
+show the cached price.
+
+Example:
+
+$2,940 AUD
+
+Updated yesterday
+
+Do not make the entire card screen fail because the provider is offline.
+
+---
+
+# PROVIDER HEALTH
+
+Create an internal provider health system.
+
+Example:
+
+PriceCharting
+ACTIVE
+
+Last successful request
+10:42 AM
+
+Last sync
+10:39 AM
+
+Errors
+0
+
+This can later be surfaced inside our platform admin area.
+
+Do not expose API secrets.
+
+---
+
+# ADMIN / DEBUG INFORMATION
+
+In development or platform administration, provide enough information to diagnose:
+
+* internal card ID
+* PriceCharting Product ID
+* match confidence
+* matched product name
+* last refresh
+* current provider values
+* provider errors
+
+Do not expose this technical information on the normal consumer card screen.
+
+---
+
+# SEARCH INTEGRATION
+
+When a user opens a card that does not yet have a PriceCharting mapping:
+
+1. display the card immediately
+2. look for an existing mapping
+3. if none exists, queue PriceCharting matching
+4. retrieve candidate products
+5. score them
+6. establish a mapping if confidence is strong
+7. retrieve pricing
+8. store pricing
+9. update the interface
+
+Do not force the user to understand PriceCharting IDs.
+
+This should be automatic.
+
+---
+
+# IMPORTANT DATA INTEGRITY RULE
+
+Never overwrite our core card identity/database data with PriceCharting data.
+
+Verified's card database remains the source of truth for:
+
+* card name
+* card number
+* set
+* rarity
+* artwork
+* language
+* card metadata
+
+PriceCharting is a:
+
+**PRICING PROVIDER**
+
+not our master card database.
+
+---
+
+# FUTURE PROVIDERS
+
+Create interfaces/adapters now.
+
+For example conceptually:
+
+PricingProvider
+
+* searchCard()
+* matchCard()
+* fetchPrices()
+* normalisePrices()
+* healthCheck()
+
+Then:
+
+PriceChartingProvider
+
+Future:
+
+EbayProvider
+JustTCGProvider
+PSAProvider
+TAGProvider
+CGCProvider
+BGSProvider
+
+Each provider outputs a standard internal format.
+
+The rest of the app should never need to care where the information came from.
+
+---
+
+# FUTURE eBAY SOLD DATA
+
+Prepare the UI and database for actual sale records.
+
+Future structure:
+
+recent_sales
+
+* card_id
+* provider
+* marketplace
+* grading_company
+* grade
+* sold_price
+* currency
+* sold_at
+* listing_title
+* listing_url
+* image_url
+* confidence
+* verified_match
+
+When eBay is connected later, Card Details should be able to display:
+
+RECENT SALES
+
+15 Aug
+$3,050
+PSA 10
+
+12 Aug
+$2,875
+PSA 10
+
+8 Aug
+$3,100
+PSA 10
+
+This should eventually become one of Verified TCG's strongest features.
+
+Do NOT fake these records now.
+
+---
+
+# FUTURE POPULATION DATA
+
+Prepare card grades to accept:
+
+population
+
+and eventually:
+
+population_higher
+
+Examples:
+
+PSA 10
+Population 1,842
+
+TAG 10
+Population 124
+
+BGS 10
+Population 38
+
+Do not display population unless a reliable data source has actually supplied it.
+
+---
+
+# OUR COMPETITIVE DIFFERENCE
+
+The product philosophy should be:
+
+**Don't just tell collectors a price. Show them how trustworthy that price is.**
+
+Verified TCG should eventually combine:
+
+Pricing
++
+Recent Sales
++
+Graded Values
++
+Population
++
+Price History
++
+Market Liquidity
++
+Confidence
+
+into one clean view.
+
+The user should be able to understand the market in approximately 5 seconds.
+
+---
+
+# IMPORTANT: DON'T COPY COLLECTR
+
+We are competing with apps such as Collectr but should not clone their UI.
+
+Build our own premium pricing experience around:
+
+**Verified Market**
+
+**Verified Confidence**
+
+**Pricing Sources**
+
+**Market Range**
+
+**Recent Sales**
+
+**Price History**
+
+**Market Insights**
+
+This should become a recognisable Verified TCG feature.
+
+---
+
+# DEVELOPMENT REQUIREMENTS
+
+Use the project's existing:
+
+* TypeScript
+* Expo / React Native architecture
+* backend/API architecture
+* database ORM
+* authentication
+* styling system
+* component patterns
+* package manager
+* routing/navigation
+
+Do not introduce unnecessary frameworks.
+
+Do not switch package managers.
+
+Do not rewrite working infrastructure.
+
+Follow the repository's existing architecture.
+
+---
+
+# SECURITY
+
+Absolutely mandatory:
+
+`PRICECHARTING_TOKEN`
+
+must exist SERVER SIDE ONLY.
+
+Never use:
+
+EXPO_PUBLIC_PRICECHARTING_TOKEN
+
+Never store API tokens in:
+
+AsyncStorage
+SecureStore for the client
+frontend JavaScript
+React components
+GitHub
+hard-coded config files
+
+All PriceCharting requests pass through our backend.
+
+---
+
+# TESTING
+
+Test at minimum:
+
+1. Pokémon raw card
+2. Pokémon PSA 10
+3. Pokémon BGS 10 where available
+4. Pokémon CGC 10 where available
+5. card without PriceCharting result
+6. ambiguous card search
+7. invalid token
+8. missing token
+9. PriceCharting timeout
+10. cached result
+11. stale cached result
+12. multiple simultaneous users
+13. API throttling
+14. currency formatting
+15. missing grade price
+16. collection valuation
+
+Use real API responses when credentials are available.
+
+Do not use fake values to claim the integration works.
+
+---
+
+# ACCEPTANCE TEST
+
+I want to be able to:
+
+1. Launch Verified TCG.
+2. Search for/open a Pokémon card.
+3. Open Card Details.
+4. Immediately see the pricing section.
+5. See Raw market pricing where available.
+6. Switch to Graded.
+7. See relevant PSA/BGS/CGC/etc values where PriceCharting has them.
+8. See when the data was updated.
+9. See PriceCharting listed under Pricing Sources.
+10. Add the card to my collection.
+11. Have that price contribute to my collection value.
+12. Close and reopen the card without unnecessarily calling PriceCharting again.
+13. Have the system automatically refresh stale pricing.
+14. Never expose my PriceCharting API token.
+
+The finished app must compile and run.
+
+Run:
+
+* type checking
+* linting if configured
+* relevant tests
+* production build checks
+
+Resolve any errors you introduce.
+
+---
+
+# FINAL RESPONSE TO ME
+
+When finished, give me a simple summary containing:
+
+### Implemented
+
+What you built.
+
+### Pricing
+
+Which PriceCharting values are now supported.
+
+### UI Changes
+
+What changed visually.
+
+### Database
+
+What tables/schema were added or modified.
+
+### Secret Required
+
+Tell me exactly where I need to put:
+
+`PRICECHARTING_TOKEN`
+
+### Test Card
+
+Give me one exact Pokémon card I can search inside Verified to confirm the integration is live.
+
+### Remaining Providers
+
+Show:
+
+PriceCharting — LIVE / READY
+
+eBay Sold — NOT CONNECTED
+
+JustTCG — NOT CONNECTED
+
+PSA Population — NOT CONNECTED
+
+TAG — NOT CONNECTED
+
+CGC — NOT CONNECTED
+
+BGS — NOT CONNECTED
+
+Do not tell me the work is completed unless the app builds successfully and the complete path from API → database → backend → card details UI has been implemented.
+
+Most importantly:
+
+**Build the functionality. Do not only create documentation, mock-ups, placeholder components or a plan.**
