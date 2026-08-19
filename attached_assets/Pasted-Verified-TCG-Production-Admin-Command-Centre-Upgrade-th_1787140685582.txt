@@ -1,0 +1,2198 @@
+Verified TCG — Production Admin Command Centre
+Upgrade the existing Verified TCG Admin Dashboard into a complete, production-ready Admin Command Centre for operating the entire Verified TCG platform.
+This is NOT a visual mock-up task.
+This is NOT a request to create another separate admin prototype.
+We already have an admin dashboard and existing backend functionality. Inspect what exists, preserve working functionality, and substantially improve it.
+The finished system must be:
+	•	Web based
+	•	Fully responsive
+	•	Mobile friendly
+	•	Tablet friendly
+	•	Desktop optimised
+	•	Connected to real backend data
+	•	Secure
+	•	Modular
+	•	Scalable
+	•	Fast
+	•	Easy for the owner to operate
+	•	Suitable for additional staff/admin accounts later
+Every visible action, filter, table, metric, button, modal, toggle and status should either work with real backend functionality or clearly state that the required external integration is not connected.
+Never fabricate data.
+
+1. FIRST — INSPECT THE EXISTING VERIFIED TCG PROJECT
+Before writing code, inspect the entire existing Verified TCG repository.
+Pay particular attention to:
+artifacts/vtcg-web
+artifacts/vtcg-web/src/pages/admin.tsx
+artifacts/api-server
+artifacts/api-server/src/routes/admin.ts
+artifacts/api-server/src/routes/adminAuth.ts
+All other API routes including:
+	•	activity
+	•	auth
+	•	block/report
+	•	catalogue
+	•	certification
+	•	collection
+	•	collectors
+	•	community
+	•	events
+	•	export
+	•	graded prices
+	•	notifications
+	•	price history
+	•	scan
+	•	subscriptions
+	•	support
+	•	wishlist
+Also inspect:
+lib/db
+all database schemas
+all migrations
+the Expo/mobile application
+the existing user/account system
+the existing subscription system
+the current PriceCharting/pricing work if it has already been implemented
+the previous admin dashboard implementation
+and the historical admin dashboard prompt stored in attached_assets.
+Treat the working code and database as the source of truth.
+Do not duplicate existing tables or APIs unnecessarily.
+Do not remove working functionality.
+Do not create a completely separate technology stack just for the admin.
+
+2. PRIMARY OBJECTIVE
+The Admin Command Centre should allow the Verified TCG owner to answer four questions immediately:
+What is happening?
+Users, activity, scans, collections, revenue, community activity, events and growth.
+Is anything wrong?
+Failed scans, pricing failures, provider outages, user reports, support requests, API problems, stale card data, failed background jobs and security issues.
+What needs my attention?
+Moderation queues, unmatched cards, questionable pricing, failed notifications, subscription issues, account requests and platform alerts.
+What can I control?
+Users, catalogue, subscriptions, pricing, events, notifications, community, configuration, feature flags and platform operations.
+The owner should not need to go into the database manually to operate normal day-to-day Verified TCG functionality.
+
+3. DO NOT KEEP THE ADMIN AS ONE LARGE PAGE
+The existing admin is too concentrated.
+Refactor it into a proper modular admin application.
+Use an architecture similar to:
+admin/layout
+admin/components
+admin/hooks
+admin/services
+admin/pages
+admin/overview
+admin/users
+admin/subscriptions
+admin/catalogue
+admin/pricing
+admin/scans
+admin/collections
+admin/community
+admin/moderation
+admin/trades
+admin/events
+admin/certifications
+admin/notifications
+admin/support
+admin/analytics
+admin/system
+admin/audit
+admin/settings
+Use the project's existing routing conventions.
+Do not introduce a new framework unless genuinely necessary.
+
+4. ADMIN NAVIGATION
+Create a proper navigation structure.
+Recommended primary navigation:
+COMMAND CENTRE
+	•	Overview
+	•	Live Activity
+	•	Tasks / Attention Required
+USERS
+	•	Users
+	•	Subscriptions
+	•	Account Requests
+	•	Sessions
+TCG DATA
+	•	Cards & Catalogue
+	•	Sets
+	•	Pricing
+	•	Pricing Providers
+	•	Scanner & Matching
+	•	Data Quality
+PLATFORM
+	•	Collections
+	•	Wishlist / Watchlist
+	•	Trades
+	•	Events
+	•	Certifications / Card Passport
+COMMUNITY
+	•	Community
+	•	Reports & Moderation
+	•	Vendors
+	•	Verified Drops
+ENGAGEMENT
+	•	Notifications
+	•	Campaigns
+	•	Smart Alerts
+INSIGHTS
+	•	Analytics
+	•	Growth
+	•	Feature Usage
+OPERATIONS
+	•	Support
+	•	System Health
+	•	Background Jobs
+	•	Integrations
+	•	Audit Log
+CONFIGURATION
+	•	Feature Flags
+	•	App Configuration
+	•	Admin Team
+	•	Security
+Do not make the navigation overwhelming.
+Use collapsible groups where appropriate.
+
+5. RESPONSIVE DESIGN
+This dashboard MUST work properly on mobile.
+Desktop:
+Use a persistent left sidebar and main workspace.
+Tablet:
+Use a collapsible sidebar.
+Mobile:
+Use a drawer or mobile admin navigation.
+Do not shrink desktop tables until they become unreadable.
+For narrow screens:
+	•	Convert tables to cards where appropriate
+	•	Use expandable rows
+	•	Use bottom sheets/drawers
+	•	Stack metrics
+	•	Keep primary actions accessible
+	•	Avoid horizontal scrolling wherever possible
+	•	Use sticky action areas where useful
+Test at minimum:
+375px
+430px
+768px
+1024px
+1440px+
+It must feel intentionally designed for mobile rather than merely technically responsive.
+
+6. ADMIN DESIGN DIRECTION
+The dashboard should feel:
+	•	Serious
+	•	Premium
+	•	Clean
+	•	Modern
+	•	Technical
+	•	Trustworthy
+	•	Minimal
+	•	Fast
+Think modern SaaS infrastructure/admin console rather than a colourful gaming dashboard.
+Use the existing Verified TCG identity.
+Avoid:
+	•	excessive gradients
+	•	unnecessary glass effects
+	•	huge cards everywhere
+	•	giant empty spacing
+	•	oversized icons
+	•	gimmicky animations
+	•	overly colourful charts
+Use excellent information hierarchy.
+High-value information should be visible immediately.
+Advanced data should progressively reveal.
+
+7. GLOBAL ADMIN HEADER
+Create a useful global header containing:
+Global search
+Environment indicator
+Platform health indicator
+Admin notification/attention indicator
+Current admin profile
+Quick actions
+Global date range where relevant
+Optional command palette:
+CMD/CTRL + K
+The global search should eventually search across:
+Users
+User ID
+Email
+Username
+Cards
+Card numbers
+Sets
+Events
+Support cases
+Reports
+Certification IDs
+Provider mappings
+Do not expose results the logged-in admin is not authorised to access.
+
+8. ADMIN OVERVIEW — COMMAND CENTRE
+The Overview must provide an immediate understanding of platform health.
+Create configurable date ranges:
+Today
+24 Hours
+7 Days
+30 Days
+90 Days
+12 Months
+Custom
+Show comparison against the previous equivalent period where meaningful.
+
+9. OVERVIEW KPIs
+Use real backend/database data.
+Users
+Total Users
+New Users Today
+New Users 7D
+New Users 30D
+DAU
+WAU
+MAU
+Free Users
+Pro Users
+Founding Pro Users if still supported
+Suspended Users
+Verified/confirmed accounts if applicable
+
+Subscriptions
+Active Pro
+New Pro
+Cancelled Pro
+Expired
+Trials if applicable
+Free → Pro Conversion
+Churn
+MRR
+ARR
+ARPU
+Only display financial figures if real payment/subscription data is connected.
+If not available:
+Revenue data unavailable — billing provider not connected
+Never estimate fake revenue.
+
+Scanner
+Scans Today
+Scans 7D
+Scans 30D
+Successful Matches
+Failed Scans
+Match Success Rate
+Average Match Confidence
+Average Scan Response Time
+Users At Free Scan Limit
+
+Collections
+Total Collection Items
+Unique Cards Held
+Cards Added Today
+Cards Added 30D
+Total User-Tracked Collection Value
+Pricing Coverage %
+Graded vs Raw Holdings
+
+Pricing
+Cards With Current Pricing
+Cards Missing Pricing
+Stale Prices
+Pricing Provider Health
+Low-Confidence Mappings
+Pricing Errors Today
+Price Refresh Queue
+
+Community
+Posts Today
+Active Posters
+Pending Reports
+Suspended Community Users
+Blocked Relationships
+
+Events / Trade Match
+Active Events
+Upcoming Events
+Event Mode Users
+Trade Matches Generated
+Trade Match Activity
+
+Operations
+Open Support Requests
+Unresolved Reports
+Failed Background Jobs
+Degraded Integrations
+Critical Alerts
+
+10. ATTENTION REQUIRED
+Create a prominent operational queue.
+Examples:
+23 cards require pricing review
+12 low-confidence scanner matches
+4 support enquiries older than 24h
+2 failed background jobs
+PriceCharting last successful sync 3h ago
+7 community reports pending
+19 invalid push tokens
+Each alert should be clickable.
+Take the admin directly to the filtered records that require attention.
+This should be one of the most useful parts of the dashboard.
+
+11. LIVE ACTIVITY
+Create a lightweight live/recent activity feed.
+Examples:
+New account registered
+User upgraded to Pro
+Card scanned
+Large collection import
+New community report
+Event created
+Pricing provider error
+Admin suspended account
+Notification campaign sent
+Do not reveal sensitive information unnecessarily.
+Allow filtering by activity type.
+Use pagination or incremental loading.
+Do not attempt to render thousands of activities at once.
+
+12. USERS MANAGEMENT
+Create a production-grade Users section.
+Use server-side:
+Pagination
+Searching
+Filtering
+Sorting
+Do not load the entire user database into the browser.
+Search:
+Name
+Username
+Email
+User ID
+Filters:
+Plan
+Account status
+Country if recorded
+Signup period
+Last active
+Scan-limit status
+Collection size
+Event Mode usage
+Community status
+Subscription status
+Sort:
+Newest
+Oldest
+Recently active
+Name
+Collection size
+Scan usage
+
+13. USER TABLE
+Useful columns:
+Avatar
+Name
+Username
+Email
+Plan
+Account Status
+Joined
+Last Active
+Collection Count
+Estimated Collection Value
+Scan Usage
+Community Status
+Subscription Status
+Use configurable columns if practical.
+
+14. USER DETAIL PAGE
+Clicking a user should open a proper detail page or drawer.
+Sections:
+Identity
+User ID
+Name
+Username
+Email
+Account creation
+Last login
+Last active
+Country
+App/platform version where available
+Account status
+
+Subscription
+Free / Pro / Founding Pro
+Subscription source
+Subscription status
+Start date
+Renewal date
+Expiry date
+Cancellation state
+Entitlements
+
+Scanner
+Current usage
+Monthly/free quota
+Lifetime scans
+Recent scans
+Failed scans
+Average confidence if available
+
+Collection
+Number of cards
+Raw cards
+Graded cards
+Estimated value
+Recent additions
+Wishlist count
+Watchlist count
+For Trade
+For Sale
+
+Community
+Posts
+Reports against user
+Reports submitted
+Blocks
+Moderation history
+
+Events / Trade
+Event Mode activity
+Trade Match usage
+Recent trade-related activity where recorded
+
+Account Activity
+Recent activity
+Recent sessions
+Security events
+
+Internal Admin
+Admin notes
+Admin tags
+Moderation notes
+Account history
+Audit events
+
+15. USER ADMIN ACTIONS
+Depending on permissions:
+Suspend
+Unsuspend
+Temporarily restrict community posting
+Force logout all sessions
+Reset scan allowance
+Grant temporary Pro
+Extend Pro
+Remove manually granted Pro
+Resend verification if supported
+Trigger password-reset flow if supported
+Export user data
+Process deletion request
+Soft deactivate
+Permanently delete
+Any destructive or sensitive action must:
+Require sufficient permission
+Show a confirmation screen
+Explain consequences
+Require an admin reason
+Create an audit log
+For permanent deletion, require stronger confirmation.
+Example:
+Type DELETE to permanently remove this account
+Never expose passwords, password hashes, session tokens or authentication secrets.
+
+16. DO NOT BUILD DANGEROUS IMPERSONATION
+Do not build unrestricted "Login As User" functionality.
+If an admin troubleshooting tool is genuinely required, implement a safe View User State mode instead.
+This should show the relevant user-facing state without authenticating the admin as the user.
+Avoid creating unnecessary account takeover capability.
+
+17. SUBSCRIPTIONS & PRO
+Create a complete Pro management section.
+Display:
+Free
+Active
+Trial
+Grace Period
+Cancelled
+Expired
+Manual Grant
+Founding Pro if applicable
+Include:
+Subscription provider
+Entitlements
+Start
+Renewal
+Expiry
+Cancellation
+Platform
+Transaction/subscription identifiers where safe
+Create filters for:
+Active
+Cancelled
+Expiring
+Failed
+Manual
+Provider
+Platform
+
+18. PRO ADMIN ACTIONS
+Owner-level admins may:
+Grant Pro
+Choose duration
+Set expiry
+Extend entitlement
+Revoke manual entitlement
+Add internal reason
+All manual changes must be auditable.
+Do NOT allow manual database subscription changes to fight against Apple/Google/Stripe/RevenueCat or whichever billing provider is the true source of truth.
+Detect the existing subscription architecture.
+External billing remains authoritative where applicable.
+
+19. SUBSCRIPTION ANALYTICS
+Where real data permits:
+Pro Conversion
+Trial Conversion
+Monthly Churn
+Renewals
+Cancellations
+New Subscribers
+Active Subscribers
+MRR
+ARR
+ARPU
+Lifetime paid users
+Subscription funnel:
+Free User
+Viewed Pro
+Started Checkout
+Trial
+Paid
+Renewed
+If particular events are not currently tracked, build the analytics event architecture required to track them going forward.
+Do not backfill invented historical data.
+
+20. CARD & CATALOGUE ADMIN
+Build a proper TCG catalogue administration system.
+Search cards by:
+Card Name
+Set
+Card Number
+Year
+Game
+Language
+Rarity
+Variant
+Internal Card ID
+Provider Product ID
+Include filters for:
+Missing image
+Missing price
+Incomplete metadata
+Duplicate suspect
+Provider mapping missing
+Low-confidence mapping
+Recently added
+Recently edited
+
+21. CARD ADMIN DETAIL
+Show:
+Card image
+Card name
+Set
+Number
+Rarity
+Year
+Language
+Variant
+Internal ID
+Provider mappings
+Current raw price
+Current graded pricing
+Collection ownership count
+Wishlist count
+Scan-match statistics
+Data completeness
+Last pricing update
+Last catalogue update
+Admin change history
+
+22. CARD EDITING
+Allow authorised admins to edit appropriate metadata.
+Use validation.
+Keep an audit trail.
+Never allow accidental edits to silently alter thousands of user collection records.
+Where a card identity change has downstream consequences, display an impact warning.
+
+23. DUPLICATE CARD MANAGEMENT
+Create a data-quality queue for suspected duplicate cards.
+Show:
+Record A
+Record B
+Matching attributes
+Differences
+Users affected
+Collection references
+Pricing references
+Provider mappings
+Allow authorised admins to:
+Dismiss duplicate suggestion
+Merge safely
+Before merging, show an impact preview.
+Never orphan:
+Collections
+Wishlist records
+Price history
+Provider mappings
+Activity
+Certification data
+
+24. CARD IMPORT / BULK OPERATIONS
+Support safe catalogue import/export where useful.
+Potential formats:
+CSV
+JSON
+Before import:
+Validate
+Show errors
+Show duplicates
+Show changes
+Show how many records will be created/updated
+Use a DRY RUN first.
+Require confirmation before bulk writes.
+Do not make a bulk import directly modify production data without validation.
+
+25. PRICING COMMAND CENTRE
+Pricing should have its own major administration section.
+This is critical to Verified TCG.
+The pricing dashboard should show:
+Pricing Providers
+Current status
+Latest successful request
+Last failure
+API response latency
+Requests today
+Error rate
+Rate-limit status
+Cache hit rate where measurable
+Cards mapped
+Cards unmapped
+Low-confidence mappings
+Stale pricing
+Pricing anomalies
+Refresh queue
+Provider freshness
+
+26. PRICING PROVIDERS
+Design this around the provider-adapter architecture.
+Potential providers:
+PriceCharting
+eBay
+JustTCG
+PSA
+CGC
+BGS
+TAG
+Future providers
+Do not display one as connected unless it actually is.
+Example statuses:
+LIVE
+HEALTHY
+DEGRADED
+RATE LIMITED
+MISCONFIGURED
+NOT CONNECTED
+DISABLED
+Show API-secret status only as:
+Configured
+or
+Not configured
+NEVER display actual secrets.
+
+27. PRICECHARTING ADMIN
+If the PriceCharting integration from the separate pricing task has already been implemented, surface it properly.
+Show:
+Number of mapped cards
+Number unmatched
+Low-confidence matches
+Current queue
+Last sync
+API errors
+Requests today
+Stale prices
+Allow:
+Search mapping
+Review mapping
+Reject incorrect mapping
+Select correct mapping
+Refresh one card
+Queue batch refresh
+Never bypass the provider's rate limits.
+
+28. PRICING MAPPING REVIEW QUEUE
+Create a review queue for cards where provider matching confidence is not sufficient.
+Display:
+Verified TCG Card
+Potential Provider Card
+Provider
+Confidence
+Why it matched
+Why confidence is low
+Card number
+Set
+Year
+Language
+Variant
+Admin actions:
+Approve
+Reject
+Choose Alternative
+Search Provider
+Ignore
+Each decision should be stored.
+This queue is extremely important to prevent incorrect card valuations.
+
+29. PRICING ANOMALY DETECTION
+Create safeguards for suspicious data.
+Examples:
+Price suddenly increases 500%
+Price suddenly drops 90%
+Raw card more expensive than PSA 10 unexpectedly
+Provider returns zero
+Provider returns negative value
+Currency appears incorrect
+Previously high-volume card suddenly has no value
+Two providers differ dramatically
+These should create review flags rather than silently affecting Verified Market values.
+Do not assume every large move is incorrect.
+Flag it for review.
+
+30. MANUAL PRICE OVERRIDES
+If manual overrides are necessary, implement them carefully.
+Require:
+Reason
+Admin identity
+Start date
+Optional expiry
+Original value
+Override value
+Do not permanently hide provider pricing.
+Make it obvious internally that a price has been overridden.
+All overrides must be auditable.
+
+31. VERIFIED MARKET ADMIN
+Where the Verified Market pricing engine exists, show:
+Calculated Market Value
+Confidence Score
+Confidence Label
+Providers Used
+Providers Excluded
+Low Estimate
+High Estimate
+Freshness
+Calculation reasons
+Allow owners to configure reasonable system thresholds through settings, but do not allow arbitrary calculation changes without audit history.
+
+32. PRICE HISTORY
+Provide an internal price-history inspector.
+Search:
+Card
+Grade
+Condition
+Provider
+Date range
+Display:
+Snapshots
+Changes
+Provider
+Timestamp
+Currency
+Do not generate fake historical records.
+
+33. SCANNER & CARD MATCHING COMMAND CENTRE
+Create a scanner analytics and quality section.
+Metrics:
+Scans Today
+7D
+30D
+Unique Scanning Users
+Success Rate
+Failure Rate
+Average Confidence
+Median Confidence
+Average Response Time
+P95 Response Time where measurable
+Free vs Pro Usage
+Most Scanned Cards
+Most Scanned Sets
+Top Failed Cards
+Top Failed Sets
+
+34. SCAN REVIEW QUEUE
+Create a review queue for:
+Failed scans
+Low-confidence matches
+Ambiguous cards
+User-corrected results
+Potential false positives
+Show available debug information safely.
+Possible data:
+Image thumbnail if storage/privacy policy allows
+Predicted card
+Alternative matches
+Confidence
+Detected card number
+Detected set
+User correction
+Processing duration
+Provider/model used
+Do not store sensitive camera content unnecessarily.
+Follow the existing privacy model.
+
+35. SCAN QUALITY ANALYTICS
+Create confidence buckets:
+95–100%
+90–94%
+80–89%
+70–79%
+Below threshold
+Track outcomes so scanner quality can improve over time.
+Create a foundation for a controlled benchmark/test-card set later.
+
+36. SCAN ABUSE / LIMITS
+Allow admins to inspect:
+Free scan quota
+Pro usage
+Abnormally high usage
+Potential automated abuse
+Rate-limit events
+Do not suspend legitimate heavy collectors merely because they scan many cards.
+Treat this as a signal, not proof.
+
+37. COLLECTION ANALYTICS
+Create aggregate platform analytics.
+Show:
+Total collection entries
+Unique cards held
+Cards added/day
+Cards removed/day
+Estimated total tracked value
+Percentage priced
+Raw vs graded
+Grading-company distribution
+Most collected cards
+Most collected sets
+Most wishlisted cards
+Most traded cards
+Do not expose collector private data publicly.
+Admin-only aggregate insights are acceptable.
+
+38. COLLECTION DATA QUALITY
+Identify issues such as:
+Collection item references missing card
+Invalid quantity
+Invalid grade
+Unknown grading company
+Missing purchase price currency
+Missing current market value
+Duplicate accidental entries if detectable
+Provide safe repair tools where appropriate.
+
+39. COMMUNITY ADMIN
+Create a complete community-management section.
+Display:
+Posts
+Users
+Reports
+Blocks
+Moderation actions
+Active users
+Post activity
+Search:
+User
+Post
+Report ID
+Date
+Status
+
+40. MODERATION QUEUE
+Create statuses such as:
+NEW
+UNDER REVIEW
+ACTIONED
+DISMISSED
+ESCALATED
+Show:
+Reported content
+Reported user
+Reporter
+Reason
+Description
+Date
+Previous reports
+Previous moderation actions
+Actions:
+Dismiss
+Hide content
+Delete content
+Warn user if warning infrastructure exists
+Restrict posting
+Suspend account
+Escalate
+All actions must be audited.
+
+41. MODERATOR WORKFLOW
+Allow:
+Assignment
+Internal notes
+Priority
+Severity
+Resolution reason
+Resolution timestamp
+Previous history
+A moderator should be able to understand a case without checking the database manually.
+
+42. USER BLOCKING
+Surface relevant user-block relationships for moderation troubleshooting.
+Do not allow admins to casually remove personal blocks unless a genuine operational reason exists.
+
+43. TRADES & TRADE MATCH
+Create operational analytics for:
+Users with For Trade cards
+Trade Match users
+Matches generated
+Matches accepted/opened where tracked
+Popular wanted cards
+Popular offered cards
+Event-mode trade activity
+Potential abuse/report activity
+Do not turn Verified TCG into an in-app financial marketplace unless the existing product direction changes.
+The current app can facilitate discovery without becoming the transaction/payment intermediary.
+
+44. VENDORS
+If vendors are part of the existing product, create proper vendor administration.
+Show:
+Vendor name
+Profile
+Status
+Location
+Contact information
+Verification status
+Created date
+Activity
+Listings where applicable
+Potential statuses:
+PENDING
+ACTIVE
+SUSPENDED
+REJECTED
+Allow authorised staff to:
+Approve
+Suspend
+Feature
+Edit approved metadata
+Add internal notes
+Do not create fake vendor records.
+
+45. EVENTS COMMAND CENTRE
+Create full event administration.
+Event statuses:
+DRAFT
+UPCOMING
+LIVE
+COMPLETED
+CANCELLED
+Allow:
+Create
+Edit
+Publish
+Unpublish
+Cancel
+Feature
+Duplicate
+Configure:
+Title
+Description
+Venue
+Address
+Location
+Start
+End
+Timezone
+Banner/image
+Event-mode availability
+Optional capacity
+Relevant links
+
+46. EVENT ANALYTICS
+Show:
+Participants
+Event Mode activations
+Trade Match activity
+Cards wanted
+Cards available
+Engagement
+Notifications sent
+Community activity linked to event where tracked
+
+47. EVENT OPERATIONS
+For live events create an operator view:
+Event Status
+Participants
+Current activity
+Reported issues
+Trade Match health
+Notification controls
+Ability to close or disable Event Mode if a problem occurs
+
+48. CERTIFICATION / VERIFIED CARD PASSPORT
+The project already has certification/card-passport related functionality.
+Create a proper admin section.
+Search by:
+Certification ID
+Card
+Owner where appropriate
+Status
+Issuer
+Date
+Possible states:
+PENDING
+VERIFIED
+REVOKED
+FLAGGED
+Display:
+Card
+Certification ID
+Evidence/source
+Issuer
+Created
+Verified
+Revoked
+History
+Notes
+Never display a card as independently verified unless the underlying verification process supports that statement.
+
+49. CERTIFICATION ACTIONS
+Allow authorised admins to:
+Review
+Approve if appropriate
+Flag
+Revoke
+Add internal note
+Require reasons and audit logs for status changes.
+
+50. VERIFIED DROPS
+If Verified Drops is active in the user application, give it proper backend controls.
+Allow:
+Create drop
+Schedule
+Start/end date
+Image
+Title
+Description
+Link/deep link
+Eligibility
+Pro-only flag if applicable
+Featured status
+Publish/unpublish
+Display engagement if tracked.
+
+51. NOTIFICATION COMMAND CENTRE
+Create a proper push-notification system.
+Do not make administrators manually edit database notification rows.
+Provide:
+Notification templates
+Campaign creation
+Audience selection
+Scheduling
+Deep links
+Preview
+Test sends
+Delivery history
+
+52. AUDIENCE SEGMENTS
+Potential segments where underlying data supports it:
+All Users
+Free
+Pro
+Founding Pro
+New Users
+Inactive Users
+Active Users
+Event Participants
+Users With Wishlist
+Users With Price Alerts
+Users At Scan Limit
+iOS
+Android
+Do not create invasive targeting using sensitive data.
+
+53. SAFE BROADCAST WORKFLOW
+Before sending a large campaign:
+Show recipient estimate.
+Example:
+This notification will be sent to approximately 12,420 users.
+Require confirmation.
+Provide:
+Send Test First
+Preview
+Schedule
+Send Now
+Never allow a single accidental click to push to every user.
+
+54. NOTIFICATION ANALYTICS
+Where technically measurable:
+Queued
+Sent
+Delivered
+Failed
+Opened
+Deep-link opened
+Invalid push tokens
+Do not display delivery/open rates if they are not actually tracked.
+
+55. PUSH TOKEN HEALTH
+Show:
+Registered Push Tokens
+Active
+Invalid
+Expired
+Duplicate
+Last Cleanup
+Provide safe automated cleanup of invalid tokens.
+
+56. SMART ALERTS
+If the app has Smart Alerts / price alerts:
+Show aggregate:
+Active alerts
+Users with alerts
+Alerts triggered
+Failed alerts
+Most watched cards
+Do not expose unnecessary user-sensitive alert detail.
+Allow operational troubleshooting.
+
+57. SUPPORT INBOX
+Upgrade existing contact submissions into an actual support workflow.
+Statuses:
+NEW
+OPEN
+WAITING
+RESOLVED
+SPAM
+Priorities:
+LOW
+NORMAL
+HIGH
+URGENT
+Categories:
+Account
+Subscription
+Scanner
+Card Data
+Pricing
+Community
+Trade/Event
+Bug
+Privacy
+Other
+
+58. SUPPORT CASE VIEW
+Show:
+User
+Email
+Account
+Plan
+Message
+Submitted date
+Status
+Priority
+Assigned admin
+Internal notes
+Relevant device/app version where available
+Recent related activity
+Allow:
+Assign
+Prioritise
+Add note
+Change status
+Resolve
+Mark spam
+Link to user profile
+If outbound email sending is not integrated, do not create a fake Send Email button.
+Either integrate a real delivery provider or clearly provide a copy-response workflow.
+
+59. SUPPORT SLA VIEW
+Show:
+New today
+Open
+Unresolved >24h
+Unresolved >48h
+Oldest unresolved
+Resolved this week
+Average resolution time where meaningful
+
+60. ANALYTICS & GROWTH
+Create a serious analytics section based on first-party data.
+Allow:
+7D
+30D
+90D
+12M
+Custom
+Show:
+User growth
+DAU
+WAU
+MAU
+Retention
+Feature adoption
+Scanner usage
+Collection activity
+Community activity
+Trade activity
+Event activity
+Subscription conversion
+
+61. RETENTION
+Where event/activity history permits, calculate:
+D1 Retention
+D7 Retention
+D30 Retention
+Cohort retention
+If current data is insufficient, begin tracking correctly from implementation date.
+Do not invent past retention.
+
+62. ONBOARDING FUNNEL
+Track the key user journey:
+Account Created
+Onboarding Completed
+First Search
+First Scan
+First Card Added
+First Collection Created/View
+Wishlist Added
+Trade Feature Used
+Event Mode Used
+Pro Screen Viewed
+Checkout Started
+Pro Activated
+Show conversion/drop-off between stages.
+
+63. FEATURE ADOPTION
+Show usage of major Verified features:
+Scanner
+Collection
+Portfolio
+Price History
+Wishlist
+Watchlist
+Trades
+Trade Match
+Event Mode
+Community
+Smart Alerts
+Verified Drops
+Pro Insights
+This will help decide what features users actually value.
+
+64. ANALYTICS EVENTS
+If the existing activity/event system is insufficient, implement a proper privacy-aware first-party analytics event layer.
+Example event naming:
+user_signed_up
+scan_started
+scan_completed
+scan_failed
+card_added_collection
+wishlist_added
+trade_match_opened
+event_mode_started
+pro_viewed
+checkout_started
+subscription_activated
+Do not log passwords, private message content, authentication tokens or sensitive unnecessary payloads.
+
+65. ANALYTICS PERFORMANCE
+Do not calculate extremely expensive platform-wide metrics on every page load.
+Use:
+Aggregations
+Indexes
+Cached summaries
+Scheduled rollups
+Materialised-style data where appropriate
+The dashboard must remain fast as Verified grows.
+Design for:
+10,000 users
+100,000 users
+1,000,000 users
+without requiring a complete rewrite.
+
+66. SYSTEM HEALTH
+Create an operations section showing actual backend status.
+Examples:
+API
+Database
+Authentication
+Push Notifications
+Pricing Engine
+PriceCharting
+Other Pricing Providers
+Image Proxy
+Email provider if connected
+Subscription provider
+Background workers
+Jobs
+Status:
+HEALTHY
+DEGRADED
+DOWN
+MISCONFIGURED
+DISABLED
+
+67. SYSTEM METRICS
+Where reasonably available:
+Server uptime
+API request rate
+API error rate
+Average latency
+P95 latency
+Database response time
+Active sessions
+Recent 5xx errors
+Recent failed jobs
+Current deployment/version
+Current environment
+Git commit/version identifier
+Do not attempt to build a full Datadog replacement.
+Show the operational information needed to know whether Verified is healthy.
+
+68. BACKGROUND JOBS
+Create a proper job-management section if the platform has scheduled/background work.
+Potential jobs:
+Pricing refresh
+Price snapshot creation
+Pricing provider matching
+Currency refresh
+Push cleanup
+Notification campaign dispatch
+Session cleanup
+Data-quality scans
+Analytics rollup
+Jobs should track:
+Name
+Status
+Started
+Finished
+Duration
+Records processed
+Records failed
+Error
+Retry count
+Last success
+Next scheduled execution if known
+
+69. JOB FAILURE HANDLING
+Statuses:
+QUEUED
+RUNNING
+SUCCESS
+FAILED
+RETRYING
+CANCELLED
+Provide authorised admin actions:
+Retry failed job
+Cancel safe queued job
+Run safe maintenance job now
+Never make dangerous database maintenance actions one-click operations.
+
+70. INTEGRATIONS PAGE
+Create one page showing external integrations.
+Examples:
+PriceCharting
+eBay
+Push provider
+Subscription provider
+Email provider
+Currency/FX provider
+Analytics service if used
+For each show:
+Configured
+Status
+Last Success
+Last Failure
+Recent errors
+Requests/usage where known
+Never show:
+API keys
+Passwords
+Secrets
+Full access tokens
+Only show:
+Secret configured
+or
+Secret missing
+
+71. SECURITY — UPGRADE ADMIN AUTHENTICATION
+The current platform already has server-side admin-session functionality.
+Improve it into a proper administrator identity and permission system.
+Do not regress to putting ADMIN_SECRET into client-side storage.
+Use:
+Secure HttpOnly cookie
+Secure flag in production
+SameSite protection
+Server-managed admin sessions
+Session expiry
+Idle expiry where practical
+Logout/revocation
+Rate limiting
+Failed login protection
+Permission checks on EVERY admin endpoint
+Do not rely on frontend route protection alone.
+
+72. ADMIN ACCOUNTS
+Create proper admin identities.
+Roles:
+OWNER
+ADMIN
+SUPPORT
+MODERATOR
+ANALYST
+Suggested access:
+OWNER Everything
+ADMIN Most operational management except owner-only security/configuration
+SUPPORT Users + support with limited account controls
+MODERATOR Community + reports
+ANALYST Read-only analytics
+Build actual permissions, not only labels.
+
+73. ADMIN PERMISSIONS
+Use a permission model such as:
+users.read
+users.suspend
+users.delete
+subscriptions.read
+subscriptions.manage
+catalogue.read
+catalogue.write
+pricing.read
+pricing.manage
+moderation.manage
+events.manage
+notifications.send
+system.read
+system.manage
+admins.manage
+audit.read
+Owner receives all.
+
+74. ADMIN TEAM PAGE
+Owner can:
+Invite admin
+Deactivate admin
+Change role
+View last login
+Revoke sessions
+Reset security access
+View permission set
+Do not allow an admin to elevate themselves beyond their own permission.
+
+75. ADMIN SESSION SECURITY
+Track safely:
+Admin
+Login time
+Last active
+Approximate IP metadata if appropriate
+User agent/device
+Expiry
+Allow Owner to revoke sessions.
+Never expose raw session tokens.
+
+76. CSRF & COOKIE AUTH
+Because admin authentication uses cookies, ensure all state-changing admin endpoints are protected appropriately against CSRF.
+Use the existing architecture's best-supported method.
+Do not assume SameSite alone is sufficient for every deployment context.
+
+77. RE-AUTHENTICATION FOR HIGH-RISK ACTIONS
+For extremely sensitive actions consider requiring recent authentication.
+Examples:
+Deleting user permanently
+Creating new admin
+Changing another admin's role
+Changing security configuration
+Rotating critical configuration
+Mass notification to all users
+Bulk catalogue deletion
+
+78. AUDIT LOG — CRITICAL
+Create a comprehensive admin audit log.
+Every sensitive admin action should create an immutable audit event.
+Store:
+Admin ID
+Admin name
+Action
+Target type
+Target ID
+Timestamp
+Reason
+Previous state where safe
+New state where safe
+IP/user-agent metadata where appropriate
+Request/correlation ID
+Example:
+OWNER Omar suspended USER 18F...
+Reason:
+Spam activity
+Do not allow ordinary admins to delete audit history.
+
+79. AUDIT LOG SEARCH
+Allow filters:
+Admin
+Action
+Target
+Date
+Severity
+Category
+Search.
+Export for owner if needed.
+
+80. SECURITY EVENTS
+Track relevant events such as:
+Failed admin login
+Successful login
+Logout
+Password/security change
+Session revoked
+Permission changed
+Admin created
+Admin disabled
+Suspicious repeated login failures
+Do not expose sensitive authentication material.
+
+81. FEATURE FLAGS
+Create a proper Feature Flags system so major functionality can be turned on/off without deploying a new app.
+Possible flags:
+Scanner
+Community Posting
+Trade Match
+Event Mode
+Verified Drops
+Smart Alerts
+Price Refresh
+Price History
+Vendor Features
+New Pro Features
+Flags may support:
+Enabled
+Disabled
+Environment
+Percentage rollout where feasible
+Free/Pro targeting where appropriate
+Do not overengineer an experimentation platform.
+
+82. PLATFORM CONFIGURATION
+Create controlled configuration for business rules currently hard-coded where it makes sense.
+Examples:
+Free scan limit
+Pro scan limit/unlimited setting
+Pro feature entitlements
+Price cache duration
+Low-confidence threshold
+Scan confidence threshold
+Maintenance message
+Support contact settings
+These changes must:
+Validate
+Audit
+Not silently break clients
+
+83. MAINTENANCE MODE
+Create safe maintenance controls.
+Possible:
+API Maintenance Message
+Disable New Scans
+Disable Community Posting
+Disable Trade Match
+Disable Event Mode
+Global read-only maintenance mode if supported
+Maintenance controls must not accidentally lock administrators out.
+
+84. APP VERSION MANAGEMENT
+This is important for a production mobile app.
+Create admin configuration for:
+Latest iOS version
+Latest Android version
+Minimum supported iOS version
+Minimum supported Android version
+Recommended update
+Forced update
+Maintenance notice
+Release message
+The mobile app should eventually be able to check this configuration.
+This allows Verified to stop very old broken app versions.
+
+85. ANNOUNCEMENTS / REMOTE CONTENT
+Provide safe control for global app announcements where useful.
+Examples:
+Maintenance
+New Feature
+Event Announcement
+Pro Feature
+Temporary Issue
+Support Notice
+Allow:
+Start
+End
+Audience
+Dismissible
+Deep link
+Do not require a mobile app release for basic announcement changes.
+
+86. PRIVACY & ACCOUNT REQUESTS
+Create a Privacy/Account Requests section.
+Include:
+Data export requests
+Deletion requests
+eBay-related account deletion callbacks if applicable
+Deletion status
+Export status
+Processing errors
+Created date
+Completed date
+Never provide a browser button that downloads raw database dumps.
+Only provide user-specific legitimate exports.
+
+87. DATA RETENTION
+Where relevant, document and expose safe status of:
+Expired sessions
+Invalid push tokens
+Old temporary scan assets
+Deleted accounts awaiting purge
+Other temporary data
+Do not create destructive bulk purge actions without safeguards.
+
+88. INTERNAL ADMIN NOTES
+For users, support cases, pricing reviews and moderation cases, allow authorised staff to add internal notes.
+Store:
+Admin
+Timestamp
+Note
+Notes should be clearly marked:
+Internal — not visible to user
+Audit creation/deletion/editing if edits are permitted.
+
+89. GLOBAL QUICK ACTIONS
+Provide a quick action menu.
+Potential actions:
+Find User
+Find Card
+Review Pricing Issues
+Review Failed Scans
+Create Event
+Create Notification
+Send Test Notification
+Create Announcement
+Grant Pro
+Open System Health
+High-risk actions should still require normal confirmation.
+
+90. DATA TABLE STANDARD
+Build one reusable professional table system.
+Support:
+Server pagination
+Search
+Sort
+Filters
+Column visibility
+Loading
+Empty state
+Error state
+Retry
+Responsive mobile alternative
+Bulk selection only where safe
+Avoid creating separate inconsistent table implementations everywhere.
+
+91. SHARED ADMIN COMPONENTS
+Create reusable components such as:
+AdminLayout
+AdminSidebar
+AdminHeader
+KpiCard
+TrendMetric
+StatusBadge
+HealthBadge
+DataTable
+FilterBar
+DateRangePicker
+UserLink
+CardLink
+ConfirmActionModal
+DangerActionModal
+DetailDrawer
+EmptyState
+ErrorState
+SkeletonState
+Pagination
+CommandPalette
+AttentionBanner
+AuditTimeline
+Do not create unnecessary abstractions for one-off elements.
+
+92. BACKEND ARCHITECTURE
+Do not keep adding everything to one giant admin.ts route file.
+Modularise admin APIs.
+For example:
+routes/admin/overview.ts
+routes/admin/users.ts
+routes/admin/subscriptions.ts
+routes/admin/catalogue.ts
+routes/admin/pricing.ts
+routes/admin/scans.ts
+routes/admin/moderation.ts
+routes/admin/events.ts
+routes/admin/notifications.ts
+routes/admin/support.ts
+routes/admin/analytics.ts
+routes/admin/system.ts
+routes/admin/audit.ts
+routes/admin/config.ts
+The exact structure should match the existing project's conventions.
+
+93. ADMIN API STANDARD
+Every endpoint should consistently support appropriate:
+Authentication
+Permissions
+Validation
+Error handling
+Pagination
+Sorting
+Filtering
+Logging
+Audit events
+Use typed schemas.
+Use existing validation libraries where available.
+Do not trust raw client parameters.
+
+94. DATABASE PERFORMANCE
+Add indexes where real queries require them.
+Examples likely to need indexing:
+User email
+Username
+Created date
+Last active
+Account status
+Subscription status
+Report status
+Support status
+Card ID
+Provider ID
+Price timestamp
+Scan timestamp
+Event date
+Audit timestamp
+Do not add random indexes everywhere.
+Use actual query patterns.
+
+95. TRANSACTIONS
+Use database transactions for operations that must remain consistent.
+Examples:
+Merging duplicate cards
+Deleting users
+Changing linked subscription state
+Bulk catalogue changes
+Certification changes
+High-risk multi-table actions
+Prevent partial state where possible.
+
+96. BACKGROUND WORK
+Long-running actions must not block HTTP requests.
+Examples:
+Refreshing thousands of prices
+Sending thousands of notifications
+Mass catalogue imports
+Analytics rollups
+Use appropriate job/queue mechanisms compatible with the existing deployment.
+Display job progress in the admin.
+
+97. DO NOT USE FAKE DATA
+Critical requirement.
+No:
+Fake users
+Fake revenue
+Fake Pro conversions
+Fake sales
+Fake price history
+Fake notification delivery rates
+Fake scanner confidence
+Fake provider health
+Fake event participation
+If there is no data, display:
+No data yet.
+If integration is missing:
+Not connected.
+If tracking begins today:
+Tracking from 19 August 2026.
+Do not make the product appear more complete through fabricated numbers.
+
+98. EMPTY STATES
+Use good empty states.
+Example:
+No pricing issues
+All currently mapped cards are within the configured confidence threshold.
+Example:
+Price history is being built
+Verified will display historical trends as price snapshots accumulate.
+Example:
+Billing provider not connected
+Subscription revenue analytics will appear when payment-provider data is available.
+
+99. ERROR STATES
+Every admin screen should handle:
+Network failure
+API failure
+No permission
+Expired admin session
+Server error
+Provider outage
+Empty data
+Invalid filters
+Provide retry where sensible.
+Never crash the entire admin because one external provider is down.
+
+100. PERFORMANCE
+Admin pages should load quickly.
+Do not fetch every data set on page load.
+Use:
+Lazy route loading where appropriate
+Server pagination
+Query caching
+Background refresh
+Debounced search
+Memoisation where appropriate
+Efficient SQL
+Do not make 30 API requests simply to render the Overview.
+Create aggregated overview APIs.
+
+101. ACCESSIBILITY
+Ensure:
+Keyboard navigation
+Visible focus
+Correct labels
+Good contrast
+Buttons have meaningful text/ARIA labels
+Forms display errors clearly
+Modals trap focus correctly
+Desktop and mobile navigation remain accessible
+
+102. URL STATE
+Where useful, store table/search/filter state in URL parameters.
+Example:
+/admin/users?plan=pro&status=active&page=2
+This allows:
+Refresh without losing state
+Copyable admin URLs
+Back/forward navigation
+
+103. DEEP LINKING BETWEEN ADMIN SECTIONS
+Make the dashboard interconnected.
+Example:
+Overview says:
+23 pricing mappings require review
+Click → Pricing → Review Queue filtered to 23.
+User detail says:
+3 reports
+Click → Moderation filtered to user.
+Provider health says:
+14 failed requests
+Click → Provider error log.
+Support ticket links → User.
+Card page links → Pricing history.
+This greatly improves usability.
+
+104. MOBILE ADMIN PRIORITY
+On mobile, prioritise:
+Attention Required
+System Health
+Search
+Users
+Support
+Moderation
+Pricing Issues
+Notifications
+Quick Actions
+Deep analytics tables can remain easier on desktop but must still be usable on mobile.
+
+105. OPTIONAL PWA SUPPORT
+If straightforward within the existing Vite/web architecture, make the admin installable as a PWA.
+This is optional.
+Do not delay core functionality to implement PWA support.
+The dashboard must work normally in Safari/Chrome without installation.
+
+106. OWNER EXPERIENCE
+The Owner account should be able to log in and within approximately 10 seconds understand:
+How many users are active?
+Are subscriptions growing?
+Are scans working?
+Are card prices current?
+Are integrations healthy?
+Are users reporting problems?
+Is moderation required?
+Are background jobs failing?
+What needs attention right now?
+That is the main goal of the Command Centre.
+
+107. DATABASE SCHEMA
+Before adding new schemas, inspect everything already present.
+Reuse where possible.
+Where genuinely missing, consider tables/models for:
+Admin Users
+Admin Sessions
+Admin Permissions/Roles
+Admin Audit Log
+Admin Notes
+Feature Flags
+Platform Configuration
+Notification Campaigns
+Background Jobs
+Analytics Rollups/Events
+Provider Health
+Pricing Review Decisions
+Support Assignment/Status
+Do NOT create duplicate pricing/card tables if the PriceCharting implementation has already added appropriate structures.
+Create proper migrations.
+Never directly modify production schema without migration support.
+
+108. CURRENT ADMIN MIGRATION
+Do not suddenly remove the current admin before the replacement works.
+Migrate safely.
+Recommended sequence:
+	1	Audit current admin UI and APIs
+	2	Extract shared functionality
+	3	Introduce new AdminLayout
+	4	Migrate Overview
+	5	Migrate Users
+	6	Migrate Reports/Support
+	7	Add new sections
+	8	Confirm all old functionality is represented
+	9	Remove obsolete duplicate code
+	10	Run full build/tests
+Do not leave both old and new admin systems conflicting.
+
+109. BACKWARD COMPATIBILITY
+Do not break the mobile Verified TCG application.
+Admin refactoring must not change user-facing endpoint behaviour without intentionally updating corresponding clients.
+Existing mobile app functionality should continue working.
+
+110. SECURITY REVIEW BEFORE COMPLETION
+Before considering the task finished, specifically check for:
+Client-exposed admin secrets
+ADMIN_SECRET in localStorage/sessionStorage
+Insecure cookies
+Missing server permission checks
+Unprotected destructive endpoints
+Secrets in API responses
+Secrets in logs
+SQL injection
+Unsafe bulk actions
+Missing CSRF considerations
+Admin escalation vulnerabilities
+Routes accessible while unauthenticated
+Password/token exposure
+Fix problems discovered.
+
+111. AUTOMATED TESTING
+Add meaningful tests for critical admin functionality.
+At minimum:
+Unauthenticated admin access rejected
+Valid admin session accepted
+Role permissions enforced
+Owner-only operation rejected for lower role
+User search
+Pagination
+Suspend/unsuspend
+Destructive confirmation backend validation
+Audit event creation
+Report resolution
+Support status change
+Pricing review action
+Provider failure handling
+Feature flag change
+Invalid input rejected
+
+112. RESPONSIVE TESTING
+Test:
+iPhone-sized viewport
+Large phone
+iPad/tablet
+Laptop
+Large desktop
+Specifically verify:
+Navigation
+Tables
+Drawers
+Modals
+Charts
+Filters
+Forms
+Action buttons
+No critical information should become inaccessible on mobile.
+
+113. BUILD VALIDATION
+Before finishing run the project's existing:
+Type checking
+Linting
+Tests
+Production builds
+Fix errors introduced by this task.
+Do not claim success if the web admin does not build.
+
+114. PRODUCTION SAFEGUARDS
+Use confirmation modals for dangerous actions.
+Use reasons for administrative interventions.
+Use permissions.
+Use audit logs.
+Use transactions where appropriate.
+Use idempotent operations where duplicate requests could cause damage.
+Never trust frontend state for authorisation.
+
+115. NO PLACEHOLDER DASHBOARD
+Do not finish this task by creating attractive pages containing:
+Coming Soon
+fake graphs
+random numbers
+sample users
+mock tables
+buttons that do nothing
+If a feature cannot be completed because an external provider is missing:
+Build the real internal architecture and display the integration as:
+NOT CONNECTED
+Do not fake completion.
+
+116. PRIORITY ORDER
+Implement in this order if the work needs to be staged internally:
+P0 — Critical
+Admin architecture
+Secure authentication
+Roles/permissions
+Audit log
+Overview
+Users
+Support
+Reports/moderation
+System health
+Responsive layout
+P1 — Platform Operations
+Subscriptions
+Catalogue
+Pricing
+Pricing providers
+Scanner analytics
+Scanner review
+Collections
+Events
+Notifications
+P2 — Advanced Operations
+Growth analytics
+Feature flags
+App configuration
+App versions
+Certifications
+Vendors
+Verified Drops
+Advanced background jobs
+Advanced data-quality workflows
+However:
+Do not stop at a planning document.
+Implement as much of the complete production system as possible in this task.
+
+117. FINAL ADMIN ROUTES
+At the end I expect a coherent system resembling:
+/admin
+/admin/users
+/admin/users/:id
+/admin/subscriptions
+/admin/cards
+/admin/cards/:id
+/admin/pricing
+/admin/pricing/providers
+/admin/pricing/review
+/admin/scans
+/admin/scans/review
+/admin/collections
+/admin/community
+/admin/moderation
+/admin/trades
+/admin/events
+/admin/certifications
+/admin/vendors
+/admin/drops
+/admin/notifications
+/admin/support
+/admin/analytics
+/admin/system
+/admin/jobs
+/admin/integrations
+/admin/audit
+/admin/feature-flags
+/admin/settings
+/admin/admins
+The exact URLs can follow the project's routing conventions, but functionality should be organised roughly this way.
+
+118. FINAL RESPONSE REQUIRED FROM REPLIT
+When implementation is complete, give me a concise report containing:
+Implemented
+Every admin section actually built.
+Existing Functionality Reused
+Which existing Verified TCG endpoints/components were retained.
+New Backend APIs
+List new admin endpoints.
+Database
+List migrations and tables added/changed.
+Security
+Explain the final admin authentication/roles/session model.
+Pricing Operations
+Explain what PriceCharting/pricing functionality is visible and controllable.
+Scanner Operations
+Explain scan analytics/review capability.
+Analytics
+Explain what metrics use real historical data and what tracking begins from this implementation forward.
+Integrations
+Show each as:
+LIVE
+CONFIGURED
+NOT CONNECTED
+DEGRADED
+Do not mark an integration LIVE unless a real successful call has been confirmed.
+Feature Flags
+Show which runtime settings can now be controlled.
+Responsive Testing
+State the viewports tested.
+Build Validation
+Give the actual result of:
+Type check
+Tests
+Web production build
+API build
+Remaining Work
+Clearly list anything that could not be implemented and why.
+Do not hide unfinished work.
+
+FINAL PRODUCT PRINCIPLE
+The Verified TCG Admin Dashboard should not simply be a place to look at statistics.
+It should be the operating system for Verified TCG.
+From this dashboard the owner should be able to:
+Understand the business
+Understand the users
+Monitor growth
+Protect the community
+Manage subscriptions
+Manage card data
+Protect pricing accuracy
+Improve scanner accuracy
+Run events
+Send communications
+Control features
+Diagnose problems
+Manage support
+Monitor integrations
+Review security
+And operate the platform confidently without needing direct database access.
+The system should be designed for Verified TCG as it exists today but architected so it can support a much larger global platform later.
+Most importantly:
+Build the functionality. Do not only design it, describe it, document it or create mock-ups.

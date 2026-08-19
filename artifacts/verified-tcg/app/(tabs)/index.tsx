@@ -421,6 +421,8 @@ export default function HomeScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
       scrollEventThrottle={16}
       refreshControl={
         <RefreshControl
