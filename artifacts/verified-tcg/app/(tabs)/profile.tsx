@@ -112,6 +112,8 @@ export default function ProfileScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
     >
       {/* Header */}
       <View style={styles.header}>

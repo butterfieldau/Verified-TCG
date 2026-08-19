@@ -427,6 +427,8 @@ export default function CollectionScreen() {
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.3}
             contentContainerStyle={{ paddingTop: topPad + 8 }}
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustContentInsets={false}
           />
         ) : (
           <FlashList
@@ -479,6 +481,8 @@ export default function CollectionScreen() {
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.3}
             contentContainerStyle={{ paddingTop: topPad + 8 }}
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustContentInsets={false}
           />
         )}
       </View>
@@ -492,6 +496,8 @@ export default function CollectionScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
     >
       {/* Shared header (without skeleton / error for static tabs) */}
       <View style={styles.header}>

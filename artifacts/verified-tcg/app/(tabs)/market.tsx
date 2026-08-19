@@ -76,6 +76,8 @@ export default function MarketScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: tabH + 24 }]}
       showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
