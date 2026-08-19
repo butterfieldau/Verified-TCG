@@ -25,10 +25,10 @@ import {
 import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
 
 describe("Grade definitions", () => {
-  test("all 9 grade keys are defined", () => {
-    assert.equal(GRADE_DEFINITIONS.length, 9);
+  test("only source-supported card condition keys are defined", () => {
+    assert.equal(GRADE_DEFINITIONS.length, 5);
     const keys = GRADE_DEFINITIONS.map(g => g.key);
-    for (const expected of ["raw", "grade_7", "grade_8", "grade_9", "grade_9_5", "psa_10", "bgs_10", "cgc_10", "sgc_10"]) {
+    for (const expected of ["raw", "graded", "bgs_10", "cgc_10", "sgc_10"]) {
       assert.ok(keys.includes(expected as any), `Missing grade key: ${expected}`);
     }
   });
@@ -38,25 +38,22 @@ describe("Grade definitions", () => {
     assert.ok(loose, "loose-price must be mapped");
     assert.equal(loose!.key, "raw");
 
-    const cib = GRADE_BY_PC_FIELD.get("cib-price");
-    assert.ok(cib);
-    assert.equal(cib!.key, "grade_7");
-
-    const newPrice = GRADE_BY_PC_FIELD.get("new-price");
-    assert.ok(newPrice);
-    assert.equal(newPrice!.key, "grade_8");
-
     const graded = GRADE_BY_PC_FIELD.get("graded-price");
     assert.ok(graded);
-    assert.equal(graded!.key, "grade_9");
+    assert.equal(graded!.key, "graded");
 
-    const boxOnly = GRADE_BY_PC_FIELD.get("box-only-price");
-    assert.ok(boxOnly);
-    assert.equal(boxOnly!.key, "grade_9_5");
-
-    const manual = GRADE_BY_PC_FIELD.get("manual-only-price");
-    assert.ok(manual);
-    assert.equal(manual!.key, "psa_10");
+    for (const unsupported of [
+      "cib-price",
+      "new-price",
+      "box-only-price",
+      "manual-only-price",
+    ]) {
+      assert.equal(
+        GRADE_BY_PC_FIELD.has(unsupported),
+        false,
+        `${unsupported} must not be labelled as a numeric card grade`,
+      );
+    }
 
     const bgs10 = GRADE_BY_PC_FIELD.get("bgs-10-price");
     assert.ok(bgs10);
@@ -85,7 +82,9 @@ describe("Grade definitions", () => {
 
   test("isValidGradeKey accepts known keys", () => {
     assert.ok(isValidGradeKey("raw"));
-    assert.ok(isValidGradeKey("psa_10"));
+    assert.ok(isValidGradeKey("graded"));
+    assert.ok(isValidGradeKey("bgs_10"));
+    assert.ok(!isValidGradeKey("psa_10"));
     assert.ok(!isValidGradeKey("psa10"));   // legacy key — not valid in new system
     assert.ok(!isValidGradeKey("unknown"));
   });
@@ -434,32 +433,31 @@ describe("isPCConfigured", () => {
 });
 
 describe("extractPrices", () => {
-  test("extracts all 9 grade prices from a full PC product detail", () => {
+  test("extracts only truthful card conditions from a full provider detail", () => {
     const detail: PCProductDetail = {
       id: "12345",
       "product-name": "Charizard ex",
       "console-name": "Obsidian Flames",
       "loose-price": 4500,         // raw
-      "cib-price": 5000,           // grade_7
-      "new-price": 5500,           // grade_8
-      "graded-price": 8000,        // grade_9
-      "box-only-price": 15000,     // grade_9_5
-      "manual-only-price": 40000,  // psa_10
+      "cib-price": 5000,
+      "new-price": 5500,
+      "graded-price": 8000,
+      "box-only-price": 15000,
+      "manual-only-price": 40000,
       "bgs-10-price": 35000,       // bgs_10
       "condition-17-price": 38000, // cgc_10
       "condition-18-price": 32000, // sgc_10
     };
     const prices = extractPrices(detail);
-    assert.equal(prices.size, 9);
+    assert.equal(prices.size, 5);
     assert.equal(prices.get("raw"), 4500);
-    assert.equal(prices.get("grade_7"), 5000);
-    assert.equal(prices.get("grade_8"), 5500);
-    assert.equal(prices.get("grade_9"), 8000);
-    assert.equal(prices.get("grade_9_5"), 15000);
-    assert.equal(prices.get("psa_10"), 40000);
+    assert.equal(prices.get("graded"), 8000);
     assert.equal(prices.get("bgs_10"), 35000);
     assert.equal(prices.get("cgc_10"), 38000);
     assert.equal(prices.get("sgc_10"), 32000);
+    for (const unsupported of ["grade_7", "grade_8", "grade_9", "grade_9_5", "psa_10"]) {
+      assert.equal(prices.has(unsupported as any), false);
+    }
   });
 
   test("skips zero / missing prices", () => {
@@ -468,11 +466,11 @@ describe("extractPrices", () => {
       "product-name": "Test",
       "console-name": "Test Set",
       "loose-price": 0,
-      "new-price": 2500,
+      "graded-price": 2500,
     };
     const prices = extractPrices(detail);
     assert.equal(prices.has("raw"), false, "zero price must be skipped");
-    assert.equal(prices.get("grade_8"), 2500);
+    assert.equal(prices.get("graded"), 2500);
   });
 
   test("handles string price values", () => {
@@ -611,16 +609,14 @@ import { clearFxCache, getExchangeRate, convertCents } from "../pricing/fx.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 
 describe("Exact holding-grade resolution", () => {
-  test("resolves raw and every supported generic grade exactly", () => {
+  test("does not assign generic provider conditions to numeric grades", () => {
     assert.equal(gradeKeyForHolding(false, null), "raw");
-    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 7 }), "grade_7");
-    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 8 }), "grade_8");
-    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 9 }), "grade_9");
-    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 9.5 }), "grade_9_5");
+    for (const grade of [7, 8, 9, 9.5, 10]) {
+      assert.equal(gradeKeyForHolding(true, { company: "PSA", grade }), null);
+    }
   });
 
-  test("keeps grade-10 companies distinct", () => {
-    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 10 }), "psa_10");
+  test("keeps explicitly supported grade-10 companies distinct", () => {
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10 }), "bgs_10");
     assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10 }), "cgc_10");
     assert.equal(gradeKeyForHolding(true, { company: "SGC", grade: 10 }), "sgc_10");

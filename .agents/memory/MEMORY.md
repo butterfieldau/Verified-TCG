@@ -3,3 +3,5 @@
 - [Tab safe-area behavior](tab-safe-area-behavior.md) — NativeTabs with Liquid Glass does not protect custom tab content from the status area; every tab root needs its native top inset.
 - [Expo web confirmations](expo-web-action-controls.md) — system Alert action callbacks are unreliable in browser previews; prefer visible in-app confirmation state.
 - [Pricing provider independence](pricing-provider-independence.md) — serve persisted mappings and quotes before catalog lookups so one provider outage cannot hide another provider's cached data.
+- [PriceCharting condition semantics](pricecharting-condition-semantics.md) — provider price fields are category-overloaded; never infer numeric card grades without durable category provenance.
+- [Trust operations truthfulness](trust-operations-truthfulness.md) — safety/event reviews must cover admin and consumer surfaces; unavailable capabilities stay explicit, never mocked.

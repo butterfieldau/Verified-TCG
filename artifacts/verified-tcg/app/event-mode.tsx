@@ -13,9 +13,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
-import { MOCK_EVENT } from '@/services/matching';
 import { useApp } from '@/context/AppContext';
-import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import {
   fetchActiveEvents,
   joinEvent,
@@ -38,19 +36,11 @@ const TABS: { label: string; value: EventTab }[] = [
   { label: 'Trending',  value: 'trending'   },
 ];
 
-const QUICK_ACTIONS = [
-  { icon: 'search',  label: "I'm Looking For", route: '/event/looking-for' },
-  { icon: 'package', label: 'I Have This',      route: '/event/have-this'  },
-  { icon: 'list',    label: 'Wanted Board',     route: '/event/wanted-board'},
-  { icon: 'grid',    label: 'Complete My Set',  route: '/event/complete-my-set'},
-] as const;
-
 const FREE_MATCH_LIMIT = 3;
 
-// Teaser stats derived deterministically from MOCK_EVENT
-const TEASER_COLLECTORS_WITH_WANTS = MOCK_EVENT.stats.collectorsWithYourWants;
-const TEASER_EXTRA_MATCHES        = MOCK_EVENT.stats.tradeMatches * 2 + 2;
-const TEASER_WANT_YOURS           = MOCK_EVENT.stats.wantYourCards * 3 - 1;
+function isLiveEvent(ev: EventSummary | null): boolean {
+  return ev?.status === 'live';
+}
 
 export default function EventModeScreen() {
   const insets = useSafeAreaInsets();
@@ -65,34 +55,36 @@ export default function EventModeScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState(false);
   const [activeTab, setActiveTab] = useState<EventTab>('matches');
   const [tradeMatches, setTradeMatches] = useState<TradeMatchResult[]>([]);
   const [matchCount, setMatchCount] = useState(0);
   const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchesError, setMatchesError] = useState(false);
 
   const wishlistCount = watchlist.length;
 
   // ── Load active events ────────────────────────────────────────────────────
-  useEffect(() => {
+  const loadEvents = useCallback(() => {
+    setEventsLoading(true);
+    setEventsError(false);
     fetchActiveEvents()
       .then(list => {
         setEvents(list);
-        if (list.length > 0) setSelectedEvent(list[0]);
+        setSelectedEvent(list.length > 0 ? list[0] : null);
       })
       .catch(() => {
-        // Fall back to mock event details for display
-        setSelectedEvent({
-          id: MOCK_EVENT.id,
-          name: MOCK_EVENT.name,
-          venue: MOCK_EVENT.venue,
-          city: MOCK_EVENT.city,
-          eventDate: MOCK_EVENT.dates,
-          isActive: true,
-          participantCount: MOCK_EVENT.collectorsPresent,
-        });
+        // No fabricated fallback — surface an explicit, retryable error state.
+        setEvents([]);
+        setSelectedEvent(null);
+        setEventsError(true);
       })
       .finally(() => setEventsLoading(false));
   }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
 
   // ── Check existing participation when event selected ──────────────────────
   useEffect(() => {
@@ -108,12 +100,16 @@ export default function EventModeScreen() {
   const loadTradeMatches = useCallback(async (eventId: string) => {
     if (!isAuthenticated) return;
     setMatchesLoading(true);
+    setMatchesError(false);
     try {
       const result = await fetchTradeMatches(eventId);
       setMatchCount(result.matchCount);
       setTradeMatches(result.matches);
     } catch {
-      // API error — keep empty matches
+      // API error — surface an unavailable state rather than an unauthentic zero.
+      setMatchesError(true);
+      setTradeMatches([]);
+      setMatchCount(0);
     } finally {
       setMatchesLoading(false);
     }
@@ -153,24 +149,19 @@ export default function EventModeScreen() {
       setIsInEvent(false);
       setTradeMatches([]);
       setMatchCount(0);
+      setMatchesError(false);
       if (setCurrentEventId) setCurrentEventId(null);
-    } catch {
-      // If leave fails, still clear local state
-      setIsInEvent(false);
-      if (setCurrentEventId) setCurrentEventId(null);
+    } catch (e: unknown) {
+      // Leave failed on the server — keep the collector in the event so local
+      // state stays truthful, and let them retry.
+      const msg = e instanceof Error ? e.message : 'Failed to leave event';
+      Alert.alert('Leave Failed', msg);
     } finally {
       setIsLeaving(false);
     }
   }, [selectedEvent, setCurrentEventId]);
 
-  const liveStats = {
-    collectorsWithYourWants: Math.max(0, Math.round(MOCK_EVENT.stats.collectorsWithYourWants * (wishlistCount / 3))),
-    tradeMatches:            isInEvent ? matchCount : Math.max(0, Math.round(MOCK_EVENT.stats.tradeMatches * (wishlistCount / 3))),
-    wishlistForSale:         Math.max(0, Math.round(MOCK_EVENT.stats.wishlistForSale * (wishlistCount / 3))),
-    wantYourCards:           MOCK_EVENT.stats.wantYourCards,
-  };
-
-  const participantCount = selectedEvent?.participantCount ?? MOCK_EVENT.collectorsPresent;
+  const participantCount = selectedEvent?.participantCount ?? 0;
   const screenTitle = isPro ? 'Event Mode+' : 'Event Mode';
 
   const visibleMatches = isPro ? tradeMatches : tradeMatches.slice(0, FREE_MATCH_LIMIT);
@@ -206,14 +197,30 @@ export default function EventModeScreen() {
               <ActivityIndicator color={C.primary} />
               <Text style={styles.loadingText}>Finding nearby events…</Text>
             </View>
+          ) : eventsError ? (
+            <View style={[styles.heroCard, { backgroundColor: C.card }]}>
+              <Feather name="wifi-off" size={32} color={C.mutedForeground} />
+              <Text style={[styles.heroName, { marginTop: 12 }]}>Events Unavailable</Text>
+              <Text style={styles.heroVenue}>
+                We couldn't load events right now. Please check your connection and try again.
+              </Text>
+              <Pressable
+                onPress={loadEvents}
+                style={[styles.emptyStateCta, { backgroundColor: C.primary }]}
+              >
+                <Text style={styles.emptyStateCtaText}>Try Again</Text>
+              </Pressable>
+            </View>
           ) : selectedEvent ? (
             <>
               {/* Hero card */}
               <View style={[styles.heroCard, { backgroundColor: C.card }]}>
                 <View style={styles.heroBadgeRow}>
                   <View style={[styles.heroBadge, { backgroundColor: `${C.primary}22` }]}>
-                    <View style={styles.livePulse} />
-                    <Text style={[styles.heroBadgeText, { color: C.primary }]}>LIVE EVENT DETECTED</Text>
+                    {isLiveEvent(selectedEvent) && <View style={styles.livePulse} />}
+                    <Text style={[styles.heroBadgeText, { color: C.primary }]}>
+                      {isLiveEvent(selectedEvent) ? 'LIVE' : 'UPCOMING'}
+                    </Text>
                   </View>
                 </View>
                 <Text style={styles.heroName}>{selectedEvent.name}</Text>
@@ -246,8 +253,7 @@ export default function EventModeScreen() {
                 </ScrollView>
               )}
 
-              {/* Stats preview */}
-              <Text style={styles.sectionLabel}>What's waiting for you</Text>
+              {/* Wishlist nudge — helps collectors get relevant matches once inside */}
               {wishlistCount === 0 && (
                 <Pressable
                   onPress={() => router.push('/wishlist' as any)}
@@ -255,38 +261,18 @@ export default function EventModeScreen() {
                 >
                   <Feather name="heart" size={14} color={C.primary} />
                   <Text style={[styles.nudgeText, { color: C.primary }]}>
-                    Add cards to your wishlist to see personalised event stats
+                    Add cards to your wishlist to find trade matches at this event
                   </Text>
                   <Feather name="chevron-right" size={14} color={C.primary} />
                 </Pressable>
               )}
 
-              <View style={styles.statsGrid}>
-                {[
-                  { icon: 'heart' as const,        value: liveStats.collectorsWithYourWants, label: 'Have your wants',     color: C.primary   },
-                  { icon: 'repeat' as const,       value: liveStats.tradeMatches,            label: 'Trade matches',       color: '#22C55E'   },
-                  { icon: 'tag' as const,          value: liveStats.wishlistForSale,         label: 'Wishlist for sale',   color: '#F59E0B'   },
-                  { icon: 'eye' as const,          value: liveStats.wantYourCards,           label: 'Want your cards',     color: '#3B82F6'   },
-                ].map(s => (
-                  <View key={s.icon} style={[styles.statCard, { backgroundColor: C.card }]}>
-                    <View style={[styles.statIconWrap, { backgroundColor: `${s.color}18` }]}>
-                      <Feather name={s.icon} size={16} color={s.color} />
-                    </View>
-                    <Text style={styles.statCardValue}>{s.value}</Text>
-                    <Text style={styles.statCardLabel}>{s.label}</Text>
-                  </View>
-                ))}
-              </View>
-
               {/* Feature list */}
               <View style={[styles.featureCard, { backgroundColor: C.card }]}>
                 <Text style={styles.featureHeading}>Event Mode unlocks</Text>
                 {([
-                  { icon: 'map-pin',      text: "See who's at the event with cards you want"      },
-                  { icon: 'repeat',       text: 'Find trade matches on the floor in real time'    },
-                  { icon: 'shopping-bag', text: 'Browse vendor inventory and listings'            },
-                  { icon: 'list',         text: 'Post to the Wanted Board for collectors to see'  },
-                  { icon: 'check-square', text: 'Track set completion with on-site availability'  },
+                  { icon: 'repeat', text: 'Find trade matches from collectors participating in this event' },
+                  { icon: 'heart', text: 'Use your wishlist and For Trade cards to find relevant matches' },
                 ] as const).map((f, i) => (
                   <View key={i} style={styles.featureRow}>
                     <View style={[styles.featureIconWrap, { backgroundColor: `${C.primary}18` }]}>
@@ -339,8 +325,8 @@ export default function EventModeScreen() {
       <View style={[styles.dashHeader, { paddingTop: topPad + 10 }]}>
         <View style={styles.dashHeaderLeft}>
           <View style={styles.liveRow}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveLabel}>LIVE</Text>
+            {isLiveEvent(selectedEvent) && <View style={styles.liveDot} />}
+            <Text style={styles.liveLabel}>{isLiveEvent(selectedEvent) ? 'LIVE' : 'UPCOMING'}</Text>
           </View>
           <View style={styles.dashTitleRow}>
             <Text style={styles.dashEventName} numberOfLines={1}>{screenTitle}</Text>
@@ -351,7 +337,7 @@ export default function EventModeScreen() {
               </View>
             )}
           </View>
-          <Text style={styles.dashEventSub}>{selectedEvent?.venue ?? MOCK_EVENT.venue} · {selectedEvent?.eventDate ?? MOCK_EVENT.dates}</Text>
+          <Text style={styles.dashEventSub}>{selectedEvent?.venue ?? ''}{selectedEvent?.venue && selectedEvent?.eventDate ? ' · ' : ''}{selectedEvent?.eventDate ?? ''}</Text>
         </View>
         <Pressable
           onPress={handleLeaveEvent}
@@ -367,13 +353,12 @@ export default function EventModeScreen() {
         </Pressable>
       </View>
 
-      {/* ── Stat grid (4-column fixed row) ── */}
+      {/* ── Category pills (navigation only) ──
+          Only Trade Matches has a real API-backed count; the other categories
+          are not yet backed by a data source, so no synthetic number is shown. */}
       <View style={styles.statGrid}>
         {([
-          { emoji: '🔥', value: liveStats.collectorsWithYourWants, label: 'have your wants', tab: 'wishlist'   },
-          { emoji: '🤝', value: liveStats.tradeMatches,            label: 'trade matches',   tab: 'matches'    },
-          { emoji: '💰', value: liveStats.wishlistForSale,         label: 'for sale',        tab: 'for_sale'   },
-          { emoji: '👀', value: liveStats.wantYourCards,           label: 'want yours',      tab: 'want_yours' },
+          { emoji: '🤝', value: matchesError ? null : matchCount, label: 'trade matches',   tab: 'matches'    },
         ] as const).map(s => (
           <Pressable
             key={s.emoji}
@@ -385,24 +370,8 @@ export default function EventModeScreen() {
             ]}
           >
             <Text style={styles.statPillEmoji}>{s.emoji}</Text>
-            <Text style={styles.statPillValue}>{s.value}</Text>
+            {s.value !== null && <Text style={styles.statPillValue}>{s.value}</Text>}
             <Text style={styles.statPillLabel}>{s.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* ── Quick actions (2×2 grid) ── */}
-      <View style={styles.qaGrid}>
-        {QUICK_ACTIONS.map(a => (
-          <Pressable
-            key={a.label}
-            onPress={() => router.push(a.route as any)}
-            style={({ pressed }) => [styles.qaBtn, { backgroundColor: C.card, opacity: pressed ? 0.7 : 1 }]}
-          >
-            <View style={[styles.qaIconWrap, { backgroundColor: `${C.primary}18` }]}>
-              <Feather name={a.icon} size={17} color={C.primary} />
-            </View>
-            <Text style={styles.qaLabel}>{a.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -440,6 +409,22 @@ export default function EventModeScreen() {
               <View style={styles.loadingWrap}>
                 <ActivityIndicator color={C.primary} />
                 <Text style={styles.loadingText}>Finding trade matches…</Text>
+              </View>
+            ) : matchesError ? (
+              <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+                <Feather name="wifi-off" size={28} color={C.mutedForeground} />
+                <Text style={styles.emptyStateTitle}>Trade Matches Unavailable</Text>
+                <Text style={styles.emptyStateBody}>
+                  We couldn't load your trade matches right now. Please try again in a moment.
+                </Text>
+                {selectedEvent && (
+                  <Pressable
+                    onPress={() => loadTradeMatches(selectedEvent.id)}
+                    style={[styles.emptyStateCta, { backgroundColor: C.primary }]}
+                  >
+                    <Text style={styles.emptyStateCtaText}>Try Again</Text>
+                  </Pressable>
+                )}
               </View>
             ) : visibleMatches.length > 0 ? (
               visibleMatches.map(match => (
@@ -528,8 +513,10 @@ export default function EventModeScreen() {
               </View>
             )}
 
-            {/* Pro teaser card — always shown for Free users when there are hidden matches */}
-            {showProTeaser && matchCount > FREE_MATCH_LIMIT && (
+            {/* Pro teaser — shown for Free users when the API reports more matches
+                than the free limit. The only number displayed is the real,
+                API-backed count of hidden matches. */}
+            {showProTeaser && !matchesError && matchCount > FREE_MATCH_LIMIT && (
               <View style={[styles.proTeaserCard, { backgroundColor: C.card, borderColor: `${C.primary}44` }]}>
                 <View style={styles.proTeaserHeader}>
                   <View style={[styles.proTeaserBadge, { backgroundColor: C.primary }]}>
@@ -539,13 +526,6 @@ export default function EventModeScreen() {
                 </View>
 
                 <View style={styles.proTeaserStats}>
-                  <View style={styles.proTeaserStatRow}>
-                    <Text style={styles.proTeaserStatEmoji}>🔥</Text>
-                    <Text style={styles.proTeaserStatText}>
-                      <Text style={styles.proTeaserStatHighlight}>{TEASER_COLLECTORS_WITH_WANTS} collectors</Text>
-                      {' '}here have cards you want
-                    </Text>
-                  </View>
                   <View style={styles.proTeaserStatRow}>
                     <Text style={styles.proTeaserStatEmoji}>🤝</Text>
                     <Text style={styles.proTeaserStatText}>
@@ -553,13 +533,6 @@ export default function EventModeScreen() {
                       {' '}with Pro
                     </Text>
                   </View>
-                  <View style={styles.proTeaserStatRow}>
-                    <Text style={styles.proTeaserStatEmoji}>👀</Text>
-                    <Text style={styles.proTeaserStatText}>
-                      <Text style={styles.proTeaserStatHighlight}>{TEASER_WANT_YOURS} collectors</Text>
-                      {' '}want your cards
-                    </Text>
-                  </View>
                 </View>
 
                 <Pressable
@@ -571,7 +544,9 @@ export default function EventModeScreen() {
               </View>
             )}
 
-            {showProTeaser && matchCount === 0 && (
+            {/* Benefits-only teaser when there are no hidden matches to quantify.
+                Describes what Pro unlocks without inventing any counts. */}
+            {showProTeaser && !matchesError && matchCount <= FREE_MATCH_LIMIT && (
               <View style={[styles.proTeaserCard, { backgroundColor: C.card, borderColor: `${C.primary}44` }]}>
                 <View style={styles.proTeaserHeader}>
                   <View style={[styles.proTeaserBadge, { backgroundColor: C.primary }]}>
@@ -582,17 +557,9 @@ export default function EventModeScreen() {
 
                 <View style={styles.proTeaserStats}>
                   <View style={styles.proTeaserStatRow}>
-                    <Text style={styles.proTeaserStatEmoji}>🔥</Text>
-                    <Text style={styles.proTeaserStatText}>
-                      <Text style={styles.proTeaserStatHighlight}>{TEASER_COLLECTORS_WITH_WANTS} collectors</Text>
-                      {' '}here have cards you want
-                    </Text>
-                  </View>
-                  <View style={styles.proTeaserStatRow}>
                     <Text style={styles.proTeaserStatEmoji}>🤝</Text>
                     <Text style={styles.proTeaserStatText}>
-                      <Text style={styles.proTeaserStatHighlight}>+{TEASER_EXTRA_MATCHES} more Trade Matches</Text>
-                      {' '}with Pro
+                      See every event trade match plus API-backed match percentages with Pro.
                     </Text>
                   </View>
                 </View>
@@ -601,207 +568,58 @@ export default function EventModeScreen() {
                   onPress={() => router.push('/pro-subscription' as any)}
                   style={({ pressed }) => [styles.proTeaserCta, { opacity: pressed ? 0.85 : 1 }]}
                 >
-                  <Text style={styles.proTeaserCtaText}>See All Matches → Unlock Event Mode+</Text>
+                  <Text style={styles.proTeaserCtaText}>Unlock Event Mode+</Text>
                 </Pressable>
               </View>
             )}
 
-            {isPro && matchCount > 0 && (
-              <Pressable
-                onPress={() => router.push('/trade-match' as any)}
-                style={[styles.viewAllRow, { borderColor: C.border }]}
-              >
-                <Text style={[styles.viewAllText, { color: C.mutedForeground }]}>View All Trade Matches</Text>
-                <Feather name="arrow-right" size={13} color={C.mutedForeground} />
-              </Pressable>
-            )}
           </View>
         )}
 
-        {/* WISHLIST NEARBY */}
+        {/* WISHLIST NEARBY — no data source yet */}
         {activeTab === 'wishlist' && (
-          <ProFeaturePreview
-            featureTitle="Wishlist Nearby"
-            description="See which collectors and vendors at this event have your wishlisted cards available right now."
-            previewContent={
-              <View style={styles.cardList}>
-                {MOCK_EVENT.wishlistNearby.slice(0, 2).map(item => (
-                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                    </View>
-                    <View style={styles.listInfo}>
-                      <Text style={styles.listName}>{item.cardName}</Text>
-                      <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                      <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
-                    </View>
-                    <View style={styles.listRight}>
-                      <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
-                        <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
-                      </View>
-                      <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            }
-            lockedContent={
-              <View style={styles.cardList}>
-                {MOCK_EVENT.wishlistNearby.map(item => (
-                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                    </View>
-                    <View style={styles.listInfo}>
-                      <Text style={styles.listName}>{item.cardName}</Text>
-                      <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                      <Text style={styles.listValue}>${item.value.toLocaleString('en-AU')}</Text>
-                    </View>
-                    <View style={styles.listRight}>
-                      <View style={[styles.availTag, { backgroundColor: `${C.positive}18` }]}>
-                        <Text style={[styles.availTagText, { color: C.positive }]}>{item.availableCount} avail.</Text>
-                      </View>
-                      <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
-                      {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
-                    </View>
-                  </View>
-                ))}
-              </View>
-            }
-            ctaLabel="Unlock Wishlist Nearby with Pro"
-          />
-        )}
-
-        {/* WANT YOUR CARDS */}
-        {activeTab === 'want_yours' && (
-          <ProFeaturePreview
-            featureTitle="People Want Your Cards"
-            description="Discover which collectors at this event are actively looking for cards you own — perfect for trades."
-            previewContent={
-              <View style={styles.cardList}>
-                {MOCK_EVENT.wantYourCards.slice(0, 1).map(item => (
-                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                    </View>
-                    <View style={styles.listInfo}>
-                      <Text style={styles.listName}>{item.cardName}</Text>
-                      <Text style={styles.listMeta}>{item.grade}</Text>
-                      <View style={styles.clusterRow}>
-                        {item.collectors.slice(0, 2).map(c => (
-                          <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
-                            <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
-                          </View>
-                        ))}
-                        <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
-                      </View>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            }
-            lockedContent={
-              <View style={styles.cardList}>
-                {MOCK_EVENT.wantYourCards.map(item => (
-                  <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                    <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                      <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                    </View>
-                    <View style={styles.listInfo}>
-                      <Text style={styles.listName}>{item.cardName}</Text>
-                      <Text style={styles.listMeta}>{item.grade}</Text>
-                      <View style={styles.clusterRow}>
-                        {item.collectors.slice(0, 3).map(c => (
-                          <View key={c.username} style={[styles.clusterDot, { backgroundColor: c.color }]}>
-                            <Text style={styles.clusterInitial}>{c.initials[0]}</Text>
-                          </View>
-                        ))}
-                        <Text style={styles.clusterCount}>{item.collectors.length} collectors</Text>
-                      </View>
-                    </View>
-                    <Pressable
-                      onPress={() => router.push('/event/have-this' as any)}
-                      style={[styles.haveThisBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
-                    >
-                      <Text style={[styles.haveThisBtnText, { color: C.primary }]}>I Have This</Text>
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            }
-            ctaLabel="Unlock People Want Your Cards with Pro"
-          />
-        )}
-
-        {/* FOR SALE */}
-        {activeTab === 'for_sale' && (
-          <View style={styles.cardList}>
-            {MOCK_EVENT.forSaleAtEvent.map(item => (
-              <Pressable
-                key={item.id}
-                onPress={() => item.vendorId
-                  ? router.push(`/vendor/${item.vendorId}` as any)
-                  : router.push(`/collector/${item.sellerUsername}` as any)
-                }
-                style={[styles.listRow, { backgroundColor: C.card }]}
-              >
-                <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                  <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                </View>
-                <View style={styles.listInfo}>
-                  <Text style={styles.listName}>{item.cardName}</Text>
-                  <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                  {item.booth && (
-                    <Text style={[styles.boothText, { color: C.primary }]}>{item.booth}</Text>
-                  )}
-                </View>
-                <View style={styles.listRight}>
-                  <Text style={styles.listPrice}>${item.askingPrice.toLocaleString('en-AU')}</Text>
-                  <Text style={styles.listSeller}>@{item.sellerUsername}</Text>
-                  {item.sellerVerified && <Feather name="check-circle" size={10} color={C.positive} />}
-                  {isPro ? (
-                    <Pressable
-                      onPress={() => {}}
-                      style={[styles.alertBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}30` }]}
-                    >
-                      <Feather name="bell" size={10} color={C.primary} />
-                      <Text style={[styles.alertBtnText, { color: C.primary }]}>Alert</Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      onPress={() => router.push('/pro-subscription' as any)}
-                      style={[styles.alertBtn, { backgroundColor: C.muted, borderColor: C.border }]}
-                    >
-                      <Feather name="lock" size={10} color={C.mutedForeground} />
-                      <Text style={[styles.alertBtnText, { color: C.mutedForeground }]}>Alert</Text>
-                    </Pressable>
-                  )}
-                </View>
-              </Pressable>
-            ))}
+          <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+            <Feather name="heart" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyStateTitle}>Wishlist Nearby</Text>
+            <Text style={styles.emptyStateBody}>
+              We'll show which collectors and vendors at this event have your wishlisted cards once
+              on-site inventory is available.
+            </Text>
           </View>
         )}
 
-        {/* TRENDING */}
+        {/* WANT YOUR CARDS — no data source yet */}
+        {activeTab === 'want_yours' && (
+          <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+            <Feather name="eye" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyStateTitle}>People Want Your Cards</Text>
+            <Text style={styles.emptyStateBody}>
+              We'll show which collectors at this event are looking for cards you own once event
+              want-lists are available.
+            </Text>
+          </View>
+        )}
+
+        {/* FOR SALE — no data source yet */}
+        {activeTab === 'for_sale' && (
+          <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+            <Feather name="tag" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyStateTitle}>For Sale at This Event</Text>
+            <Text style={styles.emptyStateBody}>
+              Listings from vendors and collectors at this event aren't available yet. Check back
+              soon.
+            </Text>
+          </View>
+        )}
+
+        {/* TRENDING — no data source yet */}
         {activeTab === 'trending' && (
-          <View style={styles.cardList}>
-            {MOCK_EVENT.trending.map((item, i) => (
-              <View key={item.id} style={[styles.listRow, { backgroundColor: C.card }]}>
-                <Text style={styles.trendRank}>#{i + 1}</Text>
-                <View style={[styles.listThumb, { backgroundColor: item.color }]}>
-                  <Text style={styles.listInitial}>{item.cardName[0]}</Text>
-                </View>
-                <View style={styles.listInfo}>
-                  <Text style={styles.listName}>{item.cardName}</Text>
-                  <Text style={styles.listMeta}>{item.set} · {item.grade}</Text>
-                  <View style={styles.watchRow}>
-                    <Feather name="eye" size={10} color={C.mutedForeground} />
-                    <Text style={styles.watchText}>{item.watchers} watching</Text>
-                  </View>
-                </View>
-                <Text style={[styles.trendChange, { color: C.positive }]}>{item.change}</Text>
-              </View>
-            ))}
+          <View style={[styles.emptyState, { backgroundColor: C.card }]}>
+            <Feather name="trending-up" size={28} color={C.mutedForeground} />
+            <Text style={styles.emptyStateTitle}>Trending at This Event</Text>
+            <Text style={styles.emptyStateBody}>
+              Trending cards for this event aren't available yet. Check back soon.
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -915,11 +733,6 @@ const styles = StyleSheet.create({
   statPillValue: { fontSize: 16, fontFamily: 'Rajdhani_700Bold', color: C.foreground },
   statPillLabel: { fontSize: 9, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
 
-  qaGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, gap: 8, marginBottom: 2 },
-  qaBtn: { width: '47%', borderRadius: 14, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  qaIconWrap: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
-  qaLabel: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.foreground, flex: 1 },
-
   tabBar: { borderBottomWidth: 1, maxHeight: 42 },
   tabBarContent: { paddingHorizontal: 16, gap: 4 },
   tabItem: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
@@ -973,12 +786,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center',
   },
   proTeaserCtaText: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FFF' },
-
-  viewAllRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 14, borderRadius: 12, borderWidth: 1,
-  },
-  viewAllText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
 
   // List rows
   listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 12 },

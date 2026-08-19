@@ -34,7 +34,8 @@ import {
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
-import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
+import { getItemCurrentValue } from '@/services/collection';
+import { fetchActiveEvents, type EventSummary } from '@/services/eventsApi';
 import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import {
   fetchCollectionSummary,
@@ -47,10 +48,7 @@ import { CardImage } from '@/components/ui/CardImage';
 import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
-
 const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
-const TRADE_MATCHES_DISMISSED_KEY = '@verified_tcg/trade_matches_dismissed_count';
-
 const C = colors.dark;
 const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
 
@@ -87,15 +85,6 @@ function formatLastUpdated(date: Date): string {
   if (diffH < 24) return `${diffH}h ago`;
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
-
-function matchColor(pct: number) {
-  if (pct >= 90) return '#22C55E';
-  if (pct >= 75) return '#F59E0B';
-  return '#888888';
-}
-
-// ── Interactive SVG Chart ──────────────────────────────────────────────────────
-
 interface ChartPoint { value: number; date: string; }
 
 interface InteractiveChartProps {
@@ -353,40 +342,43 @@ export default function HomeScreen() {
       .catch(() => {});
   }, [refreshPrices, currency, performanceRange]);
 
-  const [eventBannerDismissed, setEventBannerDismissed] = useState<boolean | null>(null);
-  const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState<boolean | null>(null);
+  // ── Live event banner (real API-backed) ─────────────────────────────────────
+  const [featuredEvent, setFeaturedEvent] = useState<EventSummary | null>(null);
+  // Stored dismissed event id (null = not yet loaded from storage).
+  const [dismissedEventId, setDismissedEventId] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
-    async function loadDismissed() {
-      try {
-        const [dismissedEventId, dismissedMatchCount] = await Promise.all([
-          AsyncStorage.getItem(EVENT_BANNER_DISMISSED_KEY),
-          AsyncStorage.getItem(TRADE_MATCHES_DISMISSED_KEY),
-        ]);
-        setEventBannerDismissed(dismissedEventId === MOCK_EVENT.id);
-        if (dismissedMatchCount !== null) {
-          const storedCount = parseInt(dismissedMatchCount, 10);
-          setTradeMatchesDismissed(!isNaN(storedCount) && MOCK_TRADE_MATCHES.length <= storedCount);
-        } else {
-          setTradeMatchesDismissed(false);
-        }
-      } catch {
-        setEventBannerDismissed(false);
-        setTradeMatchesDismissed(false);
-      }
-    }
-    loadDismissed();
+    let cancelled = false;
+
+    // Fetch active events — only a real, returned event drives the banner.
+    fetchActiveEvents()
+      .then(list => {
+        if (cancelled) return;
+        setFeaturedEvent(list.length > 0 ? list[0] : null);
+      })
+      .catch(() => {
+        // API failure means no banner — never fall back to fabricated data.
+        if (!cancelled) setFeaturedEvent(null);
+      });
+
+    AsyncStorage.getItem(EVENT_BANNER_DISMISSED_KEY)
+      .then(id => { if (!cancelled) setDismissedEventId(id); })
+      .catch(() => { if (!cancelled) setDismissedEventId(null); });
+
+    return () => { cancelled = true; };
   }, []);
 
   const dismissEventBanner = useCallback(() => {
-    setEventBannerDismissed(true);
-    AsyncStorage.setItem(EVENT_BANNER_DISMISSED_KEY, MOCK_EVENT.id).catch(() => {});
-  }, []);
+    if (!featuredEvent) return;
+    setDismissedEventId(featuredEvent.id);
+    AsyncStorage.setItem(EVENT_BANNER_DISMISSED_KEY, featuredEvent.id).catch(() => {});
+  }, [featuredEvent]);
 
-  const dismissTradeMatches = useCallback(() => {
-    setTradeMatchesDismissed(true);
-    AsyncStorage.setItem(TRADE_MATCHES_DISMISSED_KEY, String(MOCK_TRADE_MATCHES.length)).catch(() => {});
-  }, []);
+  // Banner shows only for a real event the user hasn't dismissed.
+  const showEventBanner =
+    featuredEvent !== null &&
+    dismissedEventId !== undefined &&
+    dismissedEventId !== featuredEvent.id;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -427,8 +419,6 @@ export default function HomeScreen() {
     if (marketTab === 'new') return recentCards.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
     return trending.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
   })();
-
-  const previewMatches = MOCK_TRADE_MATCHES.slice(0, 2);
 
   function handleQuickAction(action: string) {
     if (action === 'scan') router.push('/scan');
@@ -810,20 +800,17 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {/* ── Live Event Banner ────────────────────────────────────────────── */}
-      {MOCK_EVENT.isActive && eventBannerDismissed === false && (
-        <Pressable
-          onPress={() => router.push('/event-mode' as any)}
-          style={styles.eventBanner}
-          accessibilityRole="button"
-          accessibilityLabel={`Live event: ${MOCK_EVENT.name} at ${MOCK_EVENT.venue}. Tap to enter.`}
-        >
+      {/* ── Live Event Banner (real API-backed) ──────────────────────────── */}
+      {showEventBanner && featuredEvent && (
+        <View style={styles.eventBanner}>
           <View style={styles.eventBannerAccent} />
           <View style={styles.eventBannerInner}>
             <View style={styles.eventBannerTop}>
               <View style={styles.eventLivePill}>
-                <View style={styles.eventLiveDot} />
-                <Text style={styles.eventLiveText}>LIVE EVENT</Text>
+                {featuredEvent.status === 'live' && <View style={styles.eventLiveDot} />}
+                <Text style={styles.eventLiveText}>
+                  {featuredEvent.status === 'live' ? 'LIVE EVENT' : 'UPCOMING EVENT'}
+                </Text>
               </View>
               <Pressable
                 onPress={e => { e.stopPropagation(); dismissEventBanner(); }}
@@ -835,133 +822,25 @@ export default function HomeScreen() {
                 <Feather name="x" size={14} color={C.mutedForeground} />
               </Pressable>
             </View>
-            <Text style={styles.eventBannerName}>{MOCK_EVENT.name}</Text>
-            <Text style={styles.eventBannerVenue}>{MOCK_EVENT.venue} · {MOCK_EVENT.dates}</Text>
+            <Text style={styles.eventBannerName}>{featuredEvent.name}</Text>
+            <Text style={styles.eventBannerVenue}>{featuredEvent.venue} · {featuredEvent.eventDate}</Text>
             <View style={styles.eventStatRow}>
               <View style={styles.eventStat}>
-                <Text style={styles.eventStatValue}>{MOCK_EVENT.stats.tradeMatches}</Text>
-                <Text style={styles.eventStatLabel}>Trade{'\n'}Matches</Text>
-              </View>
-              <View style={styles.eventStatDivider} />
-              <View style={styles.eventStat}>
-                <Text style={styles.eventStatValue}>{MOCK_EVENT.stats.wishlistForSale}</Text>
-                <Text style={styles.eventStatLabel}>Wishlist{'\n'}For Sale</Text>
-              </View>
-              <View style={styles.eventStatDivider} />
-              <View style={styles.eventStat}>
-                <Text style={styles.eventStatValue}>{MOCK_EVENT.collectorsPresent}</Text>
-                <Text style={styles.eventStatLabel}>Collectors{'\n'}Present</Text>
+                <Text style={styles.eventStatValue}>{featuredEvent.participantCount}</Text>
+                <Text style={styles.eventStatLabel}>Collectors{'\n'}Registered</Text>
               </View>
               <View style={{ flex: 1 }} />
-              <View style={styles.enterEventBtn}>
+              <Pressable
+                onPress={() => router.push('/event-mode' as any)}
+                style={styles.enterEventBtn}
+                accessibilityRole="button"
+                accessibilityLabel={`${featuredEvent.status === 'live' ? 'Live' : 'Upcoming'} event: ${featuredEvent.name} at ${featuredEvent.venue}. Tap to enter.`}
+              >
                 <Feather name="zap" size={14} color="#FFF" />
                 <Text style={styles.enterEventBtnText}>Enter</Text>
-              </View>
-            </View>
-          </View>
-        </Pressable>
-      )}
-
-      {/* ── Trade Matches Strip ──────────────────────────────────────────── */}
-      {tradeMatchesDismissed === false && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>Trade Matches</Text>
-              <View style={[styles.matchCountPill, { backgroundColor: `${C.primary}22` }]}>
-                <Text style={[styles.matchCountText, { color: C.primary }]}>
-                  {MOCK_TRADE_MATCHES.length}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.sectionHeaderRight}>
-              <Pressable
-                onPress={() => router.push('/trade-match' as any)}
-                accessibilityRole="link"
-                accessibilityLabel="See all trade matches"
-                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-              >
-                <Text style={styles.seeAll}>See all</Text>
-              </Pressable>
-              <Pressable
-                onPress={dismissTradeMatches}
-                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                style={{ marginLeft: 8 }}
-                accessibilityRole="button"
-                accessibilityLabel="Dismiss trade matches"
-              >
-                <Feather name="x" size={14} color={C.mutedForeground} />
               </Pressable>
             </View>
           </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 10, paddingRight: 4 }}
-          >
-            {previewMatches.map(match => (
-              <Pressable
-                key={match.id}
-                onPress={() => router.push('/trade-match' as any)}
-                style={[styles.tradeMatchCard, { backgroundColor: C.card }]}
-                accessibilityRole="button"
-                accessibilityLabel={`Trade match with @${match.collector.username}, ${match.matchPercent}% match`}
-              >
-                <View style={[styles.tradeMatchPill, { backgroundColor: matchColor(match.matchPercent) + '22' }]}>
-                  <View style={[styles.tradeMatchDot, { backgroundColor: matchColor(match.matchPercent) }]} />
-                  <Text style={[styles.tradeMatchPct, { color: matchColor(match.matchPercent) }]}>
-                    {match.matchPercent}%
-                  </Text>
-                </View>
-                <View style={styles.tradeMatchCards}>
-                  <View style={styles.tradeMatchSide}>
-                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.youWant.color, overflow: 'hidden' }]}>
-                      {match.youWant.imageUrl
-                        ? <CardImage uri={match.youWant.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
-                        : <Feather name="credit-card" size={20} color="rgba(255,255,255,0.7)" />}
-                    </View>
-                    <Text style={styles.tradeMatchLabel}>YOU WANT</Text>
-                    <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.youWant.name}</Text>
-                    <Text style={styles.tradeMatchGrade}>{match.youWant.grade}</Text>
-                  </View>
-                  <View style={styles.tradeMatchSwap}>
-                    <Feather name="repeat" size={14} color={C.mutedForeground} />
-                  </View>
-                  <View style={styles.tradeMatchSide}>
-                    <View style={[styles.tradeMatchThumb, { backgroundColor: match.theyWant.color, overflow: 'hidden' }]}>
-                      {match.theyWant.imageUrl
-                        ? <CardImage uri={match.theyWant.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
-                        : <Feather name="credit-card" size={20} color="rgba(255,255,255,0.7)" />}
-                    </View>
-                    <Text style={styles.tradeMatchLabel}>THEY WANT</Text>
-                    <Text style={styles.tradeMatchCardName} numberOfLines={2}>{match.theyWant.name}</Text>
-                    <Text style={styles.tradeMatchGrade}>{match.theyWant.grade}</Text>
-                  </View>
-                </View>
-                <View style={[styles.tradeMatchCollector, { borderTopColor: C.border }]}>
-                  <View style={[styles.tradeMatchAvatar, { backgroundColor: match.collector.avatarColor }]}>
-                    <Text style={styles.tradeMatchAvatarText}>{match.collector.initials}</Text>
-                  </View>
-                  <Text style={styles.tradeMatchUsername} numberOfLines={1}>@{match.collector.username}</Text>
-                  {match.collector.isVerified && (
-                    <Feather name="check-circle" size={11} color={C.positive} />
-                  )}
-                </View>
-              </Pressable>
-            ))}
-            <Pressable
-              onPress={() => router.push('/trade-match' as any)}
-              style={[styles.tradeMatchViewAll, { backgroundColor: C.card, borderColor: C.border }]}
-              accessibilityRole="button"
-              accessibilityLabel={`View all trade matches, ${MOCK_TRADE_MATCHES.length - 2} more`}
-            >
-              <Feather name="arrow-right" size={20} color={C.primary} />
-              <Text style={[styles.tradeMatchViewAllText, { color: C.primary }]}>
-                View all{'\n'}{MOCK_TRADE_MATCHES.length - 2} more
-              </Text>
-            </Pressable>
-          </ScrollView>
         </View>
       )}
 

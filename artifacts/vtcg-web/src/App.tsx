@@ -29,6 +29,11 @@ import {
   Router as WouterRouter,
 } from 'wouter';
 import { ShieldX } from 'lucide-react';
+import OperationsPage from '@/pages/operations';
+import CommunityPage from '@/pages/community';
+import TrustPage from '@/pages/trust';
+import EventsPage from '@/pages/events';
+import VendorsPage from '@/pages/vendors';
 
 const queryClient = new QueryClient();
 
@@ -86,14 +91,29 @@ function Router() {
         <Route path="/overview">
           {() => <ProtectedRoute component={OverviewPage} permission="dashboard:read" />}
         </Route>
+        <Route path="/operations">
+          {() => <ProtectedRoute component={OperationsPage} permission="operations:read" />}
+        </Route>
         <Route path="/users">
           {() => <ProtectedRoute component={UsersPage} permission="users:read" />}
+        </Route>
+        <Route path="/community">
+          {() => <ProtectedRoute component={CommunityPage} permission="community:read" />}
         </Route>
         <Route path="/scans">
           {() => <ProtectedRoute component={ScansPage} permission="analytics:read" />}
         </Route>
         <Route path="/reports">
           {() => <ProtectedRoute component={ReportsPage} permission="reports:read" />}
+        </Route>
+        <Route path="/trust">
+          {() => <ProtectedRoute component={TrustPage} permission="trust:read" />}
+        </Route>
+        <Route path="/events">
+          {() => <ProtectedRoute component={EventsPage} permission="events:read" />}
+        </Route>
+        <Route path="/vendors">
+          {() => <ProtectedRoute component={VendorsPage} permission="vendors:read" />}
         </Route>
         <Route path="/contact">
           {() => <ProtectedRoute component={ContactPage} permission="support:read" />}

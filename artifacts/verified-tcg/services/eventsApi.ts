@@ -21,6 +21,8 @@ export interface EventSummary {
   city: string;
   eventDate: string;
   isActive: boolean;
+  /** Lifecycle status from the API. Public endpoints only ever return 'live' or 'upcoming'. */
+  status: string;
   participantCount: number;
 }
 

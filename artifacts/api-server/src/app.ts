@@ -54,7 +54,7 @@ const generalLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again shortly." },
-  skip: (req) => req.path === "/health",
+  skip: (req) => req.path === "/health" || process.env.NODE_ENV === "test",
 });
 
 /** Strict limiter for auth signup / signin — 10 req/min per IP */

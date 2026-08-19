@@ -17,7 +17,6 @@ import {
   usersTable,
   userSessionsTable,
   scanUsageTable,
-  userReportsTable,
   contactSubmissionsTable,
 } from "@workspace/db";
 import {
@@ -478,41 +477,8 @@ router.get("/admin/scan-usage", requireAdminPermission("analytics:read"), async 
   }
 });
 
-// ── GET /api/admin/reports ────────────────────────────────────────────────────
-// Uses raw SQL correlated subqueries to avoid the drizzle alias() helper.
-
-router.get("/admin/reports", requireAdminPermission("reports:read"), async (req: Request, res: Response) => {
-  try {
-    const reports = await db
-      .select({
-        id: userReportsTable.id,
-        reason: userReportsTable.reason,
-        note: userReportsTable.note,
-        createdAt: userReportsTable.createdAt,
-        reporterUserId: userReportsTable.reporterUserId,
-        reportedUserId: userReportsTable.reportedUserId,
-        reporterUsername: sql<string | null>`(
-          SELECT username FROM users WHERE id = ${userReportsTable.reporterUserId} LIMIT 1
-        )`,
-        reporterDisplayName: sql<string | null>`(
-          SELECT display_name FROM users WHERE id = ${userReportsTable.reporterUserId} LIMIT 1
-        )`,
-        reportedUsername: sql<string | null>`(
-          SELECT username FROM users WHERE id = ${userReportsTable.reportedUserId} LIMIT 1
-        )`,
-        reportedDisplayName: sql<string | null>`(
-          SELECT display_name FROM users WHERE id = ${userReportsTable.reportedUserId} LIMIT 1
-        )`,
-      })
-      .from(userReportsTable)
-      .orderBy(desc(userReportsTable.createdAt));
-
-    return res.json({ reports });
-  } catch (err) {
-    req.log.error({ err }, "Admin reports query failed");
-    return res.status(500).json({ message: "Database error. Please try again." });
-  }
-});
+// NOTE: GET /admin/reports is handled by adminTrust.ts (enhanced version with
+// pagination/search/filter). The route was removed here to avoid conflicts.
 
 // ── GET /api/admin/contact ────────────────────────────────────────────────────
 

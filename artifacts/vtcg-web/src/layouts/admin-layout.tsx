@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   Activity,
+  Calendar,
   Flag,
   HeartPulse,
   Laptop,
@@ -13,6 +14,7 @@ import {
   PanelLeft,
   ScanLine,
   Shield,
+  Store,
   Users,
   UsersRound,
   X,
@@ -26,9 +28,14 @@ import { useToast } from "@/hooks/use-toast";
 
 const NAV_ITEMS = [
   { path: "/overview", label: "Overview", icon: LayoutDashboard, permission: "dashboard:read" },
+  { path: "/operations", label: "Operations", icon: Activity, permission: "operations:read" },
   { path: "/users", label: "Users", icon: Users, permission: "users:read" },
-  { path: "/scans", label: "Scans", icon: ScanLine, permission: "analytics:read" },
+  { path: "/community", label: "Community", icon: HeartPulse, permission: "community:read" },
   { path: "/reports", label: "Reports", icon: Flag, permission: "reports:read" },
+  { path: "/trust", label: "Trust & Safety", icon: Shield, permission: "trust:read" },
+  { path: "/events", label: "Events", icon: Calendar, permission: "events:read" },
+  { path: "/vendors", label: "Vendors", icon: Store, permission: "vendors:read" },
+  { path: "/scans", label: "Scans", icon: ScanLine, permission: "analytics:read" },
   { path: "/contact", label: "Support", icon: MessageSquare, permission: "support:read" },
   { path: "/notifications", label: "Campaigns", icon: Bell, permission: "notifications:read" },
   { path: "/requests", label: "Requests", icon: Archive, permission: "privacy:read" },
