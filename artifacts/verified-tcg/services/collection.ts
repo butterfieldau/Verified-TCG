@@ -2,7 +2,9 @@ import type { CollectionItem, PortfolioSummary } from '@/types';
 import { PORTFOLIO_CHART_DATA } from './market';
 import { getAccessToken } from './auth';
 
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
+const API_BASE = explicitBase || domainBase;
 
 // ── Value helper (kept for price-display callers) ─────────────────────────────
 
@@ -87,6 +89,7 @@ export async function addCollectionItem(
       grading: item.grading ?? null,
       acquiredAt: item.acquiredAt,
       acquiredPrice: item.acquiredPrice,
+      currency: item.currency,
       notes: item.notes,
       isForSale: item.isForSale ?? false,
       isForTrade: item.isForTrade ?? false,

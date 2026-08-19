@@ -137,7 +137,14 @@ export interface CollectionItem {
   grading?: GradingRecord;
   acquiredAt: string;
   acquiredPrice: number;
-  currency: 'AUD';
+  currency: string;
+  valuation?: {
+    priceCents: number;
+    price: number;
+    currency: string;
+    gradeKey: string;
+    updatedAt: string;
+  } | null;
   notes?: string;
   isForSale?: boolean;
   isForTrade?: boolean;

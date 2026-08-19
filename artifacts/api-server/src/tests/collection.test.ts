@@ -279,12 +279,12 @@ describe("GET /api/collection/summary", () => {
 
   after(cleanupTaggedUsers);
 
-  test("returns summary with numeric fields", async () => {
+  test("returns an honest summary when prices are unavailable", async () => {
     const res = await request
       .get("/api/collection/summary")
       .set("Authorization", `Bearer ${token}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(typeof res.body.totalValue, "number");
+    assert.ok(res.body.totalValue === null || typeof res.body.totalValue === "number");
     assert.equal(typeof res.body.cardCount, "number");
     assert.ok(res.body.cardCount >= 1);
   });

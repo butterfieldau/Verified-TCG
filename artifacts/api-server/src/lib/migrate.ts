@@ -36,6 +36,13 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_tcgs TEXT`,
   // Added: account suspension support — NULL means active, non-NULL means suspended
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ`,
+  // Added: acquisition currency for collection items (task 283 — default AUD preserves existing data)
+  `ALTER TABLE collection_items ADD COLUMN IF NOT EXISTS acquired_currency TEXT NOT NULL DEFAULT 'AUD'`,
+  // PriceCharting product metadata used by provider-neutral market insights
+  `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_sales_volume INTEGER`,
+  `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_release_date TEXT`,
+  `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
+  `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
 ];
 
 /**
@@ -150,6 +157,108 @@ const TABLE_MIGRATIONS: string[] = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT push_tokens_token_uniq UNIQUE (token)
   )`,
+  // ── Task 283: Pricing domain tables ──────────────────────────────────────────
+  // Provider registry
+  `CREATE TABLE IF NOT EXISTS pricing_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_key TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT false,
+    last_healthy_at TIMESTAMPTZ,
+    last_error_at TIMESTAMPTZ,
+    last_error_message TEXT,
+    base_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Card-to-provider product mappings
+  `CREATE TABLE IF NOT EXISTS card_provider_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    provider_product_id TEXT,
+    provider_product_name TEXT,
+    provider_sales_volume INTEGER,
+    provider_release_date TEXT,
+    provider_genre TEXT,
+    provider_upc TEXT,
+    status TEXT NOT NULL DEFAULT 'unmatched',
+    confidence_score REAL,
+    confidence_level TEXT,
+    match_metadata JSONB,
+    matched_name TEXT,
+    matched_set TEXT,
+    matched_number TEXT,
+    matched_game TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT card_provider_mappings_card_provider_uniq UNIQUE (card_id, provider_key)
+  )`,
+  // Normalized current quotes (one row per card+provider+grade)
+  `CREATE TABLE IF NOT EXISTS current_quotes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    provider_product_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT current_quotes_card_provider_grade_uniq UNIQUE (card_id, provider_key, grade_key)
+  )`,
+  // Deduplicated provider price history (one row per card+provider+grade+date)
+  `CREATE TABLE IF NOT EXISTS provider_price_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT provider_price_history_dedup_uniq UNIQUE (card_id, provider_key, grade_key, snapshot_date)
+  )`,
+  // Portfolio snapshots (one row per user+date)
+  `CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    total_value_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'AUD',
+    total_cost_cents INTEGER NOT NULL,
+    priced_holdings INTEGER NOT NULL DEFAULT 0,
+    total_holdings INTEGER NOT NULL DEFAULT 0,
+    snapshot_date TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT portfolio_snapshots_user_date_uniq UNIQUE (user_id, snapshot_date)
+  )`,
+  // Sold/archived holdings (immutable at creation; PATCH for corrections only)
+  `CREATE TABLE IF NOT EXISTS sold_archive_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    original_collection_item_id UUID,
+    card_id TEXT NOT NULL,
+    card_data JSONB NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    condition TEXT,
+    grading_data JSONB,
+    is_graded BOOLEAN NOT NULL DEFAULT false,
+    acquired_price_cents INTEGER NOT NULL DEFAULT 0,
+    acquired_currency TEXT NOT NULL DEFAULT 'AUD',
+    acquired_at TEXT,
+    sale_price_cents INTEGER NOT NULL,
+    sale_currency TEXT NOT NULL DEFAULT 'AUD',
+    sold_at TEXT NOT NULL,
+    venue TEXT,
+    buyer TEXT,
+    notes TEXT,
+    market_value_at_disposal_cents INTEGER,
+    market_value_currency TEXT,
+    market_value_grade_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**
@@ -233,6 +342,30 @@ const CONSTRAINT_MIGRATIONS: string[] = [
     note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  // ── Task 283: Pricing domain indexes ─────────────────────────────────────────
+  `CREATE INDEX IF NOT EXISTS card_provider_mappings_card_idx
+     ON card_provider_mappings (card_id)`,
+  `CREATE INDEX IF NOT EXISTS card_provider_mappings_provider_product_idx
+     ON card_provider_mappings (provider_key, provider_product_id)`,
+  `CREATE INDEX IF NOT EXISTS current_quotes_card_idx
+     ON current_quotes (card_id)`,
+  `CREATE INDEX IF NOT EXISTS current_quotes_fetched_at_idx
+     ON current_quotes (fetched_at)`,
+  `CREATE INDEX IF NOT EXISTS provider_price_history_card_grade_idx
+     ON provider_price_history (card_id, grade_key, snapshot_date)`,
+  `CREATE INDEX IF NOT EXISTS portfolio_snapshots_user_date_idx
+     ON portfolio_snapshots (user_id, snapshot_date)`,
+  `CREATE INDEX IF NOT EXISTS sold_archive_items_user_idx
+     ON sold_archive_items (user_id)`,
+  `CREATE INDEX IF NOT EXISTS sold_archive_items_card_idx
+     ON sold_archive_items (card_id)`,
+  `CREATE INDEX IF NOT EXISTS sold_archive_items_sold_at_idx
+     ON sold_archive_items (user_id, sold_at)`,
+  // Seed PriceCharting provider row (idempotent)
+  `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
+   SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,
+          'https://www.pricecharting.com/api', NOW(), NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
   // Seed initial events if the table is empty
   `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
    SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()

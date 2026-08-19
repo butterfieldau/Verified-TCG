@@ -1,3 +1,5 @@
 - [Auth Architecture](auth-architecture.md) — Custom JWT auth on Replit Postgres; no Supabase. bcryptjs + SESSION_SECRET. See file for endpoint list and OAuth status.
 - [Null fields in profile API](null-profile-fields.md) — nullable text profile fields (favourite_tcg, collector_since) must be set with explicit null; avoid ?? undefined which causes Drizzle to skip the column update.
 - [Tab safe-area behavior](tab-safe-area-behavior.md) — NativeTabs with Liquid Glass does not protect custom tab content from the status area; every tab root needs its native top inset.
+- [Expo web confirmations](expo-web-action-controls.md) — system Alert action callbacks are unreliable in browser previews; prefer visible in-app confirmation state.
+- [Pricing provider independence](pricing-provider-independence.md) — serve persisted mappings and quotes before catalog lookups so one provider outage cannot hide another provider's cached data.

@@ -50,6 +50,8 @@ import {
   type PricePeriod,
   type PricePoint as HistoryPoint,
 } from '@/services/priceHistory';
+import VerifiedPricingCard from '@/components/ui/VerifiedPricingCard';
+import { useSettings } from '@/context/SettingsContext';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -710,6 +712,7 @@ export default function CardDetailScreen() {
   const { id, cardIds, catalogJson, appCardJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string; appCardJson?: string }>();
   const insets = useSafeAreaInsets();
   const { addToCollection, addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
+  const { currency: displayCurrency } = useSettings();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
@@ -1168,14 +1171,22 @@ export default function CardDetailScreen() {
           })}
         </ScrollView>
 
-        {/* ── Price History Chart ──────────────────────────────────────── */}
+        {/* ── Verified Market Pricing ──────────────────────────────────── */}
+        <VerifiedPricingCard
+          card={card}
+          displayCurrency={displayCurrency}
+          isPro={hasAdvancedPricing}
+          onUpgradePress={() => router.push('/pro-subscription')}
+          chartWidth={W - 40 - 36}
+        />
+
+        {/* ── Legacy chart (kept for 7D free period from old API) ──────── */}
         <View style={[styles.card, { backgroundColor: C.card }]}>
-          {/* Header row */}
           <View style={styles.marketHeader}>
             <View>
-              <Text style={styles.marketLabel}>Market Value · {priceTab}</Text>
-              <Text style={styles.marketValue}>
-                ${activePrice?.toLocaleString('en-AU', { minimumFractionDigits: 2 }) ?? '—'} AUD
+              <Text style={styles.marketLabel}>Price History · {priceTab}</Text>
+              <Text style={[styles.marketValue, { fontSize: 14, color: C.mutedForeground }]}>
+                eBay sold listings
               </Text>
             </View>
             <View style={styles.changeCol}>
@@ -1263,7 +1274,7 @@ export default function CardDetailScreen() {
             <View style={styles.chartFooter}>
               <Feather name="info" size={10} color={C.mutedForeground} />
               <Text style={styles.chartFooterText}>
-                Prices from eBay sold listings
+                eBay sold listings
                 {priceHistoryUpdatedAt
                   ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
                   : ''}
@@ -1285,53 +1296,6 @@ export default function CardDetailScreen() {
           <Feather name="external-link" size={14} color="#FFF" />
           <Text style={styles.ebayBtnText}>View Listings on eBay</Text>
         </Pressable>
-
-        {/* RAW pricing card */}
-        <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12, marginTop: 12 }]}>
-          <View style={styles.rawHeader}>
-            <View style={styles.rawBadge}>
-              <Text style={styles.rawBadgeText}>RAW</Text>
-            </View>
-            <Text style={styles.sectionTitle}>Market Stats</Text>
-          </View>
-
-          {/* Always-visible: market estimate from live catalog price */}
-          <View style={styles.rawStatRow}>
-            <Text style={styles.rawStatLabel}>Market Estimate</Text>
-            <Text style={styles.rawStatValue}>
-              ${card.price.raw.toLocaleString('en-AU')} AUD
-            </Text>
-          </View>
-
-          {/* Pro-gated advanced stats — shown once real history API data is available */}
-          <ProFeaturePreview
-            featureTitle="Advanced Raw Stats"
-            description="7-day, 30-day, 90-day averages, highs, lows and sales volume for serious collectors."
-            ctaLabel="Unlock with Pro"
-            previewContent={
-              <View style={styles.rawGatedPreview}>
-                {[
-                  { label: '7-Day Avg', value: '—' },
-                  { label: '30-Day Avg', value: '—' },
-                  { label: '52-Week High', value: '—' },
-                  { label: '52-Week Low', value: '—' },
-                ].map(row => (
-                  <View key={row.label} style={styles.rawStatRow}>
-                    <Text style={styles.rawStatLabel}>{row.label}</Text>
-                    <Text style={[styles.rawStatValue, { color: C.mutedForeground }]}>{row.value}</Text>
-                  </View>
-                ))}
-              </View>
-            }
-            lockedContent={
-              <View style={{ alignItems: 'center', paddingVertical: 12 }}>
-                <Text style={[styles.rawStatLabel, { color: C.mutedForeground }]}>
-                  Advanced stats require price history to accumulate. Check back after a few days.
-                </Text>
-              </View>
-            }
-          />
-        </View>
 
         {/* GRADED pricing section */}
         <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12 }]}>

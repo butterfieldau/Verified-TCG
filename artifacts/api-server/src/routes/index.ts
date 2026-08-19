@@ -22,6 +22,8 @@ import activityRouter from "./activity";
 import adminRouter from "./admin";
 import adminAuthRouter from "./adminAuth";
 import adminTeamRouter from "./adminTeam";
+import collectionSellRouter from "./collectionSell";
+import pricingRouter from "./pricing";
 
 const router: IRouter = Router();
 
@@ -33,11 +35,16 @@ router.use(catalogRouter);
 router.use(certificationRouter);
 router.use(gradedPricesRouter);
 router.use(ebayAccountDeletionRouter);
+// collectionSell must come before collectionRouter to ensure
+// /collection/summary, /collection/archive, /collection/performance
+// are matched before the wildcard /:id handlers
+router.use(collectionSellRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
 router.use(subscriptionRouter);
 router.use(scanRouter);
 router.use(priceHistoryRouter);
+router.use(pricingRouter);
 router.use(eventsRouter);
 router.use(notificationsRouter);
 router.use(collectorsRouter);

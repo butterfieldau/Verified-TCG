@@ -34,10 +34,17 @@ import {
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
-import { getItemCurrentValue } from '@/services/collection';
 import { MOCK_EVENT, MOCK_TRADE_MATCHES } from '@/services/matching';
 import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
+import {
+  fetchCollectionSummary,
+  fetchCollectionPerformance,
+  type CollectionSummary,
+  type CollectionPerformance,
+  type PerformanceRange,
+} from '@/services/collectionPerformance';
 import { CardImage } from '@/components/ui/CardImage';
+import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
 
@@ -232,12 +239,12 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 }
 
 // ── Tooltip pill shown above chart when touching ───────────────────────────────
-function ChartTooltip({ point }: { point: ChartPoint | null }) {
+function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency: string }) {
   if (!point) return null;
   return (
     <View style={styles.tooltipBox}>
       <Text style={styles.tooltipValue}>
-        ${point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+        {currency} {point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
       </Text>
       {!!point.date && (
         <Text style={styles.tooltipLabel}>{point.date}</Text>
@@ -263,6 +270,7 @@ export default function HomeScreen() {
     unreadNotificationCount,
   } = useApp();
 
+  const { currency } = useSettings();
   const [marketTab, setMarketTab] = useState<MarketTab>('trending');
   const [movers, setMovers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
@@ -270,6 +278,31 @@ export default function HomeScreen() {
   const [sectionsLoading, setSectionsLoading] = useState(true);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
+
+  // Server-authoritative collection summary for portfolio totals
+  const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
+  const [serverPerformance, setServerPerformance] = useState<CollectionPerformance | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  const performanceRange: PerformanceRange =
+    portfolioRange === '3M' || portfolioRange === '1Y' || portfolioRange === 'ALL'
+      ? portfolioRange
+      : '1M';
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    setSummaryLoading(true);
+    Promise.all([
+      fetchCollectionSummary(currency),
+      fetchCollectionPerformance(performanceRange, currency),
+    ])
+      .then(([summary, performance]) => {
+        setServerSummary(summary);
+        setServerPerformance(performance);
+      })
+      .catch(() => setServerSummary(null))
+      .finally(() => setSummaryLoading(false));
+  }, [isAuthenticated, currency, performanceRange]);
 
   // Chart tooltip state
   const [activeChartPoint, setActiveChartPoint] = useState<ChartPoint | null>(null);
@@ -301,10 +334,24 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    Promise.all([getMarketMovers(), getTrendingCards(), getRecentlyAddedCards(), fetchRecentActivity(10)])
-      .then(([m, t, r, a]) => { setMovers(m); setTrending(t); setRecentCards(r); setActivity(a); })
+    Promise.all([
+      getMarketMovers(),
+      getTrendingCards(),
+      getRecentlyAddedCards(),
+      fetchRecentActivity(10),
+      fetchCollectionSummary(currency),
+      fetchCollectionPerformance(performanceRange, currency),
+    ])
+      .then(([m, t, r, a, summary, performance]) => {
+        setMovers(m);
+        setTrending(t);
+        setRecentCards(r);
+        setActivity(a);
+        setServerSummary(summary);
+        setServerPerformance(performance);
+      })
       .catch(() => {});
-  }, [refreshPrices]);
+  }, [refreshPrices, currency, performanceRange]);
 
   const [eventBannerDismissed, setEventBannerDismissed] = useState<boolean | null>(null);
   const [tradeMatchesDismissed, setTradeMatchesDismissed] = useState<boolean | null>(null);
@@ -344,58 +391,31 @@ export default function HomeScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
-  const chartData = portfolio.chartData[portfolioRange];
-  const displayValue = activeChartPoint?.value ?? portfolio.totalValue;
-  const gain = displayValue - (chartData[0]?.value ?? displayValue);
-  const gainPct = chartData[0]?.value ? (gain / chartData[0].value) * 100 : portfolio.totalGainPercent;
-  const isPositive = gain >= 0;
+  const chartData = React.useMemo(() => {
+    const points = serverPerformance?.points ?? [];
+    const days = portfolioRange === '1D' ? 1 : portfolioRange === '7D' ? 7 : null;
+    if (days == null) return points;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return points.filter(point => new Date(point.date).getTime() >= cutoff);
+  }, [serverPerformance, portfolioRange]);
+  const displayValue = activeChartPoint?.value ?? serverSummary?.totalValue ?? null;
+  const gain =
+    chartData.length >= 2
+      ? chartData[chartData.length - 1]!.value - chartData[0]!.value
+      : null;
+  const gainPct =
+    gain != null && chartData[0]!.value > 0
+      ? (gain / chartData[0]!.value) * 100
+      : null;
+  const isPositive = (gain ?? 0) >= 0;
 
-  // ── 1-Day portfolio change derived from per-card change24h ──────────────────
-  // chartData['1D'] is not yet populated server-side (separate task), so we
-  // compute it directly: sum each item's 24h dollar move (current value × pct).
-  const { oneDayGain, oneDayGainPct, hasOneDayData } = React.useMemo(() => {
-    if (collection.length === 0 || portfolio.totalValue === 0) {
-      return { oneDayGain: 0, oneDayGainPct: 0, hasOneDayData: false };
-    }
-    let dollarGain = 0;
-    let itemsWithData = 0;
-    for (const item of collection) {
-      const pct = item.card.price.change24h;
-      if (pct === undefined || pct === null) continue;
-      const currentVal = getItemCurrentValue(item) * item.quantity;
-      dollarGain += currentVal * (pct / 100);
-      itemsWithData++;
-    }
-    if (itemsWithData === 0) return { oneDayGain: 0, oneDayGainPct: 0, hasOneDayData: false };
-    const baseValue = portfolio.totalValue - dollarGain;
-    const pctGain = baseValue > 0 ? (dollarGain / baseValue) * 100 : 0;
-    return { oneDayGain: dollarGain, oneDayGainPct: pctGain, hasOneDayData: true };
-  }, [collection, portfolio.totalValue]);
+  const oneDayGain = serverSummary?.todayMovement?.absolute ?? 0;
+  const oneDayGainPct = serverSummary?.todayMovement?.percent ?? 0;
+  const hasOneDayData = serverSummary?.todayMovement != null;
   const isOneDayPositive = oneDayGain >= 0;
 
-  // ── Top price mover from the collector's own collection ──────────────────────
-  const topMover = React.useMemo(() => {
-    if (collection.length === 0) return null;
-    let best: { item: typeof collection[0]; changePct: number } | null = null;
-    for (const item of collection) {
-      const changePct = item.card.price.change24h ?? item.card.price.change7d;
-      if (changePct === undefined) continue;
-      if (best === null || Math.abs(changePct) > Math.abs(best.changePct)) {
-        best = { item, changePct };
-      }
-    }
-    return best;
-  }, [collection]);
-
-  // ── Stale cards — no price update in 30+ days ────────────────────────────────
-  const staleCardCount = React.useMemo(() => {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    return collection.filter(item => {
-      const updatedAt = item.card.price.updatedAt;
-      if (!updatedAt) return true; // treat missing as stale
-      return new Date(updatedAt).getTime() < cutoff;
-    }).length;
-  }, [collection]);
+  const topMover = serverPerformance?.topPerformers[0] ?? null;
+  const staleCardCount = serverSummary?.coverage.staleHoldings ?? 0;
 
   // Derive gainers and losers from movers data
   const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
@@ -481,45 +501,71 @@ export default function HomeScreen() {
           )}
         </View>
 
-        <View style={styles.portfolioValueRow}>
-          <Text style={styles.portfolioValue}>
-            ${displayValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
-          </Text>
-          <Text style={styles.portfolioCurrency}>AUD</Text>
-        </View>
-
-        <View style={styles.changeBadgeRow}>
-          <View style={[
-            styles.changeBadge,
-            { backgroundColor: isPositive ? `${C.positive}18` : `${C.negative}18` },
-          ]}>
-            <Feather
-              name={isPositive ? 'trending-up' : 'trending-down'}
-              size={11}
-              color={isPositive ? C.positive : C.negative}
-            />
-            <Text style={[styles.changeBadgeText, { color: isPositive ? C.positive : C.negative }]}>
-              {isPositive ? '+' : ''}{gainPct.toFixed(2)}%
+        {/* Prefer server-authoritative value; fall back to local with "Unavailable" */}
+        {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
+          <>
+            <View style={styles.portfolioValueRow}>
+              <Text style={styles.portfolioValue}>
+                {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+              </Text>
+              <Text style={styles.portfolioCurrency}>{serverSummary.currency ?? currency}</Text>
+            </View>
+            {serverSummary.unrealizedGainPercent !== null && serverSummary.unrealizedGainPercent !== undefined && (
+              <View style={styles.changeBadgeRow}>
+                <View style={[
+                  styles.changeBadge,
+                  { backgroundColor: (serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative) + '18' },
+                ]}>
+                  <Feather
+                    name={serverSummary.unrealizedGainPercent >= 0 ? 'trending-up' : 'trending-down'}
+                    size={11}
+                    color={serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative}
+                  />
+                  <Text style={[styles.changeBadgeText, { color: serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative }]}>
+                    {serverSummary.unrealizedGainPercent >= 0 ? '+' : ''}{serverSummary.unrealizedGainPercent.toFixed(2)}%
+                  </Text>
+                </View>
+                {serverSummary.unrealizedGain !== null && serverSummary.unrealizedGain !== undefined && (
+                  <Text style={styles.changePeriod}>
+                    {serverSummary.unrealizedGain >= 0 ? '+' : ''}
+                    {serverSummary.unrealizedGain.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
+                  </Text>
+                )}
+              </View>
+            )}
+          </>
+        ) : (
+          <View style={styles.portfolioValueRow}>
+            <Text style={[styles.portfolioValue, { fontSize: 22, color: C.mutedForeground }]}>
+              Unavailable
             </Text>
           </View>
-          <Text style={styles.changePeriod}>
-            {isPositive ? '+' : ''}${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} this period
-          </Text>
-        </View>
+        )}
       </View>
 
       {/* ── Chart tooltip (shows while touching) ───────────────────────── */}
       <View style={styles.tooltipContainer}>
-        <ChartTooltip point={activeChartPoint} />
+        <ChartTooltip point={activeChartPoint} currency={currency} />
       </View>
 
       {/* ── Interactive chart ───────────────────────────────────────────── */}
       <View style={styles.chartContainer}>
-        <InteractiveChart
-          data={chartData}
-          isPositive={isPositive}
-          onPointSelect={setActiveChartPoint}
-        />
+        {chartData.length >= 2 ? (
+          <InteractiveChart
+            data={chartData}
+            isPositive={isPositive}
+            onPointSelect={setActiveChartPoint}
+          />
+        ) : (
+          <View style={styles.chartUnavailable}>
+            <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
+            <Text style={styles.chartUnavailableText}>
+              {portfolioRange === '1D' || portfolioRange === '7D'
+                ? `Not enough retained history for ${portfolioRange}`
+                : serverPerformance?.historyUnavailableReason ?? 'Price history is not available yet'}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* ── Range pills ─────────────────────────────────────────────────── */}
@@ -580,11 +626,35 @@ export default function HomeScreen() {
             <Text style={styles.seeAll}>View collection →</Text>
           </Pressable>
         </View>
-        {portfolio.totalValue > 0 ? (
+        {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
           <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
 
-            {/* Row 1 — 1-day portfolio change (only shown when change24h data exists) */}
-            {hasOneDayData && (
+            {/* Row 1 — server cost basis vs current value, else 1-day change */}
+            {serverSummary?.totalCost != null && serverSummary.totalValue != null ? (
+              <Pressable
+                style={[styles.insightRow, { borderBottomWidth: 1, borderBottomColor: C.border }]}
+                onPress={() => router.push('/collection-insights' as any)}
+                accessibilityRole="button"
+                accessibilityLabel={`Unrealised gain: ${serverSummary.unrealizedGainPercent != null ? ((serverSummary.unrealizedGainPercent >= 0 ? '+' : '') + serverSummary.unrealizedGainPercent.toFixed(1) + '%') : 'unavailable'}`}
+              >
+                <View style={[styles.insightIcon, { backgroundColor: `${(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative}18` }]}>
+                  <Feather name={(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? 'trending-up' : 'trending-down'} size={14} color={(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative} />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText}>Unrealised P/L</Text>
+                  <Text style={styles.insightSub}>
+                    Cost {currency} {serverSummary.totalCost.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+                  </Text>
+                </View>
+                {serverSummary.unrealizedGainPercent != null ? (
+                  <Text style={[styles.insightBadge, { color: (serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative }]}>
+                    {(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? '+' : ''}{(serverSummary.unrealizedGainPercent ?? 0).toFixed(1)}%
+                  </Text>
+                ) : (
+                  <Text style={[styles.insightBadge, { color: C.mutedForeground }]}>—</Text>
+                )}
+              </Pressable>
+            ) : hasOneDayData && (
               <Pressable
                 style={[styles.insightRow, { borderBottomWidth: 1, borderBottomColor: C.border }]}
                 onPress={() => router.push('/(tabs)/collection')}
@@ -597,7 +667,7 @@ export default function HomeScreen() {
                 <View style={styles.insightBody}>
                   <Text style={styles.insightText}>Today's change</Text>
                   <Text style={styles.insightSub}>
-                    {isOneDayPositive ? '+' : ''}${Math.abs(oneDayGain).toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
+                    {isOneDayPositive ? '+' : ''}{currency} {Math.abs(oneDayGain).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
                   </Text>
                 </View>
                 <Text style={[styles.insightBadge, { color: isOneDayPositive ? C.positive : C.negative }]}>
@@ -611,25 +681,24 @@ export default function HomeScreen() {
               <Pressable
                 style={[styles.insightRow, { borderBottomWidth: staleCardCount > 0 ? 1 : 0, borderBottomColor: C.border }]}
                 onPress={() => router.push({
-                  pathname: `/card/${topMover.item.card.id}` as any,
-                  params: { appCardJson: JSON.stringify(topMover.item.card) },
+                  pathname: `/card/${topMover.cardId}` as any,
                 })}
                 accessibilityRole="button"
-                accessibilityLabel={`${topMover.item.card.name} is today's top mover at ${topMover.changePct >= 0 ? '+' : ''}${topMover.changePct.toFixed(1)}%`}
+                accessibilityLabel={`${topMover.name} is the top portfolio performer at ${topMover.gainPercent >= 0 ? '+' : ''}${topMover.gainPercent.toFixed(1)}%`}
               >
-                <View style={[styles.insightIcon, { backgroundColor: `${topMover.changePct >= 0 ? C.positive : C.negative}18` }]}>
-                  <Feather name={topMover.changePct >= 0 ? 'arrow-up-right' : 'arrow-down-right'} size={14} color={topMover.changePct >= 0 ? C.positive : C.negative} />
+                <View style={[styles.insightIcon, { backgroundColor: `${topMover.gainPercent >= 0 ? C.positive : C.negative}18` }]}>
+                  <Feather name={topMover.gainPercent >= 0 ? 'arrow-up-right' : 'arrow-down-right'} size={14} color={topMover.gainPercent >= 0 ? C.positive : C.negative} />
                 </View>
                 <View style={styles.insightBody}>
                   <Text style={styles.insightText} numberOfLines={1}>
-                    {topMover.item.card.name}
+                    {topMover.name}
                   </Text>
                   <Text style={styles.insightSub} numberOfLines={1}>
-                    {topMover.item.card.price.change24h !== undefined ? 'Today' : '7D'} · ~${(topMover.item.card.price.raw * topMover.item.quantity).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} AUD
+                    Portfolio performer
                   </Text>
                 </View>
-                <Text style={[styles.insightBadge, { color: topMover.changePct >= 0 ? C.positive : C.negative }]}>
-                  {topMover.changePct >= 0 ? '+' : ''}{topMover.changePct.toFixed(1)}%
+                <Text style={[styles.insightBadge, { color: topMover.gainPercent >= 0 ? C.positive : C.negative }]}>
+                  {topMover.gainPercent >= 0 ? '+' : ''}{topMover.gainPercent.toFixed(1)}%
                 </Text>
               </Pressable>
             )}
@@ -1016,6 +1085,19 @@ const styles = StyleSheet.create({
 
   // Chart
   chartContainer: { marginHorizontal: -20, marginBottom: 4 },
+  chartUnavailable: {
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 32,
+  },
+  chartUnavailableText: {
+    color: C.mutedForeground,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+  },
 
   // Range pills
   rangeRow: {

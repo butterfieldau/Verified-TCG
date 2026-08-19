@@ -1,11 +1,14 @@
 /**
- * Collection Insights Pro — deep portfolio analytics for Pro users.
- * Free users see hero stats (value + count) ungated, then a ProFeaturePreview
- * gate with blurred placeholder content and an "Unlock Collection Insights" CTA.
+ * Collection Insights Pro — deep portfolio analytics.
+ * Free users see hero stats ungated, then a Pro gate.
+ * Pro users get real server performance data (range-selectable),
+ * explicit no-history / incomplete-coverage states, real realised/unrealised,
+ * cost basis, allocations, and high/low performers — never mock.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,45 +20,45 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
-import { MOCK_COLLECTION_INSIGHTS } from '@/services/collection';
-import type { InsightsBreakdown, InsightsHighlight, InsightsChartPoint } from '@/services/collection';
+import {
+  fetchCollectionSummary,
+  fetchCollectionPerformance,
+  type CollectionSummary,
+  type CollectionPerformance,
+  type PerformanceRange,
+  type PerformanceAllocation,
+  type PerformanceCard,
+} from '@/services/collectionPerformance';
 
 const C = colors.dark;
 
-const RANGE_CHIPS = ['1M', '3M', '6M', '1Y', 'ALL'] as const;
-type RangeKey = (typeof RANGE_CHIPS)[number];
+const RANGE_CHIPS: PerformanceRange[] = ['1M', '3M', '6M', '1Y', 'ALL'];
 
 // ─── Formatters ────────────────────────────────────────────────────────────────
 
-function fmt(n: number): string {
-  return '$' + n.toLocaleString('en-AU', { maximumFractionDigits: 0 });
+function fmt(n: number | null | undefined, currency = 'AUD'): string {
+  if (n === null || n === undefined) return '—';
+  return `${currency} ${n.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`;
 }
 
-function fmtDelta(n: number, pct: number): string {
+function fmtSigned(n: number | null | undefined, pct: number | null | undefined, currency = 'AUD'): string {
+  if (n === null || n === undefined) return '—';
   const sign = n >= 0 ? '+' : '';
-  return `${sign}${fmt(n)} (${sign}${pct.toFixed(1)}%)`;
+  const pctStr = pct !== null && pct !== undefined ? ` (${sign}${pct.toFixed(1)}%)` : '';
+  return `${sign}${currency} ${Math.abs(n).toLocaleString('en-AU', { maximumFractionDigits: 0 })}${pctStr}`;
 }
 
-// ─── Chart ─────────────────────────────────────────────────────────────────────
+// ─── Chart (bar-based for compatibility) ──────────────────────────────────────
 
-function MiniLineChart({ points }: { points: InsightsChartPoint[] }) {
+function PerformanceChart({ points }: { points: { date: string; value: number }[] }) {
+  if (points.length === 0) return null;
   const values = points.map(p => p.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const W = 280;
   const H = 80;
-  const step = W / Math.max(points.length - 1, 1);
-
-  // Build SVG-style polyline string
-  const coords = points.map((p, i) => {
-    const x = i * step;
-    const y = H - ((p.value - min) / range) * (H - 8) - 4;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-
-  // First and last label for x-axis
   const firstLabel = points[0]?.date ?? '';
   const lastLabel = points[points.length - 1]?.date ?? '';
   const lastVal = values[values.length - 1] ?? 0;
@@ -64,35 +67,20 @@ function MiniLineChart({ points }: { points: InsightsChartPoint[] }) {
 
   return (
     <View style={chartStyles.wrap}>
-      {/* Y-axis label */}
-      <View style={chartStyles.yLabels}>
-        <Text style={chartStyles.axisLabel}>{fmt(max)}</Text>
-        <Text style={chartStyles.axisLabel}>{fmt(min)}</Text>
-      </View>
-
-      {/* Chart area — drawn with Views as bars for RN compatibility */}
       <View style={chartStyles.barArea}>
         {points.map((p, i) => {
-          const normH = Math.max(2, ((p.value - min) / range) * (H - 4));
+          const normH = Math.max(3, ((p.value - min) / range) * (H - 4));
           const isCurrent = i === points.length - 1;
           return (
             <View key={i} style={chartStyles.barCol}>
-              <View
-                style={[
-                  chartStyles.bar,
-                  {
-                    height: normH,
-                    backgroundColor: isUp ? C.positive : C.negative,
-                    opacity: isCurrent ? 1 : 0.55,
-                  },
-                ]}
-              />
+              <View style={[
+                chartStyles.bar,
+                { height: normH, backgroundColor: isUp ? C.positive : C.negative, opacity: isCurrent ? 1 : 0.55 },
+              ]} />
             </View>
           );
         })}
       </View>
-
-      {/* X-axis date labels */}
       <View style={chartStyles.xRow}>
         <Text style={chartStyles.axisLabel}>{formatDateLabel(firstLabel)}</Text>
         <Text style={chartStyles.axisLabel}>{formatDateLabel(lastLabel)}</Text>
@@ -105,87 +93,39 @@ function formatDateLabel(iso: string): string {
   if (!iso) return '';
   const parts = iso.split('-');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const y = parts[0];
   const m = parts[1];
-  const d = parts[2]; // present for weekly (YYYY-MM-DD), absent for monthly (YYYY-MM)
+  const y = parts[0];
+  const d = parts[2];
   const mon = months[Number(m) - 1] ?? '';
-  return d ? `${d} ${mon}` : `${mon} ${y}`;
+  return d ? `${d} ${mon}` : `${mon} ${y ?? ''}`;
 }
 
 const chartStyles = StyleSheet.create({
-  wrap:    { width: '100%' },
-  yLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  axisLabel: { fontSize: 10, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
-  barArea: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 80,
-    gap: 2,
-    marginBottom: 4,
-  },
+  wrap: { width: '100%' },
+  barArea: { flexDirection: 'row', alignItems: 'flex-end', height: 80, gap: 2, marginBottom: 4 },
   barCol: { flex: 1, justifyContent: 'flex-end' },
-  bar:    { width: '100%', borderRadius: 2 },
-  xRow:   { flexDirection: 'row', justifyContent: 'space-between' },
+  bar: { width: '100%', borderRadius: 2 },
+  xRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  axisLabel: { fontSize: 10, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
 });
 
-// ─── Highlight card ────────────────────────────────────────────────────────────
+// ─── Allocation bar ────────────────────────────────────────────────────────────
 
-function HighlightCard({ item }: { item: InsightsHighlight }) {
-  const isUp = item.valueDelta >= 0;
-  const deltaColor = isUp ? C.positive : C.negative;
+function AllocationSection({ rows }: { rows: PerformanceAllocation[] }) {
+  if (rows.length === 0) return null;
   return (
-    <View style={hStyles.card}>
-      <Text style={hStyles.hlLabel}>{item.label}</Text>
-      <Text style={hStyles.cardName} numberOfLines={2}>{item.cardName}</Text>
-      <Text style={hStyles.setName} numberOfLines={1}>{item.set}</Text>
-      <Text style={[hStyles.delta, { color: deltaColor }]}>
-        {isUp ? '+' : ''}{item.deltaPercent.toFixed(0)}%
-      </Text>
-      <Text style={[hStyles.deltaAbs, { color: deltaColor }]}>
-        {isUp ? '+' : ''}{fmt(item.valueDelta)}
-      </Text>
-    </View>
-  );
-}
-
-const hStyles = StyleSheet.create({
-  card: {
-    flex: 1,
-    backgroundColor: C.surface,
-    borderRadius: 12,
-    padding: 14,
-    gap: 3,
-    minHeight: 110,
-  },
-  hlLabel:  { fontSize: 10, color: C.mutedForeground, fontFamily: 'Inter_500Medium', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 2 },
-  cardName: { fontSize: 13, color: C.foreground, fontFamily: 'Inter_600SemiBold', lineHeight: 17 },
-  setName:  { fontSize: 11, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
-  delta:    { fontSize: 18, fontFamily: 'Rajdhani_700Bold', marginTop: 6 },
-  deltaAbs: { fontSize: 11, fontFamily: 'Inter_400Regular' },
-});
-
-// ─── Breakdown row ─────────────────────────────────────────────────────────────
-
-function BreakdownSection({ title, rows }: { title: string; rows: InsightsBreakdown[] }) {
-  return (
-    <View style={bStyles.section}>
-      <Text style={bStyles.sectionTitle}>{title}</Text>
-      {/* Segmented bar */}
-      <View style={bStyles.barTrack}>
+    <View style={allocStyles.section}>
+      <View style={allocStyles.barTrack}>
         {rows.map(r => (
-          <View
-            key={r.label}
-            style={[bStyles.barSegment, { flex: r.percent, backgroundColor: r.color }]}
-          />
+          <View key={r.label} style={[allocStyles.barSegment, { flex: r.percent / 100, backgroundColor: r.color }]} />
         ))}
       </View>
-      {/* Legend pills */}
-      <View style={bStyles.pills}>
+      <View style={allocStyles.pills}>
         {rows.map(r => (
-          <View key={r.label} style={bStyles.pill}>
-            <View style={[bStyles.dot, { backgroundColor: r.color }]} />
-            <Text style={bStyles.pillLabel}>{r.label}</Text>
-            <Text style={bStyles.pillPct}>{r.percent}%</Text>
+          <View key={r.label} style={allocStyles.pill}>
+            <View style={[allocStyles.dot, { backgroundColor: r.color }]} />
+            <Text style={allocStyles.pillLabel}>{r.label}</Text>
+            <Text style={allocStyles.pillPct}>{r.percent}%</Text>
           </View>
         ))}
       </View>
@@ -193,89 +133,135 @@ function BreakdownSection({ title, rows }: { title: string; rows: InsightsBreakd
   );
 }
 
-const bStyles = StyleSheet.create({
-  section:      { marginBottom: 20 },
-  sectionTitle: { fontSize: 13, color: C.mutedForeground, fontFamily: 'Inter_500Medium', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.6 },
-  barTrack:     { flexDirection: 'row', height: 8, borderRadius: 6, overflow: 'hidden', gap: 1, marginBottom: 10 },
-  barSegment:   { height: '100%' },
-  pills:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  pill:         { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  dot:          { width: 7, height: 7, borderRadius: 4 },
-  pillLabel:    { fontSize: 12, color: C.foreground, fontFamily: 'Inter_400Regular' },
-  pillPct:      { fontSize: 12, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
+const allocStyles = StyleSheet.create({
+  section: { marginBottom: 16 },
+  barTrack: { flexDirection: 'row', height: 8, borderRadius: 6, overflow: 'hidden', gap: 1, marginBottom: 10 },
+  barSegment: { height: '100%' },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
+  dot: { width: 7, height: 7, borderRadius: 4 },
+  pillLabel: { fontSize: 12, color: C.foreground, fontFamily: 'Inter_400Regular' },
+  pillPct: { fontSize: 12, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
+});
+
+// ─── Performer row ─────────────────────────────────────────────────────────────
+
+function PerformerRow({ card, isTop }: { card: PerformanceCard; isTop: boolean }) {
+  const color = isTop ? C.positive : C.negative;
+  return (
+    <View style={perfStyles.row}>
+      <View style={{ flex: 1 }}>
+        <Text style={perfStyles.name} numberOfLines={1}>{card.name}</Text>
+        {card.setName ? <Text style={perfStyles.set} numberOfLines={1}>{card.setName}</Text> : null}
+      </View>
+      <View style={[perfStyles.badge, { backgroundColor: `${color}18` }]}>
+        <Text style={[perfStyles.pct, { color }]}>
+          {isTop ? '+' : ''}{card.gainPercent.toFixed(1)}%
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const perfStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+  name: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.foreground },
+  set: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
+  badge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  pct: { fontSize: 13, fontFamily: 'Rajdhani_700Bold' },
 });
 
 // ─── Gains row ────────────────────────────────────────────────────────────────
 
-function GainsRow({ label, value, color }: { label: string; value: number; color?: string }) {
+function GainsRow({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <View style={gStyles.row}>
       <Text style={gStyles.label}>{label}</Text>
-      <Text style={[gStyles.value, color ? { color } : null]}>{fmt(value)}</Text>
+      <Text style={[gStyles.value, color ? { color } : null]}>{value}</Text>
     </View>
   );
 }
 
 const gStyles = StyleSheet.create({
-  row:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: C.border },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: C.border },
   label: { fontSize: 14, color: C.foreground, fontFamily: 'Inter_400Regular' },
   value: { fontSize: 16, color: C.foreground, fontFamily: 'Rajdhani_700Bold' },
 });
 
-// ─── Placeholder used as ProFeaturePreview previewContent ─────────────────────
+// ─── Placeholder for Pro blur preview ─────────────────────────────────────────
 
 function BlurredPlaceholder() {
   return (
     <View style={{ gap: 16 }}>
-      {/* Fake chart */}
       <View style={[phStyles.block, { height: 110 }]} />
-      {/* Fake highlights grid */}
       <View style={phStyles.row}>
-        <View style={[phStyles.block, { flex: 1, height: 90 }]} />
-        <View style={[phStyles.block, { flex: 1, height: 90 }]} />
+        <View style={[phStyles.block, { flex: 1, height: 70 }]} />
+        <View style={[phStyles.block, { flex: 1, height: 70 }]} />
       </View>
-      <View style={phStyles.row}>
-        <View style={[phStyles.block, { flex: 1, height: 90 }]} />
-        <View style={[phStyles.block, { flex: 1, height: 90 }]} />
-      </View>
-      {/* Fake breakdown */}
       <View style={[phStyles.block, { height: 60 }]} />
-      {/* Fake gains rows */}
-      <View style={[phStyles.block, { height: 40 }]} />
       <View style={[phStyles.block, { height: 40 }]} />
       <View style={[phStyles.block, { height: 40 }]} />
     </View>
   );
 }
-
 const phStyles = StyleSheet.create({
   block: { backgroundColor: C.surface, borderRadius: 12 },
-  row:   { flexDirection: 'row', gap: 10 },
+  row: { flexDirection: 'row', gap: 10 },
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CollectionInsightsScreen() {
   const insets = useSafeAreaInsets();
-  const { subscriptionTier } = useApp();
-  const [range, setRange] = useState<RangeKey>('3M');
+  const { subscriptionTier, collection } = useApp();
+  const { currency } = useSettings();
+  const isPro = subscriptionTier === 'pro';
 
-  const d = MOCK_COLLECTION_INSIGHTS;
-  const chartPoints = d.chartData[range] ?? [];
-  const isUp = d.estimatedGain >= 0;
+  const [range, setRange] = useState<PerformanceRange>('3M');
+  const [summary, setSummary] = useState<CollectionSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [performance, setPerformance] = useState<CollectionPerformance | null>(null);
+  const [perfLoading, setPerfLoading] = useState(false);
 
-  // ── Pro content (unlocked) ────────────────────────────────────────────────
+  // Load summary
+  useEffect(() => {
+    setSummaryLoading(true);
+    fetchCollectionSummary(currency)
+      .then(s => setSummary(s))
+      .catch(() => setSummary(null))
+      .finally(() => setSummaryLoading(false));
+  }, [currency]);
+
+  // Load performance when range changes (Pro only)
+  useEffect(() => {
+    if (!isPro) return;
+    setPerfLoading(true);
+    setPerformance(null);
+    fetchCollectionPerformance(range, currency)
+      .then(p => setPerformance(p))
+      .catch(() => setPerformance(null))
+      .finally(() => setPerfLoading(false));
+  }, [range, currency, isPro]);
+
+  // Hero values: prefer server summary, fall back to collection totals (as unavailable)
+  const localCardCount = collection.length;
+  const portfolioValue = summary?.totalValue ?? null;
+  const totalCost = summary?.totalCost ?? null;
+  const unrealisedGain = summary?.unrealizedGain ?? null;
+  const unrealisedGainPct = summary?.unrealizedGainPercent ?? null;
+  const isGainUp = (unrealisedGain ?? 0) >= 0;
+
+  // ── Pro content ──────────────────────────────────────────────────────────────
 
   const proContent = (
     <>
       {/* ── Historical Chart ─────────────────────── */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>PORTFOLIO HISTORY</Text>
-        {/* Range chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 14 }}
           contentContainerStyle={{ gap: 8, paddingRight: 4 }}
         >
           {RANGE_CHIPS.map(chip => (
@@ -283,41 +269,116 @@ export default function CollectionInsightsScreen() {
               key={chip}
               onPress={() => setRange(chip)}
               style={[styles.chip, range === chip && styles.chipActive]}
+              accessibilityRole="button"
+              accessibilityLabel={`${chip} range`}
             >
               <Text style={[styles.chipText, range === chip && styles.chipTextActive]}>{chip}</Text>
             </Pressable>
           ))}
         </ScrollView>
-        <MiniLineChart points={chartPoints} />
+
+        {perfLoading ? (
+          <View style={{ height: 90, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator color={C.primary} />
+          </View>
+        ) : performance && performance.historyAvailable && performance.points.length > 0 ? (
+          <PerformanceChart points={performance.points.map(pt => ({ date: pt.date, value: pt.value }))} />
+        ) : (
+          <View style={{ height: 80, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <Feather name="bar-chart-2" size={24} color={C.mutedForeground} />
+            <Text style={[styles.unavailText, { textAlign: 'center' }]}>
+              {performance?.historyUnavailableReason
+                ?? performance?.completeness
+                ?? 'No performance history available for this period'}
+            </Text>
+          </View>
+        )}
       </View>
 
-      {/* ── Highlights ───────────────────────────── */}
-      <Text style={styles.sectionHeader}>Highlights</Text>
-      <View style={styles.highlightGrid}>
-        <HighlightCard item={d.highlights.bestPerformer} />
-        <HighlightCard item={d.highlights.fastestGrowing} />
-      </View>
-      <View style={[styles.highlightGrid, { marginTop: 10 }]}>
-        <HighlightCard item={d.highlights.mostValuable} />
-        <HighlightCard item={d.highlights.biggestDecline} />
-      </View>
+      {/* ── Allocations ──────────────────────────── */}
+      {performance && performance.allocations.length > 0 && (
+        <>
+          <Text style={styles.sectionHeader}>Allocation</Text>
+          <View style={styles.card}>
+            <AllocationSection rows={performance.allocations} />
+          </View>
+        </>
+      )}
 
-      {/* ── Breakdown ────────────────────────────── */}
-      <Text style={[styles.sectionHeader, { marginTop: 24 }]}>Breakdown</Text>
-      <View style={styles.card}>
-        <BreakdownSection title="Raw vs Graded" rows={d.breakdown.rawVsGraded} />
-        <BreakdownSection title="TCG Allocation" rows={d.breakdown.tcgAllocation} />
-        <BreakdownSection title="Set Allocation" rows={d.breakdown.setAllocation} />
-        <BreakdownSection title="Grading Company" rows={d.breakdown.gradingCompany} />
-      </View>
+      {/* ── Performers ───────────────────────────── */}
+      {performance && (performance.topPerformers.length > 0 || performance.worstPerformers.length > 0) && (
+        <>
+          <Text style={[styles.sectionHeader, { marginTop: 18 }]}>Performers</Text>
+          <View style={styles.card}>
+            {performance.topPerformers.length > 0 && (
+              <>
+                <Text style={styles.perfSectionLabel}>TOP</Text>
+                {performance.topPerformers.slice(0, 3).map(c => (
+                  <PerformerRow key={c.cardId} card={c} isTop={true} />
+                ))}
+              </>
+            )}
+            {performance.worstPerformers.length > 0 && (
+              <>
+                <Text style={[styles.perfSectionLabel, { marginTop: 12 }]}>WORST</Text>
+                {performance.worstPerformers.slice(0, 3).map(c => (
+                  <PerformerRow key={c.cardId} card={c} isTop={false} />
+                ))}
+              </>
+            )}
+          </View>
+        </>
+      )}
 
       {/* ── Gains ────────────────────────────────── */}
-      <Text style={[styles.sectionHeader, { marginTop: 24 }]}>Gains</Text>
+      <Text style={[styles.sectionHeader, { marginTop: 18 }]}>Gains</Text>
       <View style={styles.card}>
-        <GainsRow label="Realised Gains" value={d.gains.realisedGains} color={C.positive} />
-        <GainsRow label="Unrealised Gains" value={d.gains.unrealisedGains} color={C.positive} />
-        <GainsRow label="Avg. Purchase Price" value={d.gains.avgPurchasePrice} />
+        <GainsRow
+          label="Realised Gains"
+          value={fmt(performance?.realisedGain ?? summary?.realisedGain, currency)}
+          color={(performance?.realisedGain ?? summary?.realisedGain ?? 0) >= 0 ? C.positive : C.negative}
+        />
+        <GainsRow
+          label="Unrealised Gains"
+          value={fmt(performance?.unrealisedGain ?? summary?.unrealizedGain, currency)}
+          color={(performance?.unrealisedGain ?? summary?.unrealizedGain ?? 0) >= 0 ? C.positive : C.negative}
+        />
+        <GainsRow
+          label="Cost Basis"
+          value={fmt(performance?.costBasis ?? summary?.totalCost, currency)}
+        />
+        {summary?.coverage && (
+          <View style={[gStyles.row, { borderBottomWidth: 0 }]}>
+            <Text style={gStyles.label}>Priced Holdings</Text>
+            <Text style={gStyles.value}>
+              {summary.coverage.pricedHoldings}/{summary.coverage.totalHoldings}
+              {' '}({Math.round(summary.coverage.ratio * 100)}%)
+            </Text>
+          </View>
+        )}
       </View>
+
+      {/* Completeness note */}
+      {(performance?.completeness || summary?.completeness) && (
+        <View style={styles.completenessNote}>
+          <Feather name="info" size={11} color={C.mutedForeground} />
+          <Text style={styles.completenessText}>
+            {performance?.completeness ?? summary?.completeness}
+          </Text>
+        </View>
+      )}
+
+      {/* Archive link */}
+      <Pressable
+        onPress={() => router.push('/collection-archive' as any)}
+        style={styles.archiveLink}
+        accessibilityRole="button"
+        accessibilityLabel="View sold holdings archive"
+      >
+        <Feather name="archive" size={14} color={C.primary} />
+        <Text style={styles.archiveLinkText}>View Sold Holdings (Archive)</Text>
+        <Feather name="chevron-right" size={14} color={C.primary} />
+      </Pressable>
     </>
   );
 
@@ -340,7 +401,7 @@ export default function CollectionInsightsScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>Collection Insights</Text>
-          {subscriptionTier === 'pro' && (
+          {isPro && (
             <View style={styles.proBadge}>
               <Text style={styles.proBadgeText}>PRO</Text>
             </View>
@@ -350,43 +411,88 @@ export default function CollectionInsightsScreen() {
 
       {/* ── Hero stats — always visible ────────────────────────────────────── */}
       <View style={styles.heroCard}>
-        <View style={styles.heroRow}>
-          <View style={styles.heroStat}>
-            <Text style={styles.heroLabel}>Portfolio Value</Text>
-            <Text style={styles.heroValue}>{fmt(d.portfolioValue)}</Text>
-            <Text style={styles.heroCurrency}>AUD</Text>
+        {summaryLoading ? (
+          <View style={{ padding: 20, alignItems: 'center' }}>
+            <ActivityIndicator color={C.primary} />
           </View>
-          <View style={[styles.heroStat, styles.heroBorder]}>
-            <Text style={styles.heroLabel}>Total Invested</Text>
-            <Text style={styles.heroValue}>{fmt(d.totalInvested)}</Text>
-            <Text style={styles.heroCurrency}>AUD</Text>
-          </View>
-        </View>
+        ) : (
+          <>
+            <View style={styles.heroRow}>
+              <View style={styles.heroStat}>
+                <Text style={styles.heroLabel}>Portfolio Value</Text>
+                {portfolioValue !== null ? (
+                  <>
+                    <Text style={styles.heroValue}>
+                      {portfolioValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}
+                    </Text>
+                    <Text style={styles.heroCurrency}>{currency}</Text>
+                  </>
+                ) : (
+                  <Text style={[styles.heroValue, { color: C.mutedForeground, fontSize: 18 }]}>
+                    {localCardCount > 0 ? 'Unavailable' : '—'}
+                  </Text>
+                )}
+              </View>
+              <View style={[styles.heroStat, styles.heroBorder]}>
+                <Text style={styles.heroLabel}>Total Invested</Text>
+                {totalCost !== null ? (
+                  <>
+                    <Text style={styles.heroValue}>
+                      {totalCost.toLocaleString('en-AU', { maximumFractionDigits: 0 })}
+                    </Text>
+                    <Text style={styles.heroCurrency}>{currency}</Text>
+                  </>
+                ) : (
+                  <Text style={[styles.heroValue, { color: C.mutedForeground, fontSize: 18 }]}>—</Text>
+                )}
+              </View>
+            </View>
 
-        {/* Gain strip */}
-        <View style={[styles.gainStrip, { backgroundColor: isUp ? '#22C55E18' : '#EF444418' }]}>
-          <Feather
-            name={isUp ? 'trending-up' : 'trending-down'}
-            size={15}
-            color={isUp ? C.positive : C.negative}
-          />
-          <Text style={[styles.gainText, { color: isUp ? C.positive : C.negative }]}>
-            {fmtDelta(d.estimatedGain, d.estimatedGainPercent)}
-          </Text>
-          <Text style={styles.gainSubText}>estimated gain</Text>
-        </View>
+            {/* Gain strip */}
+            {unrealisedGain !== null ? (
+              <View style={[styles.gainStrip, { backgroundColor: isGainUp ? '#22C55E18' : '#EF444418' }]}>
+                <Feather
+                  name={isGainUp ? 'trending-up' : 'trending-down'}
+                  size={15}
+                  color={isGainUp ? C.positive : C.negative}
+                />
+                <Text style={[styles.gainText, { color: isGainUp ? C.positive : C.negative }]}>
+                  {fmtSigned(unrealisedGain, unrealisedGainPct, currency)}
+                </Text>
+                <Text style={styles.gainSubText}>unrealised gain</Text>
+              </View>
+            ) : (
+              <View style={[styles.gainStrip, { backgroundColor: `${C.muted}88` }]}>
+                <Feather name="info" size={13} color={C.mutedForeground} />
+                <Text style={[styles.gainText, { color: C.mutedForeground, fontSize: 13 }]}>
+                  Gain data unavailable
+                </Text>
+              </View>
+            )}
 
-        {/* Card count */}
-        <View style={styles.countRow}>
-          <Feather name="layers" size={13} color={C.mutedForeground} />
-          <Text style={styles.countText}>{d.cardCount} cards in collection</Text>
-        </View>
+            {/* Card count */}
+            <View style={styles.countRow}>
+              <Feather name="layers" size={13} color={C.mutedForeground} />
+              <Text style={styles.countText}>
+                {summary ? summary.cardCount : localCardCount} cards in collection
+              </Text>
+              {summary?.coverage && (
+                <>
+                  <Text style={styles.countText}> · </Text>
+                  <Text style={[styles.countText, { color: summary.coverage.ratio < 0.5 ? '#F59E0B' : C.mutedForeground }]}>
+                    {Math.round(summary.coverage.ratio * 100)}% priced
+                  </Text>
+                </>
+              )}
+            </View>
+          </>
+        )}
       </View>
 
       {/* ── Pro gated content ───────────────────────────────────────────────── */}
       <ProFeaturePreview
         featureTitle="Collection Insights"
-        description="Unlock portfolio history, highlights, gains breakdowns, and more — available with Verified TCG Pro."
+        description="Unlock portfolio history, performance by range, realised/unrealised gains, allocations, and top/worst performers — available with Verified TCG Pro."
         ctaLabel="Unlock Collection Insights"
         previewContent={<BlurredPlaceholder />}
         lockedContent={proContent}
@@ -400,16 +506,12 @@ export default function CollectionInsightsScreen() {
 const styles = StyleSheet.create({
   screen:  { flex: 1 },
   content: { paddingHorizontal: 20, gap: 0 },
-
-  // Header
   header:      { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
   backBtn:     { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center' },
   headerText:  { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   title:       { fontSize: 22, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: 0.3 },
   proBadge:    { backgroundColor: C.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   proBadgeText:{ fontSize: 10, fontFamily: 'Inter_700Bold', color: '#fff', letterSpacing: 1 },
-
-  // Hero card
   heroCard:    { backgroundColor: C.card, borderRadius: 16, overflow: 'hidden', marginBottom: 24 },
   heroRow:     { flexDirection: 'row' },
   heroStat:    { flex: 1, padding: 18, gap: 4 },
@@ -417,29 +519,29 @@ const styles = StyleSheet.create({
   heroLabel:   { fontSize: 11, color: C.mutedForeground, fontFamily: 'Inter_500Medium', textTransform: 'uppercase', letterSpacing: 0.7 },
   heroValue:   { fontSize: 26, color: C.foreground, fontFamily: 'Rajdhani_700Bold', lineHeight: 30 },
   heroCurrency:{ fontSize: 11, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
-
   gainStrip:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 11, gap: 8, borderTopWidth: 1, borderTopColor: C.border },
   gainText:    { fontSize: 16, fontFamily: 'Rajdhani_700Bold' },
   gainSubText: { fontSize: 12, color: C.mutedForeground, fontFamily: 'Inter_400Regular', marginLeft: 2 },
-
-  countRow:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, paddingBottom: 14 },
+  countRow:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 18, paddingBottom: 14 },
   countText:   { fontSize: 12, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
-
-  // Section headers
   sectionHeader: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: C.foreground, marginBottom: 12 },
-
-  // Card container
-  card:    { backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 0 },
-
-  // Section label (inside card)
   sectionLabel: { fontSize: 11, color: C.mutedForeground, fontFamily: 'Inter_500Medium', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 },
-
-  // Range chips
+  card:    { backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 0 },
   chip:          { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: C.surface },
   chipActive:    { backgroundColor: C.primary },
   chipText:      { fontSize: 13, color: C.mutedForeground, fontFamily: 'Inter_500Medium' },
   chipTextActive:{ color: '#fff' },
-
-  // Highlight grid
-  highlightGrid: { flexDirection: 'row', gap: 10 },
+  unavailText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  perfSectionLabel: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 },
+  completenessNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    paddingHorizontal: 4, marginTop: 8, marginBottom: 8,
+  },
+  completenessText: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, flex: 1, lineHeight: 16 },
+  archiveLink: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: `${C.primary}12`, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12, marginTop: 16,
+  },
+  archiveLinkText: { flex: 1, fontSize: 14, fontFamily: 'Inter_500Medium', color: C.primary },
 });

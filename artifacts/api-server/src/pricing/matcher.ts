@@ -1,0 +1,219 @@
+/**
+ * Card-to-PriceCharting product matching.
+ *
+ * Scoring dimensions:
+ *   - Normalized card name (0–1)
+ *   - Set / console name (0–1)
+ *   - Card number (0 or 1)
+ *   - Game (0 or 1)
+ *
+ * Mapping rules:
+ *   - score >= 0.85  → matched (strong unambiguous)
+ *   - score >= 0.60  → review_required
+ *   - score <  0.60  → unmatched
+ *
+ * Only "matched" mappings receive prices.
+ */
+
+import type { MappingStatus } from "@workspace/db";
+
+export interface MatchCandidate {
+  id: string;          // provider product ID
+  name: string;        // product name from provider
+  consoleName: string; // set / console from provider
+  /** May be absent */
+  cardNumber?: string;
+  /** Game/category */
+  genre?: string;
+}
+
+export interface MatchInput {
+  name: string;
+  set?: string;
+  number?: string;
+  game?: string;
+}
+
+export interface MatchScore {
+  total: number;     // 0–1
+  name: number;      // 0–1
+  set: number;       // 0–1
+  number: number;    // 0 or 1
+  game: number;      // 0 or 1
+}
+
+export interface MatchResult {
+  candidate: MatchCandidate | null;
+  status: MappingStatus;
+  score: MatchScore;
+  level: "strong" | "ambiguous" | "none";
+}
+
+const MATCH_STRONG_THRESHOLD = 0.85;
+const MATCH_AMBIGUOUS_THRESHOLD = 0.60;
+
+// Weights must sum to 1.0
+const W_NAME   = 0.45;
+const W_SET    = 0.30;
+const W_NUMBER = 0.15;
+const W_GAME   = 0.10;
+
+/** Normalize a string for comparison: lowercase, remove punctuation, collapse spaces. */
+export function normalizeString(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[''`\-–—]/g, " ")
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Extract a provider card number only from explicit, low-risk product-name forms. */
+export function extractCardNumber(name: string): string | undefined {
+  const hashMatch = name.match(/(?:^|\s)#\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)(?=\s|$)/i);
+  if (hashMatch?.[1]) return hashMatch[1];
+
+  const fractionMatch = name.match(/(?:^|\s)([a-z0-9-]+\/[a-z0-9-]+)(?=\s|$)/i);
+  return fractionMatch?.[1];
+}
+
+/** Remove only the explicit card-number fragment used by extractCardNumber. */
+export function stripCardNumber(name: string): string {
+  return name
+    .replace(/(?:^|\s)#\s*[a-z0-9-]+(?:\/[a-z0-9-]+)?(?=\s|$)/gi, " ")
+    .replace(/(?:^|\s)[a-z0-9-]+\/[a-z0-9-]+(?=\s|$)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Simple Jaccard similarity over word sets. */
+function wordJaccard(a: string, b: string): number {
+  const setA = new Set(normalizeString(a).split(" ").filter(Boolean));
+  const setB = new Set(normalizeString(b).split(" ").filter(Boolean));
+  if (setA.size === 0 && setB.size === 0) return 1;
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const w of setA) {
+    if (setB.has(w)) intersection++;
+  }
+  const union = setA.size + setB.size - intersection;
+  return intersection / union;
+}
+
+/** Longest common substring ratio. */
+function lcsRatio(a: string, b: string): number {
+  const na = normalizeString(a);
+  const nb = normalizeString(b);
+  if (na === nb) return 1;
+  const minLen = Math.min(na.length, nb.length);
+  const maxLen = Math.max(na.length, nb.length);
+  if (maxLen === 0) return 1;
+  let best = 0;
+  for (let i = 0; i < na.length; i++) {
+    for (let j = 0; j < nb.length; j++) {
+      let k = 0;
+      while (na[i + k] !== undefined && nb[j + k] !== undefined && na[i + k] === nb[j + k]) k++;
+      if (k > best) best = k;
+    }
+  }
+  return best / maxLen;
+}
+
+/** Score a card name against a candidate name (0–1). */
+function scoreName(input: string, candidate: string): number {
+  const jacc = wordJaccard(input, candidate);
+  const lcs  = lcsRatio(input, candidate);
+  // Weighted average, slightly favour exact word overlap
+  return jacc * 0.7 + lcs * 0.3;
+}
+
+/** Score a set name against a candidate console/set name (0–1). */
+function scoreSet(input: string | undefined, candidate: string): number {
+  if (!input) return 0.5; // unknown set — partial credit to avoid penalizing
+  return wordJaccard(input, candidate);
+}
+
+/** Score a card number match (0 or 1). */
+function scoreNumber(input: string | undefined, candidate: string | undefined): number {
+  if (!input || !candidate) return 0.5; // unknown — partial credit
+  const normInput = input.replace(/^0+/, "").toLowerCase().trim();
+  const normCand  = candidate.replace(/^0+/, "").toLowerCase().trim();
+  return normInput === normCand ? 1 : 0;
+}
+
+/** Score a game match (0 or 1). */
+function scoreGame(input: string | undefined, candidateGenre: string | undefined): number {
+  if (!input || !candidateGenre) return 0.5; // unknown — partial credit
+  const ni = normalizeString(input);
+  const nc = normalizeString(candidateGenre);
+  return ni === nc || nc.includes(ni) || ni.includes(nc) ? 1 : 0;
+}
+
+/** Score a single candidate against the input. */
+export function scoreSingle(input: MatchInput, candidate: MatchCandidate): MatchScore {
+  const name   = scoreName(input.name, candidate.name);
+  const set    = scoreSet(input.set, candidate.consoleName);
+  const number = scoreNumber(input.number, candidate.cardNumber);
+  const game   = scoreGame(input.game, candidate.genre);
+  const total  = name * W_NAME + set * W_SET + number * W_NUMBER + game * W_GAME;
+  return { total, name, set, number, game };
+}
+
+/** Pick the best match from a list of candidates. */
+export function pickBestMatch(
+  input: MatchInput,
+  candidates: MatchCandidate[],
+): MatchResult {
+  if (candidates.length === 0) {
+    return {
+      candidate: null,
+      status: "unmatched",
+      score: { total: 0, name: 0, set: 0, number: 0, game: 0 },
+      level: "none",
+    };
+  }
+
+  const ranked = candidates
+    .map(candidate => ({ candidate, score: scoreSingle(input, candidate) }))
+    .sort((a, b) => b.score.total - a.score.total);
+
+  const bestCandidate = ranked[0]!.candidate;
+  const bestScore = ranked[0]!.score;
+  const runnerUp = ranked[1];
+  const normalizedInputNumber = input.number?.trim();
+  const identifierIsMissingOrWrong = Boolean(
+    !normalizedInputNumber ||
+    !bestCandidate.cardNumber ||
+    bestScore.number === 0,
+  );
+
+  let status: MappingStatus;
+  let level: MatchResult["level"];
+
+  if (identifierIsMissingOrWrong) {
+    // Card number evidence is required for an automatic persisted mapping.
+    // A missing or conflicting identifier is never made "strong" by fuzzy
+    // name/set similarity.
+    status = "review_required";
+    level = "ambiguous";
+  } else if (
+    bestScore.total >= MATCH_STRONG_THRESHOLD &&
+    (!runnerUp || bestScore.total - runnerUp.score.total >= 0.08)
+  ) {
+    status = "matched";
+    level  = "strong";
+  } else if (bestScore.total >= MATCH_AMBIGUOUS_THRESHOLD) {
+    status = "review_required";
+    level  = "ambiguous";
+  } else {
+    status = "unmatched";
+    level  = "none";
+  }
+
+  return {
+    candidate: status === "matched" ? bestCandidate : null,
+    status,
+    score: bestScore,
+    level,
+  };
+}
