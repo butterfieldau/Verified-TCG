@@ -44,6 +44,39 @@ const COLUMN_MIGRATIONS: string[] = [
  * already-migrated database is always safe.
  */
 const TABLE_MIGRATIONS: string[] = [
+  // Dedicated staff identities and sessions. Operator credentials are never
+  // mixed with collector accounts or JWT refresh sessions.
+  `CREATE TABLE IF NOT EXISTS admin_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role VARCHAR(24) NOT NULL DEFAULT 'support',
+    permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status VARCHAR(24) NOT NULL DEFAULT 'invited',
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    last_login_at TIMESTAMPTZ,
+    invitation_token_hash TEXT,
+    invitation_expires_at TIMESTAMPTZ,
+    invitation_delivery_status VARCHAR(24) NOT NULL DEFAULT 'not_requested',
+    created_by_admin_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS admin_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    csrf_token_hash TEXT NOT NULL,
+    ip_hash TEXT NOT NULL,
+    user_agent_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    recent_auth_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+  )`,
   // Added: per-user monthly scan usage tracking for the card scanner feature.
   // Includes the unique constraint so it is present on freshly-provisioned DBs.
   `CREATE TABLE IF NOT EXISTS scan_usage (
@@ -125,6 +158,10 @@ const TABLE_MIGRATIONS: string[] = [
  * created before this migration was added.
  */
 const CONSTRAINT_MIGRATIONS: string[] = [
+  `CREATE INDEX IF NOT EXISTS admin_sessions_admin_active_idx
+     ON admin_sessions (admin_id, revoked_at, expires_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_accounts_status_idx
+     ON admin_accounts (status, role)`,
   // Ensure scan_usage unique constraint exists on databases where the table
   // was created by an earlier version of TABLE_MIGRATIONS that omitted it.
   `DO $$ BEGIN

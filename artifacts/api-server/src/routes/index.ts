@@ -21,6 +21,7 @@ import blockReportRouter from "./block-report";
 import activityRouter from "./activity";
 import adminRouter from "./admin";
 import adminAuthRouter from "./adminAuth";
+import adminTeamRouter from "./adminTeam";
 
 const router: IRouter = Router();
 
@@ -45,6 +46,7 @@ router.use(exportRouter);
 router.use(blockReportRouter);
 router.use(activityRouter);
 router.use(adminAuthRouter);
+router.use(adminTeamRouter);
 router.use(adminRouter);
 
 export default router;

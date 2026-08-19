@@ -32,12 +32,17 @@ import {
   sum,
   sql,
 } from "drizzle-orm";
-import { requireAdminSession } from "../lib/adminSession";
+import {
+  requireAdminCsrf,
+  requireAdminPermission,
+  requireAdminSession,
+  requireRecentAdminAuth,
+} from "../lib/adminSession";
 
 const router = Router();
 
 // Apply admin session guard to all admin data routes
-router.use("/admin", requireAdminSession);
+router.use("/admin", requireAdminSession, requireAdminCsrf);
 
 /** Returns the first day of the current UTC calendar month — matches the scan service. */
 function utcPeriodStart(): Date {
@@ -49,7 +54,7 @@ const FREE_SCAN_LIMIT = 30;
 
 // ── GET /api/admin/stats ──────────────────────────────────────────────────────
 
-router.get("/admin/stats", async (_req: Request, res: Response) => {
+router.get("/admin/stats", requireAdminPermission("dashboard:read"), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const startOfToday = new Date(
@@ -129,14 +134,14 @@ router.get("/admin/stats", async (_req: Request, res: Response) => {
       })),
     });
   } catch (err) {
-    console.error("[admin] GET /admin/stats error:", err);
+    req.log.error({ err }, "Admin statistics query failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 
-router.get("/admin/users", async (req: Request, res: Response) => {
+router.get("/admin/users", requireAdminPermission("users:read"), async (req: Request, res: Response) => {
   const {
     q,
     email,
@@ -229,14 +234,18 @@ router.get("/admin/users", async (req: Request, res: Response) => {
       limit: limitNum,
     });
   } catch (err) {
-    console.error("[admin] GET /admin/users error:", err);
+    req.log.error({ err }, "Admin users query failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });
 
 // ── POST /api/admin/users/:id/subscription ────────────────────────────────────
 
-router.post("/admin/users/:userId/subscription", async (req: Request, res: Response) => {
+router.post(
+  "/admin/users/:userId/subscription",
+  requireAdminPermission("users:manage"),
+  requireRecentAdminAuth,
+  async (req: Request, res: Response) => {
   const userId = String(req.params["userId"]);
   const { subscription_tier, is_founding_member } = req.body as {
     subscription_tier?: string;
@@ -287,18 +296,23 @@ router.post("/admin/users/:userId/subscription", async (req: Request, res: Respo
       return res.status(404).json({ message: "User not found." });
     }
 
-    console.log(`[admin] Subscription updated for user ${updated.id} (${updated.email}):`, patch);
+    req.log.info({ userId: updated.id }, "Admin updated collector subscription");
 
     return res.json({ message: "User subscription updated successfully.", user: updated });
   } catch (err) {
-    console.error("[admin] POST /admin/users/:userId/subscription error:", err);
+    req.log.error({ err, userId }, "Admin subscription update failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
-});
+  },
+);
 
 // ── POST /api/admin/users/:id/suspend ────────────────────────────────────────
 
-router.post("/admin/users/:userId/suspend", async (req: Request, res: Response) => {
+router.post(
+  "/admin/users/:userId/suspend",
+  requireAdminPermission("users:manage"),
+  requireRecentAdminAuth,
+  async (req: Request, res: Response) => {
   const userId = String(req.params["userId"]);
   const { suspend } = req.body as { suspend?: boolean };
 
@@ -329,21 +343,26 @@ router.post("/admin/users/:userId/suspend", async (req: Request, res: Response) 
     }
 
     const action = suspend ? "suspended" : "unsuspended";
-    console.log(`[admin] User ${updated.id} (${updated.email}) ${action}.`);
+    req.log.info({ userId: updated.id, action }, "Admin changed collector suspension");
 
     return res.json({
       message: `User ${action} successfully.`,
       user: { ...updated, suspendedAt: updated.suspendedAt?.toISOString() ?? null },
     });
   } catch (err) {
-    console.error("[admin] POST /admin/users/:userId/suspend error:", err);
+    req.log.error({ err, userId }, "Admin suspension update failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
-});
+  },
+);
 
 // ── DELETE /api/admin/users/:id ───────────────────────────────────────────────
 
-router.delete("/admin/users/:userId", async (req: Request, res: Response) => {
+router.delete(
+  "/admin/users/:userId",
+  requireAdminPermission("users:delete"),
+  requireRecentAdminAuth,
+  async (req: Request, res: Response) => {
   const userId = String(req.params["userId"]);
 
   try {
@@ -356,18 +375,19 @@ router.delete("/admin/users/:userId", async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    console.log(`[admin] User ${deleted.id} (${deleted.email}) permanently deleted.`);
+    req.log.info({ userId: deleted.id }, "Admin permanently deleted collector");
 
     return res.json({ message: "User permanently deleted." });
   } catch (err) {
-    console.error("[admin] DELETE /admin/users/:userId error:", err);
+    req.log.error({ err, userId }, "Admin collector deletion failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
-});
+  },
+);
 
 // ── GET /api/admin/scan-usage ─────────────────────────────────────────────────
 
-router.get("/admin/scan-usage", async (_req: Request, res: Response) => {
+router.get("/admin/scan-usage", requireAdminPermission("analytics:read"), async (req: Request, res: Response) => {
   try {
     const currentPeriod = utcPeriodStart();
     const sixMonthsAgo = new Date(
@@ -453,7 +473,7 @@ router.get("/admin/scan-usage", async (_req: Request, res: Response) => {
       })),
     });
   } catch (err) {
-    console.error("[admin] GET /admin/scan-usage error:", err);
+    req.log.error({ err }, "Admin scan usage query failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });
@@ -461,7 +481,7 @@ router.get("/admin/scan-usage", async (_req: Request, res: Response) => {
 // ── GET /api/admin/reports ────────────────────────────────────────────────────
 // Uses raw SQL correlated subqueries to avoid the drizzle alias() helper.
 
-router.get("/admin/reports", async (_req: Request, res: Response) => {
+router.get("/admin/reports", requireAdminPermission("reports:read"), async (req: Request, res: Response) => {
   try {
     const reports = await db
       .select({
@@ -489,14 +509,14 @@ router.get("/admin/reports", async (_req: Request, res: Response) => {
 
     return res.json({ reports });
   } catch (err) {
-    console.error("[admin] GET /admin/reports error:", err);
+    req.log.error({ err }, "Admin reports query failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });
 
 // ── GET /api/admin/contact ────────────────────────────────────────────────────
 
-router.get("/admin/contact", async (_req: Request, res: Response) => {
+router.get("/admin/contact", requireAdminPermission("contact:read"), async (req: Request, res: Response) => {
   try {
     const submissions = await db
       .select()
@@ -505,7 +525,7 @@ router.get("/admin/contact", async (_req: Request, res: Response) => {
 
     return res.json({ submissions });
   } catch (err) {
-    console.error("[admin] GET /admin/contact error:", err);
+    req.log.error({ err }, "Admin contact query failed");
     return res.status(500).json({ message: "Database error. Please try again." });
   }
 });
