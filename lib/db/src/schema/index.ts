@@ -14,3 +14,5 @@ export * from "./posts";
 export * from "./user-blocks";
 export * from "./user-reports";
 export * from "./activity-log";
+export * from "./admin";
+export * from "./pricing";

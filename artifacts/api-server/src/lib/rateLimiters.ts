@@ -41,3 +41,25 @@ export const authRecoverLimiter = isTestEnv
       legacyHeaders: false,
       message: { error: "Too many password reset attempts. Please wait a minute and try again." },
     });
+
+/** Card pricing reads — generous browsing allowance, bounded against ID spam. */
+export const pricingReadLimiter = isTestEnv
+  ? passthrough
+  : rateLimit({
+      windowMs: 60 * 1000,
+      limit: 120,
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      message: { error: "Too many pricing requests. Please wait a minute and try again." },
+    });
+
+/** Manual provider refreshes — deliberately much lower than cached reads. */
+export const pricingRefreshLimiter = isTestEnv
+  ? passthrough
+  : rateLimit({
+      windowMs: 60 * 60 * 1000,
+      limit: 10,
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      message: { error: "Manual pricing refresh limit reached. Please try again later." },
+    });

@@ -144,18 +144,10 @@ router.get("/catalog/cards", async (req, res) => {
     const body = result.body as { data?: Array<Record<string, unknown>> } | null;
     if (body && Array.isArray(body.data)) {
       body.data = body.data.map((card) => {
-        if (card.image_url) return card; // JustTCG already provided an image
-        if (card.tcgplayerId) {
-          return { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
-        }
-        if (isPokemonGame(String(card.game ?? ""))) {
-          const derived = pokemonImageUrl(
-            card.set as string | undefined,
-            card.number as string | undefined,
-          );
-          if (derived) return { ...card, image_url: derived };
-        }
-        return card;
+        const enriched = enrichCard(card);
+        const id = String(enriched.id ?? "");
+        if (id) saveCache(`card:${id}`, enriched);
+        return enriched;
       });
     }
 
@@ -426,74 +418,61 @@ router.get("/catalog/recently-added", async (_req, res) => {
  *
  * Results are cached for CACHE_TTL_MS like any other catalog response.
  */
+export async function resolveCatalogCardById(
+  cardId: string,
+): Promise<{ card: Record<string, unknown>; cached: boolean } | null> {
+  const cacheKey = `card:${cardId}`;
+  const hit = cached(cacheKey);
+  if (hit) return { card: hit as Record<string, unknown>, cached: true };
+
+  // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
+  const parts = cardId.split("-");
+  const gameWord = (parts[0] ?? "").toLowerCase();
+  const GAME_MAP: Record<string, string> = {
+    pokemon: "Pokemon",
+    magic: "Magic: The Gathering",
+    yugioh: "Yu-Gi-Oh!",
+    lorcana: "Disney Lorcana",
+    onepiece: "One Piece",
+    dragonball: "Dragon Ball Super",
+  };
+  const game = GAME_MAP[gameWord];
+  const RARITY_TAIL = new Set([
+    "common", "uncommon", "rare", "holo", "ultra", "secret", "special",
+    "illustration", "hyper", "rainbow", "full", "art",
+  ]);
+  const nameParts = [...parts.slice(1)];
+  while (nameParts.length > 0 && RARITY_TAIL.has(nameParts[nameParts.length - 1]!)) {
+    nameParts.pop();
+  }
+  const searchQuery = nameParts.join(" ").trim();
+  if (!searchQuery) return null;
+
+  const params = new URLSearchParams({
+    q: searchQuery,
+    limit: "20",
+    include_price_history: "false",
+  });
+  if (game) params.set("game", game);
+
+  const result = await justTcg(`/cards?${params.toString()}`);
+  if (result.status >= 500) throw new Error("Catalog provider unavailable");
+  if (result.status >= 400) return null;
+
+  const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+  const match = body?.data?.find((card) => card.id === cardId) ?? null;
+  if (!match) return null;
+
+  const card = enrichCard(match);
+  saveCache(cacheKey, card);
+  return { card, cached: false };
+}
+
 router.get("/catalog/cards/:id", async (req, res) => {
   try {
-    const cardId = String(req.params.id);
-    const cacheKey = `card:${cardId}`;
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
-
-    // --- Parse the ID to build a targeted search ----------------------------
-    // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}"
-    // e.g. "pokemon-arceus-charizard-holo-rare"
-    const parts = cardId.split("-");
-    const gameWord = (parts[0] ?? "").toLowerCase();
-    const GAME_MAP: Record<string, string> = {
-      pokemon: "Pokemon",
-      magic: "Magic: The Gathering",
-      yugioh: "Yu-Gi-Oh!",
-      lorcana: "Disney Lorcana",
-      onepiece: "One Piece",
-      dragonball: "Dragon Ball Super",
-    };
-    const game = GAME_MAP[gameWord];
-
-    // Build a clean search query by stripping trailing rarity/modifier words.
-    // We intentionally keep set-code segments (e.g. "sv3pt5") because removing
-    // them reliably would require knowing all set codes; JustTCG search ignores
-    // unknown terms so they don't hurt results, while card-name terms help.
-    const RARITY_TAIL = new Set([
-      "common", "uncommon", "rare", "holo", "ultra", "secret", "special",
-      "illustration", "hyper", "rainbow", "full", "art",
-    ]);
-    const nameParts = [...parts.slice(1)]; // remove game prefix
-    while (nameParts.length > 0 && RARITY_TAIL.has(nameParts[nameParts.length - 1]!)) {
-      nameParts.pop();
-    }
-    const searchQuery = nameParts.join(" ").trim();
-    if (!searchQuery) return res.status(404).json({ error: "Card not found" });
-
-    const params = new URLSearchParams({
-      q: searchQuery,
-      limit: "20",
-      include_price_history: "false",
-    });
-    if (game) params.set("game", game);
-
-    const result = await justTcg(`/cards?${params.toString()}`);
-    if (result.status >= 400) return res.status(result.status).json(result.body);
-
-    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
-    const match = body?.data?.find((c) => c.id === cardId) ?? null;
-    if (!match) return res.status(404).json({ error: "Card not found" });
-
-    // Enrich with image URL using the same priority as the list endpoint:
-    // TCGPlayer CDN (tcgplayerId) first, pokemontcg.io CDN as a last resort.
-    let card = match;
-    if (!card.image_url) {
-      if (card.tcgplayerId) {
-        card = { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
-      } else if (isPokemonGame(String(card.game ?? ""))) {
-        const derived = pokemonImageUrl(
-          card.set as string | undefined,
-          card.number as string | undefined,
-        );
-        if (derived) card = { ...card, image_url: derived };
-      }
-    }
-
-    saveCache(cacheKey, card);
-    return res.json({ data: card, source: "JustTCG", cached: false });
+    const resolved = await resolveCatalogCardById(String(req.params.id));
+    if (!resolved) return res.status(404).json({ error: "Card not found" });
+    return res.json({ data: resolved.card, source: "JustTCG", cached: resolved.cached });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }

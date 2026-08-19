@@ -35,7 +35,8 @@ export const collectionItemsTable = pgTable("collection_items", {
 
   // Acquisition
   acquiredAt: text("acquired_at").notNull(),  // ISO date string
-  acquiredPriceCents: integer("acquired_price_cents").notNull().default(0),  // AUD cents
+  acquiredPriceCents: integer("acquired_price_cents").notNull().default(0),  // minor units
+  acquiredCurrency: text("acquired_currency").notNull().default("AUD"),  // ISO 4217
 
   // Optional metadata
   notes: text("notes"),

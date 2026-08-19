@@ -1,0 +1,252 @@
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "wouter";
+import {
+  Activity,
+  Flag,
+  HeartPulse,
+  Laptop,
+  LayoutDashboard,
+  LockKeyhole,
+  LogOut,
+  Menu,
+  MessageSquare,
+  PanelLeft,
+  ScanLine,
+  Shield,
+  Users,
+  UsersRound,
+  X,
+} from "lucide-react";
+import { useAuth } from "@/contexts/auth";
+import { apiFetch, apiPost } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
+
+const NAV_ITEMS = [
+  { path: "/overview", label: "Overview", icon: LayoutDashboard, permission: "dashboard:read" },
+  { path: "/users", label: "Users", icon: Users, permission: "users:read" },
+  { path: "/scans", label: "Scans", icon: ScanLine, permission: "analytics:read" },
+  { path: "/reports", label: "Reports", icon: Flag, permission: "reports:read" },
+  { path: "/contact", label: "Contact", icon: MessageSquare, permission: "contact:read" },
+  { path: "/team", label: "Admin team", icon: UsersRound, permission: "team:read", owner: true },
+  { path: "/sessions", label: "Sessions", icon: Laptop, permission: "sessions:read", owner: true },
+];
+
+export function AdminLayout({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const { auth, logout } = useAuth();
+  const { toast } = useToast();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [healthy, setHealthy] = useState<boolean | null>(null);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const [reauthLoading, setReauthLoading] = useState(false);
+
+  useEffect(() => {
+    apiFetch("/healthz")
+      .then(() => setHealthy(true))
+      .catch(() => setHealthy(false));
+  }, []);
+
+  useEffect(() => {
+    const open = () => {
+      setReauthError(null);
+      setReauthOpen(true);
+    };
+    window.addEventListener("admin:reauth-required", open);
+    return () => window.removeEventListener("admin:reauth-required", open);
+  }, []);
+
+  const navItems = NAV_ITEMS.filter(
+    (item) =>
+      (!item.owner || auth?.admin.role === "owner") &&
+      auth?.permissions.includes(item.permission),
+  );
+
+  async function confirmRecentAccess(event: React.FormEvent) {
+    event.preventDefault();
+    setReauthLoading(true);
+    setReauthError(null);
+    try {
+      await apiPost("/admin/auth/reauth", { password: reauthPassword });
+      setReauthPassword("");
+      setReauthOpen(false);
+      toast({
+        title: "Sensitive access confirmed",
+        description: "Repeat your protected action within the next 10 minutes.",
+      });
+    } catch (error) {
+      setReauthError(error instanceof Error ? error.message : "Could not confirm access.");
+    } finally {
+      setReauthLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-background selection:bg-primary/30">
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex h-full flex-col border-r border-border bg-card transition-[width,transform] duration-200 md:static ${
+          collapsed ? "md:w-16" : "md:w-64"
+        } w-72 ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+      >
+        <div className={`flex h-16 shrink-0 items-center gap-3 border-b border-border px-5 ${collapsed ? "md:justify-center md:gap-0 md:px-2" : ""}`}>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary shadow-[0_0_15px_rgba(255,30,45,0.35)]">
+            <Shield size={16} className="text-white" strokeWidth={2.5} />
+          </div>
+          <div className={collapsed ? "md:hidden" : ""}>
+            <div className="font-display text-sm font-bold leading-none tracking-wide">VERIFIED TCG</div>
+            <div className="mt-0.5 text-[10px] tracking-wider text-muted-foreground">COMMAND CENTRE</div>
+          </div>
+          <button
+            type="button"
+            className="ml-auto p-2 text-muted-foreground md:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className={`shrink-0 border-b border-border/50 px-4 py-4 ${collapsed ? "md:hidden" : ""}`}>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground">
+                {auth?.admin.displayName.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold">{auth?.admin.displayName}</div>
+                <div className="truncate font-mono text-xs capitalize text-muted-foreground">{auth?.admin.role}</div>
+              </div>
+            </div>
+        </div>
+
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+          {navItems.map((item) => {
+            const active = location === item.path;
+            return (
+              <Link
+                key={item.path}
+                href={item.path}
+                onClick={() => setMobileMenuOpen(false)}
+                title={collapsed ? item.label : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                  collapsed ? "md:justify-center md:gap-0 md:px-2" : ""
+                } ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-background hover:text-foreground"}`}
+              >
+                <item.icon size={16} />
+                <span className={collapsed ? "md:hidden" : ""}>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+        <div className="border-t border-border p-3">
+          <button
+            type="button"
+            onClick={() => void logout()}
+            title={collapsed ? "Sign out" : undefined}
+            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-negative/10 hover:text-negative ${
+              collapsed ? "md:justify-center md:gap-0 md:px-2" : ""
+            }`}
+          >
+            <LogOut size={16} />
+            <span className={collapsed ? "md:hidden" : ""}>Sign out</span>
+          </button>
+        </div>
+      </aside>
+
+      {mobileMenuOpen && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background/95 px-3 backdrop-blur md:px-5">
+          <button
+            type="button"
+            className="p-2 text-muted-foreground hover:text-foreground md:hidden"
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open navigation"
+          >
+            <Menu size={20} />
+          </button>
+          <button
+            type="button"
+            className="hidden p-2 text-muted-foreground hover:text-foreground md:block"
+            onClick={() => setCollapsed((value) => !value)}
+            aria-label="Toggle navigation width"
+          >
+            <PanelLeft size={18} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-bold">Admin Command Centre</div>
+            <div className="hidden text-xs text-muted-foreground sm:block">Secure platform operations</div>
+          </div>
+          <span className="hidden rounded-md border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground sm:inline-flex">
+            {import.meta.env.PROD ? "Production" : "Development"}
+          </span>
+          <Link
+            href="/overview"
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold ${
+              healthy === false
+                ? "border-negative/30 bg-negative/10 text-negative"
+                : "border-positive/30 bg-positive/10 text-positive"
+            }`}
+            aria-label="Open platform health overview"
+          >
+            {healthy === false ? <Activity size={14} /> : <HeartPulse size={14} />}
+            <span className="hidden sm:inline">{healthy === false ? "Needs attention" : "Platform healthy"}</span>
+          </Link>
+        </header>
+        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+      </div>
+
+      {reauthOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-50 bg-black/70"
+            onClick={() => setReauthOpen(false)}
+            aria-label="Close password confirmation"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reauth-title"
+            className="fixed left-1/2 top-1/2 z-[60] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-background p-6 shadow-2xl"
+          >
+            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <LockKeyhole size={19} />
+            </div>
+            <h2 id="reauth-title" className="font-display text-xl font-bold">Confirm sensitive access</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Enter your password, then repeat the action. Confirmation remains valid for 10 minutes.
+            </p>
+            <form onSubmit={confirmRecentAccess} className="mt-5 space-y-3">
+              <input
+                type="password"
+                value={reauthPassword}
+                onChange={(event) => setReauthPassword(event.target.value)}
+                autoFocus
+                autoComplete="current-password"
+                placeholder="Your password"
+                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
+              />
+              {reauthError && <p className="text-sm text-negative">{reauthError}</p>}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setReauthOpen(false)} className="flex-1 rounded-lg border border-border px-3 py-2 text-sm font-bold">
+                  Cancel
+                </button>
+                <button disabled={reauthLoading || !reauthPassword} className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-bold text-white disabled:opacity-50">
+                  {reauthLoading ? "Confirming…" : "Confirm"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -20,13 +20,15 @@ import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CollectionListSkeleton } from '@/components/ui/SkeletonLoader';
+import SellModal from '@/components/ui/SellModal';
 import { useApp } from '@/context/AppContext';
 import { useNetwork } from '@/context/NetworkContext';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
+import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId, CollectionItem } from '@/types';
 import { getSealedProducts, getSetProgress } from '@/services/collection';
+import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
@@ -55,18 +57,34 @@ export default function CollectionScreen() {
   const { width: screenWidth } = useWindowDimensions();
   // Use AppContext's collection as the single source of truth.
   // AppContext caches the collection in AsyncStorage so it's available offline.
-  const { collection, collectionLoading, refreshCollection, portfolio } = useApp();
+  const { collection, collectionLoading, refreshCollection } = useApp();
   const { isConnected } = useNetwork();
+  const { currency } = useSettings();
 
   const [collectionTab, setCollectionTab] = useState<CollectionTab>('cards');
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
+
+  // Sell modal state
+  const [sellItem, setSellItem] = useState<CollectionItem | null>(null);
+
+  // Server summary for authoritative totals
+  const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
 
   // Client-side windowing: show first `displayCount` of the fully-filtered list.
   // This is correct for both offline (cache) and online (live) data, and
   // filters work on the complete collection — not just the current page.
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadSummary = useCallback(async () => {
+    const summary = await fetchCollectionSummary(currency);
+    setServerSummary(summary);
+  }, [currency]);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -100,16 +118,20 @@ export default function CollectionScreen() {
   // Trigger a server refresh on focus (keeps portfolio in sync, populates cache)
   useFocusEffect(
     useCallback(() => {
-      refreshCollection();
-    }, [refreshCollection]),
+      void Promise.all([refreshCollection(), loadSummary()]);
+    }, [refreshCollection, loadSummary]),
   );
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
-    await refreshCollection();
+    await Promise.all([refreshCollection(), loadSummary()]);
     setIsRefreshing(false);
-  }, [refreshCollection]);
+  }, [refreshCollection, loadSummary]);
+
+  const holdingValue = useCallback((item: CollectionItem): number | null => {
+    return item.valuation ? item.valuation.price * item.quantity : null;
+  }, []);
 
   const handleLoadMore = useCallback(() => {
     if (!hasMore || collectionLoading) return;
@@ -136,10 +158,22 @@ export default function CollectionScreen() {
           <View>
             <Text style={styles.title}>Collection</Text>
             <Text style={styles.sub}>
-              {filteredItems.length} {filteredItems.length === 1 ? 'card' : 'cards'} · ${portfolio.totalValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })} AUD
+              {filteredItems.length} {filteredItems.length === 1 ? 'card' : 'cards'}
+               {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined
+                 ? ` · ${currency} ${serverSummary.totalValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`
+                 : ''}
             </Text>
           </View>
           <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => router.push('/collection-archive' as any)}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Collection Archive (sold holdings)"
+              hitSlop={2}
+            >
+              <Feather name="archive" size={18} color={C.foreground} />
+            </Pressable>
             <Pressable
               onPress={() => router.push('/collection-insights' as any)}
               style={styles.iconBtn}
@@ -174,16 +208,32 @@ export default function CollectionScreen() {
         <View style={[styles.valueStrip, { backgroundColor: C.card }]}>
           <View>
             <Text style={styles.valueLabel}>Total Value</Text>
-            <Text style={styles.valueAmount}>
-              ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
-            </Text>
+            {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
+              <Text style={styles.valueAmount}>
+                {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
+              </Text>
+            ) : (
+              <Text style={[styles.valueAmount, { color: C.mutedForeground, fontSize: 16 }]}>Unavailable</Text>
+            )}
           </View>
-          <View style={styles.gainBadge}>
-            <Text style={[styles.gainText, { color: portfolio.totalGain >= 0 ? C.positive : C.negative }]}>
-              {portfolio.totalGain >= 0 ? '+' : ''}{portfolio.totalGainPercent.toFixed(1)}%
-            </Text>
-          </View>
+          {serverSummary?.unrealizedGainPercent !== null && serverSummary?.unrealizedGainPercent !== undefined ? (
+            <View style={[styles.gainBadge, { backgroundColor: `${(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative}22` }]}>
+              <Text style={[styles.gainText, { color: (serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative }]}>
+                {(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? '+' : ''}{(serverSummary.unrealizedGainPercent ?? 0).toFixed(1)}%
+              </Text>
+            </View>
+          ) : null}
         </View>
+
+        {/* Coverage freshness note */}
+        {serverSummary?.coverage && serverSummary.coverage.ratio < 1 && (
+          <View style={[styles.coverageNote, { backgroundColor: `${C.warning}14` }]}>
+            <Feather name="info" size={11} color={C.warning} />
+            <Text style={[styles.coverageNoteText, { color: C.warning }]}>
+              {serverSummary.completeness}
+            </Text>
+          </View>
+        )}
 
         {/* Collection type tabs */}
         <ScrollView
@@ -272,8 +322,10 @@ export default function CollectionScreen() {
           const ids = filteredItems.map(i => i.card.id).join(',');
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
         }}
+        onLongPress={() => setSellItem(item)}
+        delayLongPress={600}
         accessibilityRole="button"
-        accessibilityLabel={`${item.card.name}, ${item.grading ? `${item.grading.company} ${item.grading.grade}` : item.condition}, $${(item.grading?.grade === 10 ? item.card.price.psa10 ?? item.card.price.raw : item.card.price.raw).toLocaleString('en-AU')}`}
+        accessibilityLabel={`${item.card.name}, ${item.grading ? `${item.grading.company} ${item.grading.grade}` : item.condition}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
       >
         <View style={styles.cardPlaceholder}>
           <LinearGradient
@@ -321,23 +373,23 @@ export default function CollectionScreen() {
 
         <View style={styles.itemPricing}>
           <Text style={styles.itemCurrentValue}>
-            ${(item.grading?.grade === 10
-              ? item.card.price.psa10 ?? item.card.price.raw
-              : item.card.price.raw
-            ).toLocaleString('en-AU')}
+            {holdingValue(item) != null
+              ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`
+              : 'Unavailable'}
           </Text>
-          <Text style={styles.itemCost}>Cost ${item.acquiredPrice.toLocaleString('en-AU')}</Text>
-          {item.card.price.change7d !== undefined && (
-            <Text
-              style={[
-                styles.itemChange,
-                { color: (item.card.price.change7d ?? 0) >= 0 ? C.positive : C.negative },
-              ]}
-            >
-              {(item.card.price.change7d ?? 0) >= 0 ? '+' : ''}
-              {item.card.price.change7d?.toFixed(1)}% 7d
-            </Text>
-          )}
+          <Text style={styles.itemCost}>
+            Cost {item.currency} {(item.acquiredPrice * item.quantity).toLocaleString('en-AU')}
+          </Text>
+          <Pressable
+            onPress={(e) => { e.stopPropagation?.(); setSellItem(item); }}
+            style={styles.sellBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Sell ${item.card.name}`}
+            hitSlop={4}
+          >
+            <Feather name="dollar-sign" size={11} color={C.primary} />
+            <Text style={styles.sellBtnText}>Sell</Text>
+          </Pressable>
         </View>
       </Pressable>
     );
@@ -356,15 +408,14 @@ export default function CollectionScreen() {
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
         }}
         accessibilityRole="button"
-        accessibilityLabel={`${item.card.name}, $${(item.grading?.grade === 10 ? item.card.price.psa10 ?? item.card.price.raw : item.card.price.raw).toLocaleString('en-AU')}`}
+        accessibilityLabel={`${item.card.name}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
       >
         <CardThumbnail card={item.card} grading={item.grading} />
         <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
         <Text style={styles.gridPrice}>
-          ${(item.grading?.grade === 10
-            ? item.card.price.psa10 ?? item.card.price.raw
-            : item.card.price.raw
-          ).toLocaleString('en-AU')}
+          {holdingValue(item) != null
+            ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`
+            : 'Unavailable'}
         </Text>
       </Pressable>
     );
@@ -485,6 +536,19 @@ export default function CollectionScreen() {
             automaticallyAdjustContentInsets={false}
           />
         )}
+
+        {/* Sell Modal */}
+        {sellItem && (
+          <SellModal
+            item={sellItem}
+            displayCurrency={currency}
+            onClose={() => setSellItem(null)}
+            onSold={() => {
+              setSellItem(null);
+              void Promise.all([refreshCollection(), loadSummary()]);
+            }}
+          />
+        )}
       </View>
     );
   }
@@ -505,6 +569,15 @@ export default function CollectionScreen() {
           <Text style={styles.title}>Collection</Text>
         </View>
         <View style={styles.headerActions}>
+          <Pressable
+            onPress={() => router.push('/collection-archive' as any)}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Collection Archive"
+            hitSlop={2}
+          >
+            <Feather name="archive" size={18} color={C.foreground} />
+          </Pressable>
           <Pressable
             onPress={() => router.push('/collection-insights' as any)}
             style={styles.iconBtn}
@@ -530,15 +603,24 @@ export default function CollectionScreen() {
       <View style={[styles.valueStrip, { backgroundColor: C.card }]}>
         <View>
           <Text style={styles.valueLabel}>Total Value</Text>
-          <Text style={styles.valueAmount}>
-            ${portfolio.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} AUD
-          </Text>
+          {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
+            <Text style={styles.valueAmount}>
+              {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
+            </Text>
+          ) : (
+            <Text style={[styles.valueAmount, { color: C.mutedForeground, fontSize: 16 }]}>
+              Unavailable
+            </Text>
+          )}
         </View>
-        <View style={styles.gainBadge}>
-          <Text style={[styles.gainText, { color: portfolio.totalGain >= 0 ? C.positive : C.negative }]}>
-            {portfolio.totalGain >= 0 ? '+' : ''}{portfolio.totalGainPercent.toFixed(1)}%
-          </Text>
-        </View>
+        {serverSummary?.unrealizedGainPercent != null ? (
+          <View style={styles.gainBadge}>
+            <Text style={[styles.gainText, { color: serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative }]}>
+              {serverSummary.unrealizedGainPercent >= 0 ? '+' : ''}
+              {serverSummary.unrealizedGainPercent.toFixed(1)}%
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Collection type tabs */}
@@ -735,9 +817,22 @@ const styles = StyleSheet.create({
   tag: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
   tagText: { fontSize: 10, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
   itemPricing: { alignItems: 'flex-end', gap: 2 },
-  itemCurrentValue: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  itemCost: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  itemChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  itemCurrentValue: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
+  itemCost: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  itemChange: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  sellBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderColor: `${C.primary}55`,
+    borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3,
+    marginTop: 2,
+  },
+  sellBtnText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.primary },
+  coverageNote: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+    marginBottom: 12,
+  },
+  coverageNoteText: { fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1 },
   sealedRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,16 +1,21 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { collectionItemsTable } from "@workspace/db";
+import { collectionItemsTable, currentQuotesTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity } from "./activity.js";
+import { PROVIDER_KEY } from "../pricing/pricecharting.js";
+import { gradeKeyForHolding } from "../pricing/portfolio.js";
 
 const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Convert a DB row back to the CollectionItem shape the mobile app expects. */
-function rowToItem(row: typeof collectionItemsTable.$inferSelect) {
+function rowToItem(
+  row: typeof collectionItemsTable.$inferSelect,
+  valuation?: { priceCents: number; currency: string; gradeKey: string; fetchedAt: Date } | null,
+) {
   return {
     id: row.id,
     cardId: row.cardId,
@@ -20,10 +25,21 @@ function rowToItem(row: typeof collectionItemsTable.$inferSelect) {
     grading: row.gradingData ?? undefined,
     acquiredAt: row.acquiredAt,
     acquiredPrice: row.acquiredPriceCents / 100,
-    currency: "AUD" as const,
+    // Preserve acquisition currency (defaults AUD for legacy rows)
+    currency: (row.acquiredCurrency ?? "AUD") as string,
     notes: row.notes ?? undefined,
     isForSale: row.isForSale,
     isForTrade: row.isForTrade,
+    // Valuation from PriceCharting (nullable — never zero when missing)
+    valuation: valuation
+      ? {
+          priceCents: valuation.priceCents,
+          price: valuation.priceCents / 100,
+          currency: valuation.currency,
+          gradeKey: valuation.gradeKey,
+          updatedAt: valuation.fetchedAt.toISOString(),
+        }
+      : null,
   };
 }
 
@@ -56,8 +72,29 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     ]);
 
     const total = countResult[0]?.count ?? 0;
+
+    // Fetch valuations for this page
+    const cardIds = rows.map(r => r.cardId);
+    const quotes = cardIds.length > 0
+      ? await db
+          .select()
+          .from(currentQuotesTable)
+          .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+      : [];
+
+    const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
+    for (const q of quotes) {
+      if (!cardIds.includes(q.cardId)) continue;
+      const key = `${q.cardId}:${q.gradeKey}`;
+      quoteMap.set(key, q);
+    }
+
     return res.json({
-      items: rows.map(rowToItem),
+      items: rows.map(row => {
+        const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
+        const q = gradeKey ? quoteMap.get(`${row.cardId}:${gradeKey}`) : null;
+        return rowToItem(row, q ?? null);
+      }),
       total,
       page,
       limit,
@@ -72,62 +109,26 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     .where(eq(collectionItemsTable.userId, req.userId!))
     .orderBy(collectionItemsTable.createdAt);
 
-  return res.json(rows.map(rowToItem));
-});
+  // Fetch valuations for all items
+  const cardIds = rows.map(r => r.cardId);
+  const quotes = cardIds.length > 0
+    ? await db
+        .select()
+        .from(currentQuotesTable)
+        .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+    : [];
 
-// ── GET /api/collection/summary ───────────────────────────────────────────────
-
-router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, res) => {
-  const rows = await db
-    .select()
-    .from(collectionItemsTable)
-    .where(eq(collectionItemsTable.userId, req.userId!));
-
-  let totalValue = 0;
-  let totalCost = 0;
-  let cardCount = 0;
-  const cardIds = new Set<string>();
-
-  for (const row of rows) {
-    const card = row.cardData as Record<string, any>;
-    const price = card?.price;
-    let unitValue = price?.raw ?? 0;
-
-    // Use grading-specific price if available
-    if (row.isGraded && row.gradingData) {
-      const g = row.gradingData as Record<string, any>;
-      const company = g?.company;
-      const grade = Number(g?.grade);
-      if (company === "PSA") {
-        if (grade === 10 && price?.psa10) unitValue = price.psa10;
-        else if (grade === 9 && price?.psa9) unitValue = price.psa9;
-      } else if (company === "BGS" || company === "Beckett") {
-        if (grade === 9.5 && price?.bgs95) unitValue = price.bgs95;
-        else if (grade === 9 && price?.bgs9) unitValue = price.bgs9;
-      } else if (company === "CGC") {
-        if (grade === 10 && price?.cgc10) unitValue = price.cgc10;
-        else if (grade === 9 && price?.cgc9) unitValue = price.cgc9;
-      }
-    }
-
-    totalValue += unitValue * row.quantity;
-    totalCost += (row.acquiredPriceCents / 100) * row.quantity;
-    cardCount += row.quantity;
-    cardIds.add(row.cardId);
+  const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
+  for (const q of quotes) {
+    if (!cardIds.includes(q.cardId)) continue;
+    quoteMap.set(`${q.cardId}:${q.gradeKey}`, q);
   }
 
-  const totalGain = totalValue - totalCost;
-  const totalGainPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
-
-  return res.json({
-    totalValue,
-    totalCost,
-    totalGain,
-    totalGainPercent,
-    currency: "AUD",
-    cardCount,
-    uniqueCardCount: cardIds.size,
-  });
+  return res.json(rows.map(row => {
+    const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
+    const q = gradeKey ? quoteMap.get(`${row.cardId}:${gradeKey}`) : null;
+    return rowToItem(row, q ?? null);
+  }));
 });
 
 // ── Validation helpers ────────────────────────────────────────────────────────
@@ -168,6 +169,10 @@ function validatePostBody(body: Record<string, unknown>): string | null {
   if (notes !== undefined && notes.length > 2000)
     return "notes must not exceed 2000 characters";
 
+  const currency = body.currency as string | undefined;
+  if (currency !== undefined && !/^[A-Za-z]{3}$/.test(currency))
+    return "currency must be a 3-letter ISO currency code";
+
   return null;
 }
 
@@ -192,6 +197,10 @@ function validatePatchBody(body: Record<string, unknown>): string | null {
   if (notes !== undefined && notes.length > 2000)
     return "notes must not exceed 2000 characters";
 
+  const currency = body.currency as string | undefined;
+  if (currency !== undefined && !/^[A-Za-z]{3}$/.test(currency))
+    return "currency must be a 3-letter ISO currency code";
+
   return null;
 }
 
@@ -207,6 +216,9 @@ router.post("/collection", requireActiveUser, async (req: AuthRequest, res) => {
 
   const acquiredPrice = (body.acquiredPrice as number | undefined) ?? 0;
   const acquiredPriceCents = Math.round(acquiredPrice * 100);
+  const acquiredCurrency = typeof body.currency === "string"
+    ? body.currency.toUpperCase()
+    : "AUD";
 
   const [row] = await db
     .insert(collectionItemsTable)
@@ -220,6 +232,7 @@ router.post("/collection", requireActiveUser, async (req: AuthRequest, res) => {
       gradingData: (body.grading as Record<string, unknown> | null | undefined) ?? null,
       acquiredAt: body.acquiredAt as string,
       acquiredPriceCents,
+      acquiredCurrency,
       notes: (body.notes as string | undefined) ?? null,
       isForSale: !!(body.isForSale),
       isForTrade: !!(body.isForTrade),
@@ -272,6 +285,9 @@ router.patch("/collection/:id", requireActiveUser, async (req: AuthRequest, res)
   if (body.isForTrade !== undefined) patch.isForTrade = !!(body.isForTrade);
   if (body.acquiredPrice !== undefined) {
     patch.acquiredPriceCents = Math.round((body.acquiredPrice as number) * 100);
+  }
+  if (typeof body.currency === "string") {
+    patch.acquiredCurrency = body.currency.toUpperCase();
   }
 
   const [row] = await db
