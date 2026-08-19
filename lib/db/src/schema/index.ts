@@ -18,3 +18,4 @@ export * from "./admin";
 export * from "./pricing";
 export * from "./governance";
 export * from "./trust-operations";
+export * from "./admin-operations";

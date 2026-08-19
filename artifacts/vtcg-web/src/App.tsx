@@ -34,6 +34,10 @@ import CommunityPage from '@/pages/community';
 import TrustPage from '@/pages/trust';
 import EventsPage from '@/pages/events';
 import VendorsPage from '@/pages/vendors';
+import CataloguePage from '@/pages/catalogue';
+import PricingOperationsPage from '@/pages/pricing-operations';
+import ScannerReviewPage from '@/pages/scanner-review';
+import CollectionIntelligencePage from '@/pages/collection-intelligence';
 
 const queryClient = new QueryClient();
 
@@ -102,6 +106,18 @@ function Router() {
         </Route>
         <Route path="/scans">
           {() => <ProtectedRoute component={ScansPage} permission="analytics:read" />}
+        </Route>
+        <Route path="/catalogue">
+          {() => <ProtectedRoute component={CataloguePage} permission="catalogue:read" />}
+        </Route>
+        <Route path="/pricing">
+          {() => <ProtectedRoute component={PricingOperationsPage} permission="pricing:read" />}
+        </Route>
+        <Route path="/scanner-review">
+          {() => <ProtectedRoute component={ScannerReviewPage} permission="scanner:read" />}
+        </Route>
+        <Route path="/collection-intelligence">
+          {() => <ProtectedRoute component={CollectionIntelligencePage} permission="collections:read" />}
         </Route>
         <Route path="/reports">
           {() => <ProtectedRoute component={ReportsPage} permission="reports:read" />}

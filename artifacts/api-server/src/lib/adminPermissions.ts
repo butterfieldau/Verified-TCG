@@ -47,6 +47,13 @@ export const ADMIN_PERMISSIONS = [
   // Governance — announcements
   "announcements:read",
   "announcements:manage",
+  // TCG data operations
+  "catalogue:read",
+  "pricing:read",
+  "pricing:manage",
+  "scanner:read",
+  "scanner:review",
+  "collections:read",
   // Governance — audit log
   "audit:read",
 ] as const;
@@ -90,6 +97,13 @@ const permissionsByRole: Record<AdminRole, AdminPermission[]> = {
     "notes:manage",
     "announcements:read",
     "announcements:manage",
+    // TCG data operations
+    "catalogue:read",
+    "pricing:read",
+    "pricing:manage",
+    "scanner:read",
+    "scanner:review",
+    "collections:read",
     "audit:read",
   ],
   support: [
@@ -132,6 +146,10 @@ const permissionsByRole: Record<AdminRole, AdminPermission[]> = {
     "drops:read",
     "operations:read",
     "notifications:read",
+    "catalogue:read",
+    "pricing:read",
+    "scanner:read",
+    "collections:read",
     "audit:read",
     "announcements:read",
   ],

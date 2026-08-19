@@ -477,6 +477,73 @@ const TABLE_MIGRATIONS: string[] = [
     request_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  // ── TCG data operations: audit, scan outcomes, refresh work, overrides ────────
+  `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    actor_email TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT,
+    reason TEXT NOT NULL,
+    before_state JSONB,
+    after_state JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS scan_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    extracted_name TEXT,
+    extracted_set TEXT,
+    extracted_number TEXT,
+    top_match_card_id TEXT,
+    top_match_name TEXT,
+    top_match_confidence INTEGER,
+    candidate_summary JSONB,
+    model TEXT,
+    duration_ms INTEGER NOT NULL,
+    error_code TEXT,
+    review_status TEXT NOT NULL DEFAULT 'pending',
+    review_outcome TEXT,
+    review_reason TEXT,
+    reviewed_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricing_refresh_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL DEFAULT 'pricecharting',
+    requested_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricing_overrides (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    original_price_cents INTEGER,
+    original_currency TEXT,
+    reason TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    created_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ,
+    revoked_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    revoke_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**
@@ -604,6 +671,31 @@ const CONSTRAINT_MIGRATIONS: string[] = [
      ON sold_archive_items (card_id)`,
   `CREATE INDEX IF NOT EXISTS sold_archive_items_sold_at_idx
      ON sold_archive_items (user_id, sold_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_resource_idx
+     ON admin_audit_logs (resource_type, resource_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_actor_idx
+     ON admin_audit_logs (admin_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_status_created_idx
+     ON scan_attempts (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_review_created_idx
+     ON scan_attempts (review_status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_user_created_idx
+     ON scan_attempts (user_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_refresh_jobs_status_created_idx
+     ON pricing_refresh_jobs (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_refresh_jobs_card_created_idx
+     ON pricing_refresh_jobs (card_id, created_at DESC)`,
+  // Enforce at most one active (queued or running) job per card+provider atomically.
+  // The ON CONFLICT clause in the insert path references this partial unique index
+  // so that concurrent admin requests skip duplicate inserts without a separate
+  // SELECT round-trip.
+  `CREATE UNIQUE INDEX IF NOT EXISTS pricing_refresh_jobs_active_card_provider_uniq
+     ON pricing_refresh_jobs (card_id, provider_key)
+     WHERE status = 'queued' OR status = 'running'`,
+  `CREATE INDEX IF NOT EXISTS pricing_overrides_card_grade_idx
+     ON pricing_overrides (card_id, grade_key, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_overrides_expiry_idx
+     ON pricing_overrides (expires_at, revoked_at)`,
   // Seed PriceCharting provider row (idempotent)
   `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
    SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,

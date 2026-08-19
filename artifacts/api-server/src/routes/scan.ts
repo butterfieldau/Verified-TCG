@@ -20,15 +20,17 @@ import { Router } from "express";
 import express from "express";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
+import { scanAttemptsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
 const FREE_SCAN_LIMIT = 30;
 const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
+const RECOGNITION_MODEL = "gpt-4o-mini";
 
 /**
  * Maximum base64 image payload: 8 MB encoded ≈ ~6 MB JPEG.
@@ -136,7 +138,7 @@ async function extractCardInfo(base64Image: string, mimeType: string): Promise<{
   }
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: RECOGNITION_MODEL,
     max_completion_tokens: 256,
     messages: [
       {
@@ -246,12 +248,14 @@ function scoreMatch(
  */
 router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) => {
   const userId = req.userId!;
+  const attemptStartedAt = Date.now();
 
   // These are hoisted so the outer catch can include quota context in 500 errors
   // that occur after the scan slot has been reserved.
   let isFreeTier = false;
   let periodStart = currentPeriodStart();
   let reservedScanCount: number | undefined;
+  let attemptRecorded = false;
 
   try {
     // 1. Parse and validate request body
@@ -338,7 +342,16 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
       extracted = await extractCardInfo(image, mimeType);
     } catch (err) {
       // Log the full error server-side; only return a sanitized message to the client.
-      console.error("[scan] Vision API error:", err instanceof Error ? err.message : String(err));
+      logger.error({ err, userId }, "Scan vision request failed");
+      await db.insert(scanAttemptsTable).values({
+        userId,
+        status: "failed",
+        durationMs: Date.now() - attemptStartedAt,
+        model: RECOGNITION_MODEL,
+        errorCode: "recognition_service_unavailable",
+        reviewStatus: "pending",
+      });
+      attemptRecorded = true;
       res.status(503).json({
         message: "Card recognition service is temporarily unavailable. Please try searching manually.",
         // Return updated scan count so the client stays in sync even on failure
@@ -370,7 +383,38 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
     const hasMatch = topMatch !== undefined && topMatch.confidence >= 20;
     const scansRemaining = isFreeTier ? Math.max(0, FREE_SCAN_LIMIT - newScanCount) : null;
 
-    // 8. Return results
+    // 8. Persist only sanitized operational facts. Source photos and raw OCR
+    //    text are intentionally excluded from the database.
+    const operationalStatus = imageUnreadable
+      ? "unreadable"
+      : !hasMatch
+        ? "unmatched"
+        : topMatch.confidence < 50
+          ? "low_confidence"
+          : "matched";
+    await db.insert(scanAttemptsTable).values({
+      userId,
+      status: operationalStatus,
+      extractedName: extracted.name.slice(0, 200) || null,
+      extractedSet: extracted.setName.slice(0, 200) || null,
+      extractedNumber: extracted.number.slice(0, 80) || null,
+      topMatchCardId: hasMatch ? String(topMatch.card.id ?? "").slice(0, 300) || null : null,
+      topMatchName: hasMatch ? String(topMatch.card.name ?? "").slice(0, 200) || null : null,
+      topMatchConfidence: hasMatch ? topMatch.confidence : null,
+      candidateSummary: matches.map(({ card, confidence }) => ({
+        cardId: String(card.id ?? "").slice(0, 300),
+        name: String(card.name ?? "").slice(0, 200),
+        set: String(card.set_name ?? card.set ?? "").slice(0, 200),
+        number: String(card.number ?? "").slice(0, 80),
+        confidence,
+      })),
+      model: RECOGNITION_MODEL,
+      durationMs: Date.now() - attemptStartedAt,
+      reviewStatus: operationalStatus === "matched" ? "not_required" : "pending",
+    });
+    attemptRecorded = true;
+
+    // 9. Return results
     res.json({
       extracted: {
         name: extracted.name,
@@ -403,7 +447,19 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
       : {};
 
     // Log full error server-side; return only a sanitized message to the client.
-    console.error("[scan] Unexpected error:", err instanceof Error ? err.message : String(err));
+    logger.error({ err, userId }, "Unexpected scan recognition failure");
+    if (reservedScanCount !== undefined && !attemptRecorded) {
+      await db.insert(scanAttemptsTable).values({
+        userId,
+        status: "failed",
+        durationMs: Date.now() - attemptStartedAt,
+        model: RECOGNITION_MODEL,
+        errorCode: "unexpected_processing_failure",
+        reviewStatus: "pending",
+      }).catch((recordError: unknown) => {
+        logger.error({ err: recordError, userId }, "Failed to persist scan failure");
+      });
+    }
     res.status(500).json({
       message: "Something went wrong during card recognition. Please try again.",
       ...quotaPayload,

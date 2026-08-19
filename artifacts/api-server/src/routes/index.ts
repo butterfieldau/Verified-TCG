@@ -27,6 +27,7 @@ import pricingRouter from "./pricing";
 import adminGovernanceRouter from "./adminGovernance";
 import collectorAnnouncementsRouter from "./collectorAnnouncements";
 import adminTrustRouter from "./adminTrust";
+import adminOperationsRouter from "./adminOperations";
 
 const router: IRouter = Router();
 
@@ -58,6 +59,7 @@ router.use(activityRouter);
 router.use(adminAuthRouter);
 router.use(adminTeamRouter);
 router.use(adminTrustRouter);
+router.use(adminOperationsRouter);
 router.use(adminRouter);
 router.use(adminGovernanceRouter);
 router.use(collectorAnnouncementsRouter);
