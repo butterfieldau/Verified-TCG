@@ -1,15 +1,51 @@
 import { Router, type Request, type Response } from "express";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
+import { db, ebayAccountDeletionEventsTable } from "@workspace/db";
+import {
+  getEbayChallengeConfig,
+  getEbayNotificationConfig,
+  verifyEbayNotificationSignature,
+} from "../lib/ebayNotificationVerifier.js";
 
 const router = Router();
 
-// ── Config helpers ────────────────────────────────────────────────────────────
+const ACCOUNT_DELETION_TOPIC = "MARKETPLACE_ACCOUNT_DELETION";
 
-function getMissingSecrets(): string[] {
-  const missing: string[] = [];
-  if (!process.env.EBAY_VERIFICATION_TOKEN) missing.push("EBAY_VERIFICATION_TOKEN");
-  if (!process.env.EBAY_ENDPOINT_URL)       missing.push("EBAY_ENDPOINT_URL");
-  return missing;
+function configurationError(res: Response, missing: string[]) {
+  return res.status(503).json({
+    error: "Endpoint configuration is incomplete.",
+    missingConfiguration: missing,
+  });
+}
+
+function notificationIdFromPayload(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  const metadata = record["metadata"];
+  const notification = record["notification"];
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    Array.isArray(metadata) ||
+    typeof notification !== "object" ||
+    notification === null ||
+    Array.isArray(notification)
+  ) {
+    return null;
+  }
+
+  const topic = (metadata as Record<string, unknown>)["topic"];
+  const notificationId = (notification as Record<string, unknown>)["notificationId"];
+  if (
+    topic !== ACCOUNT_DELETION_TOPIC ||
+    typeof notificationId !== "string" ||
+    notificationId.length === 0 ||
+    notificationId.length > 512
+  ) {
+    return null;
+  }
+
+  return notificationId;
 }
 
 // ── GET /api/ebay/account-deletion ───────────────────────────────────────────
@@ -26,13 +62,6 @@ function getMissingSecrets(): string[] {
  * https://developer.ebay.com/marketplace-account-deletion
  */
 router.get("/ebay/account-deletion", (req: Request, res: Response) => {
-  const missing = getMissingSecrets();
-  if (missing.length > 0) {
-    return res.status(503).json({
-      error: `Endpoint not configured. Missing: ${missing.join(", ")}`,
-    });
-  }
-
   const challengeCode =
     typeof req.query.challenge_code === "string" ? req.query.challenge_code : "";
 
@@ -40,10 +69,13 @@ router.get("/ebay/account-deletion", (req: Request, res: Response) => {
     return res.status(400).json({ error: "challenge_code query parameter is required" });
   }
 
+  const settings = getEbayChallengeConfig();
+  if (!settings.config) return configurationError(res, settings.missing);
+
   const hash = createHash("sha256");
   hash.update(challengeCode);
-  hash.update(process.env.EBAY_VERIFICATION_TOKEN!);
-  hash.update(process.env.EBAY_ENDPOINT_URL!);
+  hash.update(settings.config.verificationToken);
+  hash.update(settings.config.endpointUrl);
 
   return res.status(200).json({ challengeResponse: hash.digest("hex") });
 });
@@ -54,84 +86,59 @@ router.get("/ebay/account-deletion", (req: Request, res: Response) => {
  * eBay Marketplace Account Deletion / Closure notification receiver.
  *
  * eBay POSTs a signed JSON payload whenever an eBay user exercises their
- * right to delete their account. We verify the X-EBAY-SIGNATURE header,
- * log the event for audit purposes, and respond 200 OK.
+ * right to delete their account. We verify the X-EBAY-SIGNATURE header using
+ * eBay's public-key process before parsing or processing the notification.
  *
  * The app installs express.raw() for this exact route before its global JSON
  * parser so signature verification always uses the original request bytes.
  *
- * Signature algorithm: HMAC-SHA256 of the raw request body bytes, keyed
- * with EBAY_VERIFICATION_TOKEN, base64-encoded.
- *
- * TODO: Once eBay–collector account linkage is added to the app, use these
- * events to delete or anonymise the associated collector data per eBay's
- * policy requirements.
+ * The processing ledger retains only eBay's delivery notification ID and the
+ * no-linkage outcome. We intentionally inspect no userId, username, or EIAS
+ * token because there is no verified eBay-to-collector identity mapping.
  */
 router.post(
   "/ebay/account-deletion",
-  (req: Request, res: Response) => {
-    const missing = getMissingSecrets();
-    if (missing.length > 0) {
-      return res.status(503).json({
-        error: `Endpoint not configured. Missing: ${missing.join(", ")}`,
-      });
-    }
+  async (req: Request, res: Response) => {
+    const settings = getEbayNotificationConfig();
+    if (!settings.config) return configurationError(res, settings.missing);
 
     const rawBody = req.body;
-    const verificationToken = process.env.EBAY_VERIFICATION_TOKEN!;
     const signatureHeader = req.get("x-ebay-signature");
-
-    // Verify the signature when the header is present.
-    // Missing signature is treated as invalid — legitimate eBay notifications
-    // always include the header.
-    if (!signatureHeader) {
-      return res.status(403).json({ error: "Missing X-EBAY-SIGNATURE header" });
+    if (
+      !signatureHeader ||
+      !Buffer.isBuffer(rawBody) ||
+      !(await verifyEbayNotificationSignature(rawBody, signatureHeader, settings.config))
+    ) {
+      return res.status(412).json({ error: "Notification signature could not be verified." });
     }
-    if (!Buffer.isBuffer(rawBody)) {
-      return res.status(403).json({ error: "Signature verification failed" });
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8")) as unknown;
+    } catch {
+      return res.status(400).json({ error: "Notification payload is invalid." });
+    }
+
+    const notificationId = notificationIdFromPayload(payload);
+    if (!notificationId) {
+      return res.status(400).json({ error: "Notification topic or identifier is invalid." });
     }
 
     try {
-      const hmac = createHmac("sha256", verificationToken);
-      hmac.update(rawBody);
-      const computed = hmac.digest("base64");
-
-      // timingSafeEqual prevents timing-based attacks; both buffers must be
-      // the same length, so we compare string lengths first.
-      const computedBuf = Buffer.from(computed);
-      const receivedBuf = Buffer.from(signatureHeader);
-
-      const valid =
-        computedBuf.length === receivedBuf.length &&
-        timingSafeEqual(computedBuf, receivedBuf);
-
-      if (!valid) {
-        return res.status(403).json({ error: "Signature verification failed" });
-      }
+      await db
+        .insert(ebayAccountDeletionEventsTable)
+        .values({
+          notificationId,
+          outcome: "no_linked_ebay_data",
+        })
+        .onConflictDoNothing();
     } catch {
-      return res.status(403).json({ error: "Signature verification failed" });
+      // Do not acknowledge an event we could not record: eBay will retry it.
+      // Deliberately omit payload and identifier data from logs and responses.
+      return res.status(503).json({ error: "Notification processing is temporarily unavailable." });
     }
 
-    // Parsing failure does not affect acknowledgement: signature verification
-    // has already authenticated the exact bytes and eBay retries non-200s.
-    let payloadParsed = false;
-    try {
-      JSON.parse(rawBody.toString("utf8"));
-      payloadParsed = true;
-    } catch {
-      // Keep payloadParsed false. Never log provider payloads or user details.
-    }
-
-    req.log?.info(
-      {
-        event: "ebay.account_deletion",
-        payloadBytes: rawBody.byteLength,
-        payloadParsed,
-      },
-      "eBay account deletion notification received",
-    );
-
-    return res.status(200).send();
+    return res.status(204).send();
   },
 );
 

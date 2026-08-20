@@ -21,3 +21,4 @@ export * from "./trust-operations";
 export * from "./admin-operations";
 export * from "./admin-operational-notes";
 export * from "./telemetry";
+export * from "./ebay-account-deletion-events";

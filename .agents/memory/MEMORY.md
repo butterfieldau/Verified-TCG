@@ -8,3 +8,4 @@
 - [Append-only evidence ledgers](append-only-evidence-ledgers.md) — immutable audit rows retain pseudonymous actor IDs and reject database mutation, including account-lifecycle rewrites.
 - [App-version policy enforcement](app-version-policy-enforcement.md) — active version policies reject unversioned consumer requests; supported clients attach their build version centrally.
 - [Owner-control route boundaries](owner-control-route-boundaries.md) — maintenance/version gates target consumer routes, not verified provider lifecycle callbacks or recovery endpoints.
+- [eBay webhook verification](ebay-webhook-verification.md) — Marketplace deletion signatures require eBay public keys over untouched request bytes, never token HMAC.
