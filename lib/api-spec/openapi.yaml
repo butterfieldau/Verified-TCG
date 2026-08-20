@@ -24,6 +24,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /catalog/cards/{id}/ebay-sold-history:
+    get:
+      operationId: getEbaySoldHistory
+      tags: [pricing]
+      summary: Get recent completed eBay sales for a card
+      description: Returns normalized completed-sale records and a trend calculated from those exact records. Requires a Pro collector session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: name
+          in: query
+          required: true
+          schema: { type: string, maxLength: 120 }
+        - name: set
+          in: query
+          required: true
+          schema: { type: string, maxLength: 120 }
+        - name: game
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pokemon, onepiece, yugioh, lorcana, dragonball, magic]
+        - name: grade
+          in: query
+          schema:
+            type: string
+            default: raw
+            enum: [raw, psa8, psa9, psa10, cgc10, bgs95, bgs10]
+        - name: period
+          in: query
+          schema:
+            type: string
+            default: 30d
+            enum: [7d, 30d, 90d, 1y, all]
+        - name: displayCurrency
+          in: query
+          schema:
+            type: string
+            default: AUD
+            enum: [AUD, USD, GBP, EUR, CAD, NZD]
+      responses:
+        "200":
+          description: A truthful eBay availability result, including no-results and upstream states.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EbaySoldHistoryResponse"
+        "400":
+          description: Invalid card identity or filter.
+        "401":
+          description: Authentication required.
+        "403":
+          description: Pro subscription required.
+        "429":
+          description: Too many eBay sold-history requests.
 components:
   schemas:
     HealthStatus:
@@ -33,4 +91,71 @@ components:
           type: string
       required:
         - status
+    EbaySale:
+      type: object
+      required: [title, endedAt, condition, priceCents, price, currency, url]
+      properties:
+        title: { type: string }
+        endedAt: { type: string, format: date-time }
+        condition: { type: [string, "null"] }
+        priceCents: { type: number }
+        price: { type: number }
+        currency: { type: string }
+        url: { type: string }
+    EbaySoldHistoryPoint:
+      type: object
+      required: [date, priceCents, price, currency]
+      properties:
+        date: { type: string, format: date }
+        priceCents: { type: number }
+        price: { type: number }
+        currency: { type: string }
+    EbaySoldHistoryMovement:
+      type: [object, "null"]
+      properties:
+        absolute: { type: number }
+        percent: { type: number }
+        direction:
+          type: string
+          enum: [up, down, flat]
+    EbaySoldHistoryResponse:
+      type: object
+      required:
+        - cardId
+        - gradeKey
+        - period
+        - currency
+        - source
+        - configured
+        - availability
+        - coverage
+        - message
+        - sales
+        - points
+        - movement
+        - returnedAt
+      properties:
+        cardId: { type: string }
+        gradeKey: { type: string }
+        period: { type: string }
+        currency: { type: string }
+        source:
+          type: string
+          enum: [ebay_completed_sales]
+        configured: { type: boolean }
+        availability:
+          type: string
+          enum: [available, no_results, configuration_error, authorization_error, permission_error, upstream_error]
+        coverage:
+          type: string
+          enum: [returned_results, provider_limited]
+        message: { type: [string, "null"] }
+        sales:
+          type: array
+          items: { $ref: "#/components/schemas/EbaySale" }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/EbaySoldHistoryPoint" }
+        movement: { $ref: "#/components/schemas/EbaySoldHistoryMovement" }
+        returnedAt: { type: string, format: date-time }
 

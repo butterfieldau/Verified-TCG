@@ -475,7 +475,7 @@ export default function VerifiedPricingCard({
       {isPro && hasQuotes && (
         <View style={vpStyles.historyBlock}>
           <View style={vpStyles.historyHeader}>
-            <Text style={vpStyles.historyLabel}>PRICE HISTORY</Text>
+            <Text style={vpStyles.historyLabel}>VERIFIED MARKET HISTORY</Text>
           </View>
 
           {/* Period selector */}
