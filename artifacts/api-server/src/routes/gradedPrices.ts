@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireProUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 
@@ -148,7 +149,30 @@ async function fetchEbayMedianUsd(
     "paginationInput.entriesPerPage": "10",
   });
 
-  const res = await fetch(`${ebayFindingUrl(appId)}?${params.toString()}`, { signal });
+  // Sanitized integration observability: record only ok/failed, duration,
+  // numeric HTTP status, and a fixed operation enum. Never the query or body.
+  const startedAt = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${ebayFindingUrl(appId)}?${params.toString()}`, { signal });
+  } catch (err) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.ebay.request",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      metadata: { operation: "find_completed_items" },
+    });
+    throw err;
+  }
+  void recordTelemetry({
+    category: "integration",
+    action: "integration.ebay.request",
+    status: res.ok ? "ok" : "failed",
+    statusCode: res.status,
+    durationMs: Date.now() - startedAt,
+    metadata: { operation: "find_completed_items" },
+  });
   if (!res.ok) return null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

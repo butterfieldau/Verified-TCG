@@ -9,6 +9,7 @@ import { db } from "@workspace/db";
 import { priceSnapshotsTable, wishlistItemsTable } from "@workspace/db";
 import { and, asc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { recordTelemetry } from "../lib/telemetry.js";
 import { createNotification } from "./notifications.js";
 import { notificationsTable } from "@workspace/db";
 import { requireProUser, requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
@@ -93,7 +94,30 @@ async function fetchEbayMedianUsd(
     "sortOrder":                      "EndTimeSoonest",
     "paginationInput.entriesPerPage": "10",
   });
-  const res = await fetch(`${ebayFindingUrl(appId)}?${params.toString()}`, { signal });
+  // Sanitized integration observability: record only ok/failed, duration,
+  // numeric HTTP status, and a fixed operation enum. Never the query or body.
+  const startedAt = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${ebayFindingUrl(appId)}?${params.toString()}`, { signal });
+  } catch (err) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.ebay.request",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      metadata: { operation: "find_completed_items" },
+    });
+    throw err;
+  }
+  void recordTelemetry({
+    category: "integration",
+    action: "integration.ebay.request",
+    status: res.ok ? "ok" : "failed",
+    statusCode: res.status,
+    durationMs: Date.now() - startedAt,
+    metadata: { operation: "find_completed_items" },
+  });
   if (!res.ok) return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const json = (await res.json()) as any;

@@ -17,6 +17,15 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
+import {
+  GOVERNANCE_COLUMN_MIGRATIONS,
+  GOVERNANCE_CONSTRAINT_MIGRATIONS,
+  GOVERNANCE_TABLE_MIGRATIONS,
+} from "./governanceMigrations";
+import {
+  TELEMETRY_TABLE_MIGRATIONS,
+  TELEMETRY_CONSTRAINT_MIGRATIONS,
+} from "./telemetryMigrations";
 
 const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
 
@@ -36,14 +45,105 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_tcgs TEXT`,
   // Added: account suspension support — NULL means active, non-NULL means suspended
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ`,
-  // Added: acquisition currency for collection items (task 283 — default AUD preserves existing data)
+  // Added: acquisition currency for collection items (default AUD preserves existing data)
   `ALTER TABLE collection_items ADD COLUMN IF NOT EXISTS acquired_currency TEXT NOT NULL DEFAULT 'AUD'`,
   // PriceCharting product metadata used by provider-neutral market insights
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_sales_volume INTEGER`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_release_date TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
+  ...GOVERNANCE_COLUMN_MIGRATIONS,
+  // user_reports operational workflow columns — queue status uses 'open' convention
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
+  `ALTER TABLE user_reports ALTER COLUMN status SET DEFAULT 'open'`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS priority VARCHAR(16) NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS severity VARCHAR(16) NOT NULL DEFAULT 'medium'`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution TEXT`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_reason TEXT`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_note TEXT`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolved_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS escalation_reason TEXT`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
+  `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+  // contact_submissions operational workflow columns for the support queue
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolution TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolution_reason TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS escalation_reason TEXT`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
+  `ALTER TABLE contact_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+  `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderation_status VARCHAR(24) NOT NULL DEFAULT 'visible'`,
+  `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderation_reason TEXT`,
+  `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderated_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE posts ADD COLUMN IF NOT EXISTS moderated_at TIMESTAMPTZ`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS description TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS address TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Australia/Sydney'`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'upcoming'`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS event_mode_enabled BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS capacity INTEGER`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS featured BOOLEAN NOT NULL DEFAULT false`,
+  // Track the operator who created an event so legacy fabricated rows (NULL)
+  // can be distinguished from admin-created events. ON DELETE SET NULL so
+  // removing an admin never cascades to their events.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+  `ALTER TABLE event_participants ADD COLUMN IF NOT EXISTS participation_status TEXT NOT NULL DEFAULT 'participating'`,
+  `ALTER TABLE event_participants ADD COLUMN IF NOT EXISTS removal_reason TEXT`,
+  `ALTER TABLE event_participants ADD COLUMN IF NOT EXISTS removed_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL`,
 ];
+
+// Exact production DDL for the two moderation tables whose fresh-schema
+// ordering matters (user_reports before moderation_notes). Kept as named
+// constants so a test can execute the *exact* statements the runtime uses
+// without re-running the full migration pipeline. Exported narrowly below.
+const USER_REPORTS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS user_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reported_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+    severity VARCHAR(16) NOT NULL DEFAULT 'medium',
+    assigned_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    resolution_reason TEXT,
+    resolution_note TEXT,
+    resolved_at TIMESTAMPTZ,
+    resolved_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    escalated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+
+const MODERATION_NOTES_TABLE_DDL = `CREATE TABLE IF NOT EXISTS moderation_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_id UUID NOT NULL REFERENCES user_reports(id) ON DELETE CASCADE,
+    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
+    note TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+
+/**
+ * Narrow, non-runtime accessor for the exact production DDL of the moderation
+ * tables whose creation order is load-bearing. Intended for schema regression
+ * tests only; the runtime uses these same constants inside TABLE_MIGRATIONS.
+ * The returned array is ordered so user_reports precedes moderation_notes.
+ */
+export function getModerationTableDDL(): readonly string[] {
+  return Object.freeze([USER_REPORTS_TABLE_DDL, MODERATION_NOTES_TABLE_DDL]);
+}
 
 /**
  * Idempotent table-level migrations.  Each entry is a raw SQL string that
@@ -83,6 +183,36 @@ const TABLE_MIGRATIONS: string[] = [
     recent_auth_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ
+  )`,
+  // Community records are part of the durable consumer surface. Create their
+  // full base shape here because startup readiness only guarantees the core
+  // account tables; trust column migrations must also work on a minimal prior
+  // schema rather than assuming a separate Drizzle push already created posts.
+  `CREATE TABLE IF NOT EXISTS posts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    card_id TEXT,
+    card_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    moderation_status VARCHAR(24) NOT NULL DEFAULT 'visible',
+    moderation_reason TEXT,
+    moderated_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    moderated_at TIMESTAMPTZ
+  )`,
+  `CREATE TABLE IF NOT EXISTS post_likes (
+    post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT post_likes_unique_pair UNIQUE (post_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS post_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   // Added: per-user monthly scan usage tracking for the card scanner feature.
   // Includes the unique constraint so it is present on freshly-provisioned DBs.
@@ -259,6 +389,181 @@ const TABLE_MIGRATIONS: string[] = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  ...GOVERNANCE_TABLE_MIGRATIONS,
+  ...TELEMETRY_TABLE_MIGRATIONS,
+  // user_reports MUST be created before moderation_notes (which FKs it) and
+  // before any user_reports index. This CREATE carries the FULL normalized
+  // operational shape so fresh databases are correct without relying on the
+  // COLUMN_MIGRATIONS upgrades (those remain idempotent no-ops here for existing
+  // databases). References users + admin_accounts, both defined above.
+  USER_REPORTS_TABLE_DDL,
+  MODERATION_NOTES_TABLE_DDL,
+  `CREATE TABLE IF NOT EXISTS vendors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    profile TEXT,
+    location TEXT,
+    contact_email TEXT,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+    verification_status VARCHAR(32) NOT NULL DEFAULT 'not_verified',
+    featured BOOLEAN NOT NULL DEFAULT false,
+    created_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS vendor_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
+    note TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS event_vendors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+    booth TEXT,
+    status VARCHAR(24) NOT NULL DEFAULT 'approved',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT event_vendors_event_vendor_uniq UNIQUE (event_id, vendor_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS certification_reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    collection_item_id UUID REFERENCES collection_items(id) ON DELETE SET NULL,
+    card_id TEXT NOT NULL,
+    card_name TEXT NOT NULL,
+    provider VARCHAR(32) NOT NULL DEFAULT 'internal',
+    certification_id TEXT,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+    provider_verification_status VARCHAR(32) NOT NULL DEFAULT 'not_requested',
+    evidence_source TEXT,
+    provider_response JSONB,
+    external_verified_at TIMESTAMPTZ,
+    reviewed_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMPTZ,
+    outcome_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS certification_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    certification_review_id UUID NOT NULL REFERENCES certification_reviews(id) ON DELETE CASCADE,
+    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
+    note TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS verified_drops (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    image_url TEXT,
+    deep_link TEXT,
+    eligibility TEXT,
+    starts_at TIMESTAMPTZ,
+    ends_at TIMESTAMPTZ,
+    pro_only BOOLEAN NOT NULL DEFAULT false,
+    featured BOOLEAN NOT NULL DEFAULT false,
+    status VARCHAR(24) NOT NULL DEFAULT 'draft',
+    created_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    published_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    published_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS trust_status_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    domain VARCHAR(32) NOT NULL,
+    record_id UUID NOT NULL,
+    from_status VARCHAR(32),
+    to_status VARCHAR(32) NOT NULL,
+    reason TEXT NOT NULL,
+    admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS admin_audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL,
+    admin_session_id UUID,
+    action VARCHAR(80) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    severity VARCHAR(16) NOT NULL DEFAULT 'info',
+    target_type VARCHAR(48) NOT NULL,
+    target_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    previous_state JSONB,
+    new_state JSONB,
+    request_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // ── TCG data operations: audit, scan outcomes, refresh work, overrides ────────
+  `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID,
+    actor_email TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT,
+    reason TEXT NOT NULL,
+    before_state JSONB,
+    after_state JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS scan_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    extracted_name TEXT,
+    extracted_set TEXT,
+    extracted_number TEXT,
+    top_match_card_id TEXT,
+    top_match_name TEXT,
+    top_match_confidence INTEGER,
+    candidate_summary JSONB,
+    model TEXT,
+    duration_ms INTEGER NOT NULL,
+    error_code TEXT,
+    review_status TEXT NOT NULL DEFAULT 'pending',
+    review_outcome TEXT,
+    review_reason TEXT,
+    reviewed_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricing_refresh_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL DEFAULT 'pricecharting',
+    requested_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricing_overrides (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    original_price_cents INTEGER,
+    original_currency TEXT,
+    reason TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    created_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ,
+    revoked_by_admin_id UUID REFERENCES admin_accounts(id) ON DELETE SET NULL,
+    revoke_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**
@@ -326,21 +631,46 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Index for fast per-user activity reads (newest first)
   `CREATE INDEX IF NOT EXISTS activity_log_user_created_at_idx
      ON activity_log (user_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS user_reports_status_created_idx
+     ON user_reports (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS user_reports_assignee_status_idx
+     ON user_reports (assigned_admin_id, status)`,
+  `CREATE INDEX IF NOT EXISTS posts_moderation_created_idx
+     ON posts (moderation_status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS posts_user_created_idx
+     ON posts (user_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS posts_created_idx
+     ON posts (created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS post_likes_post_idx
+     ON post_likes (post_id)`,
+  `CREATE INDEX IF NOT EXISTS post_likes_user_idx
+     ON post_likes (user_id)`,
+  `CREATE INDEX IF NOT EXISTS post_comments_post_created_idx
+     ON post_comments (post_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS moderation_notes_report_created_idx
+     ON moderation_notes (report_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS vendors_status_created_idx
+     ON vendors (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS event_vendors_event_idx
+     ON event_vendors (event_id)`,
+  `CREATE INDEX IF NOT EXISTS certification_reviews_status_created_idx
+     ON certification_reviews (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS certification_reviews_certification_idx
+     ON certification_reviews (certification_id)`,
+  `CREATE INDEX IF NOT EXISTS verified_drops_status_schedule_idx
+     ON verified_drops (status, starts_at)`,
+  `CREATE INDEX IF NOT EXISTS trust_status_history_record_idx
+     ON trust_status_history (domain, record_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_events_created_idx
+     ON admin_audit_events (created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_events_target_idx
+     ON admin_audit_events (target_type, target_id, created_at DESC)`,
   // Added: user_blocks — symmetric block relationships between collectors.
   `CREATE TABLE IF NOT EXISTS user_blocks (
     blocker_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     blocked_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT user_blocks_unique_pair UNIQUE (blocker_user_id, blocked_user_id)
-  )`,
-  // Added: user_reports — collector report submissions (admin review is out-of-band).
-  `CREATE TABLE IF NOT EXISTS user_reports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    reporter_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    reported_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    reason TEXT NOT NULL,
-    note TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   // ── Task 283: Pricing domain indexes ─────────────────────────────────────────
   `CREATE INDEX IF NOT EXISTS card_provider_mappings_card_idx
@@ -361,30 +691,128 @@ const CONSTRAINT_MIGRATIONS: string[] = [
      ON sold_archive_items (card_id)`,
   `CREATE INDEX IF NOT EXISTS sold_archive_items_sold_at_idx
      ON sold_archive_items (user_id, sold_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_resource_idx
+     ON admin_audit_logs (resource_type, resource_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_actor_idx
+     ON admin_audit_logs (admin_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_status_created_idx
+     ON scan_attempts (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_review_created_idx
+     ON scan_attempts (review_status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS scan_attempts_user_created_idx
+     ON scan_attempts (user_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_refresh_jobs_status_created_idx
+     ON pricing_refresh_jobs (status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_refresh_jobs_card_created_idx
+     ON pricing_refresh_jobs (card_id, created_at DESC)`,
+  // Enforce at most one active (queued or running) job per card+provider atomically.
+  // The ON CONFLICT clause in the insert path references this partial unique index
+  // so that concurrent admin requests skip duplicate inserts without a separate
+  // SELECT round-trip.
+  `CREATE UNIQUE INDEX IF NOT EXISTS pricing_refresh_jobs_active_card_provider_uniq
+     ON pricing_refresh_jobs (card_id, provider_key)
+     WHERE status = 'queued' OR status = 'running'`,
+  `CREATE INDEX IF NOT EXISTS pricing_overrides_card_grade_idx
+     ON pricing_overrides (card_id, grade_key, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS pricing_overrides_expiry_idx
+     ON pricing_overrides (expires_at, revoked_at)`,
   // Seed PriceCharting provider row (idempotent)
   `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
    SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,
           'https://www.pricecharting.com/api', NOW(), NOW()
    WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
-  // Seed initial events if the table is empty
-  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
-   SELECT gen_random_uuid(), 'TCXPO Sydney 2026', 'Sydney Olympic Park', 'Sydney, NSW', 'Aug 15–17, 2026', true, NOW()
-   WHERE NOT EXISTS (SELECT 1 FROM events LIMIT 1)`,
-  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
-   SELECT gen_random_uuid(), 'Melbourne TCG Fest', 'Melbourne Convention Centre', 'Melbourne, VIC', 'Sep 20–21, 2026', true, NOW()
-   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Melbourne TCG Fest')`,
-  `INSERT INTO events (id, name, venue, city, event_date, is_active, created_at)
-   SELECT gen_random_uuid(), 'Brisbane Card Expo', 'Brisbane Convention Centre', 'Brisbane, QLD', 'Oct 5, 2026', true, NOW()
-   WHERE NOT EXISTS (SELECT 1 FROM events WHERE name = 'Brisbane Card Expo')`,
+  ...GOVERNANCE_CONSTRAINT_MIGRATIONS,
+  ...TELEMETRY_CONSTRAINT_MIGRATIONS,
+  // NOTE: user_reports is now created (with its full normalized shape) in
+  // TABLE_MIGRATIONS, ahead of moderation_notes and its own indexes. The former
+  // late bare CREATE here was removed to fix fresh-schema ordering.
+  // NOTE: No operational data is ever seeded here. Migrations are strictly
+  // schema-only (additive DDL). Fresh deployments start with zero events, and
+  // real operational rows are created exclusively through admin/consumer APIs.
+  // Normalized internal notes for report/support operational workflows.
+  `CREATE TABLE IF NOT EXISTS admin_operational_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_type TEXT NOT NULL,
+    subject_id UUID NOT NULL,
+    author_admin_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS admin_operational_notes_subject_idx
+     ON admin_operational_notes (subject_type, subject_id, created_at)`,
 ];
 
+/**
+ * ONE-TIME CLEANUP (NOT SEEDING).
+ *
+ * Earlier versions of this file seeded three sample events into fresh
+ * databases. That seeding has been removed, but databases provisioned under
+ * the old code may still contain those fabricated rows. This cleanup deletes
+ * ONLY those exact, unmodified sample rows.
+ *
+ * Each DELETE is narrowly fingerprinted by the exact (name, venue, city,
+ * event_date) tuple the old seed used, AND additionally guarded so we only ever
+ * remove a genuinely-fabricated, untouched row:
+ *   - created_by_admin_id IS NULL  (never remove admin-created events)
+ *   - starts_at IS NULL AND ends_at IS NULL AND description IS NULL
+ *       (never remove events an operator has since edited/scheduled)
+ *   - no rows in event_participants for the event (never remove joined events)
+ *   - no rows in event_vendors for the event (never remove linked events)
+ *
+ * The guards make this idempotent (a second run finds nothing) and safe: a
+ * protected, edited, or linked event that happens to share the fingerprint is
+ * preserved. This is a targeted data-repair migration, distinct from seeding.
+ */
+const LEGACY_SEED_EVENTS: Array<{
+  name: string;
+  venue: string;
+  city: string;
+  eventDate: string;
+}> = [
+  { name: "TCXPO Sydney 2026", venue: "Sydney Olympic Park", city: "Sydney, NSW", eventDate: "Aug 15–17, 2026" },
+  { name: "Melbourne TCG Fest", venue: "Melbourne Convention Centre", city: "Melbourne, VIC", eventDate: "Sep 20–21, 2026" },
+  { name: "Brisbane Card Expo", venue: "Brisbane Convention Centre", city: "Brisbane, QLD", eventDate: "Oct 5, 2026" },
+];
+
+/**
+ * Delete legacy fabricated seed events matching the exact fingerprint and
+ * safety guards. Idempotent and safe to run on every startup. Returns the
+ * number of rows removed (primarily for tests/observability).
+ */
+export async function cleanupLegacySeedEvents(): Promise<number> {
+  let removed = 0;
+  for (const ev of LEGACY_SEED_EVENTS) {
+    const result = await db.execute(sql`
+      DELETE FROM events e
+      WHERE e.name = ${ev.name}
+        AND e.venue = ${ev.venue}
+        AND e.city = ${ev.city}
+        AND e.event_date = ${ev.eventDate}
+        AND e.created_by_admin_id IS NULL
+        AND e.starts_at IS NULL
+        AND e.ends_at IS NULL
+        AND e.description IS NULL
+        AND NOT EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id = e.id)
+        AND NOT EXISTS (SELECT 1 FROM event_vendors ev2 WHERE ev2.event_id = e.id)
+    `);
+    removed += result.rowCount ?? 0;
+  }
+  return removed;
+}
+
 export async function runMigrations(): Promise<void> {
+  await runMigrationsWithDatabase(db);
+}
+
+export async function runMigrationsWithDatabase(
+  migrationDb: Pick<typeof db, "execute"> = db,
+): Promise<void> {
   logger.info("Verifying database schema");
 
-  const result = await db.execute<{ table_name: string }>(sql`
+  const result = await migrationDb.execute<{ table_name: string }>(sql`
     SELECT table_name
     FROM information_schema.tables
-    WHERE table_schema = 'public'
+    WHERE table_schema = current_schema()
       AND table_name = ANY(ARRAY[${sql.raw(REQUIRED_TABLES.map(t => `'${t}'`).join(", "))}])
   `);
 
@@ -402,22 +830,50 @@ export async function runMigrations(): Promise<void> {
 
   // Apply forward table migrations (CREATE TABLE IF NOT EXISTS)
   for (const statement of TABLE_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: TABLE_MIGRATIONS.length }, "Table migrations applied");
 
   // Apply forward column migrations
   for (const statement of COLUMN_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: COLUMN_MIGRATIONS.length }, "Column migrations applied");
 
   // Apply forward constraint/index migrations (idempotent, post-table)
   for (const statement of CONSTRAINT_MIGRATIONS) {
-    await db.execute(sql.raw(statement));
+    await migrationDb.execute(sql.raw(statement));
   }
 
   logger.info({ count: CONSTRAINT_MIGRATIONS.length }, "Constraint migrations applied");
+
+  // One-time targeted cleanup of legacy fabricated seed events (NOT seeding).
+  // Idempotent: only removes exact-fingerprint, unowned, unedited, unlinked rows.
+  const legacyRemoved = await cleanupLegacySeedEvents();
+  if (legacyRemoved > 0) {
+    logger.warn({ count: legacyRemoved }, "Removed legacy fabricated seed events");
+  }
+
+  // Normalize legacy user_reports status vocabulary to canonical task-285 values.
+  // Idempotent: only touches rows that still carry the old trust-route statuses.
+  //   "new"         → "open"      (schema default before reconciliation)
+  //   "under_review" → "in_review" (trust-route assignment auto-status)
+  //   "actioned"    → "resolved"  (trust-route suspension outcome)
+  // The ALTER TABLE default is already changed in the DDL but ADD COLUMN IF NOT
+  // EXISTS cannot retroactively change an existing column default, so we run an
+  // explicit UPDATE on first startup after the code change and on subsequent
+  // restarts (zero rows matched = no-op cost).
+  await migrationDb.execute(sql`
+    UPDATE user_reports
+    SET status = CASE status
+      WHEN 'new'          THEN 'open'
+      WHEN 'under_review' THEN 'in_review'
+      WHEN 'actioned'     THEN 'resolved'
+    END
+    WHERE status IN ('new', 'under_review', 'actioned')
+  `);
+
+  logger.info("Legacy user_reports status values normalized");
 }

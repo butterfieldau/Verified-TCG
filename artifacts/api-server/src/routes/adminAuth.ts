@@ -17,6 +17,7 @@ import {
   setAdminSessionCookies,
 } from "../lib/adminSession";
 import { permissionsForRole, resolvePermissions } from "../lib/adminPermissions";
+import { recordTelemetry } from "../lib/telemetry";
 
 const router = Router();
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
@@ -157,6 +158,7 @@ router.post(
     );
     if (!account || !validPassword || account.status !== "active" || locked) {
       if (account && !locked) {
+        const willBeLocked = (account.failedLoginCount + 1) >= LOCK_AFTER_FAILURES;
         const lockUntil = new Date(now.getTime() + LOCK_DURATION_MS);
         await db.execute(sql`
           UPDATE admin_accounts
@@ -171,6 +173,21 @@ router.post(
           WHERE id = ${account.id}
             AND (locked_until IS NULL OR locked_until <= ${now})
         `);
+        // Record security event for failure/lockout (no password/email/IP stored)
+        void recordTelemetry({
+          category: "security",
+          action: willBeLocked ? "admin.login.lockout" : "admin.login.failure",
+          adminId: account.id,
+          status: "failed",
+          metadata: { role: account.role },
+        });
+      } else if (locked) {
+        void recordTelemetry({
+          category: "security",
+          action: "admin.login.locked_attempt",
+          adminId: account?.id,
+          status: "failed",
+        });
       }
       res.status(401).json({ message: "Email or password is incorrect." });
       return;
@@ -186,6 +203,16 @@ router.post(
       })
       .where(eq(adminAccountsTable.id, account.id));
     const session = await createAdminSession(account.id, req);
+
+    // Record successful login security event
+    void recordTelemetry({
+      category: "security",
+      action: "admin.login.success",
+      adminId: account.id,
+      status: "ok",
+      metadata: { role: account.role },
+    });
+
     setAuthenticatedResponse(res, session);
   },
 );
@@ -278,10 +305,22 @@ router.post(
       .limit(1);
     const valid = account ? await bcrypt.compare(password ?? "", account.passwordHash) : false;
     if (!valid) {
+      void recordTelemetry({
+        category: "security",
+        action: "admin.reauth.failure",
+        adminId: req.admin!.id,
+        status: "failed",
+      });
       res.status(403).json({ message: "Password is incorrect.", code: "REAUTH_FAILED" });
       return;
     }
     await markRecentAdminAuth(req.adminSession!.id);
+    void recordTelemetry({
+      category: "security",
+      action: "admin.reauth.success",
+      adminId: req.admin!.id,
+      status: "ok",
+    });
     res.json({ message: "Sensitive access confirmed for 10 minutes." });
   },
 );

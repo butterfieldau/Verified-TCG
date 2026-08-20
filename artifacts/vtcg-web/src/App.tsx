@@ -17,6 +17,9 @@ import ContactPage from '@/pages/contact';
 import TeamPage from '@/pages/team';
 import SessionsPage from '@/pages/sessions';
 import ActivatePage from '@/pages/activate';
+import NotificationsPage from '@/pages/notifications';
+import RequestsPage from '@/pages/requests';
+import AnnouncementsPage from '@/pages/announcements';
 
 import {
   Route,
@@ -26,6 +29,21 @@ import {
   Router as WouterRouter,
 } from 'wouter';
 import { ShieldX } from 'lucide-react';
+import OperationsPage from '@/pages/operations';
+import CommunityPage from '@/pages/community';
+import TrustPage from '@/pages/trust';
+import EventsPage from '@/pages/events';
+import VendorsPage from '@/pages/vendors';
+import CataloguePage from '@/pages/catalogue';
+import PricingOperationsPage from '@/pages/pricing-operations';
+import ScannerReviewPage from '@/pages/scanner-review';
+import CollectionIntelligencePage from '@/pages/collection-intelligence';
+import SubscriptionsPage from '@/pages/subscriptions';
+
+import AnalyticsPage from '@/pages/analytics';
+import SystemPage from '@/pages/system';
+import AuditPage from '@/pages/audit';
+import SettingsPage from '@/pages/settings';
 
 const queryClient = new QueryClient();
 
@@ -83,17 +101,69 @@ function Router() {
         <Route path="/overview">
           {() => <ProtectedRoute component={OverviewPage} permission="dashboard:read" />}
         </Route>
+        <Route path="/analytics">
+          {() => <ProtectedRoute component={AnalyticsPage} permission="analytics:read" />}
+        </Route>
+        <Route path="/system">
+          {() => <ProtectedRoute component={SystemPage} permission="system:read" />}
+        </Route>
+        <Route path="/audit">
+          {() => <ProtectedRoute component={AuditPage} permission="audit:read" />}
+        </Route>
+        <Route path="/settings">
+          {() => <ProtectedRoute component={SettingsPage} permission="configuration:read" />}
+        </Route>
+
+        <Route path="/operations">
+          {() => <ProtectedRoute component={OperationsPage} permission="operations:read" />}
+        </Route>
         <Route path="/users">
           {() => <ProtectedRoute component={UsersPage} permission="users:read" />}
+        </Route>
+        <Route path="/subscriptions">
+          {() => <ProtectedRoute component={SubscriptionsPage} permission="users:read" />}
+        </Route>
+        <Route path="/community">
+          {() => <ProtectedRoute component={CommunityPage} permission="community:read" />}
         </Route>
         <Route path="/scans">
           {() => <ProtectedRoute component={ScansPage} permission="analytics:read" />}
         </Route>
+        <Route path="/catalogue">
+          {() => <ProtectedRoute component={CataloguePage} permission="catalogue:read" />}
+        </Route>
+        <Route path="/pricing">
+          {() => <ProtectedRoute component={PricingOperationsPage} permission="pricing:read" />}
+        </Route>
+        <Route path="/scanner-review">
+          {() => <ProtectedRoute component={ScannerReviewPage} permission="scanner:read" />}
+        </Route>
+        <Route path="/collection-intelligence">
+          {() => <ProtectedRoute component={CollectionIntelligencePage} permission="collections:read" />}
+        </Route>
         <Route path="/reports">
           {() => <ProtectedRoute component={ReportsPage} permission="reports:read" />}
         </Route>
+        <Route path="/trust">
+          {() => <ProtectedRoute component={TrustPage} permission="trust:read" />}
+        </Route>
+        <Route path="/events">
+          {() => <ProtectedRoute component={EventsPage} permission="events:read" />}
+        </Route>
+        <Route path="/vendors">
+          {() => <ProtectedRoute component={VendorsPage} permission="vendors:read" />}
+        </Route>
         <Route path="/contact">
           {() => <ProtectedRoute component={ContactPage} permission="contact:read" />}
+        </Route>
+        <Route path="/notifications">
+          {() => <ProtectedRoute component={NotificationsPage} permission="notifications:read" />}
+        </Route>
+        <Route path="/requests">
+          {() => <ProtectedRoute component={RequestsPage} permission="privacy:read" />}
+        </Route>
+        <Route path="/announcements">
+          {() => <ProtectedRoute component={AnnouncementsPage} permission="announcements:read" />}
         </Route>
         <Route path="/team">
           {() => <ProtectedRoute component={TeamPage} permission="team:read" requireOwner />}

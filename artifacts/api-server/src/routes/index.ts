@@ -24,6 +24,12 @@ import adminAuthRouter from "./adminAuth";
 import adminTeamRouter from "./adminTeam";
 import collectionSellRouter from "./collectionSell";
 import pricingRouter from "./pricing";
+import adminGovernanceRouter from "./adminGovernance";
+import collectorAnnouncementsRouter from "./collectorAnnouncements";
+import adminTrustRouter from "./adminTrust";
+import adminOperationsRouter from "./adminOperations";
+import adminIntelligenceRouter from "./adminIntelligence";
+import adminConfigurationRouter from "./adminConfiguration";
 
 const router: IRouter = Router();
 
@@ -54,6 +60,12 @@ router.use(blockReportRouter);
 router.use(activityRouter);
 router.use(adminAuthRouter);
 router.use(adminTeamRouter);
+router.use(adminTrustRouter);
+router.use(adminOperationsRouter);
+router.use(adminIntelligenceRouter);
+router.use(adminConfigurationRouter);
 router.use(adminRouter);
+router.use(adminGovernanceRouter);
+router.use(collectorAnnouncementsRouter);
 
 export default router;

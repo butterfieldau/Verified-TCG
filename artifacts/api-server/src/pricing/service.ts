@@ -11,10 +11,11 @@ import { db } from "@workspace/db";
 import {
   cardProviderMappingsTable,
   currentQuotesTable,
+  pricingOverridesTable,
   pricingProvidersTable,
   providerPriceHistoryTable,
 } from "@workspace/db";
-import { and, eq, desc, gte, sql } from "drizzle-orm";
+import { and, eq, desc, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import {
   priceChartingProvider,
@@ -35,6 +36,13 @@ import {
   aggregateVerifiedMarketValue,
   type VerifiedMarketValue,
 } from "./engine.js";
+import { recordTelemetry } from "../lib/telemetry.js";
+
+/**
+ * Fixed operation enum for PriceCharting integration telemetry. Never
+ * includes URLs, query strings, card identifiers, or provider payloads.
+ */
+type PCOperation = "product_refresh" | "search" | "explicit_refresh";
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
@@ -94,13 +102,37 @@ export interface PricingResponse {
   errorCode?: string;
   message?: string;
   conversion?: ReturnType<typeof buildConversionProvenance>;
+  manualOverrides?: Array<{
+    id: string;
+    gradeKey: string;
+    priceCents: number;
+    currency: string;
+    reason: string;
+    expiresAt: string | null;
+  }>;
 }
 
 // ── In-flight background match jobs ──────────────────────────────────────────
 
 const matchInFlight = new Map<string, Promise<void>>();
 
-async function recordProviderHealth(healthy: boolean, message?: string): Promise<void> {
+async function recordProviderHealth(
+  healthy: boolean,
+  message?: string,
+  operation?: PCOperation,
+): Promise<void> {
+  // Sanitized integration observability. Every external PriceCharting call
+  // outcome flows through this centralized path. We record only the fixed
+  // operation enum and the ok/failed status — never URLs, card inputs,
+  // provider payloads, credentials, or error text.
+  if (operation) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.pricecharting.request",
+      status: healthy ? "ok" : "failed",
+      metadata: { operation },
+    });
+  }
   const now = new Date();
   await db
     .insert(pricingProvidersTable)
@@ -292,17 +324,17 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
     // here would incorrectly stamp an old quote and history point as fresh.
     const detail = await priceChartingProvider.getProductDetail(providerProductId, { bypassCache: true });
     if (!detail) {
-      await recordProviderHealth(false, "PriceCharting product refresh failed");
+      await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
       return;
     }
     await persistProviderMetadata(cardId, detail);
     const prices = priceChartingProvider.normalizeQuotes(detail);
     await persistQuotes(cardId, providerProductId, prices);
-    await recordProviderHealth(true);
+    await recordProviderHealth(true, undefined, "product_refresh");
   })()
     .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Pricing refresh failed");
-      await recordProviderHealth(false, "PriceCharting product refresh failed").catch(() => {});
+      await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh").catch(() => {});
     })
     .finally(() => matchInFlight.delete(key));
 
@@ -328,10 +360,10 @@ async function runBackgroundMatch(
     const query = [input.name, input.set, input.game].filter(Boolean).join(" ");
     const products = await priceChartingProvider.searchProducts(query);
     if (!products) {
-      await recordProviderHealth(false, "PriceCharting search failed");
+      await recordProviderHealth(false, "PriceCharting search failed", "search");
       return;
     }
-    await recordProviderHealth(true);
+    await recordProviderHealth(true, undefined, "search");
 
     if (products.length === 0) {
       // Save unmatched result
@@ -400,9 +432,9 @@ async function runBackgroundMatch(
         await persistProviderMetadata(cardId, detail);
         const prices = priceChartingProvider.normalizeQuotes(detail);
         await persistQuotes(cardId, result.candidate.id, prices);
-        await recordProviderHealth(true);
+        await recordProviderHealth(true, undefined, "product_refresh");
       } else {
-        await recordProviderHealth(false, "PriceCharting product refresh failed");
+        await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
       }
     }
   })()
@@ -601,6 +633,26 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
         gte(providerPriceHistoryTable.recordedAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
       ),
     );
+  const now = new Date();
+  const activeOverrideRows = await db
+    .select()
+    .from(pricingOverridesTable)
+    .where(
+      and(
+        eq(pricingOverridesTable.cardId, cardId),
+        isNull(pricingOverridesTable.revokedAt),
+        lte(pricingOverridesTable.startsAt, now),
+        or(
+          isNull(pricingOverridesTable.expiresAt),
+          gt(pricingOverridesTable.expiresAt, now),
+        ),
+      ),
+    )
+    .orderBy(desc(pricingOverridesTable.createdAt));
+  const overrideByGrade = new Map(
+    activeOverrideRows.map((override) => [override.gradeKey, override]),
+  );
+  const appliedOverrides: NonNullable<PricingResponse["manualOverrides"]> = [];
 
   for (const gradeDef of GRADE_DEFINITIONS) {
     const q = quoteMap.get(gradeDef.key);
@@ -647,7 +699,46 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       isStale,
       retainedSnapshotCents,
     });
-    if (market) verifiedMarket.push(market);
+    if (market) {
+      const override = overrideByGrade.get(gradeDef.key);
+      if (override) {
+        const overrideDisplayCents =
+          override.currency === displayCurrencyFinal
+            ? override.priceCents
+            : await convertCents(
+                override.priceCents,
+                override.currency,
+                displayCurrencyFinal,
+              );
+        if (overrideDisplayCents != null) {
+          market.verifiedMarketValueCents = overrideDisplayCents;
+          market.verifiedMarketValue = overrideDisplayCents / 100;
+          market.currency = displayCurrencyFinal;
+          market.confidence = {
+            ...market.confidence,
+            score: Math.min(market.confidence.score, 50),
+            level: "low",
+            reasons: [
+              "A reviewed manual override is currently active",
+              ...market.confidence.reasons,
+            ],
+          };
+          market.insights = [
+            "Verified Market value is temporarily overridden; provider quotes remain visible",
+            ...market.insights,
+          ];
+          appliedOverrides.push({
+            id: override.id,
+            gradeKey: override.gradeKey,
+            priceCents: override.priceCents,
+            currency: override.currency,
+            reason: override.reason,
+            expiresAt: override.expiresAt?.toISOString() ?? null,
+          });
+        }
+      }
+      verifiedMarket.push(market);
+    }
   }
 
   const primaryMarket = verifiedMarket.find(value => value.gradeKey === "raw") ?? verifiedMarket[0];
@@ -682,6 +773,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     },
     updatedAt: latestFetch?.toISOString() ?? null,
     isStale,
+    ...(appliedOverrides.length > 0 ? { manualOverrides: appliedOverrides } : {}),
     ...(!configured
       ? { message: "Stored PriceCharting value shown; automatic refresh is not configured" }
       : {}),
@@ -751,6 +843,44 @@ export async function refreshPricingForScheduler(
     number: opts.number,
     game: opts.game,
   });
+}
+
+/**
+ * Explicitly refresh quotes for a card using the persisted provider product ID.
+ * Unlike `runMappedRefresh`, this function:
+ *   - Bypasses every cache layer and contacts the provider unconditionally
+ *   - Awaits quote AND history persistence before resolving
+ *   - Propagates failure as a returned status rather than silently catching it
+ *
+ * Intended for admin-initiated refresh jobs where the operator expects the DB
+ * to reflect fresh provider data once the job is marked `succeeded`.
+ */
+export async function refreshPricingExplicit(
+  cardId: string,
+  providerProductId: string,
+): Promise<{ status: "succeeded" } | { status: "failed"; error: string }> {
+  if (!priceChartingProvider.isConfigured()) {
+    return { status: "failed", error: "PriceCharting provider is not configured" };
+  }
+  try {
+    const detail = await priceChartingProvider.getProductDetail(providerProductId, {
+      bypassCache: true,
+    });
+    if (!detail) {
+      await recordProviderHealth(false, "PriceCharting product refresh returned no data", "explicit_refresh");
+      return { status: "failed", error: "Provider returned no data for this product" };
+    }
+    await persistProviderMetadata(cardId, detail);
+    const prices = priceChartingProvider.normalizeQuotes(detail);
+    await persistQuotes(cardId, providerProductId, prices);
+    await recordProviderHealth(true, undefined, "explicit_refresh");
+    return { status: "succeeded" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message.slice(0, 300) : "Unknown error during refresh";
+    logger.error({ err, cardId, providerProductId }, "Explicit pricing refresh failed");
+    await recordProviderHealth(false, "PriceCharting explicit refresh failed", "explicit_refresh").catch(() => {});
+    return { status: "failed", error: message };
+  }
 }
 
 /**

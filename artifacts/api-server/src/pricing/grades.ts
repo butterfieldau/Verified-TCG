@@ -14,11 +14,7 @@ export interface GradeDefinition {
 
 export type GradeKey =
   | "raw"
-  | "grade_7"
-  | "grade_8"
-  | "grade_9"
-  | "grade_9_5"
-  | "psa_10"
+  | "graded"
   | "bgs_10"
   | "cgc_10"
   | "sgc_10";
@@ -28,22 +24,20 @@ export type GradeKey =
  *
  * PriceCharting API field mapping:
  *   loose-price      → raw (ungraded)
- *   cib-price        → grade_7
- *   new-price        → grade_8
- *   graded-price     → grade_9
- *   box-only-price   → grade_9.5
- *   manual-only-price→ psa_10
+ *   graded-price     → graded (provider does not identify a numeric grade)
  *   bgs-10-price     → bgs_10
  *   condition-17-price → cgc_10
  *   condition-18-price → sgc_10
+ *
+ * cib-price, new-price, box-only-price, and manual-only-price are overloaded
+ * provider fields whose meaning changes by product category. This adapter does
+ * not receive a durable category attestation, so it intentionally does not turn
+ * them into numeric card grades. A generic graded quote is never used as an
+ * exact numeric-grade value.
  */
 export const GRADE_DEFINITIONS: GradeDefinition[] = [
   { key: "raw",      label: "Ungraded (Raw)",   pricechartingField: "loose-price"        },
-  { key: "grade_7",  label: "Grade 7",           pricechartingField: "cib-price"          },
-  { key: "grade_8",  label: "Grade 8",           pricechartingField: "new-price"          },
-  { key: "grade_9",  label: "Grade 9",           pricechartingField: "graded-price"       },
-  { key: "grade_9_5",label: "Grade 9.5",         pricechartingField: "box-only-price"     },
-  { key: "psa_10",   label: "PSA 10",            pricechartingField: "manual-only-price"  },
+  { key: "graded",   label: "Graded (unspecified)", pricechartingField: "graded-price"    },
   { key: "bgs_10",   label: "BGS 10",            pricechartingField: "bgs-10-price"       },
   { key: "cgc_10",   label: "CGC 10",            pricechartingField: "condition-17-price" },
   { key: "sgc_10",   label: "SGC 10",            pricechartingField: "condition-18-price" },

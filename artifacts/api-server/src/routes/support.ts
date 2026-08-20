@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { db, contactSubmissionsTable } from "@workspace/db";
+import { db, contactSubmissionsTable, supportCasesTable } from "@workspace/db";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 
@@ -112,12 +113,17 @@ router.post("/support/contact", async (req, res) => {
   // to find and reply to any submission, regardless of email delivery status.
   // Return 500 on failure so the UI never promises a reply it cannot guarantee.
   try {
-    await db.insert(contactSubmissionsTable).values({
-      name:     cleanName,
-      email:    cleanEmail,
-      category: cleanCategory,
-      subject:  cleanSubject,
-      message:  cleanMessage,
+    await db.transaction(async (tx) => {
+      const [submission] = await tx.insert(contactSubmissionsTable).values({
+        name:     cleanName,
+        email:    cleanEmail,
+        category: cleanCategory,
+        subject:  cleanSubject,
+        message:  cleanMessage,
+      }).returning({ id: contactSubmissionsTable.id });
+      await tx.insert(supportCasesTable).values({
+        submissionId: submission!.id,
+      });
     });
   } catch (err) {
     console.error("[SUPPORT] DB write failed:", (err as Error)?.message ?? "unknown");
@@ -137,6 +143,11 @@ router.post("/support/contact", async (req, res) => {
   if (RESEND_API_KEY) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    // Sanitized integration observability for the actual outbound Resend call.
+    // Records only ok/failed, duration, numeric HTTP status, and a fixed
+    // operation enum — never the recipient, subject/body, credentials, or
+    // provider response body.
+    const startedAt = Date.now();
     try {
       const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -160,10 +171,25 @@ router.post("/support/contact", async (req, res) => {
         }),
         signal: controller.signal,
       });
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.resend.request",
+        status: emailRes.ok ? "ok" : "failed",
+        statusCode: emailRes.status,
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "support_notification" },
+      });
       if (!emailRes.ok) {
         console.warn("[SUPPORT] Resend notification failed, status:", emailRes.status);
       }
     } catch {
+      void recordTelemetry({
+        category: "integration",
+        action: "integration.resend.request",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        metadata: { operation: "support_notification" },
+      });
       console.warn("[SUPPORT] Resend notification did not complete (non-fatal; submission is stored).");
     } finally {
       clearTimeout(timeout);
@@ -172,7 +198,7 @@ router.post("/support/contact", async (req, res) => {
 
   return res.status(200).json({
     success: true,
-    message: "We've received your message and will get back to you within 24 hours.",
+    message: "Your message has been recorded for the support team.",
   });
 });
 

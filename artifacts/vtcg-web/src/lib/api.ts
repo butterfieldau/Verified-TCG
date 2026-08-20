@@ -1,3 +1,5 @@
+import packageMetadata from "../../package.json";
+
 const API = "/api";
 
 export class ApiError extends Error {
@@ -23,6 +25,7 @@ async function request<T>(
   includeCsrf = false,
 ): Promise<T> {
   const headers = new Headers(init.headers);
+  headers.set("x-app-version", packageMetadata.version);
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
   if (includeCsrf) {
     const csrf = getCsrfToken();
@@ -74,8 +77,15 @@ export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   );
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
-  return request<T>(path, { method: "DELETE" }, true);
+export function apiDelete<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: "DELETE",
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+    true,
+  );
 }
 
 export interface Admin {

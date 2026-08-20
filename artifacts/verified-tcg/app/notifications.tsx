@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -14,11 +14,24 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
-import type { NotifType } from '@/services/notifications';
-import { fetchNotifications } from '@/services/notifications';
+import type { NotifType, CollectorAnnouncement } from '@/services/notifications';
+import { fetchNotifications, fetchCollectorAnnouncements } from '@/services/notifications';
 import type { Notification } from '@/services/notifications';
 
 const C = colors.dark;
+
+function relativeAnnouncementTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return 'Just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
 
 // All types that can appear from the server + client-generated aliases
 type FilterType = NotifType | 'all';
@@ -67,6 +80,30 @@ export default function NotificationsScreen() {
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [extraNotifications, setExtraNotifications] = useState<Notification[]>([]);
 
+  // ── In-app announcements ─────────────────────────────────────────────────
+  const [announcements, setAnnouncements] = useState<CollectorAnnouncement[]>([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [announcementsError, setAnnouncementsError] = useState<string | null>(null);
+
+  const loadAnnouncements = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setAnnouncementsLoading(true);
+    setAnnouncementsError(null);
+    try {
+      const resp = await fetchCollectorAnnouncements();
+      setAnnouncements(resp.announcements);
+    } catch {
+      setAnnouncementsError('Announcements could not be loaded.');
+    } finally {
+      setAnnouncementsLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    loadAnnouncements();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
   // Sync hasMore when context updates (e.g. after first-page load completes)
   React.useEffect(() => {
     setHasMore(initialHasMore);
@@ -92,9 +129,9 @@ export default function NotificationsScreen() {
     setExtraNotifications([]);
     setPage(1);
     setHasMore(false);
-    await refreshNotifications();
+    await Promise.all([refreshNotifications(), loadAnnouncements()]);
     setIsRefreshing(false);
-  }, [refreshNotifications]);
+  }, [refreshNotifications, loadAnnouncements]);
 
   // When context marks all read, also clear extraNotifications unread state
   const handleMarkAllRead = useCallback(() => {
@@ -286,6 +323,36 @@ export default function NotificationsScreen() {
         </View>
       )}
 
+      {/* In-app Announcements */}
+      {isAuthenticated && (announcements.length > 0 || announcementsLoading || announcementsError) && (
+        <View style={styles.announcementsSection}>
+          <View style={styles.announcementsHeader}>
+            <Feather name="volume-2" size={14} color={C.mutedForeground} />
+            <Text style={styles.announcementsSectionTitle}>Announcements</Text>
+            {announcementsLoading && (
+              <ActivityIndicator size="small" color={C.mutedForeground} style={{ marginLeft: 6 }} />
+            )}
+          </View>
+          {announcementsError && (
+            <Text style={styles.announcementsError}>{announcementsError}</Text>
+          )}
+          {announcements.map(a => (
+            <View key={a.id} style={[styles.announcementCard, { backgroundColor: C.card }]}>
+              <View style={styles.announcementTitleRow}>
+                <View style={[styles.announcementIcon, { backgroundColor: `${C.primary}22` }]}>
+                  <Feather name="bell" size={14} color={C.primary} />
+                </View>
+                <Text style={styles.announcementTitle} numberOfLines={2}>{a.title}</Text>
+              </View>
+              <Text style={styles.announcementContent} numberOfLines={4}>{a.content}</Text>
+              <Text style={styles.announcementTime}>
+                {relativeAnnouncementTime(a.publishedAt)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
       {/* Load more */}
       {filtered.length > 0 && (hasMore || isLoadingMore) && (
         <Pressable
@@ -396,4 +463,62 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   loadMoreText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  announcementsSection: { marginTop: 24 },
+  announcementsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  announcementsSectionTitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+  },
+  announcementsError: {
+    color: C.negative,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  announcementCard: {
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+    gap: 8,
+  },
+  announcementTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  announcementIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  announcementTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+    lineHeight: 19,
+  },
+  announcementContent: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+    lineHeight: 18,
+  },
+  announcementTime: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: `${C.mutedForeground}88`,
+  },
 });

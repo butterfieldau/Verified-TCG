@@ -63,16 +63,11 @@ export function gradeKeyForHolding(
   if (grade == null) return null;
 
   if (grade === 10) {
-    if (company === "PSA") return "psa_10";
     if (company === "BGS" || company === "BECKETT") return "bgs_10";
     if (company === "CGC") return "cgc_10";
     if (company === "SGC") return "sgc_10";
     return null;
   }
-  if (grade === 9.5) return "grade_9_5";
-  if (grade === 9) return "grade_9";
-  if (grade === 8) return "grade_8";
-  if (grade === 7) return "grade_7";
   return null;
 }
 

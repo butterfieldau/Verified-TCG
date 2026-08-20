@@ -1,4 +1,5 @@
-import { index, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { index, pgTable, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
+import { adminAccountsTable } from "./admin";
 import { usersTable } from "./users";
 
 /**
@@ -24,10 +25,20 @@ export const postsTable = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    moderationStatus: varchar("moderation_status", { length: 24 })
+      .notNull()
+      .default("visible"),
+    moderationReason: text("moderation_reason"),
+    moderatedByAdminId: uuid("moderated_by_admin_id").references(
+      () => adminAccountsTable.id,
+      { onDelete: "set null" },
+    ),
+    moderatedAt: timestamp("moderated_at", { withTimezone: true }),
   },
   (t) => [
     index("posts_user_created_idx").on(t.userId, t.createdAt),
     index("posts_created_idx").on(t.createdAt),
+    index("posts_moderation_created_idx").on(t.moderationStatus, t.createdAt),
   ],
 );
 

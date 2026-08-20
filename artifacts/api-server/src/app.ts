@@ -5,6 +5,8 @@ import pinoHttp from "pino-http";
 import { rateLimit } from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { enforcePlatformConfig } from "./lib/enforcementMiddleware";
+import { recordApiEvent, sanitizePath } from "./lib/telemetry";
 // Rate limiters for individual routes are in lib/rateLimiters.ts (avoids circular imports)
 
 // ── JWT startup validation ────────────────────────────────────────────────────
@@ -54,7 +56,7 @@ const generalLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again shortly." },
-  skip: (req) => req.path === "/health",
+  skip: (req) => req.path === "/health" || process.env.NODE_ENV === "test",
 });
 
 /** Strict limiter for auth signup / signin — 10 req/min per IP */
@@ -74,6 +76,64 @@ export const authRecoverLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many password reset attempts. Please wait a minute and try again." },
 });
+
+// ── Telemetry skip list ───────────────────────────────────────────────────────
+// Paths excluded from global API telemetry to avoid noise / self-references.
+const TELEMETRY_SKIP_PREFIXES = [
+  "/api/healthz",
+  "/api/runtime-config",
+  "/api/admin/auth",
+  "/api/admin/intelligence/analytics",
+  "/api/admin/intelligence/health",
+  "/api/admin/intelligence/integrations",
+  "/api/admin/intelligence/jobs",
+  "/api/admin/intelligence/audit",
+];
+
+function shouldSkipTelemetry(fullUrl: string): boolean {
+  return TELEMETRY_SKIP_PREFIXES.some((p) => fullUrl.startsWith(p));
+}
+
+/**
+ * Global API telemetry middleware.
+ * Fires on response finish — never blocks the request.
+ * Records sanitized api.request / api.error events with: status code,
+ * duration, normalized path, HTTP method, and authenticated user ID if present.
+ * Does NOT record request bodies, raw query strings, IPs, or emails.
+ */
+function apiTelemetryMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const startMs = Date.now();
+  res.on("finish", () => {
+    try {
+      const rawUrl = req.originalUrl ?? req.url ?? "/";
+      const fullUrl = rawUrl.includes("?") ? rawUrl.slice(0, rawUrl.indexOf("?")) : rawUrl;
+      if (shouldSkipTelemetry(fullUrl)) return;
+      if (process.env.NODE_ENV === "test") return;
+
+      const durationMs = Date.now() - startMs;
+      const statusCode = res.statusCode;
+      // User ID is attached by auth middleware after this point runs; read it from req
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const userId: string | null = (req as any).userId ?? null;
+      // Use the server-generated request ID. Never persist a caller-controlled
+      // header as a correlation identifier.
+      const requestId = (req as Request & { id?: string | number }).id;
+      const correlationId = requestId == null ? null : String(requestId);
+
+      void recordApiEvent({
+        method: req.method,
+        path: sanitizePath(fullUrl),
+        statusCode,
+        durationMs,
+        userId,
+        correlationId,
+      });
+    } catch {
+      // Never let telemetry errors surface
+    }
+  });
+  next();
+}
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -109,14 +169,27 @@ app.use(cookieParser());
 
 // Scan endpoint accepts base64-encoded card images; allow up to 12 MB.
 // Avatar upload endpoint accepts base64 images up to 8 MB.
+// eBay signs the exact account-deletion request bytes, so its route must receive
+// a Buffer before the global JSON parser consumes the body.
 // All other endpoints keep the tighter default via the second parser.
 app.use("/api/scan", express.json({ limit: "12mb" }));
 app.use("/api/auth/avatar", express.json({ limit: "8mb" }));
+app.use(
+  "/api/ebay/account-deletion",
+  express.raw({ type: "application/json", limit: "100kb" }),
+);
 app.use(express.json({ limit: "100kb" }));
 app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 
 // Apply the general rate limit to all /api routes
 app.use("/api", generalLimiter);
+
+// Global API telemetry — fires on response finish, before enforcement so all
+// responses (including 503/400 from enforcement) are captured.
+app.use("/api", apiTelemetryMiddleware);
+
+// Platform configuration enforcement (maintenance mode, feature flags, version checks)
+app.use("/api", enforcePlatformConfig);
 
 app.use("/api", router);
 

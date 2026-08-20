@@ -85,79 +85,100 @@ communityRouter.get(
         return;
       }
 
-      // Fetch posts with author info
-      const posts = await db
-        .select({
-          id: postsTable.id,
-          userId: postsTable.userId,
-          body: postsTable.body,
-          cardId: postsTable.cardId,
-          cardName: postsTable.cardName,
-          createdAt: postsTable.createdAt,
-          authorUsername: usersTable.username,
-          authorDisplayName: usersTable.displayName,
-          authorSubscriptionTier: usersTable.subscriptionTier,
-        })
-        .from(postsTable)
-        .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
-        .where(inArray(postsTable.userId, feedUserIds))
-        .orderBy(desc(postsTable.createdAt))
-        .limit(limit)
-        .offset(offset);
+      const feedResult = await db.transaction(async (tx) => {
+        // Lock only the returned post rows so moderation cannot commit between
+        // the visibility-filtered page read and its engagement aggregation.
+        const posts = await tx
+          .select({
+            id: postsTable.id,
+            userId: postsTable.userId,
+            body: postsTable.body,
+            cardId: postsTable.cardId,
+            cardName: postsTable.cardName,
+            createdAt: postsTable.createdAt,
+            authorUsername: usersTable.username,
+            authorDisplayName: usersTable.displayName,
+            authorSubscriptionTier: usersTable.subscriptionTier,
+          })
+          .from(postsTable)
+          .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+          .where(and(
+            inArray(postsTable.userId, feedUserIds),
+            consumerVisiblePostCondition(),
+          ))
+          .orderBy(desc(postsTable.createdAt))
+          .limit(limit)
+          .offset(offset)
+          .for("share", { of: postsTable });
 
+        if (posts.length === 0) {
+          return {
+            posts,
+            likeCounts: [],
+            commentCounts: [],
+            userLikes: [],
+            total: 0,
+          };
+        }
+
+        const postIds = posts.map((p) => p.id);
+
+        const likeCounts = await tx
+          .select({
+            postId: postLikesTable.postId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(postLikesTable)
+          .where(inArray(postLikesTable.postId, postIds))
+          .groupBy(postLikesTable.postId);
+
+        const commentCounts = await tx
+          .select({
+            postId: postCommentsTable.postId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(postCommentsTable)
+          .where(inArray(postCommentsTable.postId, postIds))
+          .groupBy(postCommentsTable.postId);
+
+        const userLikes = await tx
+          .select({ postId: postLikesTable.postId })
+          .from(postLikesTable)
+          .where(
+            and(
+              inArray(postLikesTable.postId, postIds),
+              eq(postLikesTable.userId, userId),
+            ),
+          );
+
+        const [totalRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postsTable)
+          .where(and(
+            inArray(postsTable.userId, feedUserIds),
+            consumerVisiblePostCondition(),
+          ));
+
+        return {
+          posts,
+          likeCounts,
+          commentCounts,
+          userLikes,
+          total: Number(totalRow?.count ?? 0),
+        };
+      });
+
+      const { posts, likeCounts, commentCounts, userLikes, total } = feedResult;
       if (posts.length === 0) {
         res.json({ feed: [], page, hasMore: false });
         return;
       }
 
-      const postIds = posts.map((p) => p.id);
-
-      // Like counts per post
-      const likeCounts = await db
-        .select({
-          postId: postLikesTable.postId,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(postLikesTable)
-        .where(inArray(postLikesTable.postId, postIds))
-        .groupBy(postLikesTable.postId);
-
       const likeCountMap = new Map(likeCounts.map((r) => [r.postId, r.count]));
-
-      // Comment counts per post
-      const commentCounts = await db
-        .select({
-          postId: postCommentsTable.postId,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(postCommentsTable)
-        .where(inArray(postCommentsTable.postId, postIds))
-        .groupBy(postCommentsTable.postId);
-
       const commentCountMap = new Map(
         commentCounts.map((r) => [r.postId, r.count]),
       );
-
-      // Which posts has the current user liked?
-      const userLikes = await db
-        .select({ postId: postLikesTable.postId })
-        .from(postLikesTable)
-        .where(
-          and(
-            inArray(postLikesTable.postId, postIds),
-            eq(postLikesTable.userId, userId),
-          ),
-        );
-
       const likedSet = new Set(userLikes.map((r) => r.postId));
-
-      // Total count for hasMore
-      const [totalRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postsTable)
-        .where(inArray(postsTable.userId, feedUserIds));
-
-      const total = Number(totalRow?.count ?? 0);
 
       res.json({
         feed: posts.map((p) => ({
@@ -295,31 +316,32 @@ communityRouter.post(
     const postId = String(req.params["id"] ?? "");
 
     try {
-      // Verify post exists and get author
-      const [post] = await db
-        .select({ id: postsTable.id, userId: postsTable.userId })
-        .from(postsTable)
-        .where(eq(postsTable.id, postId))
-        .limit(1);
+      const result = await withConsumerVisiblePost(postId, async (tx, post) => {
+        const inserted = await tx
+          .insert(postLikesTable)
+          .values({ postId, userId })
+          .onConflictDoNothing()
+          .returning({ userId: postLikesTable.userId });
 
-      if (!post) {
+        const [countRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postLikesTable)
+          .where(eq(postLikesTable.postId, postId));
+
+        return {
+          postAuthorId: post.userId,
+          inserted: inserted.length > 0,
+          likeCount: Number(countRow?.count ?? 0),
+        };
+      });
+
+      if (!result) {
         res.status(404).json({ message: "Post not found" });
         return;
       }
 
-      const inserted = await db
-        .insert(postLikesTable)
-        .values({ postId, userId })
-        .onConflictDoNothing()
-        .returning({ userId: postLikesTable.userId });
-
-      const [countRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postLikesTable)
-        .where(eq(postLikesTable.postId, postId));
-
       // Notify the post author only when a new like row was created and the liker is not the author
-      if (inserted.length > 0 && post.userId !== userId) {
+      if (result.inserted && result.postAuthorId !== userId) {
         db.select({ username: usersTable.username })
           .from(usersTable)
           .where(eq(usersTable.id, userId))
@@ -327,7 +349,7 @@ communityRouter.post(
           .then(([likerRow]) => {
             if (!likerRow) return;
             return createNotification({
-              userId: post.userId,
+              userId: result.postAuthorId,
               type: "community",
               title: "Someone liked your post",
               body: `${likerRow.username} liked your post.`,
@@ -337,7 +359,7 @@ communityRouter.post(
           .catch((err) => console.error("[community] like notification:", err));
       }
 
-      res.json({ ok: true, likeCount: Number(countRow?.count ?? 0) });
+      res.json({ ok: true, likeCount: result.likeCount });
     } catch (err) {
       console.error("[community] POST /api/community/posts/:id/like:", err);
       res.status(500).json({ message: "Failed to like post" });
@@ -355,18 +377,27 @@ communityRouter.delete(
     const postId = String(req.params["id"] ?? "");
 
     try {
-      await db
-        .delete(postLikesTable)
-        .where(
-          and(eq(postLikesTable.postId, postId), eq(postLikesTable.userId, userId)),
-        );
+      const result = await withConsumerVisiblePost(postId, async (tx) => {
+        await tx
+          .delete(postLikesTable)
+          .where(
+            and(eq(postLikesTable.postId, postId), eq(postLikesTable.userId, userId)),
+          );
 
-      const [countRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postLikesTable)
-        .where(eq(postLikesTable.postId, postId));
+        const [countRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postLikesTable)
+          .where(eq(postLikesTable.postId, postId));
 
-      res.json({ ok: true, likeCount: Number(countRow?.count ?? 0) });
+        return { likeCount: Number(countRow?.count ?? 0) };
+      });
+
+      if (!result) {
+        res.status(404).json({ message: "Post not found" });
+        return;
+      }
+
+      res.json({ ok: true, likeCount: result.likeCount });
     } catch (err) {
       console.error("[community] DELETE /api/community/posts/:id/like:", err);
       res.status(500).json({ message: "Failed to unlike post" });
@@ -387,32 +418,39 @@ communityRouter.get(
     const offset = (page - 1) * limit;
 
     try {
-      const comments = await db
-        .select({
-          id: postCommentsTable.id,
-          postId: postCommentsTable.postId,
-          userId: postCommentsTable.userId,
-          body: postCommentsTable.body,
-          createdAt: postCommentsTable.createdAt,
-          authorUsername: usersTable.username,
-          authorDisplayName: usersTable.displayName,
-        })
-        .from(postCommentsTable)
-        .innerJoin(usersTable, eq(postCommentsTable.userId, usersTable.id))
-        .where(eq(postCommentsTable.postId, postId))
-        .orderBy(desc(postCommentsTable.createdAt))
-        .limit(limit)
-        .offset(offset);
+      const result = await withConsumerVisiblePost(postId, async (tx) => {
+        const comments = await tx
+          .select({
+            id: postCommentsTable.id,
+            postId: postCommentsTable.postId,
+            userId: postCommentsTable.userId,
+            body: postCommentsTable.body,
+            createdAt: postCommentsTable.createdAt,
+            authorUsername: usersTable.username,
+            authorDisplayName: usersTable.displayName,
+          })
+          .from(postCommentsTable)
+          .innerJoin(usersTable, eq(postCommentsTable.userId, usersTable.id))
+          .where(eq(postCommentsTable.postId, postId))
+          .orderBy(desc(postCommentsTable.createdAt))
+          .limit(limit)
+          .offset(offset);
 
-      const [totalRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postCommentsTable)
-        .where(eq(postCommentsTable.postId, postId));
+        const [totalRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postCommentsTable)
+          .where(eq(postCommentsTable.postId, postId));
 
-      const total = Number(totalRow?.count ?? 0);
+        return { comments, total: Number(totalRow?.count ?? 0) };
+      });
+
+      if (!result) {
+        res.status(404).json({ message: "Post not found" });
+        return;
+      }
 
       res.json({
-        comments: comments.map((c) => ({
+        comments: result.comments.map((c) => ({
           id: c.id,
           postId: c.postId,
           body: c.body,
@@ -425,8 +463,8 @@ communityRouter.get(
           },
         })),
         page,
-        total,
-        hasMore: offset + comments.length < total,
+        total: result.total,
+        hasMore: offset + result.comments.length < result.total,
       });
     } catch (err) {
       console.error("[community] GET /api/community/posts/:id/comments:", err);
@@ -456,34 +494,33 @@ communityRouter.post(
     }
 
     try {
-      // Verify post exists and get author
-      const [post] = await db
-        .select({ id: postsTable.id, userId: postsTable.userId })
-        .from(postsTable)
-        .where(eq(postsTable.id, postId))
-        .limit(1);
+      const result = await withConsumerVisiblePost(postId, async (tx, post) => {
+        const [[comment], [author]] = await Promise.all([
+          tx
+            .insert(postCommentsTable)
+            .values({ postId, userId, body: body.trim() })
+            .returning(),
+          tx
+            .select({ username: usersTable.username, displayName: usersTable.displayName })
+            .from(usersTable)
+            .where(eq(usersTable.id, userId))
+            .limit(1),
+        ]);
 
-      if (!post) {
+        return { comment, author, postAuthorId: post.userId };
+      });
+
+      if (!result) {
         res.status(404).json({ message: "Post not found" });
         return;
       }
 
-      const [[comment], [author]] = await Promise.all([
-        db
-          .insert(postCommentsTable)
-          .values({ postId, userId, body: body.trim() })
-          .returning(),
-        db
-          .select({ username: usersTable.username, displayName: usersTable.displayName })
-          .from(usersTable)
-          .where(eq(usersTable.id, userId))
-          .limit(1),
-      ]);
+      const { comment, author, postAuthorId } = result;
 
       // Notify the post author (skip if the commenter is the author)
-      if (post.userId !== userId && author) {
+      if (postAuthorId !== userId && author) {
         createNotification({
-          userId: post.userId,
+          userId: postAuthorId,
           type: "community",
           title: "New comment on your post",
           body: `${author.username} commented on your post.`,
@@ -517,20 +554,31 @@ communityRouter.delete(
   requireActiveUser,
   async (req: AuthRequest, res) => {
     const userId = req.userId!;
+    const postId = String(req.params["postId"] ?? "");
     const commentId = String(req.params["commentId"] ?? "");
 
     try {
-      const [deleted] = await db
-        .delete(postCommentsTable)
-        .where(
-          and(
-            eq(postCommentsTable.id, commentId),
-            eq(postCommentsTable.userId, userId),
-          ),
-        )
-        .returning({ id: postCommentsTable.id });
+      const result = await withConsumerVisiblePost(postId, async (tx) => {
+        const [deleted] = await tx
+          .delete(postCommentsTable)
+          .where(
+            and(
+              eq(postCommentsTable.id, commentId),
+              eq(postCommentsTable.userId, userId),
+              eq(postCommentsTable.postId, postId),
+            ),
+          )
+          .returning({ id: postCommentsTable.id });
 
-      if (!deleted) {
+        return { deleted };
+      });
+
+      if (!result) {
+        res.status(404).json({ message: "Post not found" });
+        return;
+      }
+
+      if (!result.deleted) {
         res.status(404).json({ message: "Comment not found or not yours" });
         return;
       }
@@ -554,43 +602,55 @@ communityRouter.get(
     const postId = String(req.params["id"] ?? "");
 
     try {
-      const [post] = await db
-        .select({
-          id: postsTable.id,
-          userId: postsTable.userId,
-          body: postsTable.body,
-          cardId: postsTable.cardId,
-          cardName: postsTable.cardName,
-          createdAt: postsTable.createdAt,
-          authorUsername: usersTable.username,
-          authorDisplayName: usersTable.displayName,
-          authorSubscriptionTier: usersTable.subscriptionTier,
-        })
-        .from(postsTable)
-        .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
-        .where(eq(postsTable.id, postId))
-        .limit(1);
+      const result = await withConsumerVisiblePost(postId, async (tx) => {
+        const [post] = await tx
+          .select({
+            id: postsTable.id,
+            userId: postsTable.userId,
+            body: postsTable.body,
+            cardId: postsTable.cardId,
+            cardName: postsTable.cardName,
+            createdAt: postsTable.createdAt,
+            authorUsername: usersTable.username,
+            authorDisplayName: usersTable.displayName,
+            authorSubscriptionTier: usersTable.subscriptionTier,
+          })
+          .from(postsTable)
+          .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+          .where(eq(postsTable.id, postId))
+          .limit(1);
+        if (!post) throw new Error("Locked post disappeared");
 
-      if (!post) {
+        const [likeCountRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postLikesTable)
+          .where(eq(postLikesTable.postId, postId));
+
+        const [commentCountRow] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(postCommentsTable)
+          .where(eq(postCommentsTable.postId, postId));
+
+        const [userLike] = await tx
+          .select({ postId: postLikesTable.postId })
+          .from(postLikesTable)
+          .where(and(eq(postLikesTable.postId, postId), eq(postLikesTable.userId, userId)))
+          .limit(1);
+
+        return {
+          post,
+          likeCount: Number(likeCountRow?.count ?? 0),
+          commentCount: Number(commentCountRow?.count ?? 0),
+          isLiked: !!userLike,
+        };
+      });
+
+      if (!result) {
         res.status(404).json({ message: "Post not found" });
         return;
       }
 
-      const [likeCountRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postLikesTable)
-        .where(eq(postLikesTable.postId, postId));
-
-      const [commentCountRow] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(postCommentsTable)
-        .where(eq(postCommentsTable.postId, postId));
-
-      const [userLike] = await db
-        .select({ postId: postLikesTable.postId })
-        .from(postLikesTable)
-        .where(and(eq(postLikesTable.postId, postId), eq(postLikesTable.userId, userId)))
-        .limit(1);
+      const { post } = result;
 
       res.json({
         id: post.id,
@@ -605,9 +665,9 @@ communityRouter.get(
           initials: initials(post.authorDisplayName),
           subscriptionTier: post.authorSubscriptionTier,
         },
-        likeCount: Number(likeCountRow?.count ?? 0),
-        commentCount: Number(commentCountRow?.count ?? 0),
-        isLiked: !!userLike,
+        likeCount: result.likeCount,
+        commentCount: result.commentCount,
+        isLiked: result.isLiked,
         isOwn: post.userId === userId,
       });
     } catch (err) {
@@ -618,6 +678,33 @@ communityRouter.get(
 );
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function consumerVisiblePostCondition(postId?: string) {
+  const visible = eq(postsTable.moderationStatus, "visible");
+  return postId ? and(eq(postsTable.id, postId), visible) : visible;
+}
+
+type CommunityTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function withConsumerVisiblePost<T>(
+  postId: string,
+  operation: (
+    tx: CommunityTransaction,
+    post: { id: string; userId: string },
+  ) => Promise<T>,
+): Promise<T | null> {
+  return db.transaction(async (tx) => {
+    const [post] = await tx
+      .select({ id: postsTable.id, userId: postsTable.userId })
+      .from(postsTable)
+      .where(consumerVisiblePostCondition(postId))
+      .for("share")
+      .limit(1);
+
+    if (!post) return null;
+    return operation(tx, post);
+  });
+}
 
 function initials(name: string): string {
   return name

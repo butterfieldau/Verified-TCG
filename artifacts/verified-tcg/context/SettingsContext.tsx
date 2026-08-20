@@ -30,6 +30,11 @@ interface SettingsContextType extends AppSettings {
   settingsLoaded: boolean;
   updateAppearance: (mode: AppearanceMode) => void;
   updateCurrency: (code: CurrencyCode) => void;
+  /**
+   * Set the master push-enabled flag locally (the caller is responsible for
+   * also calling setPushPreference() on the server and showing any error).
+   */
+  setMasterPushEnabled: (enabled: boolean) => void;
   updateNotificationPref: (key: keyof NotificationPrefs, value: boolean) => void;
   updatePrivacyPref: (key: keyof PrivacyPrefs, value: boolean) => void;
   resetSettings: () => void;
@@ -63,6 +68,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setSettings(prev => ({ ...prev, currency: code }));
   }, []);
 
+  const setMasterPushEnabled = useCallback((enabled: boolean) => {
+    setSettings(prev => ({ ...prev, masterPushEnabled: enabled }));
+  }, []);
+
   const updateNotificationPref = useCallback((key: keyof NotificationPrefs, value: boolean) => {
     setSettings(prev => ({
       ...prev,
@@ -88,6 +97,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         settingsLoaded,
         updateAppearance,
         updateCurrency,
+        setMasterPushEnabled,
         updateNotificationPref,
         updatePrivacyPref,
         resetSettings,

@@ -37,28 +37,60 @@ function paramId(req: AuthRequest, res: Parameters<Parameters<typeof router.get>
   return id;
 }
 
+/**
+ * The only event lifecycle states that are visible to / joinable by consumers.
+ * Everything else (draft, paused, completed/ended, archived, cancelled) is
+ * operator-facing and must never be exposed on public endpoints.
+ */
+const PUBLIC_EVENT_STATUSES = ["upcoming", "live"] as const;
+
+/**
+ * Single shared predicate for "is this event publicly visible?".
+ *
+ * An event is public iff it is active, has event mode enabled, and its
+ * lifecycle status is one of the eligible public states. This is the ONE
+ * definition used by GET /events (list), GET /events/:id (direct detail), and
+ * the join eligibility check, so the publication boundary can never drift
+ * between endpoints.
+ */
+function publicEventCondition() {
+  return and(
+    eq(eventsTable.isActive, true),
+    eq(eventsTable.eventModeEnabled, true),
+    inArray(eventsTable.status, [...PUBLIC_EVENT_STATUSES]),
+  );
+}
+
+/**
+ * Shared predicate for a genuine active participation row: visible, not left,
+ * and participationStatus === 'participating'. Staff-removed and self-left rows
+ * are excluded from public participant counts.
+ */
+function activeParticipantCondition() {
+  return and(
+    isNull(eventParticipantsTable.leftAt),
+    eq(eventParticipantsTable.isVisible, true),
+    eq(eventParticipantsTable.participationStatus, "participating"),
+  );
+}
+
 // ── GET /api/events ───────────────────────────────────────────────────────────
 
 router.get("/events", async (_req, res) => {
   const events = await db
     .select()
     .from(eventsTable)
-    .where(eq(eventsTable.isActive, true))
+    .where(publicEventCondition())
     .orderBy(eventsTable.eventDate);
 
-  // Attach participant counts
+  // Attach participant counts — only genuine active participating rows.
   const counts = await db
     .select({
       eventId: eventParticipantsTable.eventId,
       count: sql<number>`count(*)::int`,
     })
     .from(eventParticipantsTable)
-    .where(
-      and(
-        isNull(eventParticipantsTable.leftAt),
-        eq(eventParticipantsTable.isVisible, true),
-      ),
-    )
+    .where(activeParticipantCondition())
     .groupBy(eventParticipantsTable.eventId);
 
   const countMap = new Map(counts.map((c) => [c.eventId, c.count]));
@@ -71,122 +103,17 @@ router.get("/events", async (_req, res) => {
       city: e.city,
       eventDate: e.eventDate,
       isActive: e.isActive,
+      status: e.status,
+      eventModeEnabled: e.eventModeEnabled,
       participantCount: countMap.get(e.id) ?? 0,
     })),
   );
 });
 
-// ── GET /api/events/:id ───────────────────────────────────────────────────────
-
-router.get("/events/:id", async (req, res) => {
-  const eventId = typeof req.params.id === "string" ? req.params.id : "";
-  if (!eventId) return res.status(400).json({ message: "Missing event id" });
-
-  const event = await db
-    .select()
-    .from(eventsTable)
-    .where(eq(eventsTable.id, eventId))
-    .limit(1);
-
-  if (!event.length) return res.status(404).json({ message: "Event not found" });
-
-  const countRows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(eventParticipantsTable)
-    .where(
-      and(
-        eq(eventParticipantsTable.eventId, eventId),
-        isNull(eventParticipantsTable.leftAt),
-        eq(eventParticipantsTable.isVisible, true),
-      ),
-    );
-
-  const participantCount = countRows[0]?.count ?? 0;
-  const e = event[0];
-
-  return res.json({
-    id: e.id,
-    name: e.name,
-    venue: e.venue,
-    city: e.city,
-    eventDate: e.eventDate,
-    isActive: e.isActive,
-    participantCount,
-  });
-});
-
-// ── POST /api/events/:id/join ─────────────────────────────────────────────────
-
-router.post("/events/:id/join", requireActiveUser, async (req: AuthRequest, res) => {
-  const eventId = typeof req.params.id === "string" ? req.params.id : "";
-  if (!eventId) return res.status(400).json({ message: "Missing event id" });
-  const userId = req.userId!;
-
-  const event = await db
-    .select()
-    .from(eventsTable)
-    .where(eq(eventsTable.id, eventId))
-    .limit(1);
-
-  if (!event.length) return res.status(404).json({ message: "Event not found" });
-  if (!event[0].isActive) return res.status(400).json({ message: "Event is not active" });
-
-  // Find the most recent participation row for this user+event
-  const existing = await db
-    .select()
-    .from(eventParticipantsTable)
-    .where(
-      and(
-        eq(eventParticipantsTable.eventId, eventId),
-        eq(eventParticipantsTable.userId, userId),
-      ),
-    )
-    .orderBy(sql`joined_at DESC`)
-    .limit(1);
-
-  // Single-row-per-(event,user) upsert using the unique constraint.
-  // ON CONFLICT ensures concurrent join requests can never produce duplicate rows.
-  // If the user previously left (leftAt IS NOT NULL), this reactivates them cleanly.
-  await db.execute(
-    // Using raw SQL because Drizzle's onConflictDoUpdate target must reference
-    // columns defined in the schema-level uniqueIndex; our constraint is added via
-    // a runtime migration so we use the underlying SQL directly.
-    sql`INSERT INTO event_participants (id, event_id, user_id, joined_at, left_at, is_visible)
-        VALUES (gen_random_uuid(), ${eventId}, ${userId}, NOW(), NULL, true)
-        ON CONFLICT (event_id, user_id) DO UPDATE SET
-          left_at   = NULL,
-          is_visible = true,
-          joined_at  = NOW()`
-  );
-
-  return res.json({ joined: true, eventId });
-});
-
-// ── POST /api/events/:id/leave ────────────────────────────────────────────────
-
-router.post("/events/:id/leave", requireActiveUser, async (req: AuthRequest, res) => {
-  const eventId = typeof req.params.id === "string" ? req.params.id : "";
-  if (!eventId) return res.status(400).json({ message: "Missing event id" });
-  const userId = req.userId!;
-
-  await db
-    .update(eventParticipantsTable)
-    .set({ leftAt: new Date(), isVisible: false })
-    .where(
-      and(
-        eq(eventParticipantsTable.eventId, eventId),
-        eq(eventParticipantsTable.userId, userId),
-        isNull(eventParticipantsTable.leftAt),
-      ),
-    );
-
-  return res.json({ left: true, eventId });
-});
-
 // ── GET /api/events/my-active-participation ──────────────────────────────────
 // Returns the event the user is currently participating in (across all events),
 // so the mobile app can restore currentEventId after a restart without knowing
-// the specific event ID in advance.
+// the specific event ID in advance. This static route must precede /events/:id.
 
 router.get("/events/my-active-participation", requireActiveUser, async (req: AuthRequest, res) => {
   const userId = req.userId!;
@@ -202,9 +129,8 @@ router.get("/events/my-active-participation", requireActiveUser, async (req: Aut
     .where(
       and(
         eq(eventParticipantsTable.userId, userId),
-        isNull(eventParticipantsTable.leftAt),
-        eq(eventParticipantsTable.isVisible, true),
-        eq(eventsTable.isActive, true),
+        activeParticipantCondition(),
+        publicEventCondition(),
       ),
     )
     .limit(1);
@@ -220,6 +146,150 @@ router.get("/events/my-active-participation", requireActiveUser, async (req: Aut
   });
 });
 
+// ── GET /api/events/:id ───────────────────────────────────────────────────────
+
+router.get("/events/:id", async (req, res) => {
+  const eventId = typeof req.params.id === "string" ? req.params.id : "";
+  if (!eventId) return res.status(400).json({ message: "Missing event id" });
+
+  // Apply the SAME public predicate as the list endpoint. A non-public event
+  // (draft/paused/completed/archived/cancelled/inactive/eventMode-disabled)
+  // must be indistinguishable from a missing one: return 404, never metadata.
+  const event = await db
+    .select()
+    .from(eventsTable)
+    .where(and(eq(eventsTable.id, eventId), publicEventCondition()))
+    .limit(1);
+
+  if (!event.length) return res.status(404).json({ message: "Event not found" });
+
+  const countRows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(eventParticipantsTable)
+    .where(
+      and(
+        eq(eventParticipantsTable.eventId, eventId),
+        activeParticipantCondition(),
+      ),
+    );
+
+  const participantCount = countRows[0]?.count ?? 0;
+  const e = event[0];
+
+  return res.json({
+    id: e.id,
+    name: e.name,
+    venue: e.venue,
+    city: e.city,
+    eventDate: e.eventDate,
+    isActive: e.isActive,
+    status: e.status,
+    eventModeEnabled: e.eventModeEnabled,
+    participantCount,
+  });
+});
+
+// ── POST /api/events/:id/join ─────────────────────────────────────────────────
+
+router.post("/events/:id/join", requireActiveUser, async (req: AuthRequest, res) => {
+  const eventId = typeof req.params.id === "string" ? req.params.id : "";
+  if (!eventId) return res.status(400).json({ message: "Missing event id" });
+  const userId = req.userId!;
+
+  const result = await withPublicEvent(eventId, async (tx) => {
+    const existing = await tx
+      .select({ participationStatus: eventParticipantsTable.participationStatus })
+      .from(eventParticipantsTable)
+      .where(
+        and(
+          eq(eventParticipantsTable.eventId, eventId),
+          eq(eventParticipantsTable.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length && existing[0].participationStatus === "removed") {
+      return { kind: "removed" as const };
+    }
+
+    const upsert = await tx.execute(
+      sql`INSERT INTO event_participants (id, event_id, user_id, joined_at, left_at, is_visible, participation_status, removal_reason, removed_by_admin_id)
+          VALUES (gen_random_uuid(), ${eventId}, ${userId}, NOW(), NULL, true, 'participating', NULL, NULL)
+          ON CONFLICT (event_id, user_id) DO UPDATE SET
+            left_at = NULL,
+            is_visible = true,
+            joined_at = NOW(),
+            participation_status = 'participating',
+            removal_reason = NULL,
+            removed_by_admin_id = NULL
+          WHERE event_participants.participation_status <> 'removed'
+          RETURNING id`,
+    );
+
+    return { kind: upsert.rows.length === 0 ? "removed" as const : "joined" as const };
+  });
+
+  if (!result) {
+    return res.status(404).json({ message: "Event not found" });
+  }
+  if (result.kind === "removed") {
+    return res.status(403).json({
+      joined: false,
+      message:
+        "You have been removed from this event by a moderator and cannot rejoin. Contact support if you believe this was a mistake.",
+    });
+  }
+
+  return res.json({ joined: true, eventId });
+});
+
+// ── POST /api/events/:id/leave ────────────────────────────────────────────────
+
+router.post("/events/:id/leave", requireActiveUser, async (req: AuthRequest, res) => {
+  const eventId = typeof req.params.id === "string" ? req.params.id : "";
+  if (!eventId) return res.status(400).json({ message: "Missing event id" });
+  const userId = req.userId!;
+
+  // A staff-removed participant must NOT be able to overwrite the moderator's
+  // 'removed' state by "leaving" (which would flip participation_status to
+  // 'left' and thereby re-enable rejoin). The WHERE guard below is the
+  // authoritative, TOCTOU-safe protection: even if a removal lands between any
+  // read and this write, the update refuses to touch a 'removed' row.
+  const updated = await db.execute(
+    sql`UPDATE event_participants
+        SET left_at = NOW(), is_visible = false, participation_status = 'left'
+        WHERE event_id = ${eventId}
+          AND user_id = ${userId}
+          AND participation_status <> 'removed'
+        RETURNING id`,
+  );
+
+  if (updated.rows.length === 0) {
+    // Either no participation row at all, or the row is staff-removed. If a
+    // removed row exists, reject clearly and leave its state untouched.
+    const existing = await db
+      .select({ participationStatus: eventParticipantsTable.participationStatus })
+      .from(eventParticipantsTable)
+      .where(
+        and(
+          eq(eventParticipantsTable.eventId, eventId),
+          eq(eventParticipantsTable.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length && existing[0].participationStatus === "removed") {
+      return res.status(403).json({
+        left: false,
+        message:
+          "You have been removed from this event by a moderator and cannot change your participation. Contact support if you believe this was a mistake.",
+      });
+    }
+  }
+
+  return res.json({ left: true, eventId });
+});
+
 // ── GET /api/events/:id/my-participation ─────────────────────────────────────
 
 router.get("/events/:id/my-participation", requireActiveUser, async (req: AuthRequest, res) => {
@@ -227,12 +297,19 @@ router.get("/events/:id/my-participation", requireActiveUser, async (req: AuthRe
   if (!eventId) return res.status(400).json({ message: "Missing event id" });
 
   const rows = await db
-    .select()
+    .select({
+      joinedAt: eventParticipantsTable.joinedAt,
+      leftAt: eventParticipantsTable.leftAt,
+      isVisible: eventParticipantsTable.isVisible,
+    })
     .from(eventParticipantsTable)
+    .innerJoin(eventsTable, eq(eventParticipantsTable.eventId, eventsTable.id))
     .where(
       and(
         eq(eventParticipantsTable.eventId, eventId),
         eq(eventParticipantsTable.userId, req.userId!),
+        activeParticipantCondition(),
+        publicEventCondition(),
       ),
     )
     .orderBy(sql`joined_at DESC`)
@@ -241,9 +318,8 @@ router.get("/events/:id/my-participation", requireActiveUser, async (req: AuthRe
   if (!rows.length) return res.json({ isParticipating: false });
 
   const row = rows[0];
-  const isActive = row.leftAt === null && row.isVisible;
   return res.json({
-    isParticipating: isActive,
+    isParticipating: true,
     joinedAt: row.joinedAt,
     leftAt: row.leftAt,
     isVisible: row.isVisible,
@@ -257,16 +333,31 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
   if (!eventId) return res.status(400).json({ message: "Missing event id" });
   const userId = req.userId!;
 
-  // 1. Verify the requesting user is an active participant
-  const participation = await db
+  return db.transaction(async (tx) => {
+    // Hold a shared lock on the public event for the complete authorization and
+    // match-data read, so an admin lifecycle close cannot commit after this
+    // check but before sensitive participant/profile data is returned.
+    const publicEvent = await tx
+      .select({ id: eventsTable.id })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.id, eventId), publicEventCondition()))
+      .for("share")
+      .limit(1);
+
+  if (!publicEvent.length) {
+    return res.status(404).json({ message: "Event not found" });
+  }
+
+  // 1. Verify the requesting user is a genuine active participant
+  //    (visible, not left, participationStatus === 'participating').
+  const participation = await tx
     .select()
     .from(eventParticipantsTable)
     .where(
       and(
         eq(eventParticipantsTable.eventId, eventId),
         eq(eventParticipantsTable.userId, userId),
-        isNull(eventParticipantsTable.leftAt),
-        eq(eventParticipantsTable.isVisible, true),
+        activeParticipantCondition(),
       ),
     )
     .limit(1);
@@ -276,7 +367,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
   }
 
   // 2. Get current user's Pro status
-  const userRows = await db
+  const userRows = await tx
     .select({ subscriptionTier: usersTable.subscriptionTier })
     .from(usersTable)
     .where(eq(usersTable.id, userId))
@@ -285,7 +376,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
   const isPro = userRows[0]?.subscriptionTier === "pro";
 
   // 3. Get current user's for-trade collection items and wishlist
-  const myForTrade = await db
+  const myForTrade = await tx
     .select()
     .from(collectionItemsTable)
     .where(
@@ -295,7 +386,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
       ),
     );
 
-  const myWishlist = await db
+  const myWishlist = await tx
     .select()
     .from(wishlistItemsTable)
     .where(
@@ -309,16 +400,16 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
     return res.json({ matches: [], matchCount: 0, isProRequired: false });
   }
 
-  // 4. Get other active participants in this event
-  const otherParticipants = await db
+  // 4. Get other genuine active participants in this event
+  //    (visible, not left, participationStatus === 'participating').
+  const otherParticipants = await tx
     .select({ userId: eventParticipantsTable.userId })
     .from(eventParticipantsTable)
     .where(
       and(
         eq(eventParticipantsTable.eventId, eventId),
         ne(eventParticipantsTable.userId, userId),
-        isNull(eventParticipantsTable.leftAt),
-        eq(eventParticipantsTable.isVisible, true),
+        activeParticipantCondition(),
       ),
     );
 
@@ -330,9 +421,9 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
 
   // Filter out blocked users (bidirectional) from potential matches
   const [blockedByMe, blockedMe] = await Promise.all([
-    db.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
+    tx.select({ id: userBlocksTable.blockedUserId }).from(userBlocksTable)
       .where(eq(userBlocksTable.blockerUserId, userId)),
-    db.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
+    tx.select({ id: userBlocksTable.blockerUserId }).from(userBlocksTable)
       .where(eq(userBlocksTable.blockedUserId, userId)),
   ]);
   const blockedIdsSet = new Set([
@@ -346,7 +437,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
   }
 
   // 5. Batch-load other participants' for-trade items and wishlists
-  const otherForTrade = await db
+  const otherForTrade = await tx
     .select()
     .from(collectionItemsTable)
     .where(
@@ -356,7 +447,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
       ),
     );
 
-  const otherWishlists = await db
+  const otherWishlists = await tx
     .select()
     .from(wishlistItemsTable)
     .where(
@@ -367,7 +458,7 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
     );
 
   // 6. Get display info for matched participants
-  const otherUsers = await db
+  const otherUsers = await tx
     .select({
       id: usersTable.id,
       displayName: usersTable.displayName,
@@ -463,6 +554,26 @@ router.get("/events/:id/trade-matches", requireActiveUser, async (req: AuthReque
     matches,
     isProRequired: false,
   });
+  });
 });
+
+type EventTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function withPublicEvent<T>(
+  eventId: string,
+  operation: (tx: EventTransaction) => Promise<T>,
+): Promise<T | null> {
+  return db.transaction(async (tx) => {
+    const [event] = await tx
+      .select({ id: eventsTable.id })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.id, eventId), publicEventCondition()))
+      .for("share")
+      .limit(1);
+
+    if (!event) return null;
+    return operation(tx);
+  });
+}
 
 export default router;

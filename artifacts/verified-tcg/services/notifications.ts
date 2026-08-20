@@ -222,6 +222,7 @@ export async function markAllNotificationsReadOnServer(): Promise<void> {
 /**
  * Register an Expo push token for the authenticated user.
  * Safe to call multiple times — the server upserts on conflict.
+ * Will NOT override a collector-preference opt-out on the server side.
  */
 export async function registerPushToken(token: string): Promise<void> {
   try {
@@ -232,4 +233,77 @@ export async function registerPushToken(token: string): Promise<void> {
   } catch {
     // Non-critical — push delivery is out of scope for MVP
   }
+}
+
+// ── Push preference ───────────────────────────────────────────────────────────
+
+export interface NotificationPreference {
+  pushEnabled: boolean;
+  source: string | null;
+  optedOutAt: string | null;
+}
+
+/**
+ * Fetch the current server-side push notification preference for the
+ * authenticated user. Throws on network/server error; returns null when
+ * unauthenticated.
+ */
+export async function fetchNotificationPreferences(): Promise<NotificationPreference | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const res = await authedFetch('/api/notifications/preferences');
+  if (!res.ok) throw new Error(`fetchNotificationPreferences failed: ${res.status}`);
+  return res.json() as Promise<NotificationPreference>;
+}
+
+/**
+ * Persist the master push-enabled preference to the server.
+ * This is the collector-controlled opt-in/opt-out and is never silently
+ * overridden by a later token registration.
+ *
+ * Throws on failure so callers can show a visible error.
+ */
+export async function setPushPreference(enabled: boolean): Promise<void> {
+  const res = await authedFetch('/api/notifications/push-preference', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(body.message ?? `Failed to update push preference (${res.status})`);
+  }
+}
+
+// ── Collector announcements ───────────────────────────────────────────────────
+
+export interface CollectorAnnouncement {
+  id: string;
+  title: string;
+  content: string;
+  audience: string;
+  publishedAt: string;
+  createdAt: string;
+}
+
+export interface CollectorAnnouncementsResponse {
+  announcements: CollectorAnnouncement[];
+  tier: string;
+}
+
+/**
+ * Fetch in-app announcements for the authenticated collector.
+ * Returns published + scheduled-and-due announcements filtered by
+ * the collector's subscription tier. Excludes internal audience records.
+ *
+ * Does NOT imply push or email delivery — in-app read feed only.
+ * Returns empty list when unauthenticated.
+ */
+export async function fetchCollectorAnnouncements(): Promise<CollectorAnnouncementsResponse> {
+  const token = await getAccessToken();
+  if (!token) return { announcements: [], tier: 'free' };
+
+  const res = await authedFetch('/api/collector/announcements');
+  if (!res.ok) throw new Error(`fetchCollectorAnnouncements failed: ${res.status}`);
+  return res.json() as Promise<CollectorAnnouncementsResponse>;
 }

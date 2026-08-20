@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { recordTelemetry } from "../lib/telemetry.js";
 
 const router = Router();
 const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
@@ -73,18 +74,50 @@ function positiveInt(value: unknown, fallback: number, max: number): number {
   return Math.min(Math.floor(parsed), max);
 }
 
+/** Fixed operation enum derived from the endpoint — never the raw path/query. */
+function justTcgOperation(path: string): "games" | "cards" | "other" {
+  if (path.startsWith("/games")) return "games";
+  if (path.startsWith("/cards")) return "cards";
+  return "other";
+}
+
 async function justTcg(path: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
   const key = requiredKey();
-  const response = await fetch(`${JUSTTCG_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "x-api-key": key,
-      accept: "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  const body = await response.json().catch(() => ({ error: "Invalid provider response" }));
-  return { status: response.status, body };
+  // Sanitized integration observability for actual outbound JustTCG calls.
+  // Records only ok/failed, duration, numeric HTTP status, and a fixed
+  // operation enum — never the path/query, card inputs, provider body,
+  // credentials, or headers.
+  const operation = justTcgOperation(path);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`${JUSTTCG_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        "x-api-key": key,
+        accept: "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    const body = await response.json().catch(() => ({ error: "Invalid provider response" }));
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.justtcg.request",
+      status: response.ok ? "ok" : "failed",
+      statusCode: response.status,
+      durationMs: Date.now() - startedAt,
+      metadata: { operation },
+    });
+    return { status: response.status, body };
+  } catch (err) {
+    void recordTelemetry({
+      category: "integration",
+      action: "integration.justtcg.request",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      metadata: { operation },
+    });
+    throw err;
+  }
 }
 
 function cached(key: string): unknown | undefined {
