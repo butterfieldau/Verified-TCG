@@ -332,11 +332,17 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
         } w-72 ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
         <div className={`flex h-16 shrink-0 items-center gap-3 border-b border-border px-5 ${collapsed ? "md:justify-center md:gap-0 md:px-2" : ""}`}>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary shadow-[0_0_15px_rgba(255,30,45,0.35)]">
-            <Shield size={16} className="text-white" strokeWidth={2.5} />
-          </div>
+          <img
+            src={`${import.meta.env.BASE_URL}verified-tcg-icon.png`}
+            alt=""
+            className={`h-9 w-9 shrink-0 object-contain ${collapsed ? "" : "md:hidden"}`}
+          />
           <div className={collapsed ? "md:hidden" : ""}>
-            <div className="font-display text-sm font-bold leading-none tracking-wide">VERIFIED TCG</div>
+            <img
+              src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
+              alt="Verified TCG"
+              className="h-8 w-[116px] object-contain object-left"
+            />
             <div className="mt-0.5 text-[10px] tracking-wider text-muted-foreground">COMMAND CENTRE</div>
           </div>
           <button

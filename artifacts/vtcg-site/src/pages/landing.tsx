@@ -133,14 +133,11 @@ export default function LandingPage() {
         }`}
       >
         <div className="container mx-auto px-6 md:px-12 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded bg-primary flex items-center justify-center font-display font-bold text-xl">
-              V
-            </div>
-            <span className="font-display font-bold text-2xl tracking-wide uppercase">
-              Verified TCG
-            </span>
-          </div>
+          <img
+            src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
+            alt="Verified TCG"
+            className="h-auto w-36 sm:w-40"
+          />
 
           <div className="hidden md:flex items-center gap-8 text-sm font-medium">
             <a
@@ -897,14 +894,11 @@ export default function LandingPage() {
 
         <div className="container mx-auto px-6 md:px-12 border-t border-border/50 pt-12">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-2 opacity-50">
-              <div className="w-6 h-6 rounded bg-foreground flex items-center justify-center font-display font-bold text-xs text-background">
-                V
-              </div>
-              <span className="font-display font-bold text-lg tracking-wide uppercase">
-                Verified TCG
-              </span>
-            </div>
+            <img
+              src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
+              alt="Verified TCG"
+              className="h-auto w-32 opacity-50"
+            />
 
             <div className="flex gap-6 text-sm text-muted-foreground">
               <Link href="/privacy" className="hover:text-white transition-colors">

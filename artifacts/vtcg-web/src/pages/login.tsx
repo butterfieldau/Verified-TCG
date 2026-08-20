@@ -97,10 +97,11 @@ export function LoginScreen() {
 
       <div className="w-full max-w-sm relative z-10">
         <div className="flex flex-col items-center mb-10 text-center">
-          <div className="h-12 w-12 bg-primary rounded-xl flex items-center justify-center shadow-[0_0_30px_rgba(255,30,45,0.5)] mb-4">
-            <Shield size={24} className="text-white" strokeWidth={2.5} />
-          </div>
-          <div className="font-display text-2xl font-bold tracking-wide leading-none text-foreground">VERIFIED TCG</div>
+          <img
+            src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
+            alt="Verified TCG"
+            className="mb-4 h-auto w-48"
+          />
           <div className="text-xs text-muted-foreground mt-1.5 tracking-widest font-mono">COMMAND CENTRE</div>
         </div>
 
