@@ -85,6 +85,20 @@ describe('market SWR cache', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('shares one matching request between concurrent market consumers', async () => {
+    const fetchMock = mockFetchByEndpoint();
+    (global as any).fetch = fetchMock;
+
+    const [home, market] = await Promise.all([
+      getMarketMoversCached(),
+      getMarketMoversCached(),
+    ]);
+
+    expect(home).toHaveLength(1);
+    expect(market).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not overwrite cached data with an empty/error fetch result', async () => {
     await getMarketMoversCached();
 

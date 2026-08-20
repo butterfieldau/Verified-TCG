@@ -54,6 +54,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
+  `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`,
   `ALTER TABLE user_reports ALTER COLUMN status SET DEFAULT 'open'`,
   `ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS priority VARCHAR(16) NOT NULL DEFAULT 'normal'`,
@@ -287,6 +288,38 @@ const TABLE_MIGRATIONS: string[] = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT push_tokens_token_uniq UNIQUE (token)
   )`,
+  // Durable JustTCG response cache and UTC daily outbound-call budget.
+  `CREATE TABLE IF NOT EXISTS catalogue_cache_entries (
+    cache_key TEXT PRIMARY KEY,
+    resource TEXT NOT NULL,
+    body JSONB NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    fresh_until TIMESTAMPTZ NOT NULL,
+    stale_until TIMESTAMPTZ NOT NULL,
+    last_attempt_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS catalogue_cache_entries_resource_idx
+    ON catalogue_cache_entries (resource)`,
+  `CREATE INDEX IF NOT EXISTS catalogue_cache_entries_stale_until_idx
+    ON catalogue_cache_entries (stale_until)`,
+  `CREATE TABLE IF NOT EXISTS catalogue_daily_usage (
+    usage_date TEXT PRIMARY KEY,
+    outbound_calls INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  // Cross-process ownership for cold misses. A waiter reads the completed
+  // cache row instead of issuing a duplicate provider request.
+  `CREATE TABLE IF NOT EXISTS catalogue_cache_leases (
+    cache_key TEXT PRIMARY KEY,
+    owner_token TEXT NOT NULL,
+    lease_until TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS catalogue_cache_leases_lease_until_idx
+    ON catalogue_cache_leases (lease_until)`,
   // ── Task 283: Pricing domain tables ──────────────────────────────────────────
   // Provider registry
   `CREATE TABLE IF NOT EXISTS pricing_providers (

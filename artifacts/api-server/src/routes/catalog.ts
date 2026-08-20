@@ -1,9 +1,14 @@
 import { Router } from "express";
-import { recordTelemetry } from "../lib/telemetry.js";
+import {
+  catalogueCacheKey,
+  CatalogueReadFailure,
+  justTcg,
+  requireFreshCatalogueReads,
+  withCatalogueCache,
+  type CatalogueRead,
+} from "../lib/catalogueProvider.js";
 
 const router = Router();
-const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
-const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * For Pokémon cards that JustTCG doesn't supply an image URL for, we can
@@ -59,89 +64,26 @@ function getNmVariant(variants: unknown): Record<string, unknown> | null {
   return arr.find((v) => v.condition === "Near Mint") ?? arr[0]!;
 }
 
-type CacheEntry = { expiresAt: number; body: unknown };
-const cache = new Map<string, CacheEntry>();
-
-function requiredKey(): string {
-  const key = process.env.JUSTTCG_API_KEY;
-  if (!key) throw new Error("JUSTTCG_API_KEY is not configured");
-  return key;
-}
-
 function positiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(Math.floor(parsed), max);
 }
 
-/** Fixed operation enum derived from the endpoint — never the raw path/query. */
-function justTcgOperation(path: string): "games" | "cards" | "other" {
-  if (path.startsWith("/games")) return "games";
-  if (path.startsWith("/cards")) return "cards";
-  return "other";
-}
-
-async function justTcg(path: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
-  const key = requiredKey();
-  // Sanitized integration observability for actual outbound JustTCG calls.
-  // Records only ok/failed, duration, numeric HTTP status, and a fixed
-  // operation enum — never the path/query, card inputs, provider body,
-  // credentials, or headers.
-  const operation = justTcgOperation(path);
-  const startedAt = Date.now();
-  try {
-    const response = await fetch(`${JUSTTCG_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        "x-api-key": key,
-        accept: "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    const body = await response.json().catch(() => ({ error: "Invalid provider response" }));
-    void recordTelemetry({
-      category: "integration",
-      action: "integration.justtcg.request",
-      status: response.ok ? "ok" : "failed",
-      statusCode: response.status,
-      durationMs: Date.now() - startedAt,
-      metadata: { operation },
-    });
-    return { status: response.status, body };
-  } catch (err) {
-    void recordTelemetry({
-      category: "integration",
-      action: "integration.justtcg.request",
-      status: "failed",
-      durationMs: Date.now() - startedAt,
-      metadata: { operation },
-    });
-    throw err;
-  }
-}
-
-function cached(key: string): unknown | undefined {
-  const entry = cache.get(key);
-  if (!entry || entry.expiresAt <= Date.now()) {
-    cache.delete(key);
-    return undefined;
-  }
-  return entry.body;
-}
-
-function saveCache(key: string, body: unknown): void {
-  cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, body });
+function cacheMetadata(result: Pick<CatalogueRead, "cached" | "cacheStatus" | "outboundCall" | "revalidationScheduled">) {
+  return {
+    cached: result.cached,
+    cache_status: result.cacheStatus,
+    outbound_call: result.outboundCall,
+    ...(result.revalidationScheduled ? { revalidation_scheduled: true } : {}),
+  };
 }
 
 router.get("/catalog/games", async (_req, res) => {
   try {
-    const cacheKey = "games";
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ ...((hit as object) ?? {}), source: "JustTCG", cached: true });
     const result = await justTcg("/games");
     if (result.status >= 400) return res.status(result.status).json(result.body);
-    saveCache(cacheKey, result.body);
-    return res.json({ ...((result.body as object) ?? {}), source: "JustTCG", cached: false });
+    return res.json({ ...((result.body as object) ?? {}), source: "JustTCG", ...cacheMetadata(result) });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
@@ -159,10 +101,6 @@ router.get("/catalog/cards", async (req, res) => {
     if (query) params.set("q", query);
     if (game) params.set("game", game);
     params.set("include_price_history", "false");
-    const cacheKey = `cards:${params.toString()}`;
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ ...((hit as object) ?? {}), source: "JustTCG", cached: true });
-
     const result = await justTcg(`/cards?${params.toString()}`);
     if (result.status >= 400) return res.status(result.status).json(result.body);
 
@@ -174,18 +112,15 @@ router.get("/catalog/cards", async (req, res) => {
     //  3. pokemontcg.io CDN derived from set + number — last resort only, since
     //     JustTCG set codes (e.g. "me-ascended-heroes-pokemon") do NOT match
     //     the pokemontcg.io set-code scheme and these URLs frequently 404.
-    const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+    const body = { ...((result.body as { data?: Array<Record<string, unknown>> } | null) ?? {}) };
     if (body && Array.isArray(body.data)) {
       body.data = body.data.map((card) => {
         const enriched = enrichCard(card);
-        const id = String(enriched.id ?? "");
-        if (id) saveCache(`card:${id}`, enriched);
         return enriched;
       });
     }
 
-    saveCache(cacheKey, body);
-    return res.json({ ...((body as object) ?? {}), source: "JustTCG", cached: false });
+    return res.json({ ...body, source: "JustTCG", ...cacheMetadata(result) });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
@@ -268,62 +203,50 @@ export function mergePool(
  */
 router.get("/catalog/market-movers", async (_req, res) => {
   try {
-    const cacheKey = "market-movers";
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
-
-    // Parallel queries across all six supported TCGs with explicit game= filters
-    const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
-      justTcg("/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
-    ]);
-
-    // Track whether at least one query succeeded so we can 503 if all fail
-    const anyOk = { value: false };
-    const pool = mergePool(
-      extractData(rPoke1, anyOk),
-      extractData(rPoke2, anyOk),
-      extractData(rOp,    anyOk),
-      extractData(rMtg,   anyOk),
-      extractData(rYgo,   anyOk),
-      extractData(rLor,   anyOk),
-      extractData(rDbs,   anyOk),
-    );
-
-    if (!anyOk.value) {
-      return res.status(503).json({ error: "All catalog providers unavailable" });
-    }
-
-    // Score and sort globally by |priceChange7d|
-    const scored = pool
-      .map(enrichCard)
-      .flatMap((card) => {
-        const nm = getNmVariant(card.variants);
-        if (!nm) return [];
-        const price = Number(nm.price ?? 0);
-        if (price < 5) return [];
-        const priceChange7d = Number(nm.priceChange7d ?? 0);
-        return [{
-          game: String(card.game ?? ""),
-          card: { ...card, market_price: price, price_change_7d: priceChange7d,
-            trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral" },
-          score: Math.abs(priceChange7d),
-        }];
-      })
-      .sort((a, b) => b.score - a.score);
-
-    // Apply per-game cap (max 3 of 6 games × 3 = 18 candidates → top 8)
-    // while preserving global ranking order
-    const enriched = capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-
-    saveCache(cacheKey, enriched);
-    return res.json({ data: enriched, source: "JustTCG", cached: false });
+    const cached = await withCatalogueCache(catalogueCacheKey("market-movers"), "market", async () => {
+      const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
+        justTcg("/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
+      ]);
+      const anyOk = { value: false };
+      requireFreshCatalogueReads([rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs]);
+      const pool = mergePool(
+        extractData(rPoke1, anyOk), extractData(rPoke2, anyOk), extractData(rOp, anyOk),
+        extractData(rMtg, anyOk), extractData(rYgo, anyOk), extractData(rLor, anyOk), extractData(rDbs, anyOk),
+      );
+      if (!anyOk.value) throw new Error("All catalog providers unavailable");
+      const scored = pool
+        .map(enrichCard)
+        .flatMap((card) => {
+          const nm = getNmVariant(card.variants);
+          if (!nm) return [];
+          const price = Number(nm.price ?? 0);
+          if (price < 5) return [];
+          const priceChange7d = Number(nm.priceChange7d ?? 0);
+          return [{
+            game: String(card.game ?? ""),
+            card: { ...card, market_price: price, price_change_7d: priceChange7d,
+              trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral" },
+            score: Math.abs(priceChange7d),
+          }];
+        })
+        .sort((a, b) => b.score - a.score);
+      return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
+    });
+    return res.json({
+      data: cached.data,
+      source: "JustTCG",
+      cached: cached.cacheStatus !== "miss",
+      cache_status: cached.cacheStatus,
+      revalidation_scheduled: cached.revalidationScheduled || undefined,
+    });
   } catch (error) {
+    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
 });
@@ -338,55 +261,43 @@ router.get("/catalog/market-movers", async (_req, res) => {
  */
 router.get("/catalog/trending", async (_req, res) => {
   try {
-    const cacheKey = "trending";
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
-
-    // Parallel queries across all six supported TCGs with explicit game= filters
-    const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
-      justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
-    ]);
-
-    // Track whether at least one query succeeded so we can 503 if all fail
-    const anyOk = { value: false };
-    const pool = mergePool(
-      extractData(rPoke, anyOk),
-      extractData(rOp,   anyOk),
-      extractData(rMtg,  anyOk),
-      extractData(rYgo,  anyOk),
-      extractData(rLor,  anyOk),
-      extractData(rDbs,  anyOk),
-    );
-
-    if (!anyOk.value) {
-      return res.status(503).json({ error: "All catalog providers unavailable" });
-    }
-
-    // Score and sort globally by priceChangesCount7d (high update frequency = trending)
-    const scored = pool
-      .map(enrichCard)
-      .flatMap((card) => {
-        const nm = getNmVariant(card.variants);
-        if (!nm) return [];
-        const price = Number(nm.price ?? 0);
-        if (price <= 0) return [];
-        const changes7d = Number(nm.priceChangesCount7d ?? 0);
-        return [{ game: String(card.game ?? ""), card, score: changes7d }];
-      })
-      .sort((a, b) => b.score - a.score);
-
-    // Apply per-game cap (max 3 of 6 games × 3 = 18 candidates → top 8)
-    // while preserving global ranking order
-    const enriched = capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-
-    saveCache(cacheKey, enriched);
-    return res.json({ data: enriched, source: "JustTCG", cached: false });
+    const cached = await withCatalogueCache(catalogueCacheKey("trending"), "market", async () => {
+      const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
+        justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
+      ]);
+      const anyOk = { value: false };
+      requireFreshCatalogueReads([rPoke, rOp, rMtg, rYgo, rLor, rDbs]);
+      const pool = mergePool(
+        extractData(rPoke, anyOk), extractData(rOp, anyOk), extractData(rMtg, anyOk),
+        extractData(rYgo, anyOk), extractData(rLor, anyOk), extractData(rDbs, anyOk),
+      );
+      if (!anyOk.value) throw new Error("All catalog providers unavailable");
+      const scored = pool
+        .map(enrichCard)
+        .flatMap((card) => {
+          const nm = getNmVariant(card.variants);
+          if (!nm) return [];
+          const price = Number(nm.price ?? 0);
+          if (price <= 0) return [];
+          return [{ game: String(card.game ?? ""), card, score: Number(nm.priceChangesCount7d ?? 0) }];
+        })
+        .sort((a, b) => b.score - a.score);
+      return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
+    });
+    return res.json({
+      data: cached.data,
+      source: "JustTCG",
+      cached: cached.cacheStatus !== "miss",
+      cache_status: cached.cacheStatus,
+      revalidation_scheduled: cached.revalidationScheduled || undefined,
+    });
   } catch (error) {
+    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
 });
@@ -400,42 +311,36 @@ router.get("/catalog/trending", async (_req, res) => {
  */
 router.get("/catalog/recently-added", async (_req, res) => {
   try {
-    const cacheKey = "recently-added";
-    const hit = cached(cacheKey);
-    if (hit) return res.json({ data: hit, source: "JustTCG", cached: true });
-
-    const [r1, r2] = await Promise.all([
-      justTcg("/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false"),
-      justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
-    ]);
-
-    const cards1 = ((r1.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
-    const cards2 = ((r2.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
-
-    const seen = new Set<string>();
-    const merged = [...cards1, ...cards2].filter((c) => {
-      const id = String(c.id ?? "");
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
+    const cached = await withCatalogueCache(catalogueCacheKey("recently-added"), "market", async () => {
+      const [r1, r2] = await Promise.all([
+        justTcg("/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false"),
+        justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
+      ]);
+      const anyOk = { value: false };
+      requireFreshCatalogueReads([r1, r2]);
+      const merged = mergePool(extractData(r1, anyOk), extractData(r2, anyOk));
+      if (!anyOk.value) throw new Error("All catalog providers unavailable");
+      return merged
+        .map(enrichCard)
+        .flatMap((card) => {
+          const nm = getNmVariant(card.variants);
+          if (!nm) return [];
+          const price = Number(nm.price ?? 0);
+          return price > 0 ? [{ card, price }] : [];
+        })
+        .sort((a, b) => b.price - a.price)
+        .slice(0, 8)
+        .map(({ card }) => card);
     });
-
-    const enriched = merged
-      .map(enrichCard)
-      .flatMap((card) => {
-        const nm = getNmVariant(card.variants);
-        if (!nm) return [];
-        const price = Number(nm.price ?? 0);
-        if (price <= 0) return [];
-        return [{ card, price }];
-      })
-      .sort((a, b) => b.price - a.price)
-      .slice(0, 8)
-      .map(({ card }) => card);
-
-    saveCache(cacheKey, enriched);
-    return res.json({ data: enriched, source: "JustTCG", cached: false });
+    return res.json({
+      data: cached.data,
+      source: "JustTCG",
+      cached: cached.cacheStatus !== "miss",
+      cache_status: cached.cacheStatus,
+      revalidation_scheduled: cached.revalidationScheduled || undefined,
+    });
   } catch (error) {
+    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
   }
 });
@@ -449,15 +354,11 @@ router.get("/catalog/recently-added", async (_req, res) => {
  *  2. Searching with those terms (up to 50 results).
  *  3. Filtering the response to the exact ID match.
  *
- * Results are cached for CACHE_TTL_MS like any other catalog response.
+ * The lookup search is cached by the shared durable catalogue layer.
  */
 export async function resolveCatalogCardById(
   cardId: string,
-): Promise<{ card: Record<string, unknown>; cached: boolean } | null> {
-  const cacheKey = `card:${cardId}`;
-  const hit = cached(cacheKey);
-  if (hit) return { card: hit as Record<string, unknown>, cached: true };
-
+): Promise<{ card: Record<string, unknown>; cached: boolean; status: number } | null> {
   // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
   const parts = cardId.split("-");
   const gameWord = (parts[0] ?? "").toLowerCase();
@@ -489,6 +390,9 @@ export async function resolveCatalogCardById(
   if (game) params.set("game", game);
 
   const result = await justTcg(`/cards?${params.toString()}`);
+  if (result.status === 429) {
+    return { card: {} as Record<string, unknown>, cached: false, status: 429 };
+  }
   if (result.status >= 500) throw new Error("Catalog provider unavailable");
   if (result.status >= 400) return null;
 
@@ -497,14 +401,19 @@ export async function resolveCatalogCardById(
   if (!match) return null;
 
   const card = enrichCard(match);
-  saveCache(cacheKey, card);
-  return { card, cached: false };
+  return { card, cached: result.cached, status: 200 };
 }
 
 router.get("/catalog/cards/:id", async (req, res) => {
   try {
     const resolved = await resolveCatalogCardById(String(req.params.id));
     if (!resolved) return res.status(404).json({ error: "Card not found" });
+    if (resolved.status === 429) {
+      return res.status(429).json({
+        error: "The daily JustTCG catalogue allowance is exhausted",
+        code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED",
+      });
+    }
     return res.json({ data: resolved.card, source: "JustTCG", cached: resolved.cached });
   } catch (error) {
     return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });

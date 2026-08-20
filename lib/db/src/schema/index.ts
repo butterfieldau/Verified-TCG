@@ -22,3 +22,4 @@ export * from "./admin-operations";
 export * from "./admin-operational-notes";
 export * from "./telemetry";
 export * from "./ebay-account-deletion-events";
+export * from "./catalogue";

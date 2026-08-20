@@ -16,12 +16,19 @@ import { Feather } from '@expo/vector-icons';
 import { VerificationBadge } from '@/components/ui/Badge';
 import { Chip } from '@/components/ui/Chip';
 import { SearchListSkeleton } from '@/components/ui/SkeletonLoader';
-import { getMarketMovers } from '@/services/market';
+import { getMarketMoversCached } from '@/services/market';
 import type { MarketMover } from '@/types';
 import { handleApiError } from '@/services/errorHandler';
 import colors from '@/constants/colors';
 import type { Card, SearchCategory } from '@/types';
-import { catalogCardToAppCard, searchCatalog, type CatalogCard } from '@/services/catalogApi';
+import {
+  catalogCardToAppCard,
+  MIN_CATALOG_SEARCH_LENGTH,
+  normalizeCatalogQuery,
+  CatalogSearchRequestGate,
+  searchCatalog,
+  type CatalogCard,
+} from '@/services/catalogApi';
 import { CardImage } from '@/components/ui/CardImage';
 
 const C = colors.dark;
@@ -128,6 +135,7 @@ export default function SearchScreen() {
   // Ref tracking the current search query so stale requests don't overwrite
   const activeQueryRef = useRef('');
   const activeControllerRef = useRef<AbortController | null>(null);
+  const requestGateRef = useRef(new CatalogSearchRequestGate());
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -138,17 +146,20 @@ export default function SearchScreen() {
 
   // Load trending cards once (used in empty/idle state)
   useEffect(() => {
-    getMarketMovers().then(setTrendingMovers).catch(() => {});
+    getMarketMoversCached(fresh => setTrendingMovers(fresh)).then(setTrendingMovers).catch(() => {});
   }, []);
 
   // Debounced search — resets pagination on new query
   useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed || category !== 'cards') {
+    const requestId = requestGateRef.current.start();
+    const trimmed = normalizeCatalogQuery(query);
+    if (trimmed.length < MIN_CATALOG_SEARCH_LENGTH || category !== 'cards') {
+      if (activeControllerRef.current) activeControllerRef.current.abort();
       setRemoteResults([]);
       setRemoteError('');
       setRemoteHasMore(false);
       setRemotePage(1);
+      setRemoteLoading(false);
       return;
     }
     // Cancel any in-flight request
@@ -165,24 +176,34 @@ export default function SearchScreen() {
     const timer = setTimeout(() => {
       searchCatalog(trimmed, controller.signal, 1)
         .then(result => {
-          if (activeQueryRef.current !== trimmed) return; // stale
+          if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return; // stale
           setRemoteResults(result.data ?? []);
           setRemoteHasMore(result.meta?.hasMore ?? false);
           setRemotePage(1);
         })
         .catch(error => {
+          if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return;
           if (error?.name === 'AbortError') return;
           setRemoteResults([]);
           setRemoteError(handleApiError(error));
         })
-        .finally(() => setRemoteLoading(false));
-    }, 350);
+        .finally(() => {
+          if (requestGateRef.current.isCurrent(requestId) && activeQueryRef.current === trimmed) {
+            setRemoteLoading(false);
+          }
+        });
+    }, 450);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [query, category]);
 
   const handleLoadMore = useCallback(async () => {
-    const trimmed = query.trim();
-    if (!remoteHasMore || remoteLoadingMore || remoteLoading || !trimmed) return;
+    const trimmed = normalizeCatalogQuery(query);
+    if (
+      !remoteHasMore ||
+      remoteLoadingMore ||
+      remoteLoading ||
+      trimmed.length < MIN_CATALOG_SEARCH_LENGTH
+    ) return;
     setRemoteLoadingMore(true);
     const nextPage = remotePage + 1;
     try {

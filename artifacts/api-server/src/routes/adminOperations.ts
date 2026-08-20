@@ -33,8 +33,8 @@ import {
   type AdminRequest,
 } from "../lib/adminSession";
 import { recordAdminAudit } from "../lib/adminAudit";
-import { recordTelemetry } from "../lib/telemetry";
 import { logger } from "../lib/logger";
+import { justTcg } from "../lib/catalogueProvider";
 import { isPCConfigured, PROVIDER_KEY } from "../pricing/pricecharting";
 import { refreshPricingExplicit } from "../pricing/service";
 import { isValidGradeKey } from "../pricing/grades";
@@ -42,7 +42,6 @@ import { isValidGradeKey } from "../pricing/grades";
 const router = Router();
 router.use("/admin", requireAdminSession, requireAdminCsrf);
 
-const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
 const STALE_QUOTE_CUTOFF_MS = 12 * 60 * 60 * 1000;
 const VALID_SCAN_REVIEW_OUTCOMES = new Set([
   "confirmed_match",
@@ -136,11 +135,6 @@ router.get(
   "/admin/catalogue/cards",
   requireAdminPermission("catalogue:read"),
   async (req: AdminRequest, res: Response) => {
-    const key = process.env.JUSTTCG_API_KEY;
-    if (!key) {
-      res.status(503).json({ message: "JustTCG is not connected.", code: "PROVIDER_NOT_CONNECTED" });
-      return;
-    }
     const query = typeof req.query["q"] === "string" ? req.query["q"].trim().slice(0, 120) : "";
     const game = typeof req.query["game"] === "string" ? req.query["game"].trim().slice(0, 80) : "";
     if (!query && !game) {
@@ -156,40 +150,32 @@ router.get(
     });
     if (query) params.set("q", query);
     if (game) params.set("game", game);
-    // Sanitized integration observability: record only ok/failed, duration,
-    // numeric HTTP status, and a fixed operation enum. Never the query or body.
-    const startedAt = Date.now();
-    try {
-      const providerResponse = await fetch(`${JUSTTCG_BASE_URL}/cards?${params.toString()}`, {
-        headers: { "x-api-key": key, accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
+    const providerResponse = await justTcg(`/cards?${params.toString()}`);
+    if (providerResponse.status >= 400) {
+      req.log.warn({ status: providerResponse.status }, "Admin catalogue provider request failed");
+      const providerNotConnected = providerResponse.status === 503 && !process.env.JUSTTCG_API_KEY;
+      res.status(providerResponse.status === 429 ? 429 : providerNotConnected ? 503 : 502).json({
+        message: providerNotConnected
+          ? "JustTCG is not connected."
+          : providerResponse.status === 429
+          ? "Daily catalogue allowance is exhausted; no cached result exists for this search."
+          : "Catalogue provider request failed.",
+        ...(providerNotConnected
+          ? { code: "PROVIDER_NOT_CONNECTED" }
+          : providerResponse.status === 429
+            ? { code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED" }
+            : {}),
       });
-      const body = (await providerResponse.json().catch(() => ({}))) as Record<string, unknown>;
-      void recordTelemetry({
-        category: "integration",
-        action: "integration.justtcg.request",
-        status: providerResponse.ok ? "ok" : "failed",
-        statusCode: providerResponse.status,
-        durationMs: Date.now() - startedAt,
-        metadata: { operation: "cards" },
-      });
-      if (!providerResponse.ok) {
-        req.log.warn({ status: providerResponse.status }, "Admin catalogue provider request failed");
-        res.status(502).json({ message: "Catalogue provider request failed." });
-        return;
-      }
-      res.json({ ...body, source: "JustTCG", authority: "external_read_only" });
-    } catch (error) {
-      void recordTelemetry({
-        category: "integration",
-        action: "integration.justtcg.request",
-        status: "failed",
-        durationMs: Date.now() - startedAt,
-        metadata: { operation: "cards" },
-      });
-      req.log.warn({ err: error }, "Admin catalogue provider unavailable");
-      res.status(503).json({ message: "Catalogue provider is temporarily unavailable." });
+      return;
     }
+    res.json({
+      ...((providerResponse.body as Record<string, unknown>) ?? {}),
+      source: "JustTCG",
+      authority: "external_read_only",
+      cached: providerResponse.cached,
+      cache_status: providerResponse.cacheStatus,
+      outbound_call: providerResponse.outboundCall,
+    });
   },
 );
 
