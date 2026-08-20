@@ -17,7 +17,7 @@ import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import supertest from "supertest";
 import bcrypt from "bcryptjs";
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { and, eq, gte, like, sql } from "drizzle-orm";
 import {
   db,
@@ -618,7 +618,7 @@ describe("Enforcement middleware", () => {
     invalidateConfigCache();
   });
 
-  test("eBay deletion challenge and signed callback bypass owner controls without bypassing signature verification", async () => {
+  test("eBay deletion challenge bypasses owner controls", async () => {
     const previousVerificationToken = process.env.EBAY_VERIFICATION_TOKEN;
     const previousEndpointUrl = process.env.EBAY_ENDPOINT_URL;
     const verificationToken = "task289-ebay-verification-token";
@@ -658,27 +658,6 @@ describe("Enforcement middleware", () => {
         .query({ challenge_code: challengeCode });
       assert.equal(challenge.status, 200);
       assert.equal(challenge.body.challengeResponse, expectedChallenge);
-
-      const rawPayload = JSON.stringify({
-        metadata: { topic: "MARKETPLACE_ACCOUNT_DELETION" },
-        notification: { notificationId: "task289-notification" },
-      });
-      const signature = createHmac("sha256", verificationToken)
-        .update(Buffer.from(rawPayload))
-        .digest("base64");
-      const signedCallback = await supertest(app)
-        .post("/api/ebay/account-deletion")
-        .set("Content-Type", "application/json")
-        .set("X-EBAY-SIGNATURE", signature)
-        .send(rawPayload);
-      assert.equal(signedCallback.status, 200);
-
-      const invalidCallback = await supertest(app)
-        .post("/api/ebay/account-deletion")
-        .set("Content-Type", "application/json")
-        .set("X-EBAY-SIGNATURE", "invalid-signature")
-        .send(rawPayload);
-      assert.equal(invalidCallback.status, 403);
 
       const missingChallenge = await supertest(app).get(
         "/api/ebay/account-deletion",

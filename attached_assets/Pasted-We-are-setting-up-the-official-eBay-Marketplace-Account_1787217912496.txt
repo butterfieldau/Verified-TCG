@@ -1,0 +1,49 @@
+We are setting up the official eBay Marketplace Account Deletion webhook for Verified TCG.
+There is already an implementation at:
+artifacts/api-server/src/routes/ebayAccountDeletion.ts
+and the route is mounted at:
+GET /api/ebay/account-deletion
+POST /api/ebay/account-deletion
+Use the official current eBay documentation:
+https://developer.ebay.com/develop/guides/sell/marketplace-user-account-deletion
+Please audit and correct the existing implementation so it fully complies with eBay's current Marketplace Account Deletion requirements.
+Requirements:
+Preserve the GET challenge endpoint.
+GET /api/ebay/account-deletion?challenge_code=... must calculate SHA-256 using exactly:
+challengeCode + verificationToken + endpoint
+in that order.
+Use environment variable:
+EBAY_VERIFICATION_TOKEN
+for the verification token.
+Use environment variable:
+EBAY_ENDPOINT_URL
+for the complete public HTTPS callback URL.
+The challenge response must be:
+{ "challengeResponse": "<lowercase SHA256 hex>" }
+with HTTP 200 and application/json.
+Do NOT use an HMAC of the webhook body with EBAY_VERIFICATION_TOKEN to validate POST notifications. The current implementation doing this is incorrect according to eBay's current documentation.
+Implement eBay's current X-EBAY-SIGNATURE verification process using eBay's official Event Notification SDK for Node.js if practical. It must extract/decode the signature information, obtain the required eBay public key and verify the notification signature against the original payload.
+Make sure the raw POST request body is available for signature verification. Review the existing Express middleware ordering because express.json() currently runs before the /api router. Do not assume adding express.raw() inside the route will recover the original raw body after JSON parsing.
+Configure Express so the exact original request bytes required for eBay signature verification are retained for this route without breaking JSON parsing anywhere else in Verified TCG.
+POST /api/ebay/account-deletion must immediately acknowledge valid eBay notifications with HTTP 200/204 as required by eBay.
+After successful verification, inspect:
+notification.data.userId
+notification.data.username
+notification.data.eiasToken
+and remove/anonymise any persisted eBay-user-specific data associated with those identifiers.
+At this stage Verified TCG may not have linked eBay user accounts. If no associated user data exists, safely record that the deletion request was processed without storing unnecessary personal information.
+Make processing idempotent using notification.notificationId, because eBay may retry notifications.
+Do not expose the verification token, eBay Client Secret or any secrets in logs or frontend code.
+Add these variables to .env.example:
+EBAY_VERIFICATION_TOKEN=
+EBAY_ENDPOINT_URL=
+with clear comments.
+Add automated tests for:
+valid GET challenge
+missing challenge_code
+missing environment configuration
+successful POST acknowledgement
+invalid/missing eBay signature
+duplicate notification handling
+Run TypeScript typecheck, tests and build when complete.
+Do not redesign or change unrelated parts of Verified TCG.

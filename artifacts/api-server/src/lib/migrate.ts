@@ -564,6 +564,13 @@ const TABLE_MIGRATIONS: string[] = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  // Minimal eBay account-deletion processing evidence. Never store eBay
+  // account identifiers here: there is currently no verified account linkage.
+  `CREATE TABLE IF NOT EXISTS ebay_account_deletion_events (
+    notification_id TEXT PRIMARY KEY,
+    outcome VARCHAR(64) NOT NULL DEFAULT 'no_linked_ebay_data',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**
@@ -716,6 +723,8 @@ const CONSTRAINT_MIGRATIONS: string[] = [
      ON pricing_overrides (card_id, grade_key, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS pricing_overrides_expiry_idx
      ON pricing_overrides (expires_at, revoked_at)`,
+  `CREATE INDEX IF NOT EXISTS ebay_account_deletion_events_received_idx
+     ON ebay_account_deletion_events (received_at DESC)`,
   // Seed PriceCharting provider row (idempotent)
   `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
    SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,
@@ -723,6 +732,18 @@ const CONSTRAINT_MIGRATIONS: string[] = [
    WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
   ...GOVERNANCE_CONSTRAINT_MIGRATIONS,
   ...TELEMETRY_CONSTRAINT_MIGRATIONS,
+  // vtcg_reject_append_only_mutation is created above by the shared telemetry
+  // migrations, so these database guards apply safely to fresh databases too.
+  `DROP TRIGGER IF EXISTS ebay_account_deletion_events_append_only_mutation ON ebay_account_deletion_events`,
+  `CREATE TRIGGER ebay_account_deletion_events_append_only_mutation
+     BEFORE UPDATE OR DELETE ON ebay_account_deletion_events
+     FOR EACH ROW EXECUTE FUNCTION vtcg_reject_append_only_mutation()`,
+  `DROP TRIGGER IF EXISTS ebay_account_deletion_events_append_only_truncate ON ebay_account_deletion_events`,
+  `CREATE TRIGGER ebay_account_deletion_events_append_only_truncate
+     BEFORE TRUNCATE ON ebay_account_deletion_events
+     FOR EACH STATEMENT EXECUTE FUNCTION vtcg_reject_append_only_mutation()`,
+  `COMMENT ON TABLE ebay_account_deletion_events IS
+     'Append-only, privacy-safe eBay account-deletion processing ledger; contains no eBay account identifiers.'`,
   // NOTE: user_reports is now created (with its full normalized shape) in
   // TABLE_MIGRATIONS, ahead of moderation_notes and its own indexes. The former
   // late bare CREATE here was removed to fix fresh-schema ordering.
