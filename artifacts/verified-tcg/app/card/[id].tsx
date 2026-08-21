@@ -30,7 +30,7 @@ import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
-import { fetchGradedPrices } from '@/services/gradedPricing';
+import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
@@ -42,6 +42,7 @@ import { canViewAdvancedPricing } from '@/services/subscription';
 import VerifiedPricingCard from '@/components/ui/VerifiedPricingCard';
 import EbaySoldHistoryCard from '@/components/ui/EbaySoldHistoryCard';
 import { useSettings } from '@/context/SettingsContext';
+import { triggerPriceSnapshot } from '@/services/priceHistory';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -635,6 +636,9 @@ export default function CardDetailScreen() {
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
   const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
+  const [gradedAvailability, setGradedAvailability] = useState<GradedPricingAvailability>('available');
+  const [gradedMessage, setGradedMessage] = useState<string | null>(null);
+  const [gradedRetryNonce, setGradedRetryNonce] = useState(0);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -705,22 +709,42 @@ export default function CardDetailScreen() {
     setGradedLoading(true);
     setLiveGradedPrices({});
     setGradedRequiresUpgrade(false);
+    setGradedMessage(null);
     fetchGradedPrices(
       resolvedCard.id,
       resolvedCard.name,
       resolvedCard.setName,
       resolvedCard.tcg,
+      resolvedCard.number,
       controller.signal,
+      gradedRetryNonce > 0,
     )
       .then(result => {
         setLiveGradedPrices(result.prices);
         setGradedRequiresUpgrade(result.requiresUpgrade);
+        setGradedAvailability(result.availability);
+        setGradedMessage(result.message);
       })
       .catch(() => {})
       .finally(() => setGradedLoading(false));
     return () => controller.abort();
   // re-fetch when the card identity changes (navigation between cards)
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, catalogCard?.id, gradedRetryNonce]);
+
+  // A detail view is a natural, low-frequency opportunity to retain truthful
+  // completed-sale medians for its chart. The API records nothing when eBay
+  // is unavailable or no supported raw/grade evidence exists.
+  useEffect(() => {
+    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    if (!resolvedCard) return;
+    void triggerPriceSnapshot(
+      resolvedCard.id,
+      resolvedCard.name,
+      resolvedCard.setName,
+      resolvedCard.tcg,
+      resolvedCard.number,
+    );
   }, [id, catalogCard?.id]);
 
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
@@ -797,8 +821,20 @@ export default function CardDetailScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  // Prefer real eBay-sourced prices; fall back to card.price fields for Raw/tab display
+  // Pro completed-sale price rows intentionally never fall back to fixture or
+  // provider-market values. Missing grades are omitted until eBay returns a
+  // verified completed sale for that exact condition.
   function effectiveTabPrice(tab: PriceTab): number | undefined {
+    if (hasAdvancedPricing) {
+      switch (tab) {
+        case 'Raw': return liveGradedPrices.raw;
+        case 'PSA 9': return liveGradedPrices.psa9;
+        case 'PSA 10': return liveGradedPrices.psa10;
+        case 'CGC 10': return liveGradedPrices.cgc10;
+        case 'BGS 9.5': return liveGradedPrices.bgs95;
+        default: return undefined;
+      }
+    }
     switch (tab) {
       case 'Raw':     return card.price.raw;
       case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
@@ -1077,9 +1113,26 @@ export default function CardDetailScreen() {
                   </Pressable>
                 </>
               ) : Object.keys(liveGradedPrices).length === 0 ? (
-                <Text style={[styles.gradedLabel, { textAlign: 'center', paddingVertical: 12, color: C.mutedForeground }]}>
-                  Graded price data unavailable
-                </Text>
+                <View style={styles.gradedUnavailable}>
+                  <Text style={[styles.gradedLabel, { textAlign: 'center', color: C.mutedForeground }]}>
+                    {gradedMessage ?? (
+                      gradedAvailability === 'no_results'
+                        ? 'No matching eBay completed sales found for these grades.'
+                        : 'Graded price data unavailable'
+                    )}
+                  </Text>
+                  {gradedAvailability !== 'configuration_error' && (
+                    <Pressable
+                      onPress={() => setGradedRetryNonce((current) => current + 1)}
+                      style={styles.gradedRetry}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry eBay graded pricing"
+                    >
+                      <Feather name="refresh-cw" size={13} color={C.primary} />
+                      <Text style={styles.gradedRetryText}>Retry eBay sales</Text>
+                    </Pressable>
+                  )}
+                </View>
               ) : (
                 GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => {
                   // Map grader key to price tab so tapping a grader row switches the chart
@@ -1592,6 +1645,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
+  },
+  gradedUnavailable: {
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  gradedRetry: {
+    alignItems: 'center',
+    borderColor: C.primary,
+    borderRadius: 9,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 38,
+    paddingHorizontal: 13,
+  },
+  gradedRetryText: {
+    color: C.primary,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 12,
   },
   gradedBlurred: {
     flexDirection: 'row',

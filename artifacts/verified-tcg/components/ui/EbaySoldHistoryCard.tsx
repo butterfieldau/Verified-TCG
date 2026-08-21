@@ -99,13 +99,82 @@ function TrendChart({ points, loading }: { points: EbaySoldHistoryPoint[]; loadi
   );
 }
 
-function Availability({ result }: { result: EbaySoldHistoryResult }) {
+export function ebaySoldHistoryAvailabilityCopy(result: EbaySoldHistoryResult): {
+  title: string;
+  message: string;
+  retryable: boolean;
+} {
+  switch (result.availability) {
+    case 'no_results':
+      return {
+        title: 'No completed sales found',
+        message: result.message ?? 'No matching completed eBay sales were found for this card and grade.',
+        retryable: true,
+      };
+    case 'configuration_error':
+      return {
+        title: 'eBay sales aren’t configured',
+        message: result.message ?? 'Completed-sale pricing is not configured for this app.',
+        retryable: false,
+      };
+    case 'authorization_error':
+      return {
+        title: 'eBay access needs attention',
+        message: result.message ?? 'eBay could not authorize completed-sale access.',
+        retryable: true,
+      };
+    case 'permission_error':
+      return {
+        title: 'Completed-sale access denied',
+        message: result.message ?? 'eBay access does not have permission to read completed sales.',
+        retryable: true,
+      };
+    case 'conversion_error':
+      return {
+        title: 'Sale currency unavailable',
+        message: result.message ?? 'Completed sales could not be converted to your selected currency.',
+        retryable: true,
+      };
+    case 'network_error':
+      return {
+        title: 'Couldn’t reach eBay sales',
+        message: result.message ?? 'Check your connection and try again.',
+        retryable: true,
+      };
+    case 'sign_in_required':
+      return {
+        title: 'Sign in to view sales',
+        message: result.message ?? 'Sign in again to view completed eBay sales.',
+        retryable: true,
+      };
+    default:
+      return {
+        title: 'eBay sold history unavailable',
+        message: result.message ?? 'Completed eBay sales are temporarily unavailable. Please try again.',
+        retryable: true,
+      };
+  }
+}
+
+function Availability({ result, onRetry }: { result: EbaySoldHistoryResult; onRetry: () => void }) {
+  const copy = ebaySoldHistoryAvailabilityCopy(result);
   const noResults = result.availability === 'no_results';
   return (
     <View style={styles.availability}>
       <Feather name={noResults ? 'search' : 'alert-circle'} size={24} color={noResults ? C.mutedForeground : C.negative} />
-      <Text style={styles.availabilityTitle}>{noResults ? 'No completed sales found' : 'eBay sold history unavailable'}</Text>
-      <Text style={styles.availabilityText}>{result.message ?? 'No individual eBay sales are available for this card.'}</Text>
+      <Text style={styles.availabilityTitle}>{copy.title}</Text>
+      <Text style={styles.availabilityText}>{copy.message}</Text>
+      {copy.retryable && (
+        <Pressable
+          onPress={onRetry}
+          style={styles.retryButton}
+          accessibilityRole="button"
+          accessibilityLabel="Retry eBay completed sales"
+        >
+          <Feather name="refresh-cw" size={13} color={C.primary} />
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -115,6 +184,7 @@ function SalesContent({ card, displayCurrency }: { card: Card; displayCurrency: 
   const [period, setPeriod] = useState<Period>('30D');
   const [history, setHistory] = useState<EbaySoldHistoryResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -124,15 +194,16 @@ function SalesContent({ card, displayCurrency }: { card: Card; displayCurrency: 
       name: card.name,
       set: card.setName,
       game: card.tcg,
+      number: card.number,
       gradeKey,
       period,
       displayCurrency,
-    }, controller.signal)
+    }, controller.signal, retryNonce > 0)
       .then(setHistory)
       .catch(() => {})
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [card.id, card.name, card.setName, card.tcg, displayCurrency, gradeKey, period]);
+  }, [card.id, card.name, card.setName, card.tcg, card.number, displayCurrency, gradeKey, period, retryNonce]);
 
   const activeGrade = GRADES.find((grade) => grade.key === gradeKey)?.label ?? 'Raw';
   const hasSales = history?.availability === 'available' && history.sales.length > 0;
@@ -229,7 +300,7 @@ function SalesContent({ card, displayCurrency }: { card: Card; displayCurrency: 
           ))}
         </>
       ) : history ? (
-        <Availability result={history} />
+        <Availability result={history} onRetry={() => setRetryNonce((current) => current + 1)} />
       ) : (
         <View style={styles.availability}>
           <Feather name="alert-circle" size={24} color={C.negative} />
@@ -301,4 +372,6 @@ const styles = StyleSheet.create({
   availability: { alignItems: 'center', paddingHorizontal: 16, paddingVertical: 28 },
   availabilityTitle: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 15, marginTop: 10, textAlign: 'center' },
   availabilityText: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 5, textAlign: 'center' },
+  retryButton: { alignItems: 'center', borderColor: C.primary, borderRadius: 9, borderWidth: 1, flexDirection: 'row', gap: 6, marginTop: 14, minHeight: 38, paddingHorizontal: 13 },
+  retryButtonText: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 12 },
 });

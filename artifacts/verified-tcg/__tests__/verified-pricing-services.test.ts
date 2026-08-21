@@ -10,6 +10,7 @@ import {
   fetchVerifiedPriceHistory,
 } from '../services/verifiedPricing';
 import { fetchEbaySoldHistory } from '../services/priceHistory';
+import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
 import {
   fetchCollectionPerformance,
   fetchArchive,
@@ -130,6 +131,7 @@ describe('eBay sold-history mobile service', () => {
       name: 'Pikachu',
       set: 'Base Set',
       game: 'pokemon',
+      number: '025',
       gradeKey: 'psa10',
       period: '30D',
       displayCurrency: 'EUR',
@@ -163,6 +165,7 @@ describe('eBay sold-history mobile service', () => {
       name: 'Pikachu',
       set: 'Base Set',
       game: 'pokemon',
+      number: '025',
       gradeKey: 'raw',
       period: '7D',
       displayCurrency: 'AUD',
@@ -172,6 +175,27 @@ describe('eBay sold-history mobile service', () => {
     expect(result.configured).toBe(false);
     expect(result.sales).toEqual([]);
     expect(result.message).toContain('not configured');
+  });
+
+  it('renders a distinct retryable explanation for currency conversion failures', () => {
+    const copy = ebaySoldHistoryAvailabilityCopy({
+      cardId: 'card-1',
+      gradeKey: 'raw',
+      period: '30D',
+      currency: 'AUD',
+      source: 'ebay_completed_sales',
+      configured: true,
+      availability: 'conversion_error',
+      coverage: 'returned_results',
+      message: 'Completed sales were found, but they could not be converted to AUD.',
+      sales: [],
+      points: [],
+      movement: null,
+      returnedAt: null,
+    });
+    expect(copy.title).toBe('Sale currency unavailable');
+    expect(copy.retryable).toBe(true);
+    expect(copy.message).toContain('could not be converted');
   });
 });
 

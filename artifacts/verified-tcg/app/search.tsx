@@ -310,7 +310,10 @@ export default function SearchScreen() {
                       <CardResultRow
                         key={m.card.id}
                         card={m.card}
-                        onPress={() => router.push(`/card/${m.card.id}`)}
+                        onPress={() => router.push({
+                          pathname: `/card/${m.card.id}` as any,
+                          params: { appCardJson: JSON.stringify(m.card) },
+                        })}
                       />
                     ))}
                   </>

@@ -47,6 +47,7 @@ export type EbaySoldHistoryAvailability =
   | 'configuration_error'
   | 'authorization_error'
   | 'permission_error'
+  | 'conversion_error'
   | 'upstream_error'
   | 'network_error'
   | 'sign_in_required';
@@ -55,6 +56,8 @@ export interface EbaySale {
   title: string;
   endedAt: string;
   condition: string | null;
+  sourcePrice: number;
+  sourceCurrency: string;
   priceCents: number;
   price: number;
   currency: string;
@@ -134,16 +137,19 @@ export async function fetchEbaySoldHistory(
     name: string;
     set: string;
     game: string;
+    number: string;
     gradeKey: string;
     period: PricePeriod;
     displayCurrency: string;
   },
   signal?: AbortSignal,
+  forceRefresh = false,
 ): Promise<EbaySoldHistoryResult> {
   const { gradeKey, period, displayCurrency } = opts;
   const cacheKey = `${cardId}:${gradeKey}:${period}:${displayCurrency}`;
   const hit = ebaySoldHistoryCache.get(cacheKey);
-  if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
+  if (!forceRefresh && hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
+  if (forceRefresh) ebaySoldHistoryCache.delete(cacheKey);
 
   const base = ebaySoldHistoryApiBase();
   if (!base || base === '/api') {
@@ -159,6 +165,7 @@ export async function fetchEbaySoldHistory(
       name: opts.name,
       set: opts.set,
       game: opts.game,
+      number: opts.number,
       grade: gradeKey,
       period,
       displayCurrency,
@@ -215,6 +222,16 @@ export async function fetchEbaySoldHistory(
   }
 }
 
+/** Clears an individual result so a visible retry never reuses an empty session value. */
+export function invalidateEbaySoldHistory(
+  cardId: string,
+  gradeKey: string,
+  period: PricePeriod,
+  displayCurrency: string,
+): void {
+  ebaySoldHistoryCache.delete(`${cardId}:${gradeKey}:${period}:${displayCurrency}`);
+}
+
 /**
  * Fetch price history for a card from the API server.
  * Returns empty points array on error or if no data exists yet.
@@ -263,18 +280,28 @@ export async function fetchPriceHistory(
  * Called when a card detail screen loads so history accumulates over time.
  * Errors are silently swallowed — this is a best-effort call.
  */
-export function triggerPriceSnapshot(
+export async function triggerPriceSnapshot(
   cardId: string,
   name: string,
   setName: string,
   game: string,
-): void {
+  number: string,
+): Promise<void> {
   if (!API_BASE || API_BASE === '/api') return;
-  fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, set: setName, game }),
-  }).catch(() => {});
+  try {
+    const token = await getAccessToken();
+    await fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ name, set: setName, game, number }),
+    });
+  } catch {
+    // Snapshot collection is best-effort; its truthful availability is shown by
+    // the explicit sold-history response rather than by this background request.
+  }
 }
 
 /**
