@@ -23,6 +23,7 @@ import {
   soldArchiveItemsTable,
   cardProviderMappingsTable,
   currentQuotesTable,
+  cardPriceSnapshotsTable,
 } from "@workspace/db";
 import { and, eq, like } from "drizzle-orm";
 import app from "../app.js";
@@ -76,6 +77,7 @@ describe("GET /pricing/cards/:id — no PRICECHARTING_TOKEN", () => {
     const u = await createTestUser({ email: `${TAG}pricing1@example.com` });
     token = u.accessToken;
     delete process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
   });
 
   after(cleanupTaggedUsers);
@@ -153,6 +155,12 @@ describe("Stored pricing survives catalog unavailability", () => {
         eq(currentQuotesTable.providerKey, "pricecharting"),
       ),
     );
+    await db.delete(cardPriceSnapshotsTable).where(
+      and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
+      ),
+    );
     await db.delete(cardProviderMappingsTable).where(
       and(
         eq(cardProviderMappingsTable.cardId, cardId),
@@ -193,6 +201,16 @@ describe("Stored pricing survives catalog unavailability", () => {
 
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.quotes[0]?.priceCents, 5200);
+    const snapshots = await db
+      .select()
+      .from(cardPriceSnapshotsTable)
+      .where(and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
+      ));
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0]?.priceCents, 5200);
+    assert.match(snapshots[0]?.snapshotBucket ?? "", /^\d{4}-\d{2}-\d{2}:(AM|PM)$/);
   });
 });
 
@@ -201,6 +219,7 @@ describe("Stored pricing survives catalog unavailability", () => {
 describe("POST /pricing/cards/:id/refresh — auth", () => {
   before(() => {
     delete process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
   });
 
   test("returns 401 without auth", async () => {

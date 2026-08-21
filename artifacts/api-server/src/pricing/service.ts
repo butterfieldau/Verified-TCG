@@ -10,6 +10,7 @@
 import { db } from "@workspace/db";
 import {
   cardProviderMappingsTable,
+  cardPriceSnapshotsTable,
   currentQuotesTable,
   pricingOverridesTable,
   pricingProvidersTable,
@@ -22,12 +23,14 @@ import {
   PROVIDER_KEY,
   PROVIDER_LABEL,
   PC_CURRENCY,
+  normalizeProduct,
 } from "./pricecharting.js";
 import type { PCProductDetail } from "./pricecharting.js";
 import {
   GRADE_DEFINITIONS,
   GRADE_BY_KEY,
   isValidGradeKey,
+  normalizeGradeKey,
 } from "./grades.js";
 import type { GradeKey } from "./grades.js";
 import { pickBestMatch } from "./matcher.js";
@@ -46,6 +49,12 @@ type PCOperation = "product_refresh" | "search" | "explicit_refresh";
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+
+/** Stable UTC bucket used to deduplicate one AM and one PM capture per day. */
+export function snapshotBucketFor(date: Date): string {
+  const day = date.toISOString().slice(0, 10);
+  return `${day}:${date.getUTCHours() < 12 ? "AM" : "PM"}`;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -96,6 +105,7 @@ export interface PricingResponse {
     releaseDate: string | null;
     genre: string | null;
     upc: string | null;
+    epid: string | null;
   } | null;
   updatedAt: string | null;
   isStale: boolean;
@@ -211,7 +221,7 @@ export async function getPricingMappingState(cardId: string): Promise<PricingMap
  * Get all current quotes for a card from DB.
  */
 async function getStoredQuotes(cardId: string) {
-  return db
+  const rows = await db
     .select()
     .from(currentQuotesTable)
     .where(
@@ -220,6 +230,10 @@ async function getStoredQuotes(cardId: string) {
         eq(currentQuotesTable.providerKey, PROVIDER_KEY),
       ),
     );
+  return rows.map((row) => ({
+    ...row,
+    gradeKey: normalizeGradeKey(row.gradeKey) ?? row.gradeKey,
+  }));
 }
 
 /**
@@ -232,30 +246,21 @@ async function persistQuotes(
 ): Promise<void> {
   const now = new Date();
   const todayDate = now.toISOString().slice(0, 10);
+  const snapshotBucket = snapshotBucketFor(now);
+
+  // A valid provider response with no usable prices must not erase a last
+  // known quote. Missing fields remain missing; they are never converted to 0.
+  if (prices.size === 0) return;
 
   await db.transaction(async tx => {
-    // A provider field disappearing means that grade is no longer available.
-    // Replace the card's current quote set atomically instead of serving old
-    // grades that were absent from the latest valid provider response.
-    await tx
-      .delete(currentQuotesTable)
-      .where(
-        and(
-          eq(currentQuotesTable.cardId, cardId),
-          eq(currentQuotesTable.providerKey, PROVIDER_KEY),
-        ),
-      );
-
     for (const [gradeKey, priceCents] of prices) {
-      await tx.insert(currentQuotesTable).values({
-        cardId,
-        providerKey: PROVIDER_KEY,
-        gradeKey,
-        priceCents,
-        currency: PC_CURRENCY,
-        fetchedAt: now,
-        providerProductId,
-      });
+      await tx
+        .insert(currentQuotesTable)
+        .values({ cardId, providerKey: PROVIDER_KEY, gradeKey, priceCents, currency: PC_CURRENCY, fetchedAt: now, providerProductId })
+        .onConflictDoUpdate({
+          target: [currentQuotesTable.cardId, currentQuotesTable.providerKey, currentQuotesTable.gradeKey],
+          set: { priceCents, currency: PC_CURRENCY, fetchedAt: now, providerProductId, updatedAt: now },
+        });
 
       await tx
         .insert(providerPriceHistoryTable)
@@ -276,6 +281,29 @@ async function persistQuotes(
             providerPriceHistoryTable.snapshotDate,
           ],
           set: { priceCents, currency: PC_CURRENCY, recordedAt: now },
+        });
+
+      await tx
+        .insert(cardPriceSnapshotsTable)
+        .values({
+          cardId,
+          providerKey: PROVIDER_KEY,
+          providerProductId,
+          gradeKey,
+          priceCents,
+          currency: PC_CURRENCY,
+          capturedAt: now,
+          snapshotBucket,
+          captureStatus: "success",
+        })
+        .onConflictDoUpdate({
+          target: [
+            cardPriceSnapshotsTable.cardId,
+            cardPriceSnapshotsTable.providerKey,
+            cardPriceSnapshotsTable.gradeKey,
+            cardPriceSnapshotsTable.snapshotBucket,
+          ],
+          set: { priceCents, currency: PC_CURRENCY, providerProductId, capturedAt: now, captureStatus: "success", failureCode: null },
         });
     }
   });
@@ -304,6 +332,7 @@ async function persistProviderMetadata(cardId: string, detail: PCProductDetail):
       providerReleaseDate: cleanProviderText(detail["release-date"]),
       providerGenre: cleanProviderText(detail["genre"]),
       providerUpc: cleanProviderText(detail["upc"]),
+      providerEpid: cleanProviderText(detail["epid"]),
       updatedAt: new Date(),
     })
     .where(
@@ -328,7 +357,7 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
       return;
     }
     await persistProviderMetadata(cardId, detail);
-    const prices = priceChartingProvider.normalizeQuotes(detail);
+    const prices = normalizeProduct(detail).prices;
     await persistQuotes(cardId, providerProductId, prices);
     await recordProviderHealth(true, undefined, "product_refresh");
   })()
@@ -430,7 +459,7 @@ async function runBackgroundMatch(
       const detail = await priceChartingProvider.getProductDetail(result.candidate.id);
       if (detail) {
         await persistProviderMetadata(cardId, detail);
-        const prices = priceChartingProvider.normalizeQuotes(detail);
+        const prices = normalizeProduct(detail).prices;
         await persistQuotes(cardId, result.candidate.id, prices);
         await recordProviderHealth(true, undefined, "product_refresh");
       } else {
@@ -770,6 +799,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       releaseDate: mapping.providerReleaseDate ?? null,
       genre: mapping.providerGenre ?? null,
       upc: mapping.providerUpc ?? null,
+      epid: mapping.providerEpid ?? null,
     },
     updatedAt: latestFetch?.toISOString() ?? null,
     isStale,
@@ -942,22 +972,55 @@ export async function getPriceHistory(opts: {
   periodDays?: number;
   displayCurrency?: string;
 }): Promise<PriceHistoryResult> {
-  const { cardId, gradeKey = "raw", periodDays = 30, displayCurrency = "AUD" } = opts;
+  const { cardId, periodDays = 30, displayCurrency = "AUD" } = opts;
+  const canonicalGradeKey = normalizeGradeKey(opts.gradeKey ?? "raw") ?? "raw";
 
   const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
 
-  const rows = await db
+  const snapshotRows = await db
     .select()
-    .from(providerPriceHistoryTable)
+    .from(cardPriceSnapshotsTable)
     .where(
       and(
-        eq(providerPriceHistoryTable.cardId, cardId),
-        eq(providerPriceHistoryTable.gradeKey, gradeKey),
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, PROVIDER_KEY),
+        eq(cardPriceSnapshotsTable.gradeKey, canonicalGradeKey),
+        gte(cardPriceSnapshotsTable.capturedAt, since),
+        eq(cardPriceSnapshotsTable.captureStatus, "success"),
       ),
     )
-    .orderBy(providerPriceHistoryTable.snapshotDate);
+    .orderBy(cardPriceSnapshotsTable.capturedAt);
 
-  const filtered = rows.filter(r => new Date(r.snapshotDate) >= since);
+  // Preserve access to pre-Stage-2A provider history without pretending it has
+  // timestamp precision. New captures always use card_price_snapshots.
+  const legacyRows = snapshotRows.length === 0
+    ? await db
+      .select()
+      .from(providerPriceHistoryTable)
+      .where(and(
+        eq(providerPriceHistoryTable.cardId, cardId),
+        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
+      ))
+      .orderBy(providerPriceHistoryTable.snapshotDate)
+    : [];
+
+  const pointsSource = snapshotRows.length > 0
+    ? snapshotRows.filter((row) => row.priceCents != null).map((row) => ({
+        date: row.capturedAt.toISOString(),
+        priceCents: row.priceCents!,
+        currency: row.currency,
+        recordedAt: row.capturedAt,
+      }))
+    : legacyRows
+      .filter((row) => new Date(row.snapshotDate) >= since)
+      .filter((row) => row.priceCents > 0)
+      .map((row) => ({
+        date: row.snapshotDate,
+        priceCents: row.priceCents,
+        currency: row.currency,
+        recordedAt: row.recordedAt,
+      }));
 
   // FX conversion
   let fxRate: number | null = null;
@@ -965,13 +1028,13 @@ export async function getPriceHistory(opts: {
     fxRate = await convertCents(100, "USD", displayCurrency).then(v => v != null ? v / 100 : null);
   }
 
-  const points: HistoryPoint[] = filtered.map(r => {
+  const points: HistoryPoint[] = pointsSource.map(r => {
     const displayCents = fxRate != null
       ? Math.round(r.priceCents * fxRate)
       : r.priceCents;
     const displayCurr = fxRate != null ? displayCurrency : r.currency;
     return {
-      date: r.snapshotDate,
+      date: r.date,
       priceCents: displayCents,
       price: displayCents / 100,
       currency: displayCurr,
@@ -992,13 +1055,13 @@ export async function getPriceHistory(opts: {
     };
   }
 
-  const latestRow = rows[rows.length - 1] ?? null;
+  const latestRow = pointsSource[pointsSource.length - 1] ?? null;
 
   return {
     cardId,
-    gradeKey,
+    gradeKey: canonicalGradeKey,
     points,
-    source: PROVIDER_KEY,
+    source: snapshotRows.length > 0 ? "pricecharting_snapshots" : PROVIDER_KEY,
     historyAvailable: points.length >= 2,
     movement,
     updatedAt: latestRow?.recordedAt?.toISOString() ?? null,

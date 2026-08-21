@@ -19,7 +19,7 @@ import {
   recordSchedulerIdentityFailure,
   getPriceHistory,
 } from "../pricing/service.js";
-import { isValidGradeKey } from "../pricing/grades.js";
+import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import { captureAllPortfolioSnapshots } from "../pricing/portfolio.js";
 import { pricingReadLimiter, pricingRefreshLimiter } from "../lib/rateLimiters.js";
 import {
@@ -35,7 +35,9 @@ const PERIOD_DAYS: Record<string, number> = {
   "7d":  7,
   "30d": 30,
   "90d": 90,
+  "3m":  90,
   "180d": 180,
+  "6m":  180,
   "1y":  365,
   "all": 36500,
 };
@@ -268,8 +270,8 @@ router.get("/pricing/cards/:id/history", requireActiveUser, pricingReadLimiter, 
   }
 
   const gradeRaw = typeof req.query["grade"] === "string" ? req.query["grade"].trim() : "raw";
-  const gradeKey = gradeRaw;
-  if (!isValidGradeKey(gradeKey)) {
+  const gradeKey = normalizeGradeKey(gradeRaw);
+  if (!gradeKey || !isValidGradeKey(gradeKey)) {
     res.status(400).json({ message: "grade must be a supported Verified Market grade key" });
     return;
   }
@@ -277,7 +279,7 @@ router.get("/pricing/cards/:id/history", requireActiveUser, pricingReadLimiter, 
   const periodRaw = typeof req.query["period"] === "string" ? req.query["period"].trim() : "30d";
   const periodDays = PERIOD_DAYS[periodRaw];
   if (periodDays == null) {
-    res.status(400).json({ message: "period must be one of 7d, 30d, 90d, 180d, 1y, or all" });
+    res.status(400).json({ message: "period must be one of 7d, 30d, 90d, 3m, 180d, 6m, 1y, or all" });
     return;
   }
   const displayCurrency = typeof req.query["displayCurrency"] === "string"
