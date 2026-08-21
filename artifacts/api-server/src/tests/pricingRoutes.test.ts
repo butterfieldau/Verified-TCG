@@ -70,7 +70,7 @@ function cardPayload(id = "card-px-001") {
 
 // ── GET /pricing/cards/:id — unconfigured ─────────────────────────────────────
 
-describe("GET /pricing/cards/:id — no PRICECHARTING_TOKEN", () => {
+describe("GET /pricing/cards/:id — no PriceCharting secret", () => {
   let token: string;
 
   before(async () => {
@@ -110,13 +110,13 @@ describe("Stored pricing survives catalog unavailability", () => {
   let token: string;
   const cardId = `${TAG}stored-price-card`;
   const previousFetch = globalThis.fetch;
-  const previousPriceChartingToken = process.env.PRICECHARTING_TOKEN;
+  const previousPriceChartingToken = process.env.PRICECHARTING_API_TOKEN;
   const previousJustTcgKey = process.env.JUSTTCG_API_KEY;
 
   before(async () => {
     const user = await createTestUser({ email: `${TAG}stored-price@example.com` });
     token = user.accessToken;
-    process.env.PRICECHARTING_TOKEN = "test-pricecharting-token";
+    process.env.PRICECHARTING_API_TOKEN = "test-pricecharting-token";
     delete process.env.JUSTTCG_API_KEY;
 
     await db.insert(cardProviderMappingsTable).values({
@@ -145,8 +145,8 @@ describe("Stored pricing survives catalog unavailability", () => {
 
   after(async () => {
     globalThis.fetch = previousFetch;
-    if (previousPriceChartingToken == null) delete process.env.PRICECHARTING_TOKEN;
-    else process.env.PRICECHARTING_TOKEN = previousPriceChartingToken;
+    if (previousPriceChartingToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+    else process.env.PRICECHARTING_API_TOKEN = previousPriceChartingToken;
     if (previousJustTcgKey == null) delete process.env.JUSTTCG_API_KEY;
     else process.env.JUSTTCG_API_KEY = previousJustTcgKey;
     await db.delete(currentQuotesTable).where(

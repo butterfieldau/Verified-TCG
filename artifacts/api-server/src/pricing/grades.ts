@@ -13,6 +13,7 @@ export interface GradeDefinition {
 
 export type GradeKey =
   | "raw"
+  | "graded_7_75"
   | "graded_8_85"
   | "graded_9"
   | "graded_95"
@@ -27,6 +28,7 @@ export type GradeKey =
 
 export const GRADE_DEFINITIONS: readonly GradeDefinition[] = [
   { key: "raw", label: "Raw / Ungraded", pricechartingField: "loose-price" },
+  { key: "graded_7_75", label: "Generic Graded 7 / 7.5", pricechartingField: "cib-price" },
   { key: "graded_8_85", label: "Generic Graded 8 / 8.5", pricechartingField: "new-price" },
   { key: "graded_9", label: "Generic Graded 9", pricechartingField: "graded-price" },
   { key: "graded_95", label: "Generic Graded 9.5", pricechartingField: "box-only-price" },
@@ -49,6 +51,9 @@ const GRADE_ALIASES: Record<string, GradeKey> = {
   raw: "raw",
   ungraded: "raw",
   graded: "graded_9",
+  graded7: "graded_7_75",
+  graded75: "graded_7_75",
+  graded_7_75: "graded_7_75",
   graded9: "graded_9",
   graded_9: "graded_9",
   graded8: "graded_8_85",

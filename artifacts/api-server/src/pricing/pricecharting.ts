@@ -28,7 +28,6 @@ let lastCallAt = 0;
 let rateChain: Promise<void> = Promise.resolve();
 let queuedRequests = 0;
 let deprecatedTokenWarningLogged = false;
-let publicTokenWarningLogged = false;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -179,19 +178,15 @@ async function fetchWithRetry(
 // ── Public API ───────────────────────────────────────────────────────────────
 
 function getToken(): string | null {
-  // Explicitly ignore the Expo public namespace. A value there is a
-  // deployment mistake and must never become an authentication source.
-  if (process.env.EXPO_PUBLIC_PRICECHARTING_API_TOKEN && !publicTokenWarningLogged) {
-    publicTokenWarningLogged = true;
-    logger.warn("EXPO_PUBLIC_PRICECHARTING_API_TOKEN is ignored; configure the server-only PriceCharting token");
-  }
-  const preferred = process.env.PRICECHARTING_API_TOKEN?.trim();
-  if (preferred) return preferred;
+  const canonical = process.env.PRICECHARTING_API_TOKEN?.trim();
+  if (canonical) return canonical;
+  // Keep the original name as a backwards-compatible deployment fallback,
+  // but never require it for new deployments.
   const deprecated = process.env.PRICECHARTING_TOKEN?.trim();
   if (deprecated) {
     if (!deprecatedTokenWarningLogged) {
       deprecatedTokenWarningLogged = true;
-      logger.warn("PRICECHARTING_TOKEN is deprecated; use PRICECHARTING_API_TOKEN");
+      logger.warn("PRICECHARTING_TOKEN is deprecated; configure PRICECHARTING_API_TOKEN");
     }
     return deprecated;
   }

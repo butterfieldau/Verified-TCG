@@ -27,9 +27,9 @@ import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
 
 describe("Grade definitions", () => {
   test("all documented card condition keys are defined", () => {
-    assert.equal(GRADE_DEFINITIONS.length, 12);
+    assert.equal(GRADE_DEFINITIONS.length, 13);
     const keys = GRADE_DEFINITIONS.map(g => g.key);
-    for (const expected of ["raw", "graded_8_85", "graded_9", "graded_95", "psa_10", "bgs_10", "bgs_black_label_10", "cgc_10", "cgc_pristine_10", "sgc_10", "tag_10", "ace_10"]) {
+    for (const expected of ["raw", "graded_7_75", "graded_8_85", "graded_9", "graded_95", "psa_10", "bgs_10", "bgs_black_label_10", "cgc_10", "cgc_pristine_10", "sgc_10", "tag_10", "ace_10"]) {
       assert.ok(keys.includes(expected as any), `Missing grade key: ${expected}`);
     }
   });
@@ -42,6 +42,7 @@ describe("Grade definitions", () => {
     const graded = GRADE_BY_PC_FIELD.get("graded-price");
     assert.ok(graded);
     assert.equal(graded!.key, "graded_9");
+    assert.equal(GRADE_BY_PC_FIELD.get("cib-price")?.key, "graded_7_75");
     assert.equal(GRADE_BY_PC_FIELD.get("new-price")?.key, "graded_8_85");
     assert.equal(GRADE_BY_PC_FIELD.get("box-only-price")?.key, "graded_95");
     assert.equal(GRADE_BY_PC_FIELD.get("manual-only-price")?.key, "psa_10");
@@ -420,21 +421,53 @@ describe("isPCConfigured", () => {
     else process.env.PRICECHARTING_API_TOKEN = originalApiToken;
   });
 
-  test("prefers PRICECHARTING_API_TOKEN", () => {
-    process.env.PRICECHARTING_API_TOKEN = "new-token";
-    process.env.PRICECHARTING_TOKEN = "deprecated-token";
+  test("supports the canonical PRICECHARTING_API_TOKEN", () => {
+    process.env.PRICECHARTING_API_TOKEN = "canonical-token";
+    delete process.env.PRICECHARTING_TOKEN;
     assert.equal(isPCConfigured(), true);
   });
 
-  test("returns false when PRICECHARTING_TOKEN is not set", () => {
+  test("uses PRICECHARTING_TOKEN as a deprecated fallback", async () => {
+    delete process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_TOKEN = "deprecated-token";
+    let requestUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return { ok: true, status: 200, json: async () => ({ products: [] }) } as Response;
+    }) as typeof fetch;
+    clearPCCache();
+    resetRateLimiter();
+    await searchProducts("token-fallback-test");
+    globalThis.fetch = originalFetch;
+    assert.ok(requestUrl.includes("t=deprecated-token"));
+  });
+
+  test("returns false when neither server secret is set", () => {
     delete process.env.PRICECHARTING_TOKEN;
     delete process.env.PRICECHARTING_API_TOKEN;
     assert.equal(isPCConfigured(), false);
   });
 
-  test("returns true when PRICECHARTING_TOKEN is set", () => {
-    process.env.PRICECHARTING_TOKEN = "test-token";
-    assert.equal(isPCConfigured(), true);
+  test("canonical token wins when both names exist", async () => {
+    process.env.PRICECHARTING_API_TOKEN = "canonical-token";
+    process.env.PRICECHARTING_TOKEN = "deprecated-token";
+    let requestUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ products: [] }),
+      } as Response;
+    }) as typeof fetch;
+    clearPCCache();
+    resetRateLimiter();
+    await searchProducts("token-precedence-test");
+    globalThis.fetch = originalFetch;
+    assert.ok(requestUrl.includes("t=canonical-token"));
+    assert.ok(!requestUrl.includes("deprecated-token"));
   });
 });
 
@@ -459,8 +492,9 @@ describe("extractPrices", () => {
       "condition-22-price": 41000, // ace_10
     };
     const prices = extractPrices(detail);
-    assert.equal(prices.size, 12);
+    assert.equal(prices.size, 13);
     assert.equal(prices.get("raw"), 4500);
+    assert.equal(prices.get("graded_7_75"), 5000);
     assert.equal(prices.get("graded_8_85"), 5500);
     assert.equal(prices.get("graded_9"), 8000);
     assert.equal(prices.get("graded_95"), 15000);
@@ -485,6 +519,21 @@ describe("extractPrices", () => {
     const prices = extractPrices(detail);
     assert.equal(prices.has("raw"), false, "zero price must be skipped");
     assert.equal(prices.get("graded_9"), 2500);
+  });
+
+  test("normalises generic Grade 7 / 7.5 and rejects malformed cib-price", () => {
+    const valid: PCProductDetail = {
+      id: "1",
+      "product-name": "Test",
+      "console-name": "Test Set",
+      "cib-price": "1750",
+    };
+    assert.equal(extractPrices(valid).get("graded_7_75"), 1750);
+
+    for (const malformed of [0, -1, "", "not-a-price", 17.5]) {
+      const prices = extractPrices({ ...valid, "cib-price": malformed as never });
+      assert.equal(prices.has("graded_7_75"), false, `malformed cib-price ${String(malformed)} must stay absent`);
+    }
   });
 
   test("handles string price values", () => {
@@ -519,18 +568,18 @@ describe("PROVIDER_KEY", () => {
 
 describe("Rate limiter queue state", () => {
   const originalFetch = globalThis.fetch;
-  const originalToken = process.env.PRICECHARTING_TOKEN;
+  const originalToken = process.env.PRICECHARTING_API_TOKEN;
 
   beforeEach(() => {
     clearPCCache();
     resetRateLimiter();
-    process.env.PRICECHARTING_TOKEN = "test-token";
+    process.env.PRICECHARTING_API_TOKEN = "test-token";
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalToken === undefined) delete process.env.PRICECHARTING_TOKEN;
-    else process.env.PRICECHARTING_TOKEN = originalToken;
+    if (originalToken === undefined) delete process.env.PRICECHARTING_API_TOKEN;
+    else process.env.PRICECHARTING_API_TOKEN = originalToken;
   });
 
   test("resetRateLimiter clears pending queue", () => {
@@ -678,7 +727,7 @@ describe("FX converter (no live calls)", () => {
   });
 
   // Note: live network calls are not made in unit tests.
-  // If PRICECHARTING_TOKEN or network is unavailable, these return null gracefully.
+  // If pricing FX or network is unavailable, these return null gracefully.
   test("convertCents handles unavailable rate gracefully", async () => {
     // Override fetch to simulate network failure
     const originalFetch = globalThis.fetch;
