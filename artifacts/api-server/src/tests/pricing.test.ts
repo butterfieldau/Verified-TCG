@@ -21,14 +21,15 @@ import {
   validatePriceCents,
   pcPriceToCents,
   isValidGradeKey,
+  normalizeGradeKey,
 } from "../pricing/grades.js";
 import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
 
 describe("Grade definitions", () => {
-  test("only source-supported card condition keys are defined", () => {
-    assert.equal(GRADE_DEFINITIONS.length, 5);
+  test("all documented card condition keys are defined", () => {
+    assert.equal(GRADE_DEFINITIONS.length, 13);
     const keys = GRADE_DEFINITIONS.map(g => g.key);
-    for (const expected of ["raw", "graded", "bgs_10", "cgc_10", "sgc_10"]) {
+    for (const expected of ["raw", "graded_7_75", "graded_8_85", "graded_9", "graded_95", "psa_10", "bgs_10", "bgs_black_label_10", "cgc_10", "cgc_pristine_10", "sgc_10", "tag_10", "ace_10"]) {
       assert.ok(keys.includes(expected as any), `Missing grade key: ${expected}`);
     }
   });
@@ -40,20 +41,11 @@ describe("Grade definitions", () => {
 
     const graded = GRADE_BY_PC_FIELD.get("graded-price");
     assert.ok(graded);
-    assert.equal(graded!.key, "graded");
-
-    for (const unsupported of [
-      "cib-price",
-      "new-price",
-      "box-only-price",
-      "manual-only-price",
-    ]) {
-      assert.equal(
-        GRADE_BY_PC_FIELD.has(unsupported),
-        false,
-        `${unsupported} must not be labelled as a numeric card grade`,
-      );
-    }
+    assert.equal(graded!.key, "graded_9");
+    assert.equal(GRADE_BY_PC_FIELD.get("cib-price")?.key, "graded_7_75");
+    assert.equal(GRADE_BY_PC_FIELD.get("new-price")?.key, "graded_8_85");
+    assert.equal(GRADE_BY_PC_FIELD.get("box-only-price")?.key, "graded_95");
+    assert.equal(GRADE_BY_PC_FIELD.get("manual-only-price")?.key, "psa_10");
 
     const bgs10 = GRADE_BY_PC_FIELD.get("bgs-10-price");
     assert.ok(bgs10);
@@ -66,6 +58,10 @@ describe("Grade definitions", () => {
     const sgc10 = GRADE_BY_PC_FIELD.get("condition-18-price");
     assert.ok(sgc10);
     assert.equal(sgc10!.key, "sgc_10");
+    assert.equal(GRADE_BY_PC_FIELD.get("condition-19-price")?.key, "cgc_pristine_10");
+    assert.equal(GRADE_BY_PC_FIELD.get("condition-20-price")?.key, "bgs_black_label_10");
+    assert.equal(GRADE_BY_PC_FIELD.get("condition-21-price")?.key, "tag_10");
+    assert.equal(GRADE_BY_PC_FIELD.get("condition-22-price")?.key, "ace_10");
   });
 
   test("all grade keys have friendly labels", () => {
@@ -82,11 +78,12 @@ describe("Grade definitions", () => {
 
   test("isValidGradeKey accepts known keys", () => {
     assert.ok(isValidGradeKey("raw"));
-    assert.ok(isValidGradeKey("graded"));
+    assert.ok(isValidGradeKey("graded_9"));
     assert.ok(isValidGradeKey("bgs_10"));
-    assert.ok(!isValidGradeKey("psa_10"));
-    assert.ok(!isValidGradeKey("psa10"));   // legacy key — not valid in new system
+    assert.ok(isValidGradeKey("psa_10"));
+    assert.ok(isValidGradeKey("psa10"));
     assert.ok(!isValidGradeKey("unknown"));
+    assert.equal(normalizeGradeKey("TAG10"), "tag_10");
   });
 });
 
@@ -412,6 +409,7 @@ import type { PCProductDetail } from "../pricing/pricecharting.js";
 
 describe("isPCConfigured", () => {
   const originalToken = process.env.PRICECHARTING_TOKEN;
+  const originalApiToken = process.env.PRICECHARTING_API_TOKEN;
 
   afterEach(() => {
     if (originalToken === undefined) {
@@ -419,16 +417,57 @@ describe("isPCConfigured", () => {
     } else {
       process.env.PRICECHARTING_TOKEN = originalToken;
     }
+    if (originalApiToken === undefined) delete process.env.PRICECHARTING_API_TOKEN;
+    else process.env.PRICECHARTING_API_TOKEN = originalApiToken;
   });
 
-  test("returns false when PRICECHARTING_TOKEN is not set", () => {
+  test("supports the canonical PRICECHARTING_API_TOKEN", () => {
+    process.env.PRICECHARTING_API_TOKEN = "canonical-token";
     delete process.env.PRICECHARTING_TOKEN;
+    assert.equal(isPCConfigured(), true);
+  });
+
+  test("uses PRICECHARTING_TOKEN as a deprecated fallback", async () => {
+    delete process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_TOKEN = "deprecated-token";
+    let requestUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return { ok: true, status: 200, json: async () => ({ products: [] }) } as Response;
+    }) as typeof fetch;
+    clearPCCache();
+    resetRateLimiter();
+    await searchProducts("token-fallback-test");
+    globalThis.fetch = originalFetch;
+    assert.ok(requestUrl.includes("t=deprecated-token"));
+  });
+
+  test("returns false when neither server secret is set", () => {
+    delete process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
     assert.equal(isPCConfigured(), false);
   });
 
-  test("returns true when PRICECHARTING_TOKEN is set", () => {
-    process.env.PRICECHARTING_TOKEN = "test-token";
-    assert.equal(isPCConfigured(), true);
+  test("canonical token wins when both names exist", async () => {
+    process.env.PRICECHARTING_API_TOKEN = "canonical-token";
+    process.env.PRICECHARTING_TOKEN = "deprecated-token";
+    let requestUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ products: [] }),
+      } as Response;
+    }) as typeof fetch;
+    clearPCCache();
+    resetRateLimiter();
+    await searchProducts("token-precedence-test");
+    globalThis.fetch = originalFetch;
+    assert.ok(requestUrl.includes("t=canonical-token"));
+    assert.ok(!requestUrl.includes("deprecated-token"));
   });
 });
 
@@ -447,17 +486,26 @@ describe("extractPrices", () => {
       "bgs-10-price": 35000,       // bgs_10
       "condition-17-price": 38000, // cgc_10
       "condition-18-price": 32000, // sgc_10
+      "condition-19-price": 39000, // cgc_pristine_10
+      "condition-20-price": 50000, // bgs_black_label_10
+      "condition-21-price": 42000, // tag_10
+      "condition-22-price": 41000, // ace_10
     };
     const prices = extractPrices(detail);
-    assert.equal(prices.size, 5);
+    assert.equal(prices.size, 13);
     assert.equal(prices.get("raw"), 4500);
-    assert.equal(prices.get("graded"), 8000);
+    assert.equal(prices.get("graded_7_75"), 5000);
+    assert.equal(prices.get("graded_8_85"), 5500);
+    assert.equal(prices.get("graded_9"), 8000);
+    assert.equal(prices.get("graded_95"), 15000);
+    assert.equal(prices.get("psa_10"), 40000);
     assert.equal(prices.get("bgs_10"), 35000);
     assert.equal(prices.get("cgc_10"), 38000);
     assert.equal(prices.get("sgc_10"), 32000);
-    for (const unsupported of ["grade_7", "grade_8", "grade_9", "grade_9_5", "psa_10"]) {
-      assert.equal(prices.has(unsupported as any), false);
-    }
+    assert.equal(prices.get("cgc_pristine_10"), 39000);
+    assert.equal(prices.get("bgs_black_label_10"), 50000);
+    assert.equal(prices.get("tag_10"), 42000);
+    assert.equal(prices.get("ace_10"), 41000);
   });
 
   test("skips zero / missing prices", () => {
@@ -470,7 +518,22 @@ describe("extractPrices", () => {
     };
     const prices = extractPrices(detail);
     assert.equal(prices.has("raw"), false, "zero price must be skipped");
-    assert.equal(prices.get("graded"), 2500);
+    assert.equal(prices.get("graded_9"), 2500);
+  });
+
+  test("normalises generic Grade 7 / 7.5 and rejects malformed cib-price", () => {
+    const valid: PCProductDetail = {
+      id: "1",
+      "product-name": "Test",
+      "console-name": "Test Set",
+      "cib-price": "1750",
+    };
+    assert.equal(extractPrices(valid).get("graded_7_75"), 1750);
+
+    for (const malformed of [0, -1, "", "not-a-price", 17.5]) {
+      const prices = extractPrices({ ...valid, "cib-price": malformed as never });
+      assert.equal(prices.has("graded_7_75"), false, `malformed cib-price ${String(malformed)} must stay absent`);
+    }
   });
 
   test("handles string price values", () => {
@@ -505,18 +568,18 @@ describe("PROVIDER_KEY", () => {
 
 describe("Rate limiter queue state", () => {
   const originalFetch = globalThis.fetch;
-  const originalToken = process.env.PRICECHARTING_TOKEN;
+  const originalToken = process.env.PRICECHARTING_API_TOKEN;
 
   beforeEach(() => {
     clearPCCache();
     resetRateLimiter();
-    process.env.PRICECHARTING_TOKEN = "test-token";
+    process.env.PRICECHARTING_API_TOKEN = "test-token";
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalToken === undefined) delete process.env.PRICECHARTING_TOKEN;
-    else process.env.PRICECHARTING_TOKEN = originalToken;
+    if (originalToken === undefined) delete process.env.PRICECHARTING_API_TOKEN;
+    else process.env.PRICECHARTING_API_TOKEN = originalToken;
   });
 
   test("resetRateLimiter clears pending queue", () => {
@@ -607,25 +670,44 @@ describe("Rate limiter queue state", () => {
 
 import { clearFxCache, getExchangeRate, convertCents } from "../pricing/fx.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
+import { snapshotBucketFor } from "../pricing/service.js";
 
 describe("Exact holding-grade resolution", () => {
   test("does not assign generic provider conditions to numeric grades", () => {
     assert.equal(gradeKeyForHolding(false, null), "raw");
-    for (const grade of [7, 8, 9, 9.5, 10]) {
+    for (const grade of [7, 8, 9, 9.5]) {
       assert.equal(gradeKeyForHolding(true, { company: "PSA", grade }), null);
     }
+    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 10 }), "psa_10");
   });
 
   test("keeps explicitly supported grade-10 companies distinct", () => {
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10 }), "bgs_10");
     assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10 }), "cgc_10");
     assert.equal(gradeKeyForHolding(true, { company: "SGC", grade: 10 }), "sgc_10");
+    assert.equal(gradeKeyForHolding(true, { company: "TAG", grade: 10 }), "tag_10");
+    assert.equal(gradeKeyForHolding(true, { company: "ACE", grade: 10 }), "ace_10");
+    assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10, designation: "Pristine" }), "cgc_pristine_10");
+    assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10, designation: "Black Label" }), "bgs_black_label_10");
   });
 
   test("never falls back a graded holding to raw", () => {
     assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 6 }), null);
     assert.equal(gradeKeyForHolding(true, { company: "Unknown", grade: 10 }), null);
     assert.equal(gradeKeyForHolding(true, null), null);
+  });
+});
+
+describe("Timestamped snapshot buckets", () => {
+  test("supports two captures on the same UTC calendar day", () => {
+    assert.equal(snapshotBucketFor(new Date("2026-08-21T01:00:00.000Z")), "2026-08-21:AM");
+    assert.equal(snapshotBucketFor(new Date("2026-08-21T13:00:00.000Z")), "2026-08-21:PM");
+  });
+
+  test("is timezone-independent and deduplicable", () => {
+    assert.equal(snapshotBucketFor(new Date("2026-08-21T11:59:59.999Z")), "2026-08-21:AM");
+    assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
+    assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
   });
 });
 
@@ -645,7 +727,7 @@ describe("FX converter (no live calls)", () => {
   });
 
   // Note: live network calls are not made in unit tests.
-  // If PRICECHARTING_TOKEN or network is unavailable, these return null gracefully.
+  // If pricing FX or network is unavailable, these return null gracefully.
   test("convertCents handles unavailable rate gracefully", async () => {
     // Override fetch to simulate network failure
     const originalFetch = globalThis.fetch;

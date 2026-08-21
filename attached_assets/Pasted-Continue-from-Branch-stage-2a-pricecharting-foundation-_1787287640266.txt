@@ -1,0 +1,346 @@
+Continue from:
+
+Branch:
+`stage-2a/pricecharting-foundation`
+
+Current commit:
+`5980d9e5d33dae8b44f28394265284e1a6be7d5c`
+
+DO NOT merge to `main`.
+
+The PriceCharting code changes are complete, but Stage 2B runtime verification could not execute previously because the sandbox could not reach `registry.npmjs.org`.
+
+This task is now strictly to COMPLETE THE RUNTIME VERIFICATION in this network-enabled environment.
+
+Do not add unrelated features.
+
+Do not begin the internal catalogue migration.
+
+Do not remove JustTCG.
+
+Do not modify production data.
+
+## 1. Install dependencies
+
+Use the existing pnpm workspace and lockfile.
+
+Run:
+
+`pnpm install --frozen-lockfile`
+
+Do not delete or regenerate the lockfile unless there is a genuine repository issue.
+
+Do not upgrade packages unnecessarily.
+
+Report the exact install result.
+
+## 2. Confirm environment configuration
+
+Verify the server expects:
+
+`PRICECHARTING_API_TOKEN`
+
+as the canonical server-side secret.
+
+`PRICECHARTING_TOKEN`
+
+must remain deprecated fallback only.
+
+Do not print either token.
+
+Do not expose either token to frontend code.
+
+Do not make automated tests depend on the real PriceCharting token.
+
+## 3. Run all TypeScript checks
+
+Run applicable typechecks for:
+
+* API server
+* Verified TCG frontend/mobile app
+* database package
+* shared workspace packages
+
+Fix only errors caused by the PriceCharting / Stage 2A / Stage 2B work.
+
+Clearly identify unrelated pre-existing errors.
+
+Do not silence errors with `any`, `@ts-ignore`, or `@ts-nocheck` unless absolutely necessary and documented.
+
+## 4. Run pricing tests
+
+Execute the actual pricing test suite.
+
+Verify coverage for:
+
+* `PRICECHARTING_API_TOKEN`
+* deprecated `PRICECHARTING_TOKEN`
+* primary token wins when both exist
+* server-only secret handling
+* `cib-price → Grade 7 / 7.5`
+* raw pricing
+* generic Grade 8 / 8.5
+* generic Grade 9
+* generic Grade 9.5
+* PSA 10
+* BGS 10
+* BGS Black Label 10
+* CGC 10
+* CGC Pristine 10
+* SGC 10
+* TAG 10
+* ACE 10
+* cent conversion
+* missing fields remain null
+* malformed prices remain null
+* existing valid quotes survive provider failure
+* portfolio valuation
+* request throttling
+* request deduplication
+* candidate matching
+* timestamped snapshots
+* AM/PM snapshot behaviour
+* duplicate snapshot protection
+* history ordering
+* history filtering
+
+Automated tests must mock PriceCharting.
+
+Do not flood or repeatedly call the live provider API.
+
+## 5. Run API route tests
+
+Run all pricing route tests and relevant API regression tests.
+
+Verify:
+
+* `/api/product`
+* `/api/products`
+* current pricing routes
+* pricing history route
+* stored current quotes
+* stale quote fallback
+* provider failures
+* sanitised errors
+
+## 6. Validate database migration
+
+Review and execute migration validation for:
+
+`lib/db/drizzle/0005_friendly_snapshot.sql`
+
+Use a development/test database only.
+
+Never production.
+
+Verify:
+
+* migration sequence
+* Drizzle journal registration
+* PostgreSQL compatibility
+* existing tables remain intact
+* no truncation
+* no deletion
+* no reset
+* no ID replacement
+* no loss of collection records
+* no loss of wishlists
+* no loss of For Trade / For Sale
+* no loss of provider mappings
+* no loss of existing quotes
+* no loss of portfolio history
+
+Verify the migration can be applied to an existing schema.
+
+## 7. Snapshot verification
+
+Explicitly test:
+
+`2026-08-21T01:00:00Z → AM`
+
+and
+
+`2026-08-21T14:00:00Z → PM`
+
+for the same card.
+
+Both snapshots must coexist.
+
+Repeated refreshes in the same bucket must not create uncontrolled duplicates.
+
+Multiple grades for the same capture must coexist, for example:
+
+* raw
+* psa_10
+* tag_10
+
+## 8. History API verification
+
+Run tests for:
+
+`GET /api/pricing/cards/:id/history`
+
+Periods:
+
+* 7D
+* 30D
+* 3M
+* 6M
+* 1Y
+* ALL
+
+Verify:
+
+* chronological ordering
+* timestamps
+* grade filtering
+* provider awareness
+* duplicate prevention
+* legacy fallback
+
+Do not fabricate PriceCharting history from legacy providers.
+
+## 9. Run security scan
+
+Search the whole frontend and server for:
+
+* `PRICECHARTING_API_TOKEN`
+* `PRICECHARTING_TOKEN`
+* `EXPO_PUBLIC_PRICECHARTING_API_TOKEN`
+* `pricecharting.com`
+* `/api/product`
+* `/api/products`
+
+Confirm:
+
+* secrets are server-side only
+* no frontend token exposure
+* PriceCharting requests go through the central adapter
+* errors do not leak tokens
+* errors do not expose provider URLs containing credentials
+
+## 10. Run JustTCG regressions
+
+Stage 2A must not have broken JustTCG.
+
+Verify existing:
+
+* catalogue search
+* card search
+* card lookup
+* trending
+* market movers
+* recently added
+
+Continue to use the current JustTCG architecture.
+
+Do not migrate them yet.
+
+## 11. Run scanner regression tests
+
+Verify card scanning and recognition still work exactly as before.
+
+Do not migrate scanner matching to PriceCharting yet.
+
+## 12. Run collection regressions
+
+Test representative stored holdings:
+
+* Raw
+* PSA 10
+* TAG 10
+* CGC 10
+* BGS 10
+
+Verify existing:
+
+* quantity
+* acquisition price
+* acquisition date
+* wishlist
+* For Trade
+* For Sale
+
+remain intact.
+
+## 13. Run lint
+
+Run repository linting.
+
+Fix only Stage 2A / Stage 2B issues.
+
+Do not mass-format unrelated files.
+
+## 14. Run builds
+
+Where supported, run:
+
+* API production build
+* frontend/mobile build checks
+
+Verify no module resolution or bundling errors were introduced.
+
+## 15. Limited live PriceCharting connectivity check
+
+Only if `PRICECHARTING_API_TOKEN` is configured and it is safe to do so:
+
+Make ONE minimal live provider request to verify authentication/connectivity.
+
+Do not expose or print the token.
+
+Do not run bulk live requests.
+
+This is optional if mocked tests already verify behaviour and no token is configured.
+
+## 16. Fix failures
+
+If any test, typecheck, lint, build or migration validation fails because of Stage 2A / 2B:
+
+fix it properly.
+
+Add tests where necessary.
+
+Create a new commit on:
+
+`stage-2a/pricecharting-foundation`
+
+Do not amend previous commits.
+
+Do not merge to `main`.
+
+## Completion report
+
+Return:
+
+1. Dependency install result
+2. Typecheck result
+3. Tests passed
+4. Tests failed
+5. Pricing test count
+6. API test result
+7. Lint result
+8. Build result
+9. Migration validation result
+10. Migration execution result
+11. Drizzle journal status
+12. Grade mapping verification
+13. PSA 10 `$2,500.00` cent-conversion verification
+14. Missing-price verification
+15. Stale-price fallback verification
+16. Portfolio valuation verification
+17. AM/PM snapshot verification
+18. History API verification
+19. Rate limiter verification
+20. Request deduplication verification
+21. Security scan result
+22. JustTCG regression result
+23. Scanner regression result
+24. Collection regression result
+25. Files changed
+26. New commit SHA, if changes were needed
+27. Branch
+28. Working-tree status
+29. Remaining blockers
+30. Whether Stage 2B is now safe enough to proceed to the internal Verified TCG catalogue migration
+
+Do not say Stage 2B passed unless these checks actually execute successfully.

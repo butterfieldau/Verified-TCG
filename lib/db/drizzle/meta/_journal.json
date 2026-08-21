@@ -29,6 +29,20 @@
       "when": 1786789477997,
       "tag": "0003_sloppy_mulholland_black",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787149366000,
+      "tag": "0004_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787285115000,
+      "tag": "0005_friendly_snapshot",
+      "breakpoints": true
     }
   ]
 }

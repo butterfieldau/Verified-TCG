@@ -10,3 +10,5 @@
 - [Owner-control route boundaries](owner-control-route-boundaries.md) — maintenance/version gates target consumer routes, not verified provider lifecycle callbacks or recovery endpoints.
 - [eBay webhook verification](ebay-webhook-verification.md) — Marketplace deletion signatures require eBay public keys over untouched request bytes, never token HMAC.
 - [eBay verification deployment sync](ebay-verification-deployment-sync.md) — new callback secrets need an API restart in development and a publish before production can answer eBay challenges correctly.
+- [Catalogue cache leases](catalogue-cache-leases.md) — stale provider revalidation is DB-claimed; composed results never promote stale inputs to fresh.
+- [eBay completed-sales evidence](ebay-completed-sales-evidence.md) — Marketplace Insights sales require its Buy OAuth scope and canonical full card identity before pricing or snapshots are trustworthy.

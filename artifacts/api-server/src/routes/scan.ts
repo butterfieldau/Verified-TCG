@@ -25,12 +25,11 @@ import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { logger } from "../lib/logger.js";
-import { recordTelemetry } from "../lib/telemetry.js";
+import { justTcg } from "../lib/catalogueProvider.js";
 
 const router = Router();
 
 const FREE_SCAN_LIMIT = 30;
-const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
 const RECOGNITION_MODEL = "gpt-4o-mini";
 
 /**
@@ -198,43 +197,13 @@ async function searchCatalog(
   name: string,
   setName: string,
 ): Promise<Array<Record<string, unknown>>> {
-  const key = process.env.JUSTTCG_API_KEY;
-  if (!key) return [];
-
   const query = [name, setName].filter(Boolean).join(" ").trim();
   if (!query) return [];
 
-  const params = new URLSearchParams({ q: query, limit: "5" });
-  // Sanitized integration observability: record only ok/failed, duration,
-  // numeric HTTP status, and a fixed operation enum. Never the query or body.
-  const startedAt = Date.now();
-  let resp: Response;
-  try {
-    resp = await fetch(`${JUSTTCG_BASE_URL}/cards?${params.toString()}`, {
-      headers: { "x-api-key": key, accept: "application/json" },
-    });
-  } catch (err) {
-    void recordTelemetry({
-      category: "integration",
-      action: "integration.justtcg.request",
-      status: "failed",
-      durationMs: Date.now() - startedAt,
-      metadata: { operation: "cards" },
-    });
-    throw err;
-  }
-  void recordTelemetry({
-    category: "integration",
-    action: "integration.justtcg.request",
-    status: resp.ok ? "ok" : "failed",
-    statusCode: resp.status,
-    durationMs: Date.now() - startedAt,
-    metadata: { operation: "cards" },
-  });
-
-  if (!resp.ok) return [];
-
-  const body = (await resp.json()) as { data?: unknown[] };
+  const params = new URLSearchParams({ q: query, limit: "5", include_price_history: "false" });
+  const result = await justTcg(`/cards?${params.toString()}`);
+  if (result.status >= 400) return [];
+  const body = result.body as { data?: unknown[] };
   return (body.data ?? []) as Array<Record<string, unknown>>;
 }
 

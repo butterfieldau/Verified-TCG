@@ -23,5 +23,8 @@ timeoutMs = 20000
 
 [userenv.shared]
 
+[userenv.production]
+EBAY_ENVIRONMENT = "production"
+
 [nix]
 channel = "stable-25_05"

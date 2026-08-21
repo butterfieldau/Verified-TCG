@@ -8,7 +8,7 @@
  * Official rate limit: 1 request per second.
  * Provider currency: USD.
  *
- * IMPORTANT: The PRICECHARTING_TOKEN is NEVER logged, persisted in price data,
+ * IMPORTANT: The PRICECHARTING_API_TOKEN is NEVER logged, persisted in price data,
  * or returned to clients. It is used only as a header/param for outgoing calls.
  */
 import { logger } from "../lib/logger.js";
@@ -27,6 +27,7 @@ const MAX_QUEUED_REQUESTS = 500;
 let lastCallAt = 0;
 let rateChain: Promise<void> = Promise.resolve();
 let queuedRequests = 0;
+let deprecatedTokenWarningLogged = false;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -113,13 +114,24 @@ export interface PCProductDetail extends PCProduct {
   "box-only-price"?:    number | string;
   "manual-only-price"?: number | string;
   "bgs-10-price"?:      number | string;
+  "condition-19-price"?: number | string;
+  "condition-20-price"?: number | string;
   "condition-17-price"?: number | string;
   "condition-18-price"?: number | string;
+  "condition-21-price"?: number | string;
+  "condition-22-price"?: number | string;
+  "epid"?: string;
 }
 
 export interface PCSearchResult {
   products?: PCProduct[];
   status?: string;
+}
+
+export interface PCProductLookup {
+  id?: string;
+  upc?: string;
+  q?: string;
 }
 
 // ── Timeout + retry helpers ──────────────────────────────────────────────────
@@ -166,7 +178,19 @@ async function fetchWithRetry(
 // ── Public API ───────────────────────────────────────────────────────────────
 
 function getToken(): string | null {
-  return process.env.PRICECHARTING_TOKEN ?? null;
+  const canonical = process.env.PRICECHARTING_API_TOKEN?.trim();
+  if (canonical) return canonical;
+  // Keep the original name as a backwards-compatible deployment fallback,
+  // but never require it for new deployments.
+  const deprecated = process.env.PRICECHARTING_TOKEN?.trim();
+  if (deprecated) {
+    if (!deprecatedTokenWarningLogged) {
+      deprecatedTokenWarningLogged = true;
+      logger.warn("PRICECHARTING_TOKEN is deprecated; configure PRICECHARTING_API_TOKEN");
+    }
+    return deprecated;
+  }
+  return null;
 }
 
 /** Check if PriceCharting is configured. */
@@ -255,6 +279,52 @@ export async function getProductDetail(
 }
 
 /**
+ * Resolve one product through the documented /api/product lookup modes.
+ * Search workflows must use searchProducts() so they can evaluate candidates;
+ * this helper is for an already-selected id, UPC lookup, or explicit admin
+ * query only.
+ */
+export async function getProductByLookup(
+  lookup: PCProductLookup,
+  options: { bypassCache?: boolean } = {},
+): Promise<PCProductDetail | null> {
+  const key = lookup.id ?? lookup.upc ?? lookup.q;
+  if (!key || (lookup.id ? 1 : 0) + (lookup.upc ? 1 : 0) + (lookup.q ? 1 : 0) !== 1) return null;
+  if (lookup.id) return getProductDetail(lookup.id, options);
+
+  const token = getToken();
+  if (!token) return null;
+  const lookupType = lookup.upc ? "upc" : "q";
+  const cacheKey = `product:${lookupType}:${key.toLowerCase()}`;
+  if (!options.bypassCache) {
+    const cached = cacheGet<PCProductDetail>(cacheKey);
+    if (cached) return cached;
+  }
+
+  return deduped(cacheKey, async () => {
+    const value = lookup.upc ?? lookup.q!;
+    const url = `${PC_BASE_URL}/product?t=${token}&${lookupType}=${encodeURIComponent(value)}`;
+    logger.debug({ lookupType }, "PC product lookup request");
+    let res: Response;
+    try {
+      res = await fetchWithRetry(url);
+    } catch (err) {
+      logger.error({ err, lookupType }, "PC product lookup network error");
+      return null;
+    }
+    if (!res.ok) {
+      logger.warn({ status: res.status, lookupType }, "PC product lookup non-200 response");
+      return null;
+    }
+    const json = (await res.json()) as PCProductDetail;
+    const providerStatus = (json as unknown as { status?: string }).status;
+    if (providerStatus && providerStatus.toLowerCase() !== "success") return null;
+    cacheSet(cacheKey, json);
+    return json;
+  }) as Promise<PCProductDetail | null>;
+}
+
+/**
  * Extract all grade prices from a PCProductDetail into a map.
  * Values are in USD cents (integer).
  */
@@ -269,6 +339,43 @@ export function extractPrices(detail: PCProductDetail): Map<GradeKey, number> {
     }
   }
   return result;
+}
+
+export interface NormalizedPriceChartingProduct {
+  provider: "pricecharting";
+  providerProductId: string;
+  currency: typeof PC_CURRENCY;
+  prices: Map<GradeKey, number>;
+  metadata: {
+    productName: string;
+    consoleName: string;
+    genre: string | null;
+    releaseDate: string | null;
+    upc: string | null;
+    epid: string | null;
+    salesVolume: number | string | null;
+  };
+  fetchedAt: Date;
+}
+
+/** Provider-specific field names stop here. */
+export function normalizeProduct(detail: PCProductDetail, fetchedAt = new Date()): NormalizedPriceChartingProduct {
+  return {
+    provider: "pricecharting",
+    providerProductId: String(detail.id),
+    currency: PC_CURRENCY,
+    prices: extractPrices(detail),
+    metadata: {
+      productName: detail["product-name"],
+      consoleName: detail["console-name"],
+      genre: detail.genre == null ? null : String(detail.genre),
+      releaseDate: detail["release-date"] == null ? null : String(detail["release-date"]),
+      upc: detail.upc == null ? null : String(detail.upc),
+      epid: detail.epid == null ? null : String(detail.epid),
+      salesVolume: detail["sales-volume"] == null ? null : detail["sales-volume"],
+    },
+    fetchedAt,
+  };
 }
 
 /** The provider key used in the database. */

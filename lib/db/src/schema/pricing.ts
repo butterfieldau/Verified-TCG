@@ -84,6 +84,7 @@ export const cardProviderMappingsTable = pgTable(
     providerReleaseDate: text("provider_release_date"),
     providerGenre: text("provider_genre"),
     providerUpc: text("provider_upc"),
+    providerEpid: text("provider_epid"),
 
     /** Match quality: matched | review_required | unmatched */
     status: text("status").notNull().default("unmatched") as ReturnType<typeof text>,
@@ -128,7 +129,7 @@ export const currentQuotesTable = pgTable(
     cardId: text("card_id").notNull(),
     providerKey: text("provider_key").notNull(),
 
-    /** Grade key: raw | grade_7 | grade_8 | grade_9 | grade_9_5 | psa_10 | bgs_10 | cgc_10 | sgc_10 */
+    /** Canonical Verified TCG grade key; see api-server/src/pricing/grades.ts. */
     gradeKey: text("grade_key").notNull(),
 
     /** Price in integer minor units (cents) */
@@ -184,6 +185,41 @@ export const providerPriceHistoryTable = pgTable(
 );
 
 export type ProviderPriceHistoryRow = typeof providerPriceHistoryTable.$inferSelect;
+
+// ── Timestamped provider snapshots ──────────────────────────────────────────
+// Unlike provider_price_history, this table permits multiple captures per
+// calendar day. snapshotBucket is an application-defined UTC 12-hour bucket
+// (YYYY-MM-DD:AM or YYYY-MM-DD:PM), making the intended twice-daily cadence
+// explicit and deduplicable without relying on application timezone.
+export const cardPriceSnapshotsTable = pgTable(
+  "card_price_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cardId: text("card_id").notNull(),
+    providerKey: text("provider_key").notNull(),
+    providerProductId: text("provider_product_id"),
+    gradeKey: text("grade_key").notNull(),
+    priceCents: integer("price_cents"),
+    currency: text("currency").notNull().default("USD"),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+    snapshotBucket: text("snapshot_bucket").notNull(),
+    captureStatus: text("capture_status").notNull().default("success"),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("card_price_snapshots_card_provider_grade_bucket_uniq").on(
+      t.cardId, t.providerKey, t.gradeKey, t.snapshotBucket,
+    ),
+    index("card_price_snapshots_card_grade_captured_idx").on(t.cardId, t.gradeKey, t.capturedAt),
+    index("card_price_snapshots_provider_product_idx").on(t.providerProductId),
+    index("card_price_snapshots_bucket_idx").on(t.snapshotBucket),
+    index("card_price_snapshots_captured_idx").on(t.capturedAt),
+  ],
+);
+
+export type CardPriceSnapshotRow = typeof cardPriceSnapshotsTable.$inferSelect;
+export type InsertCardPriceSnapshot = typeof cardPriceSnapshotsTable.$inferInsert;
 
 // ── Portfolio snapshots ────────────────────────────────────────────────────────
 

@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Dimensions,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -13,7 +12,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,127 +30,23 @@ import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
 import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
-import { fetchGradedPrices } from '@/services/gradedPricing';
+import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
 import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, CollectionItem, WatchlistItem } from '@/types';
-import ProFeaturePreview from '@/components/ui/ProFeaturePreview';
 import {
   GRADERS,
 } from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
-import {
-  fetchPriceHistory,
-  triggerPriceSnapshot,
-  buildEbaySearchUrl,
-  formatUpdatedAt,
-  type PricePeriod,
-  type PricePoint as HistoryPoint,
-} from '@/services/priceHistory';
 import VerifiedPricingCard from '@/components/ui/VerifiedPricingCard';
+import EbaySoldHistoryCard from '@/components/ui/EbaySoldHistoryCard';
 import { useSettings } from '@/context/SettingsContext';
+import { triggerPriceSnapshot } from '@/services/priceHistory';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
 ];
-
-// ── Chart period selector ─────────────────────────────────────────────────────
-
-const CHART_PERIODS: PricePeriod[] = ['7D', '30D', '90D', '1Y', 'All'];
-const FREE_PERIOD: PricePeriod = '7D';
-
-/** Map PriceTab label → grade key used by the price-history API */
-function gradeKeyFromTab(tab: PriceTab): string {
-  switch (tab) {
-    case 'PSA 9':   return 'psa9';
-    case 'PSA 10':  return 'psa10';
-    case 'CGC 10':  return 'cgc10';
-    case 'BGS 9.5': return 'bgs95';
-    default:        return 'raw';
-  }
-}
-
-// ── SVG Line Chart ────────────────────────────────────────────────────────────
-
-interface PriceLineChartProps {
-  points: HistoryPoint[];
-  width: number;
-  height: number;
-  loading?: boolean;
-}
-
-function PriceLineChart({ points, width, height, loading }: PriceLineChartProps) {
-  if (loading) {
-    return (
-      <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="small" color={colors.dark.primary} />
-      </View>
-    );
-  }
-  if (points.length < 2) {
-    return (
-      <View style={{ width, height, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-        <Feather name="bar-chart-2" size={28} color="rgba(255,255,255,0.2)" />
-        <Text style={{
-          fontSize: 12, fontFamily: 'Inter_400Regular',
-          color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 18,
-        }}>
-          Price history not yet available{'\n'}for this card
-        </Text>
-      </View>
-    );
-  }
-
-  const PAD = { top: 6, right: 2, bottom: 6, left: 2 };
-  const chartW = width - PAD.left - PAD.right;
-  const chartH = height - PAD.top - PAD.bottom;
-
-  const prices = points.map(p => p.price);
-  const minP   = Math.min(...prices);
-  const maxP   = Math.max(...prices);
-  const range  = maxP - minP || 1;
-
-  const toX = (i: number) => PAD.left + (i / (points.length - 1)) * chartW;
-  const toY = (p: number) => PAD.top + ((maxP - p) / range) * chartH;
-
-  const coords = points.map((pt, i) => ({ x: toX(i), y: toY(pt.price) }));
-
-  // Smooth cubic bezier path
-  function makePath(pts: { x: number; y: number }[]): string {
-    if (pts.length < 2) return '';
-    let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1]!;
-      const curr = pts[i]!;
-      const cpx  = (prev.x + curr.x) / 2;
-      d += ` C ${cpx} ${prev.y}, ${cpx} ${curr.y}, ${curr.x} ${curr.y}`;
-    }
-    return d;
-  }
-
-  const linePath = makePath(coords);
-  const bottom   = PAD.top + chartH;
-  const firstX   = coords[0]!.x;
-  const lastX    = coords[coords.length - 1]!.x;
-  const areaPath = `${linePath} L ${lastX} ${bottom} L ${firstX} ${bottom} Z`;
-
-  const isUp     = prices[prices.length - 1]! >= prices[0]!;
-  const lineColor = isUp ? '#22c55e' : '#ef4444';
-
-  return (
-    <Svg width={width} height={height}>
-      <Defs>
-        <SvgLinearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={lineColor} stopOpacity={0.28} />
-          <Stop offset="1" stopColor={lineColor} stopOpacity={0.0} />
-        </SvgLinearGradient>
-      </Defs>
-      <Path d={areaPath} fill="url(#chartFill)" />
-      <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
 
 // ─── Inline Wishlist Panel ────────────────────────────────────────────────────
 
@@ -719,10 +613,6 @@ export default function CardDetailScreen() {
   const [showAddedBanner, setShowAddedBanner] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState<PricePeriod>('7D');
-  const [priceHistory, setPriceHistory] = useState<HistoryPoint[]>([]);
-  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
-  const [priceHistoryUpdatedAt, setPriceHistoryUpdatedAt] = useState<string | null>(null);
 
   // Catalog API fetch state — populated when the card ID isn't in the local mock store.
   // Two inline param strategies:
@@ -746,7 +636,9 @@ export default function CardDetailScreen() {
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
   const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
-  const [historyRequiresUpgrade, setHistoryRequiresUpgrade] = useState(false);
+  const [gradedAvailability, setGradedAvailability] = useState<GradedPricingAvailability>('available');
+  const [gradedMessage, setGradedMessage] = useState<string | null>(null);
+  const [gradedRetryNonce, setGradedRetryNonce] = useState(0);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -817,50 +709,42 @@ export default function CardDetailScreen() {
     setGradedLoading(true);
     setLiveGradedPrices({});
     setGradedRequiresUpgrade(false);
+    setGradedMessage(null);
     fetchGradedPrices(
       resolvedCard.id,
       resolvedCard.name,
       resolvedCard.setName,
       resolvedCard.tcg,
+      resolvedCard.number,
       controller.signal,
+      gradedRetryNonce > 0,
     )
       .then(result => {
         setLiveGradedPrices(result.prices);
         setGradedRequiresUpgrade(result.requiresUpgrade);
+        setGradedAvailability(result.availability);
+        setGradedMessage(result.message);
       })
       .catch(() => {})
       .finally(() => setGradedLoading(false));
     return () => controller.abort();
   // re-fetch when the card identity changes (navigation between cards)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, catalogCard?.id]);
+  }, [id, catalogCard?.id, gradedRetryNonce]);
 
-  // Fetch price history when grade tab or period changes
+  // A detail view is a natural, low-frequency opportunity to retain truthful
+  // completed-sale medians for its chart. The API records nothing when eBay
+  // is unavailable or no supported raw/grade evidence exists.
   useEffect(() => {
     const resolvedCard = getCardById(id ?? '') ?? catalogCard;
     if (!resolvedCard) return;
-    const controller = new AbortController();
-    setPriceHistoryLoading(true);
-    setPriceHistory([]);
-    setHistoryRequiresUpgrade(false);
-    fetchPriceHistory(resolvedCard.id, gradeKeyFromTab(priceTab), selectedPeriod, controller.signal)
-      .then(result => {
-        setPriceHistory(result.points);
-        setPriceHistoryUpdatedAt(result.updatedAt);
-        setHistoryRequiresUpgrade(result.requiresUpgrade ?? false);
-      })
-      .catch(() => {})
-      .finally(() => setPriceHistoryLoading(false));
-    return () => controller.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, catalogCard?.id, priceTab, selectedPeriod]);
-
-  // Trigger a background price snapshot on first card view so history accumulates
-  useEffect(() => {
-    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
-    if (!resolvedCard) return;
-    triggerPriceSnapshot(resolvedCard.id, resolvedCard.name, resolvedCard.setName, resolvedCard.tcg);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    void triggerPriceSnapshot(
+      resolvedCard.id,
+      resolvedCard.name,
+      resolvedCard.setName,
+      resolvedCard.tcg,
+      resolvedCard.number,
+    );
   }, [id, catalogCard?.id]);
 
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
@@ -937,8 +821,20 @@ export default function CardDetailScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  // Prefer real eBay-sourced prices; fall back to card.price fields for Raw/tab display
+  // Pro completed-sale price rows intentionally never fall back to fixture or
+  // provider-market values. Missing grades are omitted until eBay returns a
+  // verified completed sale for that exact condition.
   function effectiveTabPrice(tab: PriceTab): number | undefined {
+    if (hasAdvancedPricing) {
+      switch (tab) {
+        case 'Raw': return liveGradedPrices.raw;
+        case 'PSA 9': return liveGradedPrices.psa9;
+        case 'PSA 10': return liveGradedPrices.psa10;
+        case 'CGC 10': return liveGradedPrices.cgc10;
+        case 'BGS 9.5': return liveGradedPrices.bgs95;
+        default: return undefined;
+      }
+    }
     switch (tab) {
       case 'Raw':     return card.price.raw;
       case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
@@ -986,9 +882,6 @@ export default function CardDetailScreen() {
     setShowWishlistAddedBanner(true);
     setTimeout(() => setShowWishlistAddedBanner(false), 2500);
   }
-
-  const gain24h = card.price.change24h;
-  const gain7d = card.price.change7d;
 
   // Dot indicator helpers
   const showDots = swipeIds.length > 1;
@@ -1180,122 +1073,7 @@ export default function CardDetailScreen() {
           chartWidth={W - 40 - 36}
         />
 
-        {/* ── Legacy chart (kept for 7D free period from old API) ──────── */}
-        <View style={[styles.card, { backgroundColor: C.card }]}>
-          <View style={styles.marketHeader}>
-            <View>
-              <Text style={styles.marketLabel}>Price History · {priceTab}</Text>
-              <Text style={[styles.marketValue, { fontSize: 14, color: C.mutedForeground }]}>
-                eBay sold listings
-              </Text>
-            </View>
-            <View style={styles.changeCol}>
-              {gain24h !== undefined && (
-                <Text style={[styles.changeBadge, { color: gain24h >= 0 ? C.positive : C.negative }]}>
-                  {gain24h >= 0 ? '+' : ''}{gain24h.toFixed(1)}% 24h
-                </Text>
-              )}
-              {gain7d !== undefined && (
-                <Text style={[styles.changeBadge, { color: gain7d >= 0 ? C.positive : C.negative }]}>
-                  {gain7d >= 0 ? '+' : ''}{gain7d.toFixed(1)}% 7d
-                </Text>
-              )}
-            </View>
-          </View>
-
-          {/* Period selector */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.rangeTabsScroll}
-            contentContainerStyle={[styles.rangeTabsContent, { marginTop: 12, marginBottom: 4 }]}
-          >
-            {CHART_PERIODS.map(period => {
-              const isFree     = period === FREE_PERIOD;
-              const isSelected = selectedPeriod === period;
-              const locked     = !isFree && !hasAdvancedPricing;
-              return (
-                <Pressable
-                  key={period}
-                  onPress={() => {
-                    if (locked) { router.push('/pro-subscription'); return; }
-                    setSelectedPeriod(period);
-                  }}
-                  style={[
-                    styles.rangeChip,
-                    isSelected && { backgroundColor: '#CC1826', borderColor: '#CC1826' },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={locked ? `${period} — Pro only` : period}
-                  accessibilityState={{ selected: isSelected }}
-                  hitSlop={{ top: 8, bottom: 8 }}
-                >
-                  {locked && <Feather name="lock" size={9} color={C.mutedForeground} style={{ marginRight: 3 }} />}
-                  <Text style={[styles.rangeChipText, isSelected && { color: '#FFF' }]}>
-                    {period}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* SVG line chart */}
-          {historyRequiresUpgrade ? (
-            <Pressable
-              onPress={() => router.push('/pro-subscription')}
-              style={[styles.chartAreaWrap, {
-                alignItems: 'center', justifyContent: 'center',
-                backgroundColor: `${C.primary}11`, borderRadius: 12, gap: 6,
-              }]}
-              accessibilityRole="button"
-              accessibilityLabel="Upgrade to Pro to see price history"
-            >
-              <Feather name="lock" size={20} color={C.primary} />
-              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.primary }}>
-                Pro feature
-              </Text>
-              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' }}>
-                Upgrade to view price history
-              </Text>
-            </Pressable>
-          ) : (
-            <View style={styles.chartAreaWrap}>
-              <PriceLineChart
-                points={priceHistory}
-                width={W - 40 - 36}
-                height={120}
-                loading={priceHistoryLoading}
-              />
-            </View>
-          )}
-
-          {/* Source footer */}
-          {!historyRequiresUpgrade && (
-            <View style={styles.chartFooter}>
-              <Feather name="info" size={10} color={C.mutedForeground} />
-              <Text style={styles.chartFooterText}>
-                eBay sold listings
-                {priceHistoryUpdatedAt
-                  ? ` · Updated ${formatUpdatedAt(priceHistoryUpdatedAt)}`
-                  : ''}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* ── View Listings on eBay ────────────────────────────────────── */}
-        <Pressable
-          onPress={() => {
-            const url = buildEbaySearchUrl(card.name, card.setName, priceTab);
-            Linking.openURL(url).catch(() => {});
-          }}
-          style={styles.ebayBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`View ${card.name} listings on eBay`}
-        >
-          <Feather name="external-link" size={14} color="#FFF" />
-          <Text style={styles.ebayBtnText}>View Listings on eBay</Text>
-        </Pressable>
+        <EbaySoldHistoryCard card={card} displayCurrency={displayCurrency} />
 
         {/* GRADED pricing section */}
         <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12 }]}>
@@ -1335,9 +1113,26 @@ export default function CardDetailScreen() {
                   </Pressable>
                 </>
               ) : Object.keys(liveGradedPrices).length === 0 ? (
-                <Text style={[styles.gradedLabel, { textAlign: 'center', paddingVertical: 12, color: C.mutedForeground }]}>
-                  Graded price data unavailable
-                </Text>
+                <View style={styles.gradedUnavailable}>
+                  <Text style={[styles.gradedLabel, { textAlign: 'center', color: C.mutedForeground }]}>
+                    {gradedMessage ?? (
+                      gradedAvailability === 'no_results'
+                        ? 'No matching eBay completed sales found for these grades.'
+                        : 'Graded price data unavailable'
+                    )}
+                  </Text>
+                  {gradedAvailability !== 'configuration_error' && (
+                    <Pressable
+                      onPress={() => setGradedRetryNonce((current) => current + 1)}
+                      style={styles.gradedRetry}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry eBay graded pricing"
+                    >
+                      <Feather name="refresh-cw" size={13} color={C.primary} />
+                      <Text style={styles.gradedRetryText}>Retry eBay sales</Text>
+                    </Pressable>
+                  )}
+                </View>
               ) : (
                 GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => {
                   // Map grader key to price tab so tapping a grader row switches the chart
@@ -1386,31 +1181,6 @@ export default function CardDetailScreen() {
               </Pressable>
             </>
           )}
-        </View>
-
-        {/* Recent Sales — Pro feature, populated from price history snapshots */}
-        <View style={{ marginBottom: 24 }}>
-          <ProFeaturePreview
-            featureTitle="Recent Sales"
-            description="See what this card actually sold for across eBay, TCGPlayer, Whatnot and more."
-            ctaLabel="Unlock Recent Sales"
-            previewContent={
-              <View style={[styles.card, { backgroundColor: C.card }]}>
-                <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
-                  Sales data accumulates as this card is viewed over time
-                </Text>
-              </View>
-            }
-            lockedContent={
-              <View style={[styles.card, { backgroundColor: C.card }]}>
-                <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Recent Sales</Text>
-                <Text style={[styles.rawStatLabel, { color: C.mutedForeground, textAlign: 'center', paddingVertical: 8 }]}>
-                  Sales data accumulates as this card is viewed over time
-                </Text>
-              </View>
-            }
-          />
         </View>
 
         {/* Action buttons */}
@@ -1875,6 +1645,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
+  },
+  gradedUnavailable: {
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  gradedRetry: {
+    alignItems: 'center',
+    borderColor: C.primary,
+    borderRadius: 9,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 38,
+    paddingHorizontal: 13,
+  },
+  gradedRetryText: {
+    color: C.primary,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 12,
   },
   gradedBlurred: {
     flexDirection: 'row',

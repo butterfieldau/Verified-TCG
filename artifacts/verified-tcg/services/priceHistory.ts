@@ -15,6 +15,14 @@ const domainBase = process.env.EXPO_PUBLIC_DOMAIN
   : '';
 const API_BASE = `${explicitBase || domainBase}/api`;
 
+function ebaySoldHistoryApiBase(): string {
+  const configuredBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+  const configuredDomain = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
+    : '';
+  return `${configuredBase || configuredDomain}/api`;
+}
+
 export type PricePeriod = '7D' | '30D' | '90D' | '1Y' | 'All';
 
 export interface PricePoint {
@@ -33,9 +41,196 @@ export interface PriceHistoryResult {
   requiresUpgrade?: boolean;
 }
 
+export type EbaySoldHistoryAvailability =
+  | 'available'
+  | 'no_results'
+  | 'configuration_error'
+  | 'authorization_error'
+  | 'permission_error'
+  | 'conversion_error'
+  | 'upstream_error'
+  | 'network_error'
+  | 'sign_in_required';
+
+export interface EbaySale {
+  title: string;
+  endedAt: string;
+  condition: string | null;
+  sourcePrice: number;
+  sourceCurrency: string;
+  priceCents: number;
+  price: number;
+  currency: string;
+  url: string;
+}
+
+export interface EbaySoldHistoryPoint {
+  date: string;
+  priceCents: number;
+  price: number;
+  currency: string;
+}
+
+export interface EbaySoldHistoryMovement {
+  absolute: number;
+  percent: number;
+  direction: 'up' | 'down' | 'flat';
+}
+
+export interface EbaySoldHistoryResult {
+  cardId: string;
+  gradeKey: string;
+  period: string;
+  currency: string;
+  source: 'ebay_completed_sales';
+  configured: boolean;
+  availability: EbaySoldHistoryAvailability;
+  coverage: 'returned_results' | 'provider_limited';
+  message: string | null;
+  sales: EbaySale[];
+  points: EbaySoldHistoryPoint[];
+  movement: EbaySoldHistoryMovement | null;
+  returnedAt: string | null;
+  requiresUpgrade?: boolean;
+}
+
 /** In-memory cache: `${cardId}:${gradeKey}:${period}` → result */
 const cache = new Map<string, { data: PriceHistoryResult; fetchedAt: number }>();
+const ebaySoldHistoryCache = new Map<string, { data: EbaySoldHistoryResult; fetchedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function unavailableEbaySoldHistory(
+  cardId: string,
+  gradeKey: string,
+  period: PricePeriod,
+  currency: string,
+  availability: EbaySoldHistoryAvailability,
+  message: string,
+  requiresUpgrade = false,
+): EbaySoldHistoryResult {
+  return {
+    cardId,
+    gradeKey,
+    period,
+    currency,
+    source: 'ebay_completed_sales',
+    configured: availability !== 'configuration_error',
+    availability,
+    coverage: 'returned_results',
+    message,
+    sales: [],
+    points: [],
+    movement: null,
+    returnedAt: null,
+    requiresUpgrade,
+  };
+}
+
+/**
+ * Fetch individual completed eBay sales and a trend calculated from those same
+ * sales. Unlike the legacy snapshot helper below, this never turns failures
+ * into an indistinguishable empty history.
+ */
+export async function fetchEbaySoldHistory(
+  cardId: string,
+  opts: {
+    name: string;
+    set: string;
+    game: string;
+    number: string;
+    gradeKey: string;
+    period: PricePeriod;
+    displayCurrency: string;
+  },
+  signal?: AbortSignal,
+  forceRefresh = false,
+): Promise<EbaySoldHistoryResult> {
+  const { gradeKey, period, displayCurrency } = opts;
+  const cacheKey = `${cardId}:${gradeKey}:${period}:${displayCurrency}`;
+  const hit = ebaySoldHistoryCache.get(cacheKey);
+  if (!forceRefresh && hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
+  if (forceRefresh) ebaySoldHistoryCache.delete(cacheKey);
+
+  const base = ebaySoldHistoryApiBase();
+  if (!base || base === '/api') {
+    return unavailableEbaySoldHistory(
+      cardId, gradeKey, period, displayCurrency, 'configuration_error',
+      'eBay sold history is not configured for this app.',
+    );
+  }
+
+  try {
+    const token = await getAccessToken();
+    const params = new URLSearchParams({
+      name: opts.name,
+      set: opts.set,
+      game: opts.game,
+      number: opts.number,
+      grade: gradeKey,
+      period,
+      displayCurrency,
+    });
+    const res = await fetch(
+      `${base}/catalog/cards/${encodeURIComponent(cardId)}/ebay-sold-history?${params.toString()}`,
+      {
+        signal,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
+    );
+
+    if (res.status === 401) {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'sign_in_required',
+        'Sign in again to view eBay sold history.',
+      );
+    }
+    if (res.status === 403) {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'permission_error',
+        'Pro access is required to view eBay sold history.', true,
+      );
+    }
+    if (!res.ok) {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'upstream_error',
+        'eBay sold history is temporarily unavailable. Please try again.',
+      );
+    }
+
+    const body = (await res.json()) as EbaySoldHistoryResult;
+    const result: EbaySoldHistoryResult = {
+      ...body,
+      cardId,
+      gradeKey,
+      period,
+      currency: body.currency ?? displayCurrency,
+      source: 'ebay_completed_sales',
+      coverage: body.coverage === 'provider_limited' ? 'provider_limited' : 'returned_results',
+      sales: Array.isArray(body.sales) ? body.sales : [],
+      points: Array.isArray(body.points) ? body.points : [],
+      movement: body.movement ?? null,
+      returnedAt: body.returnedAt ?? null,
+    };
+    ebaySoldHistoryCache.set(cacheKey, { data: result, fetchedAt: Date.now() });
+    return result;
+  } catch (error: unknown) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    return unavailableEbaySoldHistory(
+      cardId, gradeKey, period, displayCurrency, 'network_error',
+      'Couldn’t reach eBay sold history. Check your connection and try again.',
+    );
+  }
+}
+
+/** Clears an individual result so a visible retry never reuses an empty session value. */
+export function invalidateEbaySoldHistory(
+  cardId: string,
+  gradeKey: string,
+  period: PricePeriod,
+  displayCurrency: string,
+): void {
+  ebaySoldHistoryCache.delete(`${cardId}:${gradeKey}:${period}:${displayCurrency}`);
+}
 
 /**
  * Fetch price history for a card from the API server.
@@ -85,18 +280,28 @@ export async function fetchPriceHistory(
  * Called when a card detail screen loads so history accumulates over time.
  * Errors are silently swallowed — this is a best-effort call.
  */
-export function triggerPriceSnapshot(
+export async function triggerPriceSnapshot(
   cardId: string,
   name: string,
   setName: string,
   game: string,
-): void {
+  number: string,
+): Promise<void> {
   if (!API_BASE || API_BASE === '/api') return;
-  fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, set: setName, game }),
-  }).catch(() => {});
+  try {
+    const token = await getAccessToken();
+    await fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ name, set: setName, game, number }),
+    });
+  } catch {
+    // Snapshot collection is best-effort; its truthful availability is shown by
+    // the explicit sold-history response rather than by this background request.
+  }
 }
 
 /**

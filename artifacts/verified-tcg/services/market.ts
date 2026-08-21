@@ -37,6 +37,16 @@ interface MarketCache {
   recentlyAdded?: MarketCacheSection<Card[]>;
 }
 
+const networkFlights = new Map<string, Promise<unknown>>();
+
+function singleFlight<T>(key: string, request: () => Promise<T>): Promise<T> {
+  const existing = networkFlights.get(key);
+  if (existing) return existing as Promise<T>;
+  const flight = request().finally(() => networkFlights.delete(key));
+  networkFlights.set(key, flight);
+  return flight;
+}
+
 async function readMarketCache(): Promise<MarketCache> {
   try {
     const raw = await AsyncStorage.getItem(MARKET_CACHE_KEY);
@@ -124,6 +134,10 @@ export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void):
  * Returns an empty array on error so callers can show a graceful fallback.
  */
 export async function getMarketMovers(): Promise<MarketMover[]> {
+  return singleFlight('market-movers', fetchMarketMovers);
+}
+
+async function fetchMarketMovers(): Promise<MarketMover[]> {
   if (!API_BASE || API_BASE === '/api') return [];
   try {
     const res = await fetch(`${API_BASE}/catalog/market-movers`);
@@ -148,6 +162,10 @@ export async function getMarketMovers(): Promise<MarketMover[]> {
  * Returns an empty array on error.
  */
 export async function getTrendingCards(): Promise<Card[]> {
+  return singleFlight('trending', fetchTrendingCards);
+}
+
+async function fetchTrendingCards(): Promise<Card[]> {
   if (!API_BASE || API_BASE === '/api') return [];
   try {
     const res = await fetch(`${API_BASE}/catalog/trending`);
@@ -166,6 +184,10 @@ export async function getTrendingCards(): Promise<Card[]> {
  * Returns an empty array on error.
  */
 export async function getRecentlyAddedCards(): Promise<Card[]> {
+  return singleFlight('recently-added', fetchRecentlyAddedCards);
+}
+
+async function fetchRecentlyAddedCards(): Promise<Card[]> {
   if (!API_BASE || API_BASE === '/api') return [];
   try {
     const res = await fetch(`${API_BASE}/catalog/recently-added`);

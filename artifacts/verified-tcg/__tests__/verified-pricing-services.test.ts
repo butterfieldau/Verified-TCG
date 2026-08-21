@@ -9,6 +9,8 @@ import {
   fetchVerifiedPricing,
   fetchVerifiedPriceHistory,
 } from '../services/verifiedPricing';
+import { fetchEbaySoldHistory } from '../services/priceHistory';
+import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
 import {
   fetchCollectionPerformance,
   fetchArchive,
@@ -55,7 +57,7 @@ describe('Verified pricing mobile service', () => {
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/api/pricing/cards/card-1');
     expect(url).toContain('displayCurrency=AUD');
-    expect(url).not.toContain('PRICECHARTING_TOKEN');
+    expect(url).not.toContain('PRICECHARTING_API_TOKEN');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer fake-access-token');
   });
 
@@ -96,6 +98,104 @@ describe('Verified pricing mobile service', () => {
     await fetchVerifiedPriceHistory('card-1', 'raw', period, 'AUD');
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`period=${expected}`);
+  });
+});
+
+describe('eBay sold-history mobile service', () => {
+  it('keeps normalized completed sales and selected display currency intact', async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
+    mockFetch.mockResolvedValueOnce(response({
+      cardId: 'card-1',
+      gradeKey: 'psa10',
+      period: '30D',
+      currency: 'EUR',
+      source: 'ebay_completed_sales',
+      configured: true,
+      availability: 'available',
+      message: null,
+      sales: [{
+        title: 'Pikachu PSA 10',
+        endedAt: '2026-08-19T12:00:00.000Z',
+        condition: 'Graded',
+        priceCents: 12000,
+        price: 120,
+        currency: 'EUR',
+        url: 'https://www.ebay.com/itm/123',
+      }],
+      points: [{ date: '2026-08-19', priceCents: 12000, price: 120, currency: 'EUR' }],
+      movement: null,
+      returnedAt: '2026-08-20T12:00:00.000Z',
+    }));
+
+    const result = await fetchEbaySoldHistory('card-1', {
+      name: 'Pikachu',
+      set: 'Base Set',
+      game: 'pokemon',
+      number: '025',
+      gradeKey: 'psa10',
+      period: '30D',
+      displayCurrency: 'EUR',
+    });
+
+    expect(result.availability).toBe('available');
+    expect(result.sales).toHaveLength(1);
+    expect(result.sales[0]?.url).toBe('https://www.ebay.com/itm/123');
+    expect(result.currency).toBe('EUR');
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/ebay-sold-history');
+    expect(url).toContain('grade=psa10');
+    expect(url).toContain('displayCurrency=EUR');
+    expect(url).not.toContain('EBAY_APP_ID');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer fake-access-token');
+  });
+
+  it('preserves a configuration failure instead of returning an ambiguous empty history', async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
+    mockFetch.mockResolvedValueOnce(response({
+      configured: false,
+      availability: 'configuration_error',
+      message: 'eBay sold history is not configured for this app.',
+      sales: [],
+      points: [],
+      movement: null,
+      returnedAt: null,
+    }));
+
+    const result = await fetchEbaySoldHistory('card-1', {
+      name: 'Pikachu',
+      set: 'Base Set',
+      game: 'pokemon',
+      number: '025',
+      gradeKey: 'raw',
+      period: '7D',
+      displayCurrency: 'AUD',
+    });
+
+    expect(result.availability).toBe('configuration_error');
+    expect(result.configured).toBe(false);
+    expect(result.sales).toEqual([]);
+    expect(result.message).toContain('not configured');
+  });
+
+  it('renders a distinct retryable explanation for currency conversion failures', () => {
+    const copy = ebaySoldHistoryAvailabilityCopy({
+      cardId: 'card-1',
+      gradeKey: 'raw',
+      period: '30D',
+      currency: 'AUD',
+      source: 'ebay_completed_sales',
+      configured: true,
+      availability: 'conversion_error',
+      coverage: 'returned_results',
+      message: 'Completed sales were found, but they could not be converted to AUD.',
+      sales: [],
+      points: [],
+      movement: null,
+      returnedAt: null,
+    });
+    expect(copy.title).toBe('Sale currency unavailable');
+    expect(copy.retryable).toBe(true);
+    expect(copy.message).toContain('could not be converted');
   });
 });
 

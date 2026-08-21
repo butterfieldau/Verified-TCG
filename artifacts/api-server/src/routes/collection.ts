@@ -6,6 +6,7 @@ import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity } from "./activity.js";
 import { PROVIDER_KEY } from "../pricing/pricecharting.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
+import { normalizeGradeKey } from "../pricing/grades.js";
 
 const router = Router();
 
@@ -85,8 +86,8 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
     for (const q of quotes) {
       if (!cardIds.includes(q.cardId)) continue;
-      const key = `${q.cardId}:${q.gradeKey}`;
-      quoteMap.set(key, q);
+      const gradeKey = normalizeGradeKey(q.gradeKey);
+      if (gradeKey) quoteMap.set(`${q.cardId}:${gradeKey}`, q);
     }
 
     return res.json({
@@ -121,7 +122,8 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
   const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
   for (const q of quotes) {
     if (!cardIds.includes(q.cardId)) continue;
-    quoteMap.set(`${q.cardId}:${q.gradeKey}`, q);
+    const gradeKey = normalizeGradeKey(q.gradeKey);
+    if (gradeKey) quoteMap.set(`${q.cardId}:${gradeKey}`, q);
   }
 
   return res.json(rows.map(row => {
