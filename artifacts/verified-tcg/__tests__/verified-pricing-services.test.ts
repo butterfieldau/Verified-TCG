@@ -57,7 +57,7 @@ describe('Verified pricing mobile service', () => {
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/api/pricing/cards/card-1');
     expect(url).toContain('displayCurrency=AUD');
-    expect(url).not.toContain('PRICECHARTING_TOKEN');
+    expect(url).not.toContain('PRICECHARTING_API_TOKEN');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer fake-access-token');
   });
 

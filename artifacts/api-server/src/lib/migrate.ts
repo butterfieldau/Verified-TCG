@@ -52,6 +52,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_release_date TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
+  `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_epid TEXT`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
@@ -422,6 +423,24 @@ const TABLE_MIGRATIONS: string[] = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  // Timestamped PriceCharting snapshots. This is additive and intentionally
+  // does not alter or delete provider_price_history or legacy price_snapshots.
+  `CREATE TABLE IF NOT EXISTS card_price_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    provider_product_id TEXT,
+    grade_key TEXT NOT NULL,
+    price_cents INTEGER,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    snapshot_bucket TEXT NOT NULL,
+    capture_status TEXT NOT NULL DEFAULT 'success',
+    failure_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT card_price_snapshots_card_provider_grade_bucket_uniq
+      UNIQUE (card_id, provider_key, grade_key, snapshot_bucket)
+  )`,
   ...GOVERNANCE_TABLE_MIGRATIONS,
   ...TELEMETRY_TABLE_MIGRATIONS,
   // user_reports MUST be created before moderation_notes (which FKs it) and
@@ -723,6 +742,14 @@ const CONSTRAINT_MIGRATIONS: string[] = [
      ON current_quotes (fetched_at)`,
   `CREATE INDEX IF NOT EXISTS provider_price_history_card_grade_idx
      ON provider_price_history (card_id, grade_key, snapshot_date)`,
+  `CREATE INDEX IF NOT EXISTS card_price_snapshots_card_grade_captured_idx
+     ON card_price_snapshots (card_id, grade_key, captured_at)`,
+  `CREATE INDEX IF NOT EXISTS card_price_snapshots_provider_product_idx
+     ON card_price_snapshots (provider_product_id)`,
+  `CREATE INDEX IF NOT EXISTS card_price_snapshots_bucket_idx
+     ON card_price_snapshots (snapshot_bucket)`,
+  `CREATE INDEX IF NOT EXISTS card_price_snapshots_captured_idx
+     ON card_price_snapshots (captured_at)`,
   `CREATE INDEX IF NOT EXISTS portfolio_snapshots_user_date_idx
      ON portfolio_snapshots (user_id, snapshot_date)`,
   `CREATE INDEX IF NOT EXISTS sold_archive_items_user_idx

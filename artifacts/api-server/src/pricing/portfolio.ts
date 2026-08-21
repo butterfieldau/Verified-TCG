@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { convertCents } from "./fx.js";
+import { normalizeGradeKey } from "./grades.js";
 import type { GradeKey } from "./grades.js";
 import { PROVIDER_KEY } from "./pricecharting.js";
 
@@ -46,6 +47,18 @@ function normalizedGrade(value: unknown): number | null {
   return Number.isFinite(grade) ? grade : null;
 }
 
+function designationText(grading: Record<string, unknown>): string {
+  return [
+    grading.designation,
+    grading.label,
+    grading.variant,
+    grading.subLabel,
+    grading.sub_label,
+    grading.isBlackLabel ? "black label" : "",
+    grading.isPristine ? "pristine" : "",
+  ].filter(Boolean).join(" ").trim().toLowerCase();
+}
+
 /**
  * Resolve a holding to the exact normalized provider grade that represents it.
  * Unsupported graded values return null; they never fall back to raw.
@@ -58,15 +71,31 @@ export function gradeKeyForHolding(
   if (!gradingData || typeof gradingData !== "object") return null;
 
   const grading = gradingData as Record<string, unknown>;
-  const company = String(grading["company"] ?? "").trim().toUpperCase();
+  const company = String(grading["company"] ?? grading["gradingCompany"] ?? "").trim().toUpperCase();
   const grade = normalizedGrade(grading["grade"]);
   if (grade == null) return null;
 
   if (grade === 10) {
-    if (company === "BGS" || company === "BECKETT") return "bgs_10";
-    if (company === "CGC") return "cgc_10";
+    const designation = designationText(grading);
+    if (company === "PSA") return "psa_10";
+    if (company === "BGS" || company === "BECKETT") {
+      return designation.includes("black label") ? "bgs_black_label_10" : "bgs_10";
+    }
+    if (company === "CGC") {
+      return designation.includes("pristine") ? "cgc_pristine_10" : "cgc_10";
+    }
     if (company === "SGC") return "sgc_10";
+    if (company === "TAG") return "tag_10";
+    if (company === "ACE") return "ace_10";
     return null;
+  }
+  // Generic PriceCharting grades are not substitutes for a company-specific
+  // slab. They can only be selected when the holding explicitly identifies
+  // itself as a generic grade.
+  if (company === "GENERIC" || company === "UNSPECIFIED") {
+    if (grade === 9) return normalizeGradeKey("graded_9");
+    if (grade === 8 || grade === 8.5) return normalizeGradeKey("graded_8_85");
+    if (grade === 9.5) return normalizeGradeKey("graded_95");
   }
   return null;
 }
@@ -92,7 +121,8 @@ export async function calculatePortfolioValuation(
   const quoteMap = new Map<string, QuoteRow>();
   for (const quote of quotes) {
     if (cardIds.has(quote.cardId)) {
-      quoteMap.set(`${quote.cardId}:${quote.gradeKey}`, quote);
+      const canonicalGrade = normalizeGradeKey(quote.gradeKey);
+      if (canonicalGrade) quoteMap.set(`${quote.cardId}:${canonicalGrade}`, quote);
     }
   }
 

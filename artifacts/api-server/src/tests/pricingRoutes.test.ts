@@ -23,6 +23,7 @@ import {
   soldArchiveItemsTable,
   cardProviderMappingsTable,
   currentQuotesTable,
+  cardPriceSnapshotsTable,
 } from "@workspace/db";
 import { and, eq, like } from "drizzle-orm";
 import app from "../app.js";
@@ -69,13 +70,14 @@ function cardPayload(id = "card-px-001") {
 
 // ── GET /pricing/cards/:id — unconfigured ─────────────────────────────────────
 
-describe("GET /pricing/cards/:id — no PRICECHARTING_TOKEN", () => {
+describe("GET /pricing/cards/:id — no PriceCharting secret", () => {
   let token: string;
 
   before(async () => {
     const u = await createTestUser({ email: `${TAG}pricing1@example.com` });
     token = u.accessToken;
     delete process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
   });
 
   after(cleanupTaggedUsers);
@@ -108,13 +110,13 @@ describe("Stored pricing survives catalog unavailability", () => {
   let token: string;
   const cardId = `${TAG}stored-price-card`;
   const previousFetch = globalThis.fetch;
-  const previousPriceChartingToken = process.env.PRICECHARTING_TOKEN;
+  const previousPriceChartingToken = process.env.PRICECHARTING_API_TOKEN;
   const previousJustTcgKey = process.env.JUSTTCG_API_KEY;
 
   before(async () => {
     const user = await createTestUser({ email: `${TAG}stored-price@example.com` });
     token = user.accessToken;
-    process.env.PRICECHARTING_TOKEN = "test-pricecharting-token";
+    process.env.PRICECHARTING_API_TOKEN = "test-pricecharting-token";
     delete process.env.JUSTTCG_API_KEY;
 
     await db.insert(cardProviderMappingsTable).values({
@@ -143,14 +145,20 @@ describe("Stored pricing survives catalog unavailability", () => {
 
   after(async () => {
     globalThis.fetch = previousFetch;
-    if (previousPriceChartingToken == null) delete process.env.PRICECHARTING_TOKEN;
-    else process.env.PRICECHARTING_TOKEN = previousPriceChartingToken;
+    if (previousPriceChartingToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+    else process.env.PRICECHARTING_API_TOKEN = previousPriceChartingToken;
     if (previousJustTcgKey == null) delete process.env.JUSTTCG_API_KEY;
     else process.env.JUSTTCG_API_KEY = previousJustTcgKey;
     await db.delete(currentQuotesTable).where(
       and(
         eq(currentQuotesTable.cardId, cardId),
         eq(currentQuotesTable.providerKey, "pricecharting"),
+      ),
+    );
+    await db.delete(cardPriceSnapshotsTable).where(
+      and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
       ),
     );
     await db.delete(cardProviderMappingsTable).where(
@@ -193,6 +201,16 @@ describe("Stored pricing survives catalog unavailability", () => {
 
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.quotes[0]?.priceCents, 5200);
+    const snapshots = await db
+      .select()
+      .from(cardPriceSnapshotsTable)
+      .where(and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
+      ));
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0]?.priceCents, 5200);
+    assert.match(snapshots[0]?.snapshotBucket ?? "", /^\d{4}-\d{2}-\d{2}:(AM|PM)$/);
   });
 });
 
@@ -201,6 +219,7 @@ describe("Stored pricing survives catalog unavailability", () => {
 describe("POST /pricing/cards/:id/refresh — auth", () => {
   before(() => {
     delete process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
   });
 
   test("returns 401 without auth", async () => {
