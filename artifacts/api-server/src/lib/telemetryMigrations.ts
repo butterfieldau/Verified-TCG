@@ -154,7 +154,10 @@ export const TELEMETRY_CONSTRAINT_MIGRATIONS: string[] = [
      'Append-only operational audit records; UPDATE, DELETE, and TRUNCATE are rejected by database triggers.'`,
   `COMMENT ON TABLE admin_audit_events IS
      'Append-only trust/governance audit records; UPDATE, DELETE, and TRUNCATE are rejected by database triggers.'`,
-  // Seed default platform config values (idempotent)
+];
+
+/** Default operational records; deliberately excluded from fresh schema bootstrap. */
+export const TELEMETRY_DATA_MIGRATIONS: string[] = [
   `INSERT INTO platform_config (key, value, value_type, version, revisions)
    VALUES
      ('maintenance_mode',    'false',  'boolean', 1, '[]'::jsonb),

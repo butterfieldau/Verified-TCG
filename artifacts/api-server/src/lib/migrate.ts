@@ -20,11 +20,13 @@ import { logger } from "./logger";
 import {
   GOVERNANCE_COLUMN_MIGRATIONS,
   GOVERNANCE_CONSTRAINT_MIGRATIONS,
+  GOVERNANCE_DATA_MIGRATIONS,
   GOVERNANCE_TABLE_MIGRATIONS,
 } from "./governanceMigrations";
 import {
   TELEMETRY_TABLE_MIGRATIONS,
   TELEMETRY_CONSTRAINT_MIGRATIONS,
+  TELEMETRY_DATA_MIGRATIONS,
 } from "./telemetryMigrations";
 
 const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password_reset_tokens", "contact_submissions"] as const;
@@ -38,6 +40,15 @@ const COLUMN_MIGRATIONS: string[] = [
   // Added: subscription tier and founding-member flag for Pro persistence
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
+  // Extended public-profile fields. Defaults preserve existing user visibility.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(2048)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS favourite_tcg VARCHAR(100)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_since VARCHAR(7)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_public BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_collection BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_wishlist BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_for_trade BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_for_sale BOOLEAN NOT NULL DEFAULT true`,
   // Added: soft-delete support for wishlist items so deletions are durable across restarts
   // (NULL = active, non-NULL = tombstone; sync endpoint respects this column)
   `ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
@@ -153,6 +164,12 @@ export function getModerationTableDDL(): readonly string[] {
  * already-migrated database is always safe.
  */
 const TABLE_MIGRATIONS: string[] = [
+  `CREATE TABLE IF NOT EXISTS follows (
+    follower_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    followee_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT follows_unique_pair UNIQUE (follower_user_id, followee_user_id)
+  )`,
   // Dedicated staff identities and sessions. Operator credentials are never
   // mixed with collector accounts or JWT refresh sessions.
   `CREATE TABLE IF NOT EXISTS admin_accounts (
@@ -631,6 +648,28 @@ const TABLE_MIGRATIONS: string[] = [
  * created before this migration was added.
  */
 const CONSTRAINT_MIGRATIONS: string[] = [
+  `CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows (follower_user_id)`,
+  `CREATE INDEX IF NOT EXISTS follows_followee_idx ON follows (followee_user_id)`,
+  // Columns added by older ALTER ... ADD COLUMN IF NOT EXISTS statements can
+  // exist without their inline FK. Reconcile those relationships separately.
+  `DO $$ BEGIN
+     ALTER TABLE events
+       ADD CONSTRAINT events_created_by_admin_id_fkey
+       FOREIGN KEY (created_by_admin_id) REFERENCES admin_accounts(id) ON DELETE SET NULL;
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE event_participants
+       ADD CONSTRAINT event_participants_removed_by_admin_id_fkey
+       FOREIGN KEY (removed_by_admin_id) REFERENCES admin_accounts(id) ON DELETE SET NULL;
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE event_vendors
+       ADD CONSTRAINT event_vendors_event_vendor_uniq UNIQUE (event_id, vendor_id);
+   EXCEPTION WHEN duplicate_table THEN NULL;
+             WHEN duplicate_object THEN NULL;
+   END $$`,
   `CREATE INDEX IF NOT EXISTS admin_sessions_admin_active_idx
      ON admin_sessions (admin_id, revoked_at, expires_at)`,
   `CREATE INDEX IF NOT EXISTS admin_accounts_status_idx
@@ -785,11 +824,6 @@ const CONSTRAINT_MIGRATIONS: string[] = [
      ON pricing_overrides (expires_at, revoked_at)`,
   `CREATE INDEX IF NOT EXISTS ebay_account_deletion_events_received_idx
      ON ebay_account_deletion_events (received_at DESC)`,
-  // Seed PriceCharting provider row (idempotent)
-  `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
-   SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,
-          'https://www.pricecharting.com/api', NOW(), NOW()
-   WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
   ...GOVERNANCE_CONSTRAINT_MIGRATIONS,
   ...TELEMETRY_CONSTRAINT_MIGRATIONS,
   // vtcg_reject_append_only_mutation is created above by the shared telemetry
@@ -821,6 +855,16 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS admin_operational_notes_subject_idx
      ON admin_operational_notes (subject_type, subject_id, created_at)`,
+];
+
+/** Existing-data writes retained for normal application startup only. */
+const DATA_MAINTENANCE_MIGRATIONS: string[] = [
+  `INSERT INTO pricing_providers (id, provider_key, label, is_active, base_url, created_at, updated_at)
+   SELECT gen_random_uuid(), 'pricecharting', 'PriceCharting', false,
+          'https://www.pricecharting.com/api', NOW(), NOW()
+   WHERE NOT EXISTS (SELECT 1 FROM pricing_providers WHERE provider_key = 'pricecharting')`,
+  ...GOVERNANCE_DATA_MIGRATIONS,
+  ...TELEMETRY_DATA_MIGRATIONS,
 ];
 
 /**
@@ -885,8 +929,18 @@ export async function runMigrations(): Promise<void> {
   await runMigrationsWithDatabase(db);
 }
 
+export interface SchemaReconciliationOptions {
+  /**
+   * Runtime cleanup and data normalisation are intentionally excluded from the
+   * fresh-install bootstrap. The bootstrap only creates or reconciles schema;
+   * ordinary application startup retains the existing maintenance behaviour.
+   */
+  includeDataMaintenance?: boolean;
+}
+
 export async function runMigrationsWithDatabase(
   migrationDb: Pick<typeof db, "execute"> = db,
+  options: SchemaReconciliationOptions = {},
 ): Promise<void> {
   logger.info("Verifying database schema");
 
@@ -903,7 +957,7 @@ export async function runMigrationsWithDatabase(
   if (missing.length > 0) {
     throw new Error(
       `Required database tables are missing: [${missing.join(", ")}]. ` +
-        "Run 'pnpm --filter @workspace/db run push' before starting the server.",
+        "For a new database, run 'pnpm --filter @workspace/api-server run db:bootstrap' first.",
     );
   }
 
@@ -929,6 +983,15 @@ export async function runMigrationsWithDatabase(
   }
 
   logger.info({ count: CONSTRAINT_MIGRATIONS.length }, "Constraint migrations applied");
+
+  if (options.includeDataMaintenance === false) {
+    logger.info("Database schema reconciliation completed without data maintenance");
+    return;
+  }
+
+  for (const statement of DATA_MAINTENANCE_MIGRATIONS) {
+    await migrationDb.execute(sql.raw(statement));
+  }
 
   // One-time targeted cleanup of legacy fabricated seed events (NOT seeding).
   // Idempotent: only removes exact-fingerprint, unowned, unedited, unlinked rows.

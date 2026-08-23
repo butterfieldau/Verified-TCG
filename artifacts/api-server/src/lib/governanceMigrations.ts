@@ -278,6 +278,10 @@ export const GOVERNANCE_CONSTRAINT_MIGRATIONS: string[] = [
      ON internal_note_history (note_id)`,
   `CREATE INDEX IF NOT EXISTS announcements_status_idx
      ON announcements (status)`,
+];
+
+/** Existing-data backfills; deliberately excluded from fresh schema bootstrap. */
+export const GOVERNANCE_DATA_MIGRATIONS: string[] = [
   `INSERT INTO notification_preferences (user_id, push_enabled, source)
      SELECT DISTINCT user_id, true, 'existing_push_token'
      FROM push_tokens

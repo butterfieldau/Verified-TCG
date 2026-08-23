@@ -13,4 +13,9 @@ if (!process.env.DATABASE_URL) {
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 
+/** Create an independent pool for an explicitly selected disposable database. */
+export function createDatabasePool(connectionString: string): pg.Pool {
+  return new Pool({ connectionString });
+}
+
 export * from "./schema";
