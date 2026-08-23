@@ -23,3 +23,4 @@ export * from "./admin-operational-notes";
 export * from "./telemetry";
 export * from "./ebay-account-deletion-events";
 export * from "./catalogue";
+export * from "./canonical-catalogue";
