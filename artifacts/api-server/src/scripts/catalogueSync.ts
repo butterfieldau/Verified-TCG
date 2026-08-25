@@ -9,6 +9,7 @@ import {
   getCatalogueHealth,
   importJobCursor,
   latestSuccessfulJustTcgImport,
+  readOnlyJustTcgCacheCards,
 } from "../catalogue/internal/catalogueSyncRepository.js";
 
 function option(name: string): string | null {
@@ -60,13 +61,17 @@ const priorSuccess =
   jobType === "incremental" ? await latestSuccessfulJustTcgImport() : null;
 const resumeJobId = option("--resume");
 const afterCursor = resumeJobId ? await importJobCursor(resumeJobId) : null;
-const source = cachedJustTcgCards({
+const sourceOptions = {
   updatedAfter: priorSuccess,
   setExternalId,
   cardExternalId,
   afterCursor,
   maxCacheEntries: positiveOption("--max-cache-entries"),
-});
+};
+const sourceDatabaseUrl = process.env.CATALOGUE_SOURCE_DATABASE_URL;
+const source = sourceDatabaseUrl
+  ? readOnlyJustTcgCacheCards(sourceDatabaseUrl, sourceOptions)
+  : cachedJustTcgCards(sourceOptions);
 const result = await runCatalogueImport(
   createDatabaseCatalogueImportRepository(),
   source,
@@ -75,7 +80,9 @@ const result = await runCatalogueImport(
     dryRun,
     batchSize: positiveOption("--batch-size"),
     metadata: {
-      source: "durable_justtcg_cache",
+      source: sourceDatabaseUrl
+        ? "external_read_only_justtcg_cache"
+        : "durable_justtcg_cache",
       incrementalFallback:
         jobType === "incremental" && !priorSuccess
           ? "full_cache_scan"

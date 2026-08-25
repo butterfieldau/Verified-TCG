@@ -12,6 +12,12 @@ a backfill does not consume new JustTCG budget. Records are streamed in pages
 of 100 cache entries; repeated card results are safe because reconciliation
 uses the JustTCG external card ID first.
 
+For a disposable database that starts empty, set `DATABASE_URL` to the target
+and `CATALOGUE_SOURCE_DATABASE_URL` to a read-only HeliumDB credential. The
+source is read inside `BEGIN READ ONLY`; the importer never writes to that
+connection. Do not set `CATALOGUE_SOURCE_DATABASE_URL` to a production
+credential with write permissions.
+
 Each provider record flows through:
 
 `JustTCG cache record -> normalisation -> external-ID reconciliation -> canonical upsert -> identity/provenance`

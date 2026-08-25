@@ -4,6 +4,7 @@ import {
   catalogueCardVariantsTable,
   catalogueExternalIdsTable,
   catalogueImportJobsTable,
+  createDatabasePool,
   db,
 } from "@workspace/db";
 import {
@@ -124,6 +125,86 @@ export async function* cachedJustTcgCards(
         return;
     }
     offset += rows.length;
+  }
+}
+
+/**
+ * Streams a separately configured cache database inside an explicit read-only
+ * transaction. This is used to backfill a disposable target from HeliumDB
+ * without modifying the populated source database.
+ */
+export async function* readOnlyJustTcgCacheCards(
+  connectionString: string,
+  input: {
+    updatedAfter?: Date | null;
+    setExternalId?: string | null;
+    cardExternalId?: string | null;
+    maxCacheEntries?: number;
+    afterCursor?: string | null;
+  } = {},
+): AsyncGenerator<CatalogueImportSourceRecord> {
+  const sourcePool = createDatabasePool(connectionString);
+  const client = await sourcePool.connect();
+  const separator = input.afterCursor?.lastIndexOf(":") ?? -1;
+  const afterCacheKey =
+    separator > 0 ? input.afterCursor!.slice(0, separator) : null;
+  const afterCardIndex =
+    separator > 0 ? Number(input.afterCursor!.slice(separator + 1)) : -1;
+  let offset = 0;
+  let readEntries = 0;
+  try {
+    await client.query("BEGIN READ ONLY");
+    while (
+      input.maxCacheEntries === undefined ||
+      readEntries < input.maxCacheEntries
+    ) {
+      const values: unknown[] = ["cards"];
+      let where = "resource = $1";
+      if (input.updatedAfter) {
+        values.push(input.updatedAfter);
+        where += ` AND updated_at > $${values.length}`;
+      }
+      if (afterCacheKey) {
+        values.push(afterCacheKey);
+        where += ` AND cache_key >= $${values.length}`;
+      }
+      values.push(CACHE_PAGE_SIZE, offset);
+      const rows = await client.query<{ cache_key: string; body: unknown }>(
+        `SELECT cache_key, body FROM catalogue_cache_entries WHERE ${where} ORDER BY cache_key LIMIT $${values.length - 1} OFFSET $${values.length}`,
+        values,
+      );
+      if (!rows.rows.length) return;
+      for (const row of rows.rows) {
+        readEntries++;
+        const cards = providerCards(row.body);
+        for (let index = 0; index < cards.length; index++) {
+          if (row.cache_key === afterCacheKey && index <= afterCardIndex)
+            continue;
+          const card = cards[index]!;
+          const id =
+            typeof card.id === "string" || typeof card.id === "number"
+              ? String(card.id)
+              : "";
+          const setId =
+            typeof card.set_id === "string" || typeof card.set_id === "number"
+              ? String(card.set_id)
+              : null;
+          if (input.cardExternalId && id !== input.cardExternalId) continue;
+          if (input.setExternalId && setId !== input.setExternalId) continue;
+          yield { card: { ...card, id }, cursor: `${row.cache_key}:${index}` };
+        }
+        if (
+          input.maxCacheEntries !== undefined &&
+          readEntries >= input.maxCacheEntries
+        )
+          return;
+      }
+      offset += rows.rows.length;
+    }
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    client.release();
+    await sourcePool.end();
   }
 }
 
