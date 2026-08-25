@@ -278,9 +278,13 @@ describe("completed-sale snapshots", () => {
   });
 
   test("inserts only grades backed by successful Marketplace Insights sales", async () => {
-    const cardId = `${TAG}-snapshot`;
+    const cardId = `pokemon-Base-Set-Pikachu-${TAG}-holo`;
     const endedAt = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
     const calls: string[] = [];
+    const previousJustTcgApiKey = process.env.JUSTTCG_API_KEY;
+    const previousJustTcgBudget = process.env.JUSTTCG_DAILY_CALL_BUDGET;
+    process.env.JUSTTCG_API_KEY = "test-justtcg-api-key";
+    process.env.JUSTTCG_DAILY_CALL_BUDGET = "1000";
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input);
       calls.push(url);
@@ -299,32 +303,39 @@ describe("completed-sale snapshots", () => {
       })]);
     }) as typeof fetch;
 
-    const response = await request
-      .post(`/api/catalog/cards/${cardId}/snapshot-prices`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({ name: "Wrong Card", set: "Wrong Set", game: "magic", number: "99" });
-    assert.equal(response.status, 204);
+    try {
+      const response = await request
+        .post(`/api/catalog/cards/${cardId}/snapshot-prices`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "Wrong Card", set: "Wrong Set", game: "magic", number: "99" });
+      assert.equal(response.status, 204, JSON.stringify({ body: response.body, calls }));
 
-    let rows: { gradeKey: string; priceCents: number; source: string }[] = [];
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      rows = await db
-        .select({
-          gradeKey: priceSnapshotsTable.gradeKey,
-          priceCents: priceSnapshotsTable.priceCents,
-          source: priceSnapshotsTable.source,
-        })
-        .from(priceSnapshotsTable)
-        .where(eq(priceSnapshotsTable.cardId, cardId));
-      if (rows.length > 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      let rows: { gradeKey: string; priceCents: number; source: string }[] = [];
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        rows = await db
+          .select({
+            gradeKey: priceSnapshotsTable.gradeKey,
+            priceCents: priceSnapshotsTable.priceCents,
+            source: priceSnapshotsTable.source,
+          })
+          .from(priceSnapshotsTable)
+          .where(eq(priceSnapshotsTable.cardId, cardId));
+        if (rows.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.deepEqual(rows, [{ gradeKey: "raw", priceCents: 5_000, source: "ebay_completed_sales" }]);
+      assert.ok(calls.some((url) => url.includes("Pikachu") && url.includes("Base")));
+      assert.equal(calls.some((url) => url.includes("Wrong")), false);
+      await db.delete(priceSnapshotsTable).where(and(
+        eq(priceSnapshotsTable.cardId, cardId),
+        eq(priceSnapshotsTable.gradeKey, "raw"),
+      ));
+    } finally {
+      if (previousJustTcgApiKey === undefined) delete process.env.JUSTTCG_API_KEY;
+      else process.env.JUSTTCG_API_KEY = previousJustTcgApiKey;
+      if (previousJustTcgBudget === undefined) delete process.env.JUSTTCG_DAILY_CALL_BUDGET;
+      else process.env.JUSTTCG_DAILY_CALL_BUDGET = previousJustTcgBudget;
     }
-    assert.deepEqual(rows, [{ gradeKey: "raw", priceCents: 5_000, source: "ebay_completed_sales" }]);
-    assert.ok(calls.some((url) => url.includes("Pikachu") && url.includes("Base")));
-    assert.equal(calls.some((url) => url.includes("Wrong")), false);
-    await db.delete(priceSnapshotsTable).where(and(
-      eq(priceSnapshotsTable.cardId, cardId),
-      eq(priceSnapshotsTable.gradeKey, "raw"),
-    ));
   });
 
   test("does not relabel legacy snapshot rows as verified completed-sales history", async () => {

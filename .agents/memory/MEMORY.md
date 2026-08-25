@@ -12,3 +12,4 @@
 - [eBay verification deployment sync](ebay-verification-deployment-sync.md) — new callback secrets need an API restart in development and a publish before production can answer eBay challenges correctly.
 - [Catalogue cache leases](catalogue-cache-leases.md) — stale provider revalidation is DB-claimed; composed results never promote stale inputs to fresh.
 - [eBay completed-sales evidence](ebay-completed-sales-evidence.md) — Marketplace Insights sales require its Buy OAuth scope and canonical full card identity before pricing or snapshots are trustworthy.
+- [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.

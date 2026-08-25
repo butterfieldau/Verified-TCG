@@ -1,0 +1,636 @@
+# Stage 3A.1 — Fresh Database Migration Repair
+
+You are working on the **Verified TCG** repository.
+
+This task exists because Stage 3A runtime verification passed completely, but the repository's historical Drizzle migration chain cannot initialise a brand-new empty PostgreSQL database.
+
+This task is **database migration repair only**.
+
+Do NOT begin Stage 3B.
+
+---
+
+# CURRENT VERIFIED STATE
+
+Work from branch:
+
+`stage-3a/runtime-verification`
+
+Current verified Stage 3A state includes:
+
+* Stage 3A canonical catalogue foundation implemented
+* Stage 3A catalogue tests: **8/8 passed**
+* Existing JustTCG/catalogue provider tests: **23/23 passed**
+* Focused eBay completed-sales tests: **12/12 passed**
+* Focused telemetry suite: **58/58 passed**
+* Full API test suite: **404/404 passed**
+* Recursive repository test suite: **404/404 passed**
+* Workspace TypeScript: passed
+* API production build: passed
+* Scanner/collection/pricing/admin/governance regressions: passed
+* JustTCG remains active
+* Stage 3B has not started
+* No full catalogue import has occurred
+
+Recent commits on this branch include:
+
+`f2799fb9e53c512577ef89dc437ac488a0aef233`
+`Stabilize isolated telemetry and sale-history tests`
+
+`236b7613d7d50802566d939cea45e8df764a45da`
+`Document fresh database migration verification gap`
+
+Confirm exact HEAD before making changes.
+
+Do NOT merge to `main`.
+
+---
+
+# KNOWN DEFECT
+
+The official tracked Drizzle migration history:
+
+`0000 → 0001 → 0002 → 0003 → 0004 → 0005 → 0006`
+
+does NOT currently initialise a completely empty PostgreSQL database successfully.
+
+Observed problems:
+
+* `0004_governance.sql` references `admin_accounts`, but `admin_accounts` is not created anywhere in the recorded migration chain.
+* `0004_governance.sql` also depends on `push_tokens`, which appears to have historically been created outside the tracked migration history.
+* `0005_friendly_snapshot.sql` references `card_provider_mappings`, which is also absent from the tracked empty-database migration chain.
+* Existing development environments work because their schema contains historically-created tables that were likely introduced via `drizzle-kit push`, runtime setup, manual schema application, or another non-journalled process.
+* Stage 3A migration `0006_canonical_catalogue_foundation.sql` itself has already been physically validated and is not the root cause.
+
+---
+
+# PRIMARY GOAL
+
+Make this workflow succeed safely:
+
+`Completely empty PostgreSQL database`
+→ `official repository migration command`
+→ `0000 through latest migration`
+→ `complete valid Verified TCG schema`
+→ `application typechecks`
+→ `API builds`
+→ `404/404 tests pass`
+
+A new developer or CI environment must be able to initialise Verified TCG from scratch without depending on undocumented historical schema state.
+
+---
+
+# CRITICAL SAFETY RULE
+
+Do NOT blindly edit historical migrations that may already have been applied in existing environments.
+
+Before changing any migration:
+
+1. Audit how the missing tables are currently defined in the Drizzle schema.
+2. Determine when/how they were introduced.
+3. Determine whether any current development/production environment already considers `0004`, `0005`, or `0006` applied.
+4. Choose a repair strategy that does not corrupt or duplicate existing installations.
+
+Historical migration consistency matters.
+
+---
+
+# STEP 1 — AUDIT THE FULL CURRENT DATABASE SCHEMA
+
+Inspect all Drizzle schema files.
+
+Create an inventory of every table defined by the current application schema.
+
+For each table, identify:
+
+* table name
+* schema source file
+* first migration that creates it, if any
+* whether it exists in migrations at all
+* whether later migrations reference it
+* whether foreign keys depend on it
+* whether it appears to have historically been created through `drizzle-kit push` or another non-migration mechanism
+
+Pay special attention to:
+
+* `admin_accounts`
+* `push_tokens`
+* `card_provider_mappings`
+* collection tables
+* wishlist tables
+* auth/session tables
+* scanner-related tables
+* pricing tables
+* telemetry tables
+* governance tables
+* notification tables
+* portfolio tables
+* catalogue tables
+
+Return the complete migration-gap inventory in the report.
+
+---
+
+# STEP 2 — AUDIT MIGRATIONS 0000–0006
+
+Inspect every migration:
+
+* `0000_*`
+* `0001_*`
+* `0002_*`
+* `0003_*`
+* `0004_governance`
+* `0005_friendly_snapshot`
+* `0006_canonical_catalogue_foundation`
+
+Document:
+
+* tables created
+* columns added
+* indexes added
+* foreign keys added
+* tables assumed to pre-exist
+* order dependencies
+* missing prerequisites
+* any DDL that cannot succeed from a blank database
+
+Do not assume only the three currently-known tables are missing.
+
+Prove whether other historical migration gaps exist.
+
+---
+
+# STEP 3 — DETERMINE THE SAFE REPAIR STRATEGY
+
+Choose the safest migration repair strategy.
+
+Potential strategies may include:
+
+## Option A — Forward baseline repair migration
+
+Create a new migration that establishes historically missing schema safely before dependent migrations in fresh-install workflows.
+
+If ordering makes this impossible because `0004` fails before the repair migration can execute, do NOT pretend a later migration fixes the empty-database path.
+
+## Option B — Proper baseline migration
+
+Create a documented baseline/bootstrap migration representing the pre-`0004` schema for fresh installations.
+
+If using this approach, it must coexist safely with already-existing databases.
+
+## Option C — Amend historical migration chain
+
+Only modify historical migrations if repository/environment evidence proves this is safe and there is no applied-migration compatibility risk.
+
+This is generally less desirable.
+
+## Option D — Separate bootstrap migration path
+
+If the repository genuinely requires a baseline bootstrap before the journalled migrations, implement it explicitly and document it.
+
+Do not rely on undocumented `drizzle-kit push`.
+
+---
+
+# IMPORTANT
+
+The chosen strategy must support both:
+
+### Fresh database
+
+A completely empty PostgreSQL DB must initialise successfully.
+
+### Existing database
+
+An existing Verified TCG database containing the current schema must not:
+
+* lose data
+* recreate tables destructively
+* duplicate schema objects
+* drop columns
+* reset migration history
+* corrupt Drizzle journal state
+
+---
+
+# STEP 4 — DO NOT DESTROY EXISTING DATA
+
+No destructive operations against real application data.
+
+Do NOT use:
+
+* `DROP TABLE`
+* `TRUNCATE`
+* destructive `ALTER COLUMN`
+* blanket database resets
+* data wipes
+* migration-history deletion
+
+unless operating on a disposable test database.
+
+Production must never be used for verification.
+
+---
+
+# STEP 5 — CREATE AN ISOLATED EMPTY TEST DATABASE
+
+Use a completely disposable PostgreSQL database.
+
+The DB must begin with:
+
+* zero application tables
+* zero users
+* zero collection items
+* zero wishlist items
+
+Confirm the database name before writes.
+
+Do not use the existing populated `heliumdb`.
+
+Do not use production.
+
+---
+
+# STEP 6 — VERIFY THE OFFICIAL MIGRATION PATH
+
+Use the repository's real migration command.
+
+Do not use `drizzle-kit push` as a substitute unless the repository's intended official bootstrap process explicitly requires it.
+
+The verification target is:
+
+```text
+empty database
+↓
+official migration/bootstrap command
+↓
+all schema created
+↓
+latest migration recorded
+```
+
+All migrations through `0006` must result in a valid schema.
+
+If the repair introduces a newer migration such as `0007`, verify through that latest migration.
+
+---
+
+# STEP 7 — VERIFY ALL CURRENT APPLICATION TABLES EXIST
+
+After migration completes, compare the fresh database against the current Drizzle schema.
+
+Every required application table should exist.
+
+At minimum confirm all existing application domains:
+
+* authentication
+* users
+* sessions
+* collection
+* wishlist
+* scanner
+* catalogue provider/cache
+* pricing
+* PriceCharting mappings
+* portfolio
+* telemetry
+* admin
+* governance
+* notifications
+* support
+* canonical catalogue
+
+Also explicitly confirm:
+
+* `admin_accounts`
+* `push_tokens`
+* `card_provider_mappings`
+
+now exist through the documented migration/bootstrap path.
+
+---
+
+# STEP 8 — SCHEMA PARITY CHECK
+
+Compare the newly migrated empty DB against a schema-only snapshot of the current valid development database.
+
+Do NOT compare data.
+
+Compare schema objects such as:
+
+* tables
+* columns
+* data types
+* nullability
+* defaults
+* primary keys
+* foreign keys
+* unique constraints
+* indexes
+
+Report any differences.
+
+The fresh installation should represent the same intended application schema as the existing valid environment.
+
+Do not silently accept major schema drift.
+
+---
+
+# STEP 9 — IDEMPOTENCY / EXISTING DATABASE SAFETY
+
+Test the repair against a schema-only clone of an existing valid Verified TCG development database.
+
+No user data should be copied.
+
+Confirm the migration/bootstrap process does not:
+
+* fail because tables already exist
+* duplicate indexes
+* duplicate constraints
+* overwrite schema
+* destroy current tables
+* corrupt migration journal state
+
+If the repair intentionally applies only to fresh installs, prove that existing installations safely bypass it.
+
+---
+
+# STEP 10 — DRIZZLE JOURNAL
+
+Verify migration metadata remains coherent.
+
+Check:
+
+* migration ordering
+* unique indices
+* correct tags
+* timestamps/order
+* no duplicate migration entries
+* no fake entries inserted merely to make `status` look green
+
+If a new migration is introduced, register it correctly.
+
+Do not manually falsify migration history.
+
+---
+
+# STEP 11 — DATABASE BUILD
+
+Run:
+
+```bash
+pnpm --filter @workspace/db run build
+```
+
+Must pass.
+
+Remember `lib/db/dist` is git-ignored.
+
+---
+
+# STEP 12 — TYPESCRIPT
+
+Run full workspace typecheck.
+
+At minimum:
+
+```bash
+pnpm --filter @workspace/db exec tsc --noEmit
+pnpm --filter @workspace/api-server exec tsc --noEmit
+pnpm --filter @workspace/vtcg-web exec tsc --noEmit
+pnpm --filter @workspace/verified-tcg exec tsc --noEmit
+```
+
+Also run the repository's root/workspace typecheck command if available.
+
+Target:
+
+**0 errors**
+
+Do not use:
+
+* `any`
+* `@ts-ignore`
+* `@ts-nocheck`
+
+as migration repair workarounds.
+
+---
+
+# STEP 13 — API PRODUCTION BUILD
+
+Run:
+
+```bash
+pnpm --filter @workspace/api-server run build
+```
+
+Must pass.
+
+---
+
+# STEP 14 — RUN DATABASE/MIGRATION TESTS
+
+Add tests that specifically prove:
+
+### Fresh DB bootstrap
+
+A blank PostgreSQL database can initialise successfully.
+
+### Missing historical tables
+
+Verify the official setup path creates:
+
+* `admin_accounts`
+* `push_tokens`
+* `card_provider_mappings`
+
+before code requiring them is used.
+
+### Migration order
+
+The complete migration chain succeeds.
+
+### Schema parity
+
+Important current schema objects exist after fresh bootstrap.
+
+### Existing DB safety
+
+The repair does not destroy or duplicate existing schema.
+
+---
+
+# STEP 15 — RUN ALL EXISTING TESTS
+
+After migration repair, run the complete suite.
+
+Current baseline:
+
+**404 / 404 passed**
+
+The repaired migration architecture must not regress this.
+
+Run:
+
+* Stage 3A catalogue tests
+* JustTCG catalogue/provider tests
+* pricing tests
+* pricing routes
+* scanner tests
+* collection tests
+* eBay tests
+* telemetry
+* admin
+* governance
+* auth
+* subscription
+* events
+* trust
+* portfolio/performance
+* complete API suite
+* recursive repository test command
+
+Final target:
+
+**404/404 or higher if new tests are added**
+
+**0 failing tests**
+
+---
+
+# STEP 16 — SECURITY
+
+Do not introduce:
+
+* DB credentials into source
+* secrets into migration files
+* hard-coded `DATABASE_URL`
+* provider tokens
+* production database identifiers
+* development passwords
+
+No secret should enter Git history.
+
+---
+
+# STEP 17 — DO NOT START STAGE 3B
+
+Do not:
+
+* ingest catalogue data
+* activate import jobs
+* cut over public catalogue routes
+* migrate scanner identity
+* migrate collections to UUID catalogue IDs
+* alter PriceCharting mappings
+* remove JustTCG
+* build market intelligence features
+
+This task stops once fresh-install migration safety is fixed and verified.
+
+---
+
+# STEP 18 — COMMIT
+
+Keep all work on:
+
+`stage-3a/runtime-verification`
+
+Do not merge to `main`.
+
+If changes are required, commit them with a clear message such as:
+
+`Repair fresh database migration bootstrap`
+
+Do not create unrelated commits.
+
+---
+
+# REQUIRED COMPLETION REPORT
+
+Return exactly:
+
+1. Branch
+2. Starting commit SHA
+3. Final commit SHA
+4. Working-tree status
+5. Full table inventory count
+6. Tables missing from historical migration chain
+7. Migration dependencies discovered
+8. Root cause of fresh-install failure
+9. Repair strategy chosen
+10. Why that strategy is safer than alternatives
+11. Historical migrations modified: yes/no
+12. New migration/bootstrap files created
+13. Drizzle journal changes
+14. Fresh empty database used
+15. Confirmation it contained no user data
+16. Official migration/bootstrap command used
+17. Fresh DB migration result
+18. Latest migration reached
+19. `admin_accounts` fresh-install result
+20. `push_tokens` fresh-install result
+21. `card_provider_mappings` fresh-install result
+22. Stage 3A catalogue table result
+23. Total tables present after fresh bootstrap
+24. Schema parity result versus valid development schema
+25. Missing columns/constraints/indexes, if any
+26. Existing-database compatibility result
+27. Idempotency result
+28. DB build result
+29. Workspace TypeScript result
+30. API build result
+31. New migration tests result
+32. Stage 3A catalogue tests
+33. JustTCG/catalogue tests
+34. Pricing tests
+35. Pricing-route tests
+36. Scanner tests
+37. Collection tests
+38. eBay tests
+39. Telemetry tests
+40. Governance/admin tests
+41. Full API suite total
+42. Recursive repository suite total
+43. Total tests passed
+44. Total tests failed
+45. Security scan result
+46. Production database touched: yes/no
+47. Production/user data modified: yes/no
+48. JustTCG still active: yes/no
+49. Stage 3B work performed: yes/no
+50. Full catalogue import performed: yes/no
+51. Files changed
+52. Commit created
+53. Remaining blockers
+54. Final recommendation: safe/not safe to merge Stage 3A
+55. Final recommendation: safe/not safe to begin Stage 3B
+
+---
+
+# PASS CRITERIA
+
+Do not approve the migration repair unless all of these are true:
+
+* a completely empty PostgreSQL database can initialise successfully
+* the process is documented and reproducible
+* `admin_accounts` exists
+* `push_tokens` exists
+* `card_provider_mappings` exists
+* migrations/bootstrap complete through latest revision
+* Stage 3A catalogue schema exists
+* schema closely matches the current valid application schema
+* existing databases remain safe
+* no production data is modified
+* DB build passes
+* TypeScript passes
+* API build passes
+* migration tests pass
+* complete regression suite passes
+* JustTCG remains active
+* no Stage 3B work occurs
+
+The goal is simple:
+
+**A brand-new Verified TCG environment must be able to initialise its database from scratch safely, using a documented repository-controlled process.**

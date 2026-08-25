@@ -1167,20 +1167,23 @@ describe("Integration observability", () => {
         status: telemetryEventsTable.status,
         statusCode: telemetryEventsTable.statusCode,
         durationMs: telemetryEventsTable.durationMs,
+        correlationId: telemetryEventsTable.correlationId,
         metadata: telemetryEventsTable.metadata,
       })
       .from(telemetryEventsTable)
       .where(
         and(
           eq(telemetryEventsTable.action, "integration.justtcg.request"),
+          eq(telemetryEventsTable.correlationId, TEST_CORRELATION_ID),
           gte(telemetryEventsTable.recordedAt, since),
         ),
       )
       .orderBy(telemetryEventsTable.recordedAt)
-      .limit(5);
+      .limit(1);
 
     const row = rows.find((r) => (r.metadata as Record<string, unknown> | null)?.["operation"] === "cards");
     assert.ok(row, "expected persisted integration.justtcg.request event");
+    assert.strictEqual(row!.correlationId, TEST_CORRELATION_ID);
     assert.strictEqual(row!.category, "integration");
     assert.strictEqual(row!.status, "ok");
     assert.strictEqual(row!.statusCode, 200);
