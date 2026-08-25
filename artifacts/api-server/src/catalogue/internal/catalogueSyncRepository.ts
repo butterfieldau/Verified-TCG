@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, sql } from "drizzle-orm";
 import {
   catalogueCacheEntriesTable,
   catalogueCardVariantsTable,
@@ -67,8 +67,14 @@ export async function* cachedJustTcgCards(
     setExternalId?: string | null;
     cardExternalId?: string | null;
     maxCacheEntries?: number;
+    afterCursor?: string | null;
   } = {},
 ): AsyncGenerator<CatalogueImportSourceRecord> {
+  const separator = input.afterCursor?.lastIndexOf(":") ?? -1;
+  const afterCacheKey =
+    separator > 0 ? input.afterCursor!.slice(0, separator) : null;
+  const afterCardIndex =
+    separator > 0 ? Number(input.afterCursor!.slice(separator + 1)) : -1;
   let offset = 0;
   let readEntries = 0;
   while (
@@ -80,6 +86,8 @@ export async function* cachedJustTcgCards(
       conditions.push(
         gt(catalogueCacheEntriesTable.updatedAt, input.updatedAfter),
       );
+    if (afterCacheKey)
+      conditions.push(gte(catalogueCacheEntriesTable.cacheKey, afterCacheKey));
     const rows = await db
       .select({
         cacheKey: catalogueCacheEntriesTable.cacheKey,
@@ -95,6 +103,7 @@ export async function* cachedJustTcgCards(
       readEntries++;
       const cards = providerCards(row.body);
       for (let index = 0; index < cards.length; index++) {
+        if (row.cacheKey === afterCacheKey && index <= afterCardIndex) continue;
         const card = cards[index]!;
         const id =
           typeof card.id === "string" || typeof card.id === "number"
@@ -133,6 +142,18 @@ export async function latestSuccessfulJustTcgImport(): Promise<Date | null> {
       .limit(1)
   )[0];
   return row?.completedAt ?? null;
+}
+
+export async function importJobCursor(jobId: string): Promise<string | null> {
+  const row = (
+    await db
+      .select({ cursor: catalogueImportJobsTable.cursor })
+      .from(catalogueImportJobsTable)
+      .where(eq(catalogueImportJobsTable.id, jobId))
+      .limit(1)
+  )[0];
+  if (!row) throw new Error("Catalogue import job was not found");
+  return row.cursor;
 }
 
 export function createDatabaseCatalogueImportRepository(): CatalogueImportRepository {

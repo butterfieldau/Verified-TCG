@@ -7,6 +7,7 @@ import {
   compareCachedJustTcgCoverage,
   createDatabaseCatalogueImportRepository,
   getCatalogueHealth,
+  importJobCursor,
   latestSuccessfulJustTcgImport,
 } from "../catalogue/internal/catalogueSyncRepository.js";
 
@@ -57,10 +58,13 @@ if (jobType === "card" && !cardExternalId)
 
 const priorSuccess =
   jobType === "incremental" ? await latestSuccessfulJustTcgImport() : null;
+const resumeJobId = option("--resume");
+const afterCursor = resumeJobId ? await importJobCursor(resumeJobId) : null;
 const source = cachedJustTcgCards({
   updatedAfter: priorSuccess,
   setExternalId,
   cardExternalId,
+  afterCursor,
   maxCacheEntries: positiveOption("--max-cache-entries"),
 });
 const result = await runCatalogueImport(
@@ -77,6 +81,7 @@ const result = await runCatalogueImport(
           ? "full_cache_scan"
           : undefined,
       cacheEntriesBound: positiveOption("--max-cache-entries") ?? null,
+      resumedFromJobId: resumeJobId,
     },
   },
 );

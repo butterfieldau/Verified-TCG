@@ -324,5 +324,6 @@ describe("Stage 3B cache-backed catalogue import", () => {
     assert.equal(result.status, "failed");
     assert.equal(repository.cards.size, 1);
     assert.equal([...repository.jobs.values()][0]?.status, "failed");
+    assert.equal([...repository.jobs.values()][0]?.cursor, "cache-a:0");
   });
 });

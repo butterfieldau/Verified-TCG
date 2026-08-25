@@ -33,6 +33,7 @@ pnpm --filter @workspace/api-server run catalogue:sync
 pnpm --filter @workspace/api-server run catalogue:sync:incremental
 pnpm --filter @workspace/api-server run catalogue:sync:set -- --set <justtcg-set-id>
 pnpm --filter @workspace/api-server run catalogue:sync:card -- --card <justtcg-card-id>
+pnpm --filter @workspace/api-server run catalogue:sync -- --resume <failed-import-job-uuid>
 pnpm --filter @workspace/api-server run catalogue:health
 pnpm --filter @workspace/api-server run catalogue:shadow -- --max-records 500
 ```
@@ -42,6 +43,10 @@ sync imports cache entries updated since the last completed import. When there
 is no prior completed job, it truthfully falls back to a bounded full cache
 scan; it does not claim provider updated-since support that the current
 JustTCG client does not expose.
+
+Interrupted cache imports checkpoint the last `cache_key:index` cursor after
+each batch. `--resume <job-id>` starts a new job after that stored cursor; it
+does not modify the original job or replay its successfully processed cards.
 
 ## Jobs, errors, and security
 
