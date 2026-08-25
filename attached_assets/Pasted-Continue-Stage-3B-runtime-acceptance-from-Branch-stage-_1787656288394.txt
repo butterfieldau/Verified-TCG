@@ -1,0 +1,46 @@
+Continue Stage 3B runtime acceptance from:
+Branch: stage-3b/catalogue-import-sync
+Expected HEAD: be625accfd4ab85a8f41e522ffbcef552b826d77
+Fetch and check out that exact revision. Do not merge to main and do not begin Stage 3C.
+The implementation now supports the required safe two-database topology:
+DATABASE_URL = isolated disposable PostgreSQL write target
+CATALOGUE_SOURCE_DATABASE_URL = existing HeliumDB catalogue-cache source, strictly read-only
+Do not ask me to provide database connection strings in chat. Resolve/configure these privately using the Replit database/environment facilities already available to this project.
+CATALOGUE_SOURCE_DATABASE_URL may access HeliumDB only for read-only catalogue-cache retrieval. Do not modify HeliumDB.
+Create a fresh disposable Stage 3B PostgreSQL database and set that as DATABASE_URL.
+Before continuing, prove:
+write target is not HeliumDB
+write target is not production
+disposable DB has zero users
+zero collection items
+zero wishlist items
+source DB is opened read-only
+Then complete the Stage 3B runtime acceptance end-to-end:
+Bootstrap the disposable DB through the approved Stage 3A.1 bootstrap.
+Run the real cache-backed full catalogue import using HeliumDB only as the read-only source.
+Record actual games, sets, cards, variants, images, aliases, external IDs and provenance created.
+Record failed/ambiguous records.
+Run the identical import a second time and prove idempotency.
+Run catalogue:health.
+Run catalogue:shadow against the real cached catalogue.
+Report mapping coverage, missing mappings, mismatches and conflicts.
+Test changed-record updates.
+Test external-ID conflict protection.
+Test resume/checkpoint behaviour.
+Run all Stage 3A and Stage 3B tests.
+Run JustTCG/catalogue tests.
+Run pricing and pricing-route tests.
+Run scanner and collection tests.
+Run auth/subscription/admin/governance/eBay/telemetry/events/trust tests.
+Run the complete API suite.
+Run the recursive repository suite.
+Run full workspace typecheck.
+Run DB build and API production build.
+Baseline before Stage 3B was 404/404. Stage 3B adds new tests, so final total must be greater than 404 with zero failures.
+Do not require a JustTCG live API credential to approve Stage 3B if the real HeliumDB JustTCG cache provides sufficient real catalogue data to validate backfill, reconciliation, idempotency and shadow coverage.
+A bounded live JustTCG test may be performed only if a safe credential already exists in Replit.
+Fix any genuine Stage 3B importer defects discovered during the real backfill, commit those fixes on this branch, and rerun verification.
+Do not modify production/user data.
+Do not perform public catalogue cutover.
+Do not begin Stage 3C.
+Return the final Stage 3B completion report with the actual runtime metrics and final commit SHA.
