@@ -70,5 +70,8 @@ or rehosted. Variants are created only where JustTCG exposes explicit variant,
 finish, edition, stamp, or foil evidence.
 
 `catalogue:shadow` is a read-only bounded comparison between durable JustTCG
-cache records and canonical mappings. It reports mapping coverage, missing
-cards, set mismatches, and collector-number mismatches for Stage 3C readiness.
+cache records and canonical mappings. When `CATALOGUE_SOURCE_DATABASE_URL` is
+configured, it reads that cache through the same `BEGIN READ ONLY` source
+connection as imports; otherwise it compares the local cache. It reports
+mapping coverage, missing cards, set mismatches, and collector-number
+mismatches for Stage 3C readiness.

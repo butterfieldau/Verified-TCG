@@ -351,6 +351,7 @@ export async function getCatalogueHealth(): Promise<CatalogueHealth> {
     sets: number;
     cards: number;
     justtcg_cards: number;
+    justtcg_mapped_cards: number;
     cards_without_images: number;
     unresolved_records: number;
     failed_records: number;
@@ -362,6 +363,7 @@ export async function getCatalogueHealth(): Promise<CatalogueHealth> {
       (SELECT COUNT(*)::int FROM catalogue_sets) AS sets,
       (SELECT COUNT(*)::int FROM catalogue_cards) AS cards,
       (SELECT COUNT(*)::int FROM catalogue_external_ids WHERE provider_key = 'justtcg' AND entity_type = 'card') AS justtcg_cards,
+       (SELECT COUNT(DISTINCT entity_id)::int FROM catalogue_external_ids WHERE provider_key = 'justtcg' AND entity_type = 'card') AS justtcg_mapped_cards,
       (SELECT COUNT(*)::int FROM catalogue_cards c WHERE NOT EXISTS (SELECT 1 FROM catalogue_card_images i WHERE i.card_id = c.id)) AS cards_without_images,
       (SELECT COUNT(*)::int FROM catalogue_import_errors WHERE error_code IN ('AMBIGUOUS_IDENTITY', 'EXTERNAL_ID_CONFLICT')) AS unresolved_records,
       (SELECT COUNT(*)::int FROM catalogue_import_errors) AS failed_records,
@@ -385,7 +387,7 @@ export async function getCatalogueHealth(): Promise<CatalogueHealth> {
     failedRecords: Number(row.failed_records),
     mappingCoveragePercent: Number(row.cards)
       ? Number(
-          ((Number(row.justtcg_cards) / Number(row.cards)) * 100).toFixed(2),
+          ((Number(row.justtcg_mapped_cards) / Number(row.cards)) * 100).toFixed(2),
         )
       : 0,
   };
@@ -425,6 +427,7 @@ export interface CatalogueShadowComparison {
  */
 export async function compareCachedJustTcgCoverage(
   maxRecords = 500,
+  source?: AsyncIterable<CatalogueImportSourceRecord>,
 ): Promise<CatalogueShadowComparison> {
   const result: CatalogueShadowComparison = {
     recordsRead: 0,
@@ -435,8 +438,8 @@ export async function compareCachedJustTcgCoverage(
     unsupported: 0,
   };
   const seen = new Set<string>();
-  for await (const source of cachedJustTcgCards()) {
-    const candidate = normalizeJustTcgCard(source.card);
+  for await (const sourceRecord of source ?? cachedJustTcgCards()) {
+    const candidate = normalizeJustTcgCard(sourceRecord.card);
     if (!candidate.externalId || seen.has(candidate.externalId)) continue;
     seen.add(candidate.externalId);
     result.recordsRead++;

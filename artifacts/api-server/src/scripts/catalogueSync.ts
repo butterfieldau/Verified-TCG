@@ -28,10 +28,14 @@ if (mode === "health") {
   process.exit(0);
 }
 if (mode === "shadow") {
+  const sourceDatabaseUrl = process.env.CATALOGUE_SOURCE_DATABASE_URL;
   console.log(
     JSON.stringify(
       await compareCachedJustTcgCoverage(
         positiveOption("--max-records") ?? 500,
+        sourceDatabaseUrl
+          ? readOnlyJustTcgCacheCards(sourceDatabaseUrl)
+          : undefined,
       ),
       null,
       2,
