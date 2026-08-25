@@ -1,14 +1,19 @@
 import { and, eq, ilike, isNull } from "drizzle-orm";
 import {
+  catalogueAliasesTable,
+  catalogueCardImagesTable,
   catalogueCardVariantsTable,
   catalogueCardsTable,
   catalogueExternalIdsTable,
   catalogueGamesTable,
+  catalogueImportErrorsTable,
+  catalogueImportJobsTable,
   catalogueSetsTable,
   catalogueSourceRecordsTable,
   db,
 } from "@workspace/db";
 import { normalizeCollectorNumber } from "./catalogueNormalisation.js";
+import { normalizeForMatching } from "./catalogueNormalisation.js";
 
 type EntityType = "game" | "set" | "card" | "variant";
 
@@ -31,6 +36,23 @@ export async function getSetById(id: string) {
         .select()
         .from(catalogueSetsTable)
         .where(eq(catalogueSetsTable.id, id))
+        .limit(1)
+    )[0] ?? null
+  );
+}
+
+export async function findSetByGameSlug(gameId: string, slug: string) {
+  return (
+    (
+      await db
+        .select()
+        .from(catalogueSetsTable)
+        .where(
+          and(
+            eq(catalogueSetsTable.gameId, gameId),
+            eq(catalogueSetsTable.slug, slug),
+          ),
+        )
         .limit(1)
     )[0] ?? null
   );
@@ -232,6 +254,33 @@ export async function upsertCanonicalCard(input: {
   return created!;
 }
 
+/** Updates mutable provider fields without ever changing a card's identity. */
+export async function updateCanonicalCard(input: {
+  id: string;
+  name: string;
+  collectorNumber?: string | null;
+  language?: string | null;
+  rarity?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const [row] = await db
+    .update(catalogueCardsTable)
+    .set({
+      name: input.name,
+      collectorNumber: input.collectorNumber ?? null,
+      collectorNumberNormalized: normalizeCollectorNumber(
+        input.collectorNumber,
+      ),
+      language: input.language ?? null,
+      rarity: input.rarity ?? null,
+      metadata: input.metadata ?? {},
+      updatedAt: new Date(),
+    })
+    .where(eq(catalogueCardsTable.id, input.id))
+    .returning();
+  return row!;
+}
+
 export async function upsertCardVariant(input: {
   cardId: string;
   variantKey: string;
@@ -264,6 +313,75 @@ export async function upsertCardVariant(input: {
     })
     .returning();
   return row!;
+}
+
+export async function upsertCatalogueImage(input: {
+  cardId: string;
+  variantId?: string | null;
+  url: string;
+  source: string;
+}) {
+  const variantCondition = input.variantId
+    ? eq(catalogueCardImagesTable.variantId, input.variantId)
+    : isNull(catalogueCardImagesTable.variantId);
+  const existing = (
+    await db
+      .select()
+      .from(catalogueCardImagesTable)
+      .where(
+        and(
+          eq(catalogueCardImagesTable.cardId, input.cardId),
+          variantCondition,
+          eq(catalogueCardImagesTable.url, input.url),
+          eq(catalogueCardImagesTable.imageType, "front"),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (existing) return { row: existing, created: false };
+  const [row] = await db
+    .insert(catalogueCardImagesTable)
+    .values({
+      cardId: input.cardId,
+      variantId: input.variantId ?? null,
+      url: input.url,
+      imageType: "front",
+      source: input.source,
+      isPrimary: true,
+    })
+    .returning();
+  return { row: row!, created: true };
+}
+
+export async function upsertCatalogueAlias(input: {
+  entityType: EntityType;
+  entityId: string;
+  alias: string;
+  aliasType: string;
+  source: string;
+}) {
+  const aliasNormalized = normalizeForMatching(input.alias);
+  const existing = (
+    await db
+      .select()
+      .from(catalogueAliasesTable)
+      .where(
+        and(
+          eq(catalogueAliasesTable.entityType, input.entityType),
+          eq(catalogueAliasesTable.entityId, input.entityId),
+          eq(catalogueAliasesTable.aliasNormalized, aliasNormalized),
+          eq(catalogueAliasesTable.aliasType, input.aliasType),
+          eq(catalogueAliasesTable.source, input.source),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (existing) return { row: existing, created: false };
+  const [row] = await db
+    .insert(catalogueAliasesTable)
+    .values({ ...input, aliasNormalized })
+    .returning();
+  return { row: row!, created: true };
 }
 
 export async function upsertExternalIdentity(input: {
@@ -348,6 +466,104 @@ export async function recordCatalogueProvenance(input: {
         lastImportedAt: new Date(),
         updatedAt: new Date(),
       },
+    })
+    .returning();
+  return row!;
+}
+
+export async function findCatalogueProvenance(input: {
+  providerKey: string;
+  entityType: EntityType;
+  externalId: string;
+}) {
+  return (
+    (
+      await db
+        .select()
+        .from(catalogueSourceRecordsTable)
+        .where(
+          and(
+            eq(catalogueSourceRecordsTable.providerKey, input.providerKey),
+            eq(catalogueSourceRecordsTable.entityType, input.entityType),
+            eq(catalogueSourceRecordsTable.externalId, input.externalId),
+          ),
+        )
+        .limit(1)
+    )[0] ?? null
+  );
+}
+
+export async function createCatalogueImportJob(input: {
+  providerKey: string;
+  jobType: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const [row] = await db
+    .insert(catalogueImportJobsTable)
+    .values({
+      providerKey: input.providerKey,
+      jobType: input.jobType,
+      status: "queued",
+      metadata: input.metadata ?? {},
+    })
+    .returning();
+  return row!;
+}
+
+export async function updateCatalogueImportJob(input: {
+  id: string;
+  status?: string;
+  cursor?: string | null;
+  counters?: {
+    recordsRead: number;
+    recordsCreated: number;
+    recordsUpdated: number;
+    recordsSkipped: number;
+    recordsFailed: number;
+  };
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  completed?: boolean;
+}) {
+  await db
+    .update(catalogueImportJobsTable)
+    .set({
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+      ...(input.counters
+        ? {
+            recordsRead: input.counters.recordsRead,
+            recordsCreated: input.counters.recordsCreated,
+            recordsUpdated: input.counters.recordsUpdated,
+            recordsSkipped: input.counters.recordsSkipped,
+            recordsFailed: input.counters.recordsFailed,
+          }
+        : {}),
+      ...(input.errorCode !== undefined ? { errorCode: input.errorCode } : {}),
+      ...(input.errorMessage !== undefined
+        ? { errorMessage: input.errorMessage }
+        : {}),
+      ...(input.status === "running" ? { startedAt: new Date() } : {}),
+      ...(input.completed ? { completedAt: new Date() } : {}),
+    })
+    .where(eq(catalogueImportJobsTable.id, input.id));
+}
+
+export async function recordCatalogueImportError(input: {
+  importJobId: string;
+  providerKey: string;
+  externalId?: string | null;
+  entityType: string;
+  errorCode: string;
+  errorMessage: string;
+  payload?: Record<string, unknown> | null;
+}) {
+  const [row] = await db
+    .insert(catalogueImportErrorsTable)
+    .values({
+      ...input,
+      externalId: input.externalId ?? null,
+      payload: input.payload ?? null,
     })
     .returning();
   return row!;

@@ -13,3 +13,4 @@
 - [Catalogue cache leases](catalogue-cache-leases.md) — stale provider revalidation is DB-claimed; composed results never promote stale inputs to fresh.
 - [eBay completed-sales evidence](ebay-completed-sales-evidence.md) — Marketplace Insights sales require its Buy OAuth scope and canonical full card identity before pricing or snapshots are trustworthy.
 - [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.
+- [Catalogue source validation](catalogue-source-validation.md) — source-safe imports need a disposable target and must avoid API startup maintenance against HeliumDB.
