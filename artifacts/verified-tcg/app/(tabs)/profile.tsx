@@ -122,7 +122,7 @@ export default function ProfileScreen() {
           {isAuthenticated && user?.username && (
             <Pressable
               onPress={() => {
-                const url = `https://verifiedtcg.com/c/${user.username}`;
+                const url = `https://verifiedtcg.co/c/${user.username}`;
                 Share.share({
                   title: `${user.displayName ?? user.username}'s Verified TCG Profile`,
                   message: `Check out my Verified TCG profile!\n${url}`,

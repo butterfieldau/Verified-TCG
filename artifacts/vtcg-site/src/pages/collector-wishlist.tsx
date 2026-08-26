@@ -113,7 +113,7 @@ export default function CollectorWishlistPage() {
               @{username} keeps their wishlist private. Follow them on the app to connect.
             </p>
             <a
-              href="https://verifiedtcg.com"
+              href="https://verifiedtcg.co"
               className="mt-2 inline-flex items-center gap-2 bg-red-600 hover:bg-red-500 transition-colors text-white text-sm font-medium px-5 py-2.5 rounded-xl"
             >
               Get the App
@@ -183,7 +183,7 @@ export default function CollectorWishlistPage() {
                   Have any of these cards? Connect on Verified TCG to make a trade offer.
                 </p>
                 <a
-                  href="https://verifiedtcg.com"
+                  href="https://verifiedtcg.co"
                   className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-500 transition-colors text-white text-sm font-medium px-5 py-2.5 rounded-xl"
                 >
                   Open in App

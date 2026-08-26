@@ -572,7 +572,7 @@ setInterval(() => {
 // ── Email helper ──────────────────────────────────────────────────────────────
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.RESET_FROM_EMAIL ?? "noreply@verifiedtcg.com";
+const FROM_EMAIL = process.env.RESET_FROM_EMAIL ?? "noreply@verifiedtcg.co";
 const APP_SCHEME = "verified-tcg";
 const RESET_TOKEN_TTL_MINUTES = 60;
 

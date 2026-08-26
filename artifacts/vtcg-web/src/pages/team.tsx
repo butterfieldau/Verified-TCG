@@ -296,7 +296,7 @@ export default function TeamPage() {
             </label>
             <label className="block text-xs font-bold text-muted-foreground">
               EMAIL
-              <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground" placeholder="staff@verifiedtcg.com" />
+              <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground" placeholder="staff@verifiedtcg.co" />
             </label>
             <label className="block text-xs font-bold text-muted-foreground">
               ROLE

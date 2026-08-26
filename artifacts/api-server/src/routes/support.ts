@@ -156,8 +156,8 @@ router.post("/support/contact", async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: "Verified TCG <support@verifiedtcg.com>",
-          to: ["support@verifiedtcg.com"],
+          from: "Verified TCG <support@verifiedtcg.co>",
+          to: ["support@verifiedtcg.co"],
           reply_to: cleanEmail,
           subject: `[Support] ${cleanCategory}: ${cleanSubject}`,
           text: [
