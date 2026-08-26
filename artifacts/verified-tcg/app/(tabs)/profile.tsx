@@ -116,15 +116,10 @@ export default function ProfileScreen() {
     .join(' · ');
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: C.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
-      showsVerticalScrollIndicator={false}
-      contentInsetAdjustmentBehavior="never"
-      automaticallyAdjustContentInsets={false}
-    >
-      {/* Header */}
-      <View style={styles.header}>
+    <View style={[styles.screen, { backgroundColor: C.background, paddingTop: topPad + 8 }]}>
+      {/* Keep the safe-area header outside the scroll view so an iOS pull
+          gesture cannot move it below the status bar. */}
+      <View style={[styles.header, styles.fixedHeader]}>
         <Text style={styles.title}>Profile</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {isAuthenticated && user?.username && (
@@ -157,6 +152,13 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, { paddingBottom: TAB_H + 24 }]}
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+      >
       {!isAuthenticated && (
         <View style={styles.guestBanner}>
           <View style={styles.guestBannerIcon}>
@@ -435,12 +437,14 @@ export default function ProfileScreen() {
       )}
 
       <Text style={styles.versionText}>Verified TCG v1.0.0</Text>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  scroll: { flex: 1 },
   content: { paddingHorizontal: 20 },
   header: {
     flexDirection: 'row',
@@ -448,6 +452,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 18,
   },
+  fixedHeader: { paddingHorizontal: 20 },
   title: { fontSize: 28, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.3 },
   editBtn: {
     width: 40,
