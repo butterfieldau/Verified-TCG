@@ -101,9 +101,14 @@ export default function ProfileScreen() {
   };
   const profileCardBg = THEME_CARD_COLORS[profileTheme] ?? C.card;
 
-  // Avoid double-applying the top inset when the iOS liquid-glass NativeTabs
-  // container has already accounted for the status-bar safe area.
-  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
+  // NativeTabs reports a doubled top inset for this ScrollView on current
+  // liquid-glass iOS. Keep one normal status-bar inset so the title clears the
+  // clock, without recreating the oversized black band.
+  const topPad = Platform.OS === 'web'
+    ? 67
+    : isLiquidGlassAvailable()
+      ? Math.min(insets.top, 60)
+      : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const tcgNames = (user?.tcgPreferences ?? [])
