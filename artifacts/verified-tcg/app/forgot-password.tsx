@@ -73,8 +73,9 @@ export default function ForgotPasswordScreen() {
             </View>
             <Text style={styles.heading}>Check your email</Text>
             <Text style={styles.sub}>
-              We sent a reset link to{'\n'}
+              If an account exists for{'\n'}
               <Text style={styles.email}>{email}</Text>
+              {', '}a reset link will arrive shortly. Check your spam folder if you do not see it.
             </Text>
             <Button fullWidth size="lg" onPress={() => router.push('/sign-in')} style={styles.mt24}>
               Back to Sign In

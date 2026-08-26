@@ -581,9 +581,38 @@ function getResendClient(): Resend | null {
   return new Resend(RESEND_API_KEY);
 }
 
+function getPasswordResetWebLink(plainToken: string): string | null {
+  const configuredUrl = process.env.PASSWORD_RESET_WEB_URL?.trim();
+  const expoDevDomain = process.env.REPLIT_EXPO_DEV_DOMAIN?.trim();
+  const baseUrl = configuredUrl
+    ? configuredUrl
+    : expoDevDomain
+      ? `https://${expoDevDomain}/reset-password`
+      : null;
+
+  if (!baseUrl) return null;
+
+  try {
+    const url = new URL(baseUrl);
+    if (!url.pathname.endsWith("/reset-password")) {
+      url.pathname = `${url.pathname.replace(/\/$/, "")}/reset-password`;
+    }
+    url.searchParams.set("token", plainToken);
+    return url.toString();
+  } catch {
+    console.warn("[password-reset] PASSWORD_RESET_WEB_URL is invalid.");
+    return null;
+  }
+}
+
 async function sendPasswordResetEmail(toEmail: string, plainToken: string): Promise<void> {
   const resend = getResendClient();
   const deepLink = `${APP_SCHEME}://reset-password?token=${plainToken}`;
+  const webLink = getPasswordResetWebLink(plainToken);
+  const expoGoDomain = process.env.REPLIT_EXPO_DEV_DOMAIN?.trim();
+  const expoGoLink = expoGoDomain
+    ? `exp://${expoGoDomain}/--/reset-password?token=${plainToken}`
+    : null;
 
   if (!resend) {
     console.warn("[password-reset] RESEND_API_KEY not set; reset email not delivered.");
@@ -605,14 +634,20 @@ async function sendPasswordResetEmail(toEmail: string, plainToken: string): Prom
           <h2 style="color: #1a1a2e;">Reset your password</h2>
           <p>We received a request to reset the password for your Verified TCG account.</p>
           <p>Tap the button below to choose a new password. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.</p>
-          <a href="${deepLink}"
+          <a href="${webLink ?? deepLink}"
              style="display:inline-block;padding:14px 28px;background:#6c63ff;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">
             Reset Password
           </a>
           <p style="color:#888;font-size:13px;">
-            If the button doesn't work, open your Verified TCG app and use this link:<br>
+            If you have the installed Verified TCG app, open this link directly:<br>
             <code>${deepLink}</code>
           </p>
+          ${expoGoLink ? `
+            <p style="color:#888;font-size:13px;">
+              Using Expo Go during development? Open this link in Expo Go:<br>
+              <code>${expoGoLink}</code>
+            </p>
+          ` : ""}
           <p style="color:#888;font-size:13px;">
             If you didn't request a password reset, you can safely ignore this email.
           </p>
