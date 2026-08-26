@@ -9,9 +9,10 @@ import {
 } from "../lib/catalogueProvider.js";
 import {
   canonicalCatalogueReadsEnabled,
-  findCanonicalPublicCard,
+  readCanonicalPublicCard,
+  readCanonicalPublicCards,
   recordCatalogueReadMetric,
-  searchCanonicalPublicCards,
+  deduplicatePublicCards,
 } from "../catalogue/internal/catalogueReadService.js";
 
 const router = Router();
@@ -132,21 +133,126 @@ router.get("/catalog/cards", async (req, res) => {
       return res.status(400).json({ error: "Provide q or game" });
 
     if (canonicalCatalogueReadsEnabled() && query) {
-      const canonical = await searchCanonicalPublicCards({
+      const canonicalRead = await readCanonicalPublicCards({
         query,
         game: game || undefined,
         limit,
         offset,
       });
+      const canonical = canonicalRead.value;
       if (canonical.length) {
+        const fallbackResult = await justTcg(
+          `/cards?${new URLSearchParams({
+            ...(query ? { q: query } : {}),
+            ...(game ? { game } : {}),
+            limit: String(limit),
+            offset: String(offset),
+            include_price_history: "false",
+          }).toString()}`,
+        );
+        const fallbackCards =
+          fallbackResult.status < 400 &&
+          fallbackResult.body &&
+          typeof fallbackResult.body === "object" &&
+          Array.isArray(
+            (fallbackResult.body as { data?: unknown }).data,
+          )
+            ? (
+                (fallbackResult.body as {
+                  data: Array<Record<string, unknown>>;
+                }).data
+              ).map(enrichCard)
+            : [];
+        if (fallbackResult.status >= 400) {
+          recordCatalogueReadMetric(
+            "search",
+            canonicalRead.outcome,
+            canonicalRead.durationMs,
+            "canonical",
+          );
+          return res.json({
+            data: canonical,
+            source: "VerifiedTCG",
+            canonical: true,
+            cached: fallbackResult.cached ?? false,
+          });
+        }
+        if (!fallbackCards.length) {
+          recordCatalogueReadMetric(
+            "search",
+            canonicalRead.outcome,
+            canonicalRead.durationMs,
+            "canonical",
+          );
+          return res.json({
+            data: canonical,
+            source: "VerifiedTCG",
+            canonical: true,
+            cached: fallbackResult.cached ?? false,
+          });
+        }
+        const data = deduplicatePublicCards(canonical, fallbackCards).slice(0, limit);
+        const canonicalCardsDelivered = canonical.length;
+        const delivery =
+          canonicalCardsDelivered === 0
+            ? "justtcg"
+            : canonicalCardsDelivered === data.length
+              ? "canonical"
+              : "mixed";
+        recordCatalogueReadMetric(
+          "search",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          delivery,
+        );
         return res.json({
-          data: canonical,
-          source: "VerifiedTCG",
-          canonical: true,
-          cached: false,
+          data,
+          source:
+            delivery === "canonical"
+              ? "VerifiedTCG"
+              : delivery === "mixed"
+                ? "VerifiedTCG+JustTCG"
+                : "JustTCG",
+          canonical: delivery !== "justtcg",
+          cached: fallbackResult.cached ?? false,
         });
       }
-      recordCatalogueReadMetric("search", "fallback");
+      const fallbackResult = await justTcg(
+        `/cards?${new URLSearchParams({
+          ...(query ? { q: query } : {}),
+          ...(game ? { game } : {}),
+          limit: String(limit),
+          offset: String(offset),
+          include_price_history: "false",
+        }).toString()}`,
+      );
+      if (fallbackResult.status < 400) {
+        recordCatalogueReadMetric(
+          "search",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          "justtcg",
+        );
+        const body = {
+          ...((fallbackResult.body as {
+            data?: Array<Record<string, unknown>>;
+          } | null) ?? {}),
+        };
+        if (Array.isArray(body.data))
+          body.data = body.data.map(enrichCard);
+        return res.json({
+          ...body,
+          source: "JustTCG",
+          ...cacheMetadata(fallbackResult),
+        });
+      }
+      recordCatalogueReadMetric(
+        "search",
+        canonicalRead.outcome,
+        canonicalRead.durationMs,
+        "failed",
+      );
+      return res.status(fallbackResult.status).json(fallbackResult.body);
     }
 
     const params = new URLSearchParams({
@@ -531,12 +637,45 @@ export async function resolveCatalogCardById(
   card: Record<string, unknown>;
   cached: boolean;
   status: number;
+  source: "VerifiedTCG" | "JustTCG";
 } | null> {
   if (canonicalCatalogueReadsEnabled()) {
-    const canonical = await findCanonicalPublicCard(cardId);
-    if (canonical) return { card: canonical, cached: false, status: 200 };
-    recordCatalogueReadMetric("card_lookup", "fallback");
+    const canonicalRead = await readCanonicalPublicCard(cardId);
+    const canonical = canonicalRead.value;
+    if (canonical) {
+        recordCatalogueReadMetric(
+          "card_lookup",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          "canonical",
+        );
+      return {
+        card: canonical,
+        cached: false,
+        status: 200,
+        source: "VerifiedTCG",
+      };
+    }
+    const resolved = await resolveJustTcgCatalogCardById(cardId);
+    recordCatalogueReadMetric(
+      "card_lookup",
+      canonicalRead.outcome,
+      canonicalRead.durationMs,
+      resolved?.status === 200 ? "justtcg" : "failed",
+    );
+    return resolved;
   }
+  return resolveJustTcgCatalogCardById(cardId);
+}
+
+async function resolveJustTcgCatalogCardById(
+  cardId: string,
+): Promise<{
+  card: Record<string, unknown>;
+  cached: boolean;
+  status: number;
+  source: "JustTCG";
+} | null> {
   // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
   const parts = cardId.split("-");
   const gameWord = (parts[0] ?? "").toLowerCase();
@@ -582,7 +721,12 @@ export async function resolveCatalogCardById(
 
   const result = await justTcg(`/cards?${params.toString()}`);
   if (result.status === 429) {
-    return { card: {} as Record<string, unknown>, cached: false, status: 429 };
+    return {
+      card: {} as Record<string, unknown>,
+      cached: false,
+      status: 429,
+      source: "JustTCG",
+    };
   }
   if (result.status >= 500) throw new Error("Catalog provider unavailable");
   if (result.status >= 400) return null;
@@ -592,7 +736,7 @@ export async function resolveCatalogCardById(
   if (!match) return null;
 
   const card = enrichCard(match);
-  return { card, cached: result.cached, status: 200 };
+  return { card, cached: result.cached, status: 200, source: "JustTCG" };
 }
 
 router.get("/catalog/cards/:id", async (req, res) => {
@@ -607,8 +751,9 @@ router.get("/catalog/cards/:id", async (req, res) => {
     }
     return res.json({
       data: resolved.card,
-      source: "JustTCG",
+      source: resolved.source,
       cached: resolved.cached,
+      ...(resolved.source === "VerifiedTCG" ? { canonical: true } : {}),
     });
   } catch (error) {
     return res

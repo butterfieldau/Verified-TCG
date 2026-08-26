@@ -6,7 +6,6 @@ export { canonicalCatalogueReadsEnabled } from "./catalogueReadConfig.js";
 
 export interface PublicCatalogueCard extends Record<string, unknown> {
   id: string;
-  canonical_id: string;
   name: string;
   game: string;
   set: string;
@@ -21,18 +20,119 @@ export interface PublicCatalogueCard extends Record<string, unknown> {
   variants: Array<Record<string, unknown>>;
 }
 
-function shapeCard(row: Record<string, unknown>): PublicCatalogueCard | null {
+export type CatalogueReadOperation = "card_lookup" | "search" | "games";
+export type CatalogueReadOutcome =
+  | "canonical_hit"
+  | "fallback"
+  | "canonical_error"
+  | "incomplete"
+  | "unsupported_fallback";
+
+type CatalogueMetricSample = {
+  operation: CatalogueReadOperation;
+  outcome: CatalogueReadOutcome;
+  durationMs: number | null;
+  delivery: "canonical" | "justtcg" | "mixed" | "failed";
+};
+
+const metricSamples: CatalogueMetricSample[] = [];
+const MAX_METRIC_SAMPLES = 1_000;
+
+export interface CatalogueReadMetrics {
+  total: number;
+  canonicalHits: number;
+  justTcgFallbacks: number;
+  mixedReads: number;
+  canonicalErrors: number;
+  unsupportedFallbacks: number;
+  incompleteFallbacks: number;
+  canonicalHitPercentage: number;
+  fallbackPercentage: number;
+  averageLatencyMs: number | null;
+  p95LatencyMs: number | null;
+}
+
+function percentage(value: number, total: number): number {
+  return total ? Number(((value / total) * 100).toFixed(2)) : 0;
+}
+
+/** Returns process-local read metrics for acceptance and operational checks. */
+export function getCatalogueReadMetrics(): CatalogueReadMetrics {
+  const total = metricSamples.length;
+  const canonicalHits = metricSamples.filter(
+    (sample) => sample.delivery === "canonical",
+  ).length;
+  const justTcgFallbacks = metricSamples.filter(
+    (sample) => sample.delivery === "justtcg",
+  ).length;
+  const mixedReads = metricSamples.filter(
+    (sample) => sample.delivery === "mixed",
+  ).length;
+  const canonicalErrors = metricSamples.filter(
+    (sample) => sample.outcome === "canonical_error",
+  ).length;
+  const unsupportedFallbacks = metricSamples.filter(
+    (sample) => sample.outcome === "unsupported_fallback",
+  ).length;
+  const incompleteFallbacks = metricSamples.filter(
+    (sample) => sample.outcome === "incomplete",
+  ).length;
+  const latencies = metricSamples
+    .map((sample) => sample.durationMs)
+    .filter((duration): duration is number => duration !== null)
+    .sort((a, b) => a - b);
+  const p95Index = latencies.length
+    ? Math.min(latencies.length - 1, Math.ceil(latencies.length * 0.95) - 1)
+    : -1;
+  return {
+    total,
+    canonicalHits,
+    justTcgFallbacks,
+    mixedReads,
+    canonicalErrors,
+    unsupportedFallbacks,
+    incompleteFallbacks,
+    canonicalHitPercentage: percentage(canonicalHits, total),
+    fallbackPercentage: percentage(justTcgFallbacks, total),
+    averageLatencyMs: latencies.length
+      ? Number(
+          (
+            latencies.reduce((sum, duration) => sum + duration, 0) /
+            latencies.length
+          ).toFixed(2),
+        )
+      : null,
+    p95LatencyMs: p95Index >= 0 ? latencies[p95Index]! : null,
+  };
+}
+
+/** Clears process-local acceptance counters without changing persisted telemetry. */
+export function resetCatalogueReadMetrics(): void {
+  metricSamples.length = 0;
+}
+
+export function isUnsupportedCanonicalRecord(row: Record<string, unknown>): boolean {
+  const game = normalizeForMatching(String(row.game ?? ""));
+  const language = normalizeForMatching(String(row.language ?? ""));
+  return (
+    game === "pokemon" &&
+    ["ja", "japanese", "jpn", "jp"].includes(language)
+  );
+}
+
+export function shapeCanonicalCard(
+  row: Record<string, unknown>,
+): PublicCatalogueCard | null {
   if (
     !row.external_id ||
-    !row.card_id ||
     !row.name ||
     !row.game ||
-    !row.set_name
+    !row.set_name ||
+    !row.image_url
   )
     return null;
   return {
     id: String(row.external_id),
-    canonical_id: String(row.card_id),
     name: String(row.name),
     game: String(row.game),
     set: String(row.set_code ?? row.set_name),
@@ -47,7 +147,14 @@ function shapeCard(row: Record<string, unknown>): PublicCatalogueCard | null {
     release_date:
       typeof row.release_date === "string" ? row.release_date : null,
     variants: Array.isArray(row.variants)
-      ? (row.variants as Array<Record<string, unknown>>)
+      ? (row.variants as Array<Record<string, unknown>>).map((variant) => ({
+          key: typeof variant.key === "string" ? variant.key : null,
+          name: typeof variant.name === "string" ? variant.name : null,
+          finish: typeof variant.finish === "string" ? variant.finish : null,
+          edition:
+            typeof variant.edition === "string" ? variant.edition : null,
+          stamp: typeof variant.stamp === "string" ? variant.stamp : null,
+        }))
       : [],
   };
 }
@@ -57,7 +164,7 @@ const CARD_SELECT = sql`
     s.code AS set_code, c.collector_number, c.rarity, c.language, s.region,
     c.release_date,
     (SELECT i.url FROM catalogue_card_images i WHERE i.card_id = c.id AND i.is_primary = true ORDER BY i.created_at LIMIT 1) AS image_url,
-    COALESCE((SELECT jsonb_agg(jsonb_build_object('id', v.id, 'key', v.variant_key, 'name', v.name, 'finish', v.finish, 'edition', v.edition, 'stamp', v.stamp)) FROM catalogue_card_variants v WHERE v.card_id = c.id), '[]'::jsonb) AS variants
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key', v.variant_key, 'name', v.name, 'finish', v.finish, 'edition', v.edition, 'stamp', v.stamp)) FROM catalogue_card_variants v WHERE v.card_id = c.id), '[]'::jsonb) AS variants
   FROM catalogue_external_ids e
   JOIN catalogue_cards c ON c.id = e.entity_id
   JOIN catalogue_sets s ON s.id = c.set_id
@@ -65,37 +172,62 @@ const CARD_SELECT = sql`
   WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
 `;
 
-export async function findCanonicalPublicCard(
+export interface CanonicalReadResult<T> {
+  value: T;
+  outcome: CatalogueReadOutcome;
+  durationMs: number;
+}
+
+export async function readCanonicalPublicCard(
   externalId: string,
-): Promise<PublicCatalogueCard | null> {
+): Promise<CanonicalReadResult<PublicCatalogueCard | null>> {
+  const startedAt = Date.now();
   try {
     const result = await db.execute<Record<string, unknown>>(
       sql`${CARD_SELECT} AND e.external_id = ${externalId} LIMIT 1`,
     );
-    const card = result.rows[0] ? shapeCard(result.rows[0]) : null;
-    void recordCatalogueReadMetric(
-      "card_lookup",
-      card ? "canonical_hit" : "fallback",
-    );
-    return card;
+    const row = result.rows[0];
+    const card =
+      row && !isUnsupportedCanonicalRecord(row)
+        ? shapeCanonicalCard(row)
+        : null;
+    const outcome: CatalogueReadOutcome = row
+      ? isUnsupportedCanonicalRecord(row)
+        ? "unsupported_fallback"
+        : card
+          ? "canonical_hit"
+          : "incomplete"
+      : "fallback";
+    return { value: card, outcome, durationMs: Date.now() - startedAt };
   } catch {
-    void recordCatalogueReadMetric("card_lookup", "canonical_error");
-    return null;
+    return {
+      value: null,
+      outcome: "canonical_error",
+      durationMs: Date.now() - startedAt,
+    };
   }
 }
 
-export async function searchCanonicalPublicCards(input: {
+export async function findCanonicalPublicCard(
+  externalId: string,
+): Promise<PublicCatalogueCard | null> {
+  return (await readCanonicalPublicCard(externalId)).value;
+}
+
+export async function readCanonicalPublicCards(input: {
   query: string;
   game?: string;
   limit: number;
   offset: number;
-}): Promise<PublicCatalogueCard[]> {
+}): Promise<CanonicalReadResult<PublicCatalogueCard[]>> {
+  const startedAt = Date.now();
   const query = input.query.trim();
-  if (!query) return [];
+  if (!query) return { value: [], outcome: "fallback", durationMs: 0 };
   const matching = normalizeForMatching(query);
   try {
     const result = await db.execute<Record<string, unknown>>(sql`
       ${CARD_SELECT}
+      AND c.is_active = true AND s.is_active = true AND g.is_active = true
       AND (
         c.name ILIKE ${`%${query}%`} OR c.collector_number ILIKE ${`%${query}%`} OR
         s.name ILIKE ${`%${query}%`} OR s.code ILIKE ${`%${query}%`} OR
@@ -105,18 +237,36 @@ export async function searchCanonicalPublicCards(input: {
       ORDER BY c.name, s.name, c.collector_number
       LIMIT ${input.limit} OFFSET ${input.offset}
     `);
-    const cards = result.rows
-      .map(shapeCard)
-      .filter((card): card is PublicCatalogueCard => Boolean(card));
-    void recordCatalogueReadMetric(
-      "search",
-      cards.length ? "canonical_hit" : "fallback",
+    const supportedRows = result.rows.filter(
+      (row) => !isUnsupportedCanonicalRecord(row),
     );
-    return cards;
+    const cards = supportedRows
+      .map(shapeCanonicalCard)
+      .filter((card): card is PublicCatalogueCard => Boolean(card));
+    const outcome: CatalogueReadOutcome = cards.length
+      ? "canonical_hit"
+      : result.rows.some(isUnsupportedCanonicalRecord)
+        ? "unsupported_fallback"
+        : result.rows.length
+          ? "incomplete"
+          : "fallback";
+    return { value: cards, outcome, durationMs: Date.now() - startedAt };
   } catch {
-    void recordCatalogueReadMetric("search", "canonical_error");
-    return [];
+    return {
+      value: [],
+      outcome: "canonical_error",
+      durationMs: Date.now() - startedAt,
+    };
   }
+}
+
+export async function searchCanonicalPublicCards(input: {
+  query: string;
+  game?: string;
+  limit: number;
+  offset: number;
+}): Promise<PublicCatalogueCard[]> {
+  return (await readCanonicalPublicCards(input)).value;
 }
 
 export async function canonicalCatalogueGames(): Promise<
@@ -145,13 +295,29 @@ export function deduplicatePublicCards<T extends Record<string, unknown>>(
 }
 
 export function recordCatalogueReadMetric(
-  operation: "card_lookup" | "search" | "games",
-  outcome: "canonical_hit" | "fallback" | "canonical_error" | "incomplete",
+  operation: CatalogueReadOperation,
+  outcome: CatalogueReadOutcome,
+  durationMs: number | null = null,
+  delivery:
+    | "canonical"
+    | "justtcg"
+    | "mixed"
+    | "failed" = outcome === "canonical_hit" ? "canonical" : "justtcg",
 ) {
+  metricSamples.push({ operation, outcome, durationMs, delivery });
+  if (metricSamples.length > MAX_METRIC_SAMPLES) metricSamples.shift();
+  const metrics = getCatalogueReadMetrics();
   void recordTelemetry({
     category: "integration",
     action: "catalogue.canonical_read",
     status: outcome === "canonical_error" ? "failed" : "ok",
-    metadata: { operation, outcome },
+    durationMs,
+    metadata: {
+      operation,
+      outcome,
+      delivery,
+      canonicalHitPercentage: metrics.canonicalHitPercentage,
+      fallbackPercentage: metrics.fallbackPercentage,
+    },
   });
 }

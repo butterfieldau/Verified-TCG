@@ -313,11 +313,22 @@ export async function getCatalogueHealth(): Promise<CatalogueHealth> {
 export async function findCanonicalCardByJustTcgId(externalId: string) {
   const result = await db.execute<{
     canonical_id: string;
+    external_id: string;
+    name: string;
     collector_number: string | null;
     set_name: string;
+    set_code: string | null;
+    rarity: string | null;
+    image_url: string | null;
     game_slug: string;
   }>(sql`
-    SELECT c.id AS canonical_id, c.collector_number, s.name AS set_name, g.slug AS game_slug
+    SELECT c.id AS canonical_id, e.external_id, c.name, c.collector_number,
+      s.name AS set_name, s.code AS set_code, c.rarity, g.slug AS game_slug,
+      (SELECT i.url
+       FROM catalogue_card_images i
+       WHERE i.card_id = c.id AND i.is_primary = true
+       ORDER BY i.created_at
+       LIMIT 1) AS image_url
     FROM catalogue_external_ids e
     JOIN catalogue_cards c ON c.id = e.entity_id
     JOIN catalogue_sets s ON s.id = c.set_id
@@ -328,6 +339,20 @@ export async function findCanonicalCardByJustTcgId(externalId: string) {
   return result.rows[0] ?? null;
 }
 
+type CatalogueShadowField =
+  | "name"
+  | "externalId"
+  | "game"
+  | "set"
+  | "collectorNumber"
+  | "rarity"
+  | "image";
+
+type CatalogueShadowFieldMismatch = {
+  source: string | null;
+  canonical: string | null;
+};
+
 export interface CatalogueShadowComparison {
   recordsRead: number;
   mapped: number;
@@ -335,6 +360,13 @@ export interface CatalogueShadowComparison {
   setMismatches: number;
   collectorNumberMismatches: number;
   unsupported: number;
+  mismatchCounts: Record<CatalogueShadowField, number>;
+  mismatches: Array<{
+    externalId: string;
+    fields: Partial<
+      Record<CatalogueShadowField, CatalogueShadowFieldMismatch>
+    >;
+  }>;
 }
 
 /**
@@ -352,6 +384,16 @@ export async function compareCachedJustTcgCoverage(
     setMismatches: 0,
     collectorNumberMismatches: 0,
     unsupported: 0,
+    mismatchCounts: {
+      name: 0,
+      externalId: 0,
+      game: 0,
+      set: 0,
+      collectorNumber: 0,
+      rarity: 0,
+      image: 0,
+    },
+    mismatches: [],
   };
   const seen = new Set<string>();
   for await (const source of cachedJustTcgCards()) {
@@ -369,18 +411,47 @@ export async function compareCachedJustTcgCoverage(
         result.missing++;
       } else {
         result.mapped++;
-        if (
-          canonical.game_slug !== candidate.gameSlug ||
-          normalizeForMatching(canonical.set_name) !==
-            normalizeForMatching(candidate.setName)
-        ) {
-          result.setMismatches++;
-        }
-        if (
-          normalizeCollectorNumber(canonical.collector_number) !==
-          candidate.collectorNumber
-        ) {
-          result.collectorNumberMismatches++;
+        const fields: Partial<
+          Record<CatalogueShadowField, CatalogueShadowFieldMismatch>
+        > = {};
+        const compare = (
+          field: CatalogueShadowField,
+          source: string | null,
+          canonicalValue: string | null,
+          normalise = (value: string | null) => value,
+        ) => {
+          if (normalise(source) === normalise(canonicalValue)) return;
+          result.mismatchCounts[field]++;
+          fields[field] = { source, canonical: canonicalValue };
+        };
+        compare("name", candidate.name || null, canonical.name);
+        compare("externalId", candidate.externalId, canonical.external_id);
+        compare(
+          "game",
+          candidate.gameSlug,
+          canonical.game_slug,
+          (value) => (value ? normalizeForMatching(value) : null),
+        );
+        compare(
+          "set",
+          candidate.setCode || candidate.setName,
+          canonical.set_code || canonical.set_name,
+          (value) => (value ? normalizeForMatching(value) : null),
+        );
+        compare(
+          "collectorNumber",
+          candidate.collectorNumber,
+          normalizeCollectorNumber(canonical.collector_number),
+        );
+        compare("rarity", candidate.rarity, canonical.rarity);
+        compare("image", candidate.imageUrl, canonical.image_url);
+        if (fields.set) result.setMismatches++;
+        if (fields.collectorNumber) result.collectorNumberMismatches++;
+        if (Object.keys(fields).length) {
+          result.mismatches.push({
+            externalId: candidate.externalId,
+            fields,
+          });
         }
       }
     }
