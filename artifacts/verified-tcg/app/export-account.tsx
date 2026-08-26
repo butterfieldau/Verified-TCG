@@ -20,9 +20,9 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import colors from '@/constants/colors';
 import { getAccessToken } from '@/services/auth';
+import { apiRequest } from '@/services/apiClient';
 
 const C = colors.dark;
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 export default function ExportAccountScreen() {
   const insets = useSafeAreaInsets();
@@ -33,13 +33,7 @@ export default function ExportAccountScreen() {
     setLoading(true);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${API_BASE}/api/me/export/account.json`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
+      const res = await apiRequest('/api/me/export/account.json', { accessToken: token });
 
       const json = await res.json();
       const text = JSON.stringify(json, null, 2);

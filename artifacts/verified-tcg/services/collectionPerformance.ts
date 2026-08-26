@@ -9,16 +9,12 @@
  */
 
 import { getAccessToken } from './auth';
+import { apiJson, apiRequest } from './apiClient';
 
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
-const API_BASE = explicitBase || domainBase;
-
-async function authHeaders(): Promise<Record<string, string>> {
+async function accessToken(): Promise<string> {
   const token = await getAccessToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
+  if (!token) throw new Error('Your session has expired. Please sign in again.');
+  return token;
 }
 
 // ── Collection Summary ─────────────────────────────────────────────────────────
@@ -61,20 +57,14 @@ export interface CollectionSummary {
 
 /**
  * Fetch authoritative collection summary from the server.
- * On any error returns null — callers should handle null as "unavailable".
+ * Errors remain errors; callers must not turn an unavailable portfolio into an
+ * empty portfolio.
  */
 export async function fetchCollectionSummary(
   displayCurrency = 'AUD',
-): Promise<CollectionSummary | null> {
-  try {
-    const headers = await authHeaders();
-    const params = new URLSearchParams({ displayCurrency });
-    const res = await fetch(`${API_BASE}/api/collection/summary?${params}`, { headers });
-    if (!res.ok) return null;
-    return (await res.json()) as CollectionSummary;
-  } catch {
-    return null;
-  }
+): Promise<CollectionSummary> {
+  const params = new URLSearchParams({ displayCurrency });
+  return apiJson<CollectionSummary>(`/api/collection/summary?${params}`, { accessToken: await accessToken() });
 }
 
 // ── Performance History ─────────────────────────────────────────────────────────
@@ -124,13 +114,9 @@ export interface CollectionPerformance {
 export async function fetchCollectionPerformance(
   range: PerformanceRange,
   displayCurrency = 'AUD',
-): Promise<CollectionPerformance | null> {
-  try {
-    const headers = await authHeaders();
+): Promise<CollectionPerformance> {
     const params = new URLSearchParams({ range, displayCurrency });
-    const res = await fetch(`${API_BASE}/api/collection/performance?${params}`, { headers });
-    if (!res.ok) return null;
-    const raw = await res.json() as {
+    const raw = await apiJson<{
       points?: PerformancePoint[];
       realisedGain?: number | null;
       unrealizedGain?: number | null;
@@ -156,7 +142,7 @@ export async function fetchCollectionPerformance(
       historyAvailable?: boolean;
       historyUnavailableReason?: string | null;
       completeness?: string;
-    };
+    }>(`/api/collection/performance?${params}`, { accessToken: await accessToken() });
     const colors = ['#CC1826', '#3B82F6', '#22C55E', '#F59E0B', '#A855F7', '#14B8A6'];
     const mapCard = (card: NonNullable<typeof raw.topPerformers>[number]): PerformanceCard => ({
       cardId: card.cardId,
@@ -183,9 +169,6 @@ export async function fetchCollectionPerformance(
       historyUnavailableReason: raw.historyUnavailableReason,
       completeness: raw.completeness ?? 'Performance data unavailable',
     };
-  } catch {
-    return null;
-  }
 }
 
 // ── Archive (sold holdings) ───────────────────────────────────────────────────
@@ -232,11 +215,8 @@ export interface ArchivedHolding {
  * Fetch all archived (sold) holdings for the signed-in user.
  */
 export async function fetchArchive(displayCurrency = 'AUD'): Promise<ArchivedHolding[]> {
-  const headers = await authHeaders();
   const params = new URLSearchParams({ displayCurrency });
-  const res = await fetch(`${API_BASE}/api/collection/archive?${params}`, { headers });
-  if (!res.ok) throw new Error(`Failed to load archive (${res.status})`);
-  return (await res.json()) as ArchivedHolding[];
+  return apiJson<ArchivedHolding[]>(`/api/collection/archive?${params}`, { accessToken: await accessToken() });
 }
 
 /**
@@ -246,26 +226,21 @@ export async function patchArchivedHolding(
   id: string,
   patch: Partial<Pick<ArchivedHolding, 'notes' | 'venue' | 'buyer' | 'salePrice' | 'soldAt'>>,
 ): Promise<ArchivedHolding> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection/archive/${id}`, {
+  return apiJson<ArchivedHolding>(`/api/collection/archive/${encodeURIComponent(id)}`, {
     method: 'PATCH',
-    headers,
+    accessToken: await accessToken(),
     body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`Failed to update archived holding (${res.status})`);
-  return (await res.json()) as ArchivedHolding;
 }
 
 /**
  * Restore an archived holding back to the active collection.
  */
 export async function restoreArchivedHolding(id: string): Promise<void> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection/archive/${id}/restore`, {
+  await apiRequest(`/api/collection/archive/${encodeURIComponent(id)}/restore`, {
     method: 'POST',
-    headers,
+    accessToken: await accessToken(),
   });
-  if (!res.ok) throw new Error(`Failed to restore archived holding (${res.status})`);
 }
 
 // ── Sell Action ────────────────────────────────────────────────────────────────
@@ -294,15 +269,9 @@ export async function sellCollectionItem(
   collectionItemId: string,
   sale: SellRequest,
 ): Promise<SellResponse> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection/${collectionItemId}/sell`, {
+  return apiJson<SellResponse>(`/api/collection/${encodeURIComponent(collectionItemId)}/sell`, {
     method: 'POST',
-    headers,
+    accessToken: await accessToken(),
     body: JSON.stringify(sale),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { message?: string };
-    throw new Error(body.message ?? `Failed to record sale (${res.status})`);
-  }
-  return (await res.json()) as SellResponse;
 }

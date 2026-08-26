@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Modal,
@@ -26,6 +27,7 @@ import type { CollectionItem } from '@/types';
 import { canUseUnlimitedScanner } from '@/services/subscription';
 import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
 import { getAccessToken } from '@/services/auth';
+import { ApiClientError, apiRequest } from '@/services/apiClient';
 import {
   type RecentScan,
   loadRecentScans,
@@ -39,9 +41,6 @@ const { width: W, height: SCREEN_H } = Dimensions.get('window');
 // Guide frame insets — all derived from screen edges
 const GUIDE_X   = 36;   // horizontal padding for guide
 const GUIDE_SIDE_W = GUIDE_X; // alias used in mask rects
-
-// API base
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -97,34 +96,20 @@ class ScanApiError extends Error {
 
 async function recognizeCard(base64Image: string): Promise<ScanResult> {
   const token = await getAccessToken();
-  const response = await fetch(`${API_BASE}/api/scan/recognize`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ image: base64Image, mimeType: 'image/jpeg' }),
-  });
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as {
-      message?: string;
-      scansUsed?: number;
-      scanLimit?: number | null;
-      scansRemaining?: number | null;
-    };
+  try {
+    const response = await apiRequest('/api/scan/recognize', {
+      method: 'POST',
+      accessToken: token,
+      body: JSON.stringify({ image: base64Image, mimeType: 'image/jpeg' }),
+    });
+    return response.json() as Promise<ScanResult>;
+  } catch (error) {
+    const apiError = error as ApiClientError;
     throw new ScanApiError(
-      body.message ?? `Recognition failed (${response.status})`,
-      {
-        code: response.status === 403 ? 'LIMIT_REACHED' : undefined,
-        scansUsed: body.scansUsed,
-        scanLimit: body.scanLimit,
-        scansRemaining: body.scansRemaining,
-      },
+      error instanceof Error ? error.message : 'Recognition failed. Please try again.',
+      { code: apiError.status === 403 ? 'LIMIT_REACHED' : undefined },
     );
   }
-
-  return response.json() as Promise<ScanResult>;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -408,7 +393,7 @@ export default function ScanScreen() {
     };
   }
 
-  function handleAddToCollection() {
+  async function handleAddToCollection() {
     const raw = getMatchedCard();
     if (!raw) return;
     const card = buildCard(raw);
@@ -419,10 +404,14 @@ export default function ScanScreen() {
       acquiredAt: new Date().toISOString().split('T')[0],
       acquiredPrice: 0, currency: 'AUD',
     };
-    addToCollection(item);
-    setShowActionSheet(false);
-    setConfirmedAction('collection');
-    setScanState('confirmed');
+    try {
+      await addToCollection(item);
+      setShowActionSheet(false);
+      setConfirmedAction('collection');
+      setScanState('confirmed');
+    } catch (error) {
+      Alert.alert('Could not save card', error instanceof Error ? error.message : 'Please try again.');
+    }
   }
 
   function handleAddToWishlist() {

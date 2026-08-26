@@ -1,10 +1,5 @@
 import type { Card, CardRarity } from '@/types';
-
-// Use an explicit override first, then fall back to the dev-domain that the
-// Expo start script already injects as EXPO_PUBLIC_DOMAIN.
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
-const API_BASE = `${explicitBase || domainBase}/api`;
+import { ApiClientError, apiJson } from './apiClient';
 
 export interface CatalogVariant {
   id: string;
@@ -113,22 +108,24 @@ function mapRarity(rarity: string | undefined): CardRarity {
 
 /**
  * Fetch a single card by its JustTCG ID (e.g. "pokemon-arceus-charizard-holo-rare").
- * Returns null when the card is not found or the API is unreachable.
+ * Returns null only when the server confirms the card is not found. Transport,
+ * authentication and provider failures remain errors so UI never presents them
+ * as an honest missing card.
  */
 export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promise<CatalogCard | null> {
-  if (!API_BASE || API_BASE === '/api') return null;
   try {
-    const response = await fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(id)}`, { signal });
-    if (!response.ok) return null;
-    const body = await response.json().catch(() => null);
-    return (body?.data ?? null) as CatalogCard | null;
-  } catch {
-    return null;
+    const body = await apiJson<{ data?: CatalogCard | null }>(
+      `/api/catalog/cards/${encodeURIComponent(id)}`,
+      { signal },
+    );
+    return body.data ?? null;
+  } catch (error) {
+    if (error instanceof ApiClientError && error.kind === 'not_found') return null;
+    throw error;
   }
 }
 
 export async function searchCatalog(query: string, signal?: AbortSignal, page: number = 1): Promise<CatalogResponse> {
-  if (!API_BASE || API_BASE === '/api') throw new Error('The catalog API is not configured for this build.');
   const normalizedQuery = normalizeCatalogQuery(query);
   if (normalizedQuery.length < MIN_CATALOG_SEARCH_LENGTH) {
     return { data: [], meta: { total: 0, limit: 20, offset: 0, hasMore: false }, cached: true };
@@ -148,10 +145,7 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
   // needed by another consumer; callers still ignore obsolete results.
   const flight = (async () => {
     const params = new URLSearchParams({ q: normalizedQuery, limit: String(limit), offset: String(offset) });
-    const response = await fetch(`${API_BASE}/catalog/cards?${params.toString()}`);
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Catalog request failed (${response.status})`);
-    const result = body as CatalogResponse;
+    const result = await apiJson<CatalogResponse>(`/api/catalog/cards?${params.toString()}`);
     searchCache.set(cacheKey, { response: result, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
     if (searchCache.size > MAX_SEARCH_CACHE_ENTRIES) {
       const oldest = searchCache.keys().next().value;

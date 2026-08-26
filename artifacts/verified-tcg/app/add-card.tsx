@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
@@ -39,7 +39,8 @@ const GRADES = [10, 9.5, 9, 8.5, 8, 7];
 
 export default function AddCardScreen() {
   const insets = useSafeAreaInsets();
-  const { addToCollection } = useApp();
+  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const { addToCollection, collection, updateCollectionHolding } = useApp();
   const [step, setStep] = useState<Step>('search');
   const [query, setQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
@@ -48,6 +49,9 @@ export default function AddCardScreen() {
   const [grader, setGrader] = useState<GradingCompany>('PSA');
   const [grade, setGrade] = useState(10);
   const [purchasePrice, setPurchasePrice] = useState('');
+  const [purchaseCurrency, setPurchaseCurrency] = useState('AUD');
+  const [acquisitionDate, setAcquisitionDate] = useState(() => new Date().toISOString().split('T')[0]!);
+  const [quantity, setQuantity] = useState('1');
   const [certNumber, setCertNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [success, setSuccess] = useState(false);
@@ -55,7 +59,25 @@ export default function AddCardScreen() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  const editingItem = editId ? collection.find(item => item.id === editId) : undefined;
+
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  useEffect(() => {
+    if (!editingItem) return;
+    setSelectedCard(editingItem.card);
+    setCardType(editingItem.grading ? 'graded' : 'raw');
+    setCondition(editingItem.condition);
+    setGrader(editingItem.grading?.company ?? 'PSA');
+    setGrade(Number(editingItem.grading?.grade ?? 10));
+    setCertNumber(editingItem.grading?.certNumber ?? '');
+    setPurchasePrice(String(editingItem.acquiredPrice));
+    setPurchaseCurrency(editingItem.currency);
+    setAcquisitionDate(editingItem.acquiredAt);
+    setQuantity(String(editingItem.quantity));
+    setNotes(editingItem.notes ?? '');
+    setStep('details');
+  }, [editingItem]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -79,20 +101,30 @@ export default function AddCardScreen() {
 
   function selectCard(card: Card) {
     setSelectedCard(card);
+    setSearchError(null);
     setStep('details');
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!selectedCard) return;
+    const parsedPrice = Number(purchasePrice);
+    const parsedQuantity = Number(quantity);
+    const currency = purchaseCurrency.trim().toUpperCase();
+    if (!purchasePrice.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0 || !Number.isInteger(parsedQuantity) || parsedQuantity < 1 || !/^[A-Z]{3}$/.test(currency) || !/^\d{4}-\d{2}-\d{2}$/.test(acquisitionDate)) {
+      setSearchError('Enter a valid unit price, 3-letter currency, quantity, and acquisition date.');
+      return;
+    }
     const item: CollectionItem = {
       id: `col-add-${Date.now()}`,
       cardId: selectedCard.id,
       card: selectedCard,
-      quantity: 1,
+      quantity: parsedQuantity,
       condition,
-      acquiredAt: new Date().toISOString().split('T')[0],
-      acquiredPrice: parseFloat(purchasePrice) || selectedCard.price.raw,
-      currency: 'AUD',
+      acquiredAt: acquisitionDate,
+      // Purchase price is consistently stored as a per-card cost. The API and
+      // portfolio multiply it by quantity for known cost basis.
+      acquiredPrice: parsedPrice,
+      currency,
       notes: notes || undefined,
       grading: cardType === 'graded' ? {
         company: grader,
@@ -101,9 +133,25 @@ export default function AddCardScreen() {
         gradedAt: new Date().toISOString().split('T')[0],
       } : undefined,
     };
-    addToCollection(item);
-    setSuccess(true);
-    setTimeout(() => router.back(), 1600);
+    try {
+      if (editingItem) {
+        await updateCollectionHolding(editingItem.id, {
+          quantity: item.quantity,
+          condition: item.condition,
+          grading: item.grading,
+          acquiredAt: item.acquiredAt,
+          acquiredPrice: item.acquiredPrice,
+          currency: item.currency,
+          notes: item.notes,
+        });
+      } else {
+        await addToCollection(item);
+      }
+      setSuccess(true);
+      setTimeout(() => router.back(), 1600);
+    } catch (error) {
+      setSearchError(error instanceof Error ? error.message : 'Could not save this card. Please try again.');
+    }
   }
 
   if (success) {
@@ -112,8 +160,10 @@ export default function AddCardScreen() {
         <View style={styles.successIcon}>
           <Feather name="check-circle" size={64} color={C.positive} />
         </View>
-        <Text style={styles.successTitle}>Card Added!</Text>
-        <Text style={styles.successSub}>{selectedCard?.name} added to your collection</Text>
+        <Text style={styles.successTitle}>{editingItem ? 'Card Updated!' : 'Card Added!'}</Text>
+        <Text style={styles.successSub}>
+          {selectedCard?.name} {editingItem ? 'updated in' : 'added to'} your collection
+        </Text>
       </View>
     );
   }
@@ -128,7 +178,7 @@ export default function AddCardScreen() {
         >
           <Feather name={step === 'search' ? 'x' : 'arrow-left'} size={20} color={C.foreground} />
         </Pressable>
-        <Text style={styles.title}>{step === 'search' ? 'Add Card' : 'Card Details'}</Text>
+        <Text style={styles.title}>{editingItem ? 'Edit Card' : step === 'search' ? 'Add Card' : 'Card Details'}</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -227,6 +277,7 @@ export default function AddCardScreen() {
       {/* Details step */}
       {step === 'details' && selectedCard && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          {searchError && <Text style={[styles.searchStatus, { color: C.negative }]}>{searchError}</Text>}
           {/* Selected card preview */}
           <View style={[styles.selectedCard, { backgroundColor: C.card }]}>
             <View style={[styles.selectedThumb, { backgroundColor: selectedCard.gradientStart }]}>
@@ -236,9 +287,11 @@ export default function AddCardScreen() {
               <Text style={styles.selectedName}>{selectedCard.name}</Text>
               <Text style={styles.selectedSet}>{selectedCard.setName} · {selectedCard.number}</Text>
             </View>
-            <Pressable onPress={() => setStep('search')}>
-              <Text style={[styles.changeLink, { color: C.primary }]}>Change</Text>
-            </Pressable>
+            {!editingItem && (
+              <Pressable onPress={() => setStep('search')}>
+                <Text style={[styles.changeLink, { color: C.primary }]}>Change</Text>
+              </Pressable>
+            )}
           </View>
 
           {/* Card type toggle */}
@@ -336,15 +389,48 @@ export default function AddCardScreen() {
             </View>
           )}
 
-          {/* Purchase price */}
-          <Text style={styles.fieldLabel}>Purchase Price (AUD)</Text>
+          {/* Acquisition details — price is a unit price, not total lot cost. */}
+          <Text style={styles.fieldLabel}>Purchase Price per Card</Text>
           <TextInput
             style={styles.textInput}
-            placeholder={`e.g. ${selectedCard.price.raw.toFixed(2)}`}
+            placeholder="e.g. 100.00"
             placeholderTextColor={C.mutedForeground}
             value={purchasePrice}
             onChangeText={setPurchasePrice}
             keyboardType="decimal-pad"
+            selectionColor={C.primary}
+          />
+
+          <Text style={styles.fieldLabel}>Acquisition Currency</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder="AUD"
+            placeholderTextColor={C.mutedForeground}
+            value={purchaseCurrency}
+            onChangeText={value => setPurchaseCurrency(value.toUpperCase())}
+            autoCapitalize="characters"
+            maxLength={3}
+            selectionColor={C.primary}
+          />
+
+          <Text style={styles.fieldLabel}>Acquisition Date</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={C.mutedForeground}
+            value={acquisitionDate}
+            onChangeText={setAcquisitionDate}
+            selectionColor={C.primary}
+          />
+
+          <Text style={styles.fieldLabel}>Quantity</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder="1"
+            placeholderTextColor={C.mutedForeground}
+            value={quantity}
+            onChangeText={setQuantity}
+            keyboardType="number-pad"
             selectionColor={C.primary}
           />
 
@@ -364,7 +450,7 @@ export default function AddCardScreen() {
           {/* Add button */}
           <Pressable onPress={handleAdd} style={styles.addBtn}>
             <Feather name="plus" size={18} color="#FFFFFF" />
-            <Text style={styles.addBtnText}>Add to Collection</Text>
+            <Text style={styles.addBtnText}>{editingItem ? 'Save Changes' : 'Add to Collection'}</Text>
           </Pressable>
         </ScrollView>
       )}

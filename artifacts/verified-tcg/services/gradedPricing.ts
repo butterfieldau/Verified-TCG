@@ -7,12 +7,9 @@
  */
 
 import { getAccessToken } from './auth';
+import { resolveApiOrigin } from './apiClient';
 
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : '';
-const API_BASE = `${explicitBase || domainBase}/api`;
+const API_BASE = `${resolveApiOrigin()}/api`;
 
 /** Grade key → AUD price. Only keys with real eBay data are present. */
 export type GradedPrices = Record<string, number>;

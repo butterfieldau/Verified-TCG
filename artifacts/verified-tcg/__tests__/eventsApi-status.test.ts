@@ -9,9 +9,14 @@
 import { fetchActiveEvents } from '../services/eventsApi';
 
 describe('fetchActiveEvents — surfaces the real status field', () => {
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.verified.test';
+  });
+
   afterEach(() => {
     // @ts-expect-error test cleanup
     delete global.fetch;
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
   });
 
   it('passes through live and upcoming statuses from the API', async () => {
@@ -46,6 +51,7 @@ describe('fetchActiveEvents — surfaces the real status field', () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 503,
+      headers: { get: () => 'application/json' },
       json: async () => ({ message: 'Service unavailable' }),
     }) as unknown as typeof fetch;
 

@@ -15,12 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
-// Follows the same resolved-base strategy as wishlistApi.ts:
-// EXPO_PUBLIC_API_BASE_URL may already include the /api prefix (Replit dev
-// proxy path), or be empty (web preview, same origin).  Appending '/api'
-// makes the URL correct in both cases since the proxy strips the /api prefix
-// before forwarding to the API server.
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '') + '/api';
+import { apiRequest } from '@/services/apiClient';
 
 const C = colors.dark;
 
@@ -59,9 +54,8 @@ export default function ContactSupportScreen() {
     setSubmitting(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/support/contact`, {
+      await apiRequest('/api/support/contact', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
           email: email.trim(),
@@ -70,7 +64,6 @@ export default function ContactSupportScreen() {
           message: message.trim(),
         }),
       });
-      if (!res.ok) throw new Error('Server error');
       setSubmitted(true);
     } catch {
       setError('Failed to send your message. Please check your connection and try again.');

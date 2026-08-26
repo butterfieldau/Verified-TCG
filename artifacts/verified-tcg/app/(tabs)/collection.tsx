@@ -52,7 +52,7 @@ export default function CollectionScreen() {
   const { width: screenWidth } = useWindowDimensions();
   // Use AppContext's collection as the single source of truth.
   // AppContext caches the collection in AsyncStorage so it's available offline.
-  const { collection, collectionLoading, refreshCollection } = useApp();
+  const { collection, collectionLoading, collectionError, refreshCollection } = useApp();
   const { isConnected } = useNetwork();
   const { currency } = useSettings();
 
@@ -145,6 +145,18 @@ export default function CollectionScreen() {
             <Text style={[styles.offlineNoteText, { color: C.warning }]}>
               Offline — showing cached collection
             </Text>
+          </View>
+        )}
+
+        {collectionError && (
+          <View style={styles.errorBox} accessibilityRole="alert">
+            <Feather name="alert-circle" size={20} color={C.negative} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <Text style={styles.errorText}>{collectionError}</Text>
+              <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
+                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -385,6 +397,19 @@ export default function CollectionScreen() {
             <Feather name="dollar-sign" size={11} color={C.primary} />
             <Text style={styles.sellBtnText}>Sell</Text>
           </Pressable>
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation?.();
+              router.push({ pathname: '/add-card', params: { editId: item.id } });
+            }}
+            style={styles.editBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${item.card.name}`}
+            hitSlop={4}
+          >
+            <Feather name="edit-2" size={11} color={C.mutedForeground} />
+            <Text style={styles.editBtnText}>Edit</Text>
+          </Pressable>
         </View>
       </Pressable>
     );
@@ -438,7 +463,7 @@ export default function CollectionScreen() {
               </>
             )}
             ListEmptyComponent={() =>
-              !initialLoading ? (
+              !initialLoading && !collectionError ? (
                 <View style={{ paddingHorizontal: 20 }}>
                   <EmptyState
                     icon="layers"
@@ -492,7 +517,7 @@ export default function CollectionScreen() {
               </>
             )}
             ListEmptyComponent={() =>
-              !initialLoading ? (
+              !initialLoading && !collectionError ? (
                 <View style={{ paddingHorizontal: 20 }}>
                   <EmptyState
                     icon="layers"
@@ -766,6 +791,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   sellBtnText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.primary },
+  editBtn: {
+    marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+  },
+  editBtnText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
   coverageNote: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,

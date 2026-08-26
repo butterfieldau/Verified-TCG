@@ -20,10 +20,10 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import colors from '@/constants/colors';
 import { getAccessToken } from '@/services/auth';
+import { apiRequest } from '@/services/apiClient';
 import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 export default function ExportCollectionScreen() {
   const insets = useSafeAreaInsets();
@@ -35,25 +35,7 @@ export default function ExportCollectionScreen() {
     setLoading(true);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${API_BASE}/api/me/export/collection.csv`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (res.status === 403) {
-        Alert.alert(
-          'Pro Feature',
-          'Collection export is a Pro feature. Upgrade to export your collection as CSV.',
-          [
-            { text: 'Not Now', style: 'cancel' },
-            { text: 'Upgrade to Pro', onPress: () => router.push('/pro-subscription') },
-          ],
-        );
-        return;
-      }
-
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
+      const res = await apiRequest('/api/me/export/collection.csv', { accessToken: token });
 
       const csv = await res.text();
 

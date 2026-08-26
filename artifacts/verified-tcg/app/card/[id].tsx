@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -845,7 +846,7 @@ export default function CardDetailScreen() {
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
 
-  function handleAddToCollection() {
+  async function handleAddToCollection() {
     const newItem: CollectionItem = {
       id: `col-${Date.now()}`,
       cardId: card.id,
@@ -856,10 +857,14 @@ export default function CardDetailScreen() {
       acquiredPrice: card.price.raw,
       currency: 'AUD',
     };
-    addToCollection(newItem);
-    setLocalInCollection(true);
-    setShowAddedBanner(true);
-    setTimeout(() => setShowAddedBanner(false), 2500);
+    try {
+      await addToCollection(newItem);
+      setLocalInCollection(true);
+      setShowAddedBanner(true);
+      setTimeout(() => setShowAddedBanner(false), 2500);
+    } catch (error) {
+      Alert.alert('Could not save card', error instanceof Error ? error.message : 'Please try again.');
+    }
   }
 
   function handleWishlistToggle() {

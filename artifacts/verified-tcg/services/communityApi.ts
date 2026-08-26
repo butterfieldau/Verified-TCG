@@ -12,8 +12,9 @@
  */
 
 import { getAccessToken } from '@/services/auth';
+import { resolveApiOrigin } from './apiClient';
 
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const API_BASE = resolveApiOrigin();
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { resolveApiOrigin } from './apiClient';
 
 export interface RuntimeConfig {
   maintenanceMode: boolean;
@@ -35,12 +36,7 @@ export const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 
 function configuredApiHosts(): Set<string> {
   const hosts = new Set<string>();
-  const values = [
-    process.env.EXPO_PUBLIC_DOMAIN
-      ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-      : null,
-    process.env.EXPO_PUBLIC_API_BASE_URL ?? null,
-  ];
+  const values = [resolveApiOrigin()];
   for (const value of values) {
     if (!value) continue;
     try {
@@ -150,16 +146,10 @@ export function onUpdateRequired(listener: UpdateListener): () => void {
   return () => state.listeners.delete(listener);
 }
 
-function apiOrigin(): string {
-  const explicit = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-  if (explicit) return explicit.endsWith('/api') ? explicit.slice(0, -4) : explicit;
-  return process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-    : '';
-}
-
 export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
-  const response = await fetch(`${apiOrigin()}/api/runtime-config`, {
+  const origin = resolveApiOrigin();
+  if (!origin) throw new Error('Runtime configuration unavailable: API origin is not configured');
+  const response = await fetch(`${origin}/api/runtime-config`, {
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) {
