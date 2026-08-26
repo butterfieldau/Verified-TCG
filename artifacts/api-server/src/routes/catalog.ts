@@ -7,6 +7,13 @@ import {
   withCatalogueCache,
   type CatalogueRead,
 } from "../lib/catalogueProvider.js";
+import {
+  canonicalCatalogueReadsEnabled,
+  readCanonicalPublicCard,
+  readCanonicalPublicCards,
+  recordCatalogueReadMetric,
+  deduplicatePublicCards,
+} from "../catalogue/internal/catalogueReadService.js";
 
 const router = Router();
 
@@ -20,18 +27,24 @@ const router = Router();
  * direct.  If the set/number combo doesn't exist on that CDN the image
  * request will simply 404 and the app's letter-initial fallback fires.
  */
-function pokemonImageUrl(set: string | undefined, number: string | undefined): string | undefined {
+function pokemonImageUrl(
+  set: string | undefined,
+  number: string | undefined,
+): string | undefined {
   if (!set || !number) return undefined;
   // Normalise: lower-case, strip whitespace
   const setId = set.trim().toLowerCase();
   // JustTCG returns numbers like "125/197" — the CDN only needs the card number ("125")
-  const num = number.trim().split('/')[0].trim();
+  const num = number.trim().split("/")[0].trim();
   if (!setId || !num) return undefined;
   return `https://images.pokemontcg.io/${setId}/${num}.png`;
 }
 
 function isPokemonGame(game: string): boolean {
-  return game.toLowerCase().includes("pokemon") || game.toLowerCase().includes("pokémon");
+  return (
+    game.toLowerCase().includes("pokemon") ||
+    game.toLowerCase().includes("pokémon")
+  );
 }
 
 /**
@@ -51,7 +64,10 @@ function enrichCard(card: Record<string, unknown>): Record<string, unknown> {
     return { ...card, image_url: tcgPlayerUrl(String(card.tcgplayerId)) };
   }
   if (isPokemonGame(String(card.game ?? ""))) {
-    const derived = pokemonImageUrl(card.set as string | undefined, card.number as string | undefined);
+    const derived = pokemonImageUrl(
+      card.set as string | undefined,
+      card.number as string | undefined,
+    );
     if (derived) return { ...card, image_url: derived };
   }
   return card;
@@ -70,7 +86,12 @@ function positiveInt(value: unknown, fallback: number, max: number): number {
   return Math.min(Math.floor(parsed), max);
 }
 
-function cacheMetadata(result: Pick<CatalogueRead, "cached" | "cacheStatus" | "outboundCall" | "revalidationScheduled">) {
+function cacheMetadata(
+  result: Pick<
+    CatalogueRead,
+    "cached" | "cacheStatus" | "outboundCall" | "revalidationScheduled"
+  >,
+) {
   return {
     cached: result.cached,
     cache_status: result.cacheStatus,
@@ -82,27 +103,168 @@ function cacheMetadata(result: Pick<CatalogueRead, "cached" | "cacheStatus" | "o
 router.get("/catalog/games", async (_req, res) => {
   try {
     const result = await justTcg("/games");
-    if (result.status >= 400) return res.status(result.status).json(result.body);
-    return res.json({ ...((result.body as object) ?? {}), source: "JustTCG", ...cacheMetadata(result) });
+    if (result.status >= 400)
+      return res.status(result.status).json(result.body);
+    return res.json({
+      ...((result.body as object) ?? {}),
+      source: "JustTCG",
+      ...cacheMetadata(result),
+    });
   } catch (error) {
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
 router.get("/catalog/cards", async (req, res) => {
   try {
     const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
-    const game = typeof req.query.game === "string" ? req.query.game.trim() : "";
+    const game =
+      typeof req.query.game === "string" ? req.query.game.trim() : "";
     const limit = positiveInt(req.query.limit, 20, 100);
     const offset = positiveInt(req.query.offset, 0, 1000000);
-    if (!query && !game) return res.status(400).json({ error: "Provide q or game" });
+    if (!query && !game)
+      return res.status(400).json({ error: "Provide q or game" });
 
-    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (canonicalCatalogueReadsEnabled() && query) {
+      const canonicalRead = await readCanonicalPublicCards({
+        query,
+        game: game || undefined,
+        limit,
+        offset,
+      });
+      const canonical = canonicalRead.value;
+      if (canonical.length) {
+        const fallbackResult = await justTcg(
+          `/cards?${new URLSearchParams({
+            ...(query ? { q: query } : {}),
+            ...(game ? { game } : {}),
+            limit: String(limit),
+            offset: String(offset),
+            include_price_history: "false",
+          }).toString()}`,
+        );
+        const fallbackCards =
+          fallbackResult.status < 400 &&
+          fallbackResult.body &&
+          typeof fallbackResult.body === "object" &&
+          Array.isArray(
+            (fallbackResult.body as { data?: unknown }).data,
+          )
+            ? (
+                (fallbackResult.body as {
+                  data: Array<Record<string, unknown>>;
+                }).data
+              ).map(enrichCard)
+            : [];
+        if (fallbackResult.status >= 400) {
+          recordCatalogueReadMetric(
+            "search",
+            canonicalRead.outcome,
+            canonicalRead.durationMs,
+            "canonical",
+          );
+          return res.json({
+            data: canonical,
+            source: "VerifiedTCG",
+            canonical: true,
+            cached: fallbackResult.cached ?? false,
+          });
+        }
+        if (!fallbackCards.length) {
+          recordCatalogueReadMetric(
+            "search",
+            canonicalRead.outcome,
+            canonicalRead.durationMs,
+            "canonical",
+          );
+          return res.json({
+            data: canonical,
+            source: "VerifiedTCG",
+            canonical: true,
+            cached: fallbackResult.cached ?? false,
+          });
+        }
+        const data = deduplicatePublicCards(canonical, fallbackCards).slice(0, limit);
+        const canonicalCardsDelivered = canonical.length;
+        const delivery =
+          canonicalCardsDelivered === 0
+            ? "justtcg"
+            : canonicalCardsDelivered === data.length
+              ? "canonical"
+              : "mixed";
+        recordCatalogueReadMetric(
+          "search",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          delivery,
+        );
+        return res.json({
+          data,
+          source:
+            delivery === "canonical"
+              ? "VerifiedTCG"
+              : delivery === "mixed"
+                ? "VerifiedTCG+JustTCG"
+                : "JustTCG",
+          canonical: delivery !== "justtcg",
+          cached: fallbackResult.cached ?? false,
+        });
+      }
+      const fallbackResult = await justTcg(
+        `/cards?${new URLSearchParams({
+          ...(query ? { q: query } : {}),
+          ...(game ? { game } : {}),
+          limit: String(limit),
+          offset: String(offset),
+          include_price_history: "false",
+        }).toString()}`,
+      );
+      if (fallbackResult.status < 400) {
+        recordCatalogueReadMetric(
+          "search",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          "justtcg",
+        );
+        const body = {
+          ...((fallbackResult.body as {
+            data?: Array<Record<string, unknown>>;
+          } | null) ?? {}),
+        };
+        if (Array.isArray(body.data))
+          body.data = body.data.map(enrichCard);
+        return res.json({
+          ...body,
+          source: "JustTCG",
+          ...cacheMetadata(fallbackResult),
+        });
+      }
+      recordCatalogueReadMetric(
+        "search",
+        canonicalRead.outcome,
+        canonicalRead.durationMs,
+        "failed",
+      );
+      return res.status(fallbackResult.status).json(fallbackResult.body);
+    }
+
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+    });
     if (query) params.set("q", query);
     if (game) params.set("game", game);
     params.set("include_price_history", "false");
     const result = await justTcg(`/cards?${params.toString()}`);
-    if (result.status >= 400) return res.status(result.status).json(result.body);
+    if (result.status >= 400)
+      return res.status(result.status).json(result.body);
 
     // Enrich cards that are missing an image_url.
     // Priority:
@@ -112,7 +274,10 @@ router.get("/catalog/cards", async (req, res) => {
     //  3. pokemontcg.io CDN derived from set + number — last resort only, since
     //     JustTCG set codes (e.g. "me-ascended-heroes-pokemon") do NOT match
     //     the pokemontcg.io set-code scheme and these URLs frequently 404.
-    const body = { ...((result.body as { data?: Array<Record<string, unknown>> } | null) ?? {}) };
+    const body = {
+      ...((result.body as { data?: Array<Record<string, unknown>> } | null) ??
+        {}),
+    };
     if (body && Array.isArray(body.data)) {
       body.data = body.data.map((card) => {
         const enriched = enrichCard(card);
@@ -122,7 +287,14 @@ router.get("/catalog/cards", async (req, res) => {
 
     return res.json({ ...body, source: "JustTCG", ...cacheMetadata(result) });
   } catch (error) {
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
@@ -164,7 +336,7 @@ export function extractData(
 ): Array<Record<string, unknown>> {
   if (result.status >= 400) return [];
   anyOk.value = true;
-  return ((result.body as { data?: Array<Record<string, unknown>> })?.data) ?? [];
+  return (result.body as { data?: Array<Record<string, unknown>> })?.data ?? [];
 }
 
 /**
@@ -203,41 +375,85 @@ export function mergePool(
  */
 router.get("/catalog/market-movers", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(catalogueCacheKey("market-movers"), "market", async () => {
-      const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
-        justTcg("/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
-      ]);
-      const anyOk = { value: false };
-      requireFreshCatalogueReads([rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs]);
-      const pool = mergePool(
-        extractData(rPoke1, anyOk), extractData(rPoke2, anyOk), extractData(rOp, anyOk),
-        extractData(rMtg, anyOk), extractData(rYgo, anyOk), extractData(rLor, anyOk), extractData(rDbs, anyOk),
-      );
-      if (!anyOk.value) throw new Error("All catalog providers unavailable");
-      const scored = pool
-        .map(enrichCard)
-        .flatMap((card) => {
-          const nm = getNmVariant(card.variants);
-          if (!nm) return [];
-          const price = Number(nm.price ?? 0);
-          if (price < 5) return [];
-          const priceChange7d = Number(nm.priceChange7d ?? 0);
-          return [{
-            game: String(card.game ?? ""),
-            card: { ...card, market_price: price, price_change_7d: priceChange7d,
-              trend: priceChange7d >= 0.5 ? "up" : priceChange7d <= -0.5 ? "down" : "neutral" },
-            score: Math.abs(priceChange7d),
-          }];
-        })
-        .sort((a, b) => b.score - a.score);
-      return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-    });
+    const cached = await withCatalogueCache(
+      catalogueCacheKey("market-movers"),
+      "market",
+      async () => {
+        const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all(
+          [
+            justTcg(
+              "/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false",
+            ),
+            justTcg(
+              "/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false",
+            ),
+          ],
+        );
+        const anyOk = { value: false };
+        requireFreshCatalogueReads([
+          rPoke1,
+          rPoke2,
+          rOp,
+          rMtg,
+          rYgo,
+          rLor,
+          rDbs,
+        ]);
+        const pool = mergePool(
+          extractData(rPoke1, anyOk),
+          extractData(rPoke2, anyOk),
+          extractData(rOp, anyOk),
+          extractData(rMtg, anyOk),
+          extractData(rYgo, anyOk),
+          extractData(rLor, anyOk),
+          extractData(rDbs, anyOk),
+        );
+        if (!anyOk.value) throw new Error("All catalog providers unavailable");
+        const scored = pool
+          .map(enrichCard)
+          .flatMap((card) => {
+            const nm = getNmVariant(card.variants);
+            if (!nm) return [];
+            const price = Number(nm.price ?? 0);
+            if (price < 5) return [];
+            const priceChange7d = Number(nm.priceChange7d ?? 0);
+            return [
+              {
+                game: String(card.game ?? ""),
+                card: {
+                  ...card,
+                  market_price: price,
+                  price_change_7d: priceChange7d,
+                  trend:
+                    priceChange7d >= 0.5
+                      ? "up"
+                      : priceChange7d <= -0.5
+                        ? "down"
+                        : "neutral",
+                },
+                score: Math.abs(priceChange7d),
+              },
+            ];
+          })
+          .sort((a, b) => b.score - a.score);
+        return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
+      },
+    );
     return res.json({
       data: cached.data,
       source: "JustTCG",
@@ -246,8 +462,16 @@ router.get("/catalog/market-movers", async (_req, res) => {
       revalidation_scheduled: cached.revalidationScheduled || undefined,
     });
   } catch (error) {
-    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    if (error instanceof CatalogueReadFailure)
+      return res.status(error.status).json(error.body);
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
@@ -261,34 +485,60 @@ router.get("/catalog/market-movers", async (_req, res) => {
  */
 router.get("/catalog/trending", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(catalogueCacheKey("trending"), "market", async () => {
-      const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
-        justTcg("/cards?q=ex&game=Pokemon&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false"),
-      ]);
-      const anyOk = { value: false };
-      requireFreshCatalogueReads([rPoke, rOp, rMtg, rYgo, rLor, rDbs]);
-      const pool = mergePool(
-        extractData(rPoke, anyOk), extractData(rOp, anyOk), extractData(rMtg, anyOk),
-        extractData(rYgo, anyOk), extractData(rLor, anyOk), extractData(rDbs, anyOk),
-      );
-      if (!anyOk.value) throw new Error("All catalog providers unavailable");
-      const scored = pool
-        .map(enrichCard)
-        .flatMap((card) => {
-          const nm = getNmVariant(card.variants);
-          if (!nm) return [];
-          const price = Number(nm.price ?? 0);
-          if (price <= 0) return [];
-          return [{ game: String(card.game ?? ""), card, score: Number(nm.priceChangesCount7d ?? 0) }];
-        })
-        .sort((a, b) => b.score - a.score);
-      return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-    });
+    const cached = await withCatalogueCache(
+      catalogueCacheKey("trending"),
+      "market",
+      async () => {
+        const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
+          justTcg(
+            "/cards?q=ex&game=Pokemon&limit=20&include_price_history=false",
+          ),
+          justTcg(
+            "/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false",
+          ),
+          justTcg(
+            "/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false",
+          ),
+          justTcg(
+            "/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false",
+          ),
+          justTcg(
+            "/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false",
+          ),
+          justTcg(
+            "/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false",
+          ),
+        ]);
+        const anyOk = { value: false };
+        requireFreshCatalogueReads([rPoke, rOp, rMtg, rYgo, rLor, rDbs]);
+        const pool = mergePool(
+          extractData(rPoke, anyOk),
+          extractData(rOp, anyOk),
+          extractData(rMtg, anyOk),
+          extractData(rYgo, anyOk),
+          extractData(rLor, anyOk),
+          extractData(rDbs, anyOk),
+        );
+        if (!anyOk.value) throw new Error("All catalog providers unavailable");
+        const scored = pool
+          .map(enrichCard)
+          .flatMap((card) => {
+            const nm = getNmVariant(card.variants);
+            if (!nm) return [];
+            const price = Number(nm.price ?? 0);
+            if (price <= 0) return [];
+            return [
+              {
+                game: String(card.game ?? ""),
+                card,
+                score: Number(nm.priceChangesCount7d ?? 0),
+              },
+            ];
+          })
+          .sort((a, b) => b.score - a.score);
+        return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
+      },
+    );
     return res.json({
       data: cached.data,
       source: "JustTCG",
@@ -297,8 +547,16 @@ router.get("/catalog/trending", async (_req, res) => {
       revalidation_scheduled: cached.revalidationScheduled || undefined,
     });
   } catch (error) {
-    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    if (error instanceof CatalogueReadFailure)
+      return res.status(error.status).json(error.body);
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
@@ -311,27 +569,36 @@ router.get("/catalog/trending", async (_req, res) => {
  */
 router.get("/catalog/recently-added", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(catalogueCacheKey("recently-added"), "market", async () => {
-      const [r1, r2] = await Promise.all([
-        justTcg("/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false"),
-        justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
-      ]);
-      const anyOk = { value: false };
-      requireFreshCatalogueReads([r1, r2]);
-      const merged = mergePool(extractData(r1, anyOk), extractData(r2, anyOk));
-      if (!anyOk.value) throw new Error("All catalog providers unavailable");
-      return merged
-        .map(enrichCard)
-        .flatMap((card) => {
-          const nm = getNmVariant(card.variants);
-          if (!nm) return [];
-          const price = Number(nm.price ?? 0);
-          return price > 0 ? [{ card, price }] : [];
-        })
-        .sort((a, b) => b.price - a.price)
-        .slice(0, 8)
-        .map(({ card }) => card);
-    });
+    const cached = await withCatalogueCache(
+      catalogueCacheKey("recently-added"),
+      "market",
+      async () => {
+        const [r1, r2] = await Promise.all([
+          justTcg(
+            "/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false",
+          ),
+          justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
+        ]);
+        const anyOk = { value: false };
+        requireFreshCatalogueReads([r1, r2]);
+        const merged = mergePool(
+          extractData(r1, anyOk),
+          extractData(r2, anyOk),
+        );
+        if (!anyOk.value) throw new Error("All catalog providers unavailable");
+        return merged
+          .map(enrichCard)
+          .flatMap((card) => {
+            const nm = getNmVariant(card.variants);
+            if (!nm) return [];
+            const price = Number(nm.price ?? 0);
+            return price > 0 ? [{ card, price }] : [];
+          })
+          .sort((a, b) => b.price - a.price)
+          .slice(0, 8)
+          .map(({ card }) => card);
+      },
+    );
     return res.json({
       data: cached.data,
       source: "JustTCG",
@@ -340,8 +607,16 @@ router.get("/catalog/recently-added", async (_req, res) => {
       revalidation_scheduled: cached.revalidationScheduled || undefined,
     });
   } catch (error) {
-    if (error instanceof CatalogueReadFailure) return res.status(error.status).json(error.body);
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    if (error instanceof CatalogueReadFailure)
+      return res.status(error.status).json(error.body);
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
@@ -358,7 +633,49 @@ router.get("/catalog/recently-added", async (_req, res) => {
  */
 export async function resolveCatalogCardById(
   cardId: string,
-): Promise<{ card: Record<string, unknown>; cached: boolean; status: number } | null> {
+): Promise<{
+  card: Record<string, unknown>;
+  cached: boolean;
+  status: number;
+  source: "VerifiedTCG" | "JustTCG";
+} | null> {
+  if (canonicalCatalogueReadsEnabled()) {
+    const canonicalRead = await readCanonicalPublicCard(cardId);
+    const canonical = canonicalRead.value;
+    if (canonical) {
+        recordCatalogueReadMetric(
+          "card_lookup",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          "canonical",
+        );
+      return {
+        card: canonical,
+        cached: false,
+        status: 200,
+        source: "VerifiedTCG",
+      };
+    }
+    const resolved = await resolveJustTcgCatalogCardById(cardId);
+    recordCatalogueReadMetric(
+      "card_lookup",
+      canonicalRead.outcome,
+      canonicalRead.durationMs,
+      resolved?.status === 200 ? "justtcg" : "failed",
+    );
+    return resolved;
+  }
+  return resolveJustTcgCatalogCardById(cardId);
+}
+
+async function resolveJustTcgCatalogCardById(
+  cardId: string,
+): Promise<{
+  card: Record<string, unknown>;
+  cached: boolean;
+  status: number;
+  source: "JustTCG";
+} | null> {
   // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
   const parts = cardId.split("-");
   const gameWord = (parts[0] ?? "").toLowerCase();
@@ -372,11 +689,24 @@ export async function resolveCatalogCardById(
   };
   const game = GAME_MAP[gameWord];
   const RARITY_TAIL = new Set([
-    "common", "uncommon", "rare", "holo", "ultra", "secret", "special",
-    "illustration", "hyper", "rainbow", "full", "art",
+    "common",
+    "uncommon",
+    "rare",
+    "holo",
+    "ultra",
+    "secret",
+    "special",
+    "illustration",
+    "hyper",
+    "rainbow",
+    "full",
+    "art",
   ]);
   const nameParts = [...parts.slice(1)];
-  while (nameParts.length > 0 && RARITY_TAIL.has(nameParts[nameParts.length - 1]!)) {
+  while (
+    nameParts.length > 0 &&
+    RARITY_TAIL.has(nameParts[nameParts.length - 1]!)
+  ) {
     nameParts.pop();
   }
   const searchQuery = nameParts.join(" ").trim();
@@ -391,7 +721,12 @@ export async function resolveCatalogCardById(
 
   const result = await justTcg(`/cards?${params.toString()}`);
   if (result.status === 429) {
-    return { card: {} as Record<string, unknown>, cached: false, status: 429 };
+    return {
+      card: {} as Record<string, unknown>,
+      cached: false,
+      status: 429,
+      source: "JustTCG",
+    };
   }
   if (result.status >= 500) throw new Error("Catalog provider unavailable");
   if (result.status >= 400) return null;
@@ -401,7 +736,7 @@ export async function resolveCatalogCardById(
   if (!match) return null;
 
   const card = enrichCard(match);
-  return { card, cached: result.cached, status: 200 };
+  return { card, cached: result.cached, status: 200, source: "JustTCG" };
 }
 
 router.get("/catalog/cards/:id", async (req, res) => {
@@ -414,9 +749,21 @@ router.get("/catalog/cards/:id", async (req, res) => {
         code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED",
       });
     }
-    return res.json({ data: resolved.card, source: "JustTCG", cached: resolved.cached });
+    return res.json({
+      data: resolved.card,
+      source: resolved.source,
+      cached: resolved.cached,
+      ...(resolved.source === "VerifiedTCG" ? { canonical: true } : {}),
+    });
   } catch (error) {
-    return res.status(503).json({ error: error instanceof Error ? error.message : "Catalog provider unavailable" });
+    return res
+      .status(503)
+      .json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Catalog provider unavailable",
+      });
   }
 });
 
