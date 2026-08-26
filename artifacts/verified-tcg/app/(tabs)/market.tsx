@@ -29,6 +29,18 @@ const TCG_FILTERS: { label: string; value: TCGId | 'all' }[] = [
   { label: 'MTG', value: 'magic' },
 ];
 
+function formatDatasetUpdatedAt(date: string | undefined): string {
+  if (!date) return 'No market snapshot yet';
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return 'No market snapshot yet';
+  const minutes = Math.max(0, Math.round((Date.now() - value.getTime()) / 60_000));
+  if (minutes < 1) return 'Updated less than a minute ago';
+  if (minutes < 60) return `Updated ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  return `Updated ${value.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
+}
+
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
   const [movers, setMovers] = useState<MarketMover[]>([]);
@@ -72,6 +84,13 @@ export default function MarketScreen() {
 
   const filteredMovers =
     activeTCG === 'all' ? movers : movers.filter(m => m.card.tcg === activeTCG);
+  const latestUpdatedAt = movers.reduce<string | undefined>((latest, mover) =>
+    !latest || new Date(mover.updatedAt).getTime() > new Date(latest).getTime()
+      ? mover.updatedAt
+      : latest,
+  undefined);
+  const currencies = [...new Set(filteredMovers.map(m => m.currency))];
+  const currencyLabel = currencies.length === 1 ? currencies[0] : currencies.length > 1 ? 'mixed currencies' : '';
 
   return (
     <ScrollView
@@ -93,7 +112,7 @@ export default function MarketScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Market</Text>
-          <Text style={styles.sub}>Updated just now · AUD</Text>
+          <Text style={styles.sub}>{formatDatasetUpdatedAt(latestUpdatedAt)}{currencyLabel ? ` · ${currencyLabel}` : ''}</Text>
         </View>
         <View style={styles.headerButtons}>
           <Pressable
@@ -164,13 +183,13 @@ export default function MarketScreen() {
                 style={styles.moverCard}
                 onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
                 accessibilityRole="button"
-                accessibilityLabel={`${m.card.name}, ${m.trend === 'up' ? '+' : ''}${m.priceChangePercent.toFixed(1)}% — $${m.currentPrice.toLocaleString()}`}
+                accessibilityLabel={`${m.card.name}, ${m.trend === 'up' ? '+' : ''}${m.priceChangePercent.toFixed(1)}% — ${m.currency} ${m.currentPrice.toLocaleString()}`}
               >
                 <CardThumbnail card={m.card} compact />
                 <Text style={styles.moverName} numberOfLines={1}>{m.card.name}</Text>
                 <Text style={styles.moverSet} numberOfLines={1}>{m.card.setName}</Text>
                 <View style={styles.moverBottom}>
-                  <Text style={styles.moverPrice}>${m.currentPrice.toLocaleString()}</Text>
+                  <Text style={styles.moverPrice}>{m.currency} {m.currentPrice.toLocaleString()}</Text>
                   <Text style={[styles.moverPct, { color: m.trend === 'up' ? C.positive : C.negative }]}>
                     {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
                   </Text>
@@ -202,7 +221,7 @@ export default function MarketScreen() {
               <Text style={styles.rankedSet}>{m.card.setName}</Text>
             </View>
             <View style={styles.rankedRight}>
-              <Text style={styles.rankedPrice}>${m.currentPrice.toLocaleString()}</Text>
+              <Text style={styles.rankedPrice}>{m.currency} {m.currentPrice.toLocaleString()}</Text>
               <Text style={[styles.moverPct, { color: m.trend === 'up' ? C.positive : C.negative, marginTop: 3 }]}>
                 {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
               </Text>

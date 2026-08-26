@@ -50,12 +50,6 @@ jest.mock('../services/pushRegistration', () => ({
   registerPushTokenIfPermitted: jest.fn(),
 }));
 
-jest.mock('../services/market', () => ({
-  simulateRefreshedPrice: jest.fn((item: unknown) => item),
-  fetchRefreshedPrices: jest.fn(() => Promise.resolve([])),
-  PORTFOLIO_CHART_DATA: [],
-}));
-
 jest.mock('../services/eventsApi', () => ({
   fetchMyActiveParticipation: jest.fn(() => Promise.resolve(null)),
 }));
@@ -76,18 +70,6 @@ jest.mock('../services/alertsStore', () => ({
 
 jest.mock('../services/tcgPreferences', () => ({
   syncPreferredTcgsAfterSignIn: jest.fn(),
-}));
-
-jest.mock('../services/profile', () => ({
-  MOCK_WATCHLIST: [],
-  MOCK_USER: {
-    id: 'mock-user',
-    email: 'mock@example.com',
-    displayName: 'Mock',
-    username: 'mock',
-    tcgPreferences: [],
-    stats: { cardsInCollection: 0, totalTrades: 0, memberSince: '2025' },
-  },
 }));
 
 // ── Import under test (after mocks) ──────────────────────────────────────────

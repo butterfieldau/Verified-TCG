@@ -88,7 +88,7 @@ export interface PriceRecord {
   bgs95?: number;
   cgc9?: number;
   cgc10?: number;
-  currency: 'AUD';
+  currency: string;
   updatedAt: string;
   change24h?: number;  // percentage
   change7d?: number;
@@ -270,6 +270,10 @@ export interface MarketMover {
   priceChange: number;
   priceChangePercent: number;
   trend: 'up' | 'down' | 'neutral';
+  /** Currency supplied by the persisted price snapshot. */
+  currency: string;
+  /** Timestamp of the latest comparable snapshot. */
+  updatedAt: string;
   volume?: number;
 }
 

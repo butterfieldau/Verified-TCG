@@ -22,8 +22,6 @@ import type {
   PortfolioSummary,
 } from '@/types';
 import { getItemCurrentValue, fetchCollection, addCollectionItem, removeCollectionItem } from '@/services/collection';
-import { MOCK_WATCHLIST, MOCK_USER } from '@/services/profile';
-import { simulateRefreshedPrice, fetchRefreshedPrices } from '@/services/market';
 import {
   syncWishlistToServer,
   addWishlistItemToServer,
@@ -32,7 +30,6 @@ import {
 } from '@/services/wishlistApi';
 import {
   loadPersistedPrices,
-  saveRefreshedPrices,
   applyPersistedCollectionPrices,
 } from '@/services/pricePersistence';
 import {
@@ -216,7 +213,12 @@ const COLLECTION_CACHE_KEY = '@verified_tcg/collection_cache';
  * removed, or renamed). Add a corresponding case to migrateWatchlist() below
  * so existing data is upgraded rather than discarded.
  */
-const WATCHLIST_SCHEMA_VERSION = 1;
+const WATCHLIST_SCHEMA_VERSION = 2;
+const LEGACY_FIXTURE_CARD_IDS = new Set([
+  'charizard-ex-ob',
+  'pikachu-ex-151',
+  'luffy-op01',
+]);
 
 function userFromSession(session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }): User {
   const email = session.user.email ?? '';
@@ -232,6 +234,11 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
   const avatarUrl = typeof meta.avatar_url === 'string' ? meta.avatar_url : null;
   const favouriteTcg = typeof meta.favourite_tcg === 'string' ? meta.favourite_tcg : null;
   const collectorSince = typeof meta.collector_since === 'string' ? meta.collector_since : null;
+  const preferredTcgs = Array.isArray(meta.preferred_tcgs)
+    ? meta.preferred_tcgs.filter((value): value is TCGId =>
+        typeof value === 'string' && ['pokemon', 'magic', 'onepiece', 'yugioh', 'lorcana', 'dragonball'].includes(value),
+      )
+    : [];
   return {
     id: session.user.id,
     email,
@@ -248,8 +255,13 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
     showForTrade: meta.show_for_trade !== false,
     showForSale: meta.show_for_sale !== false,
     joinedAt: new Date().toISOString(),
-    tcgPreferences: MOCK_USER.tcgPreferences,
-    stats: MOCK_USER.stats,
+    tcgPreferences: preferredTcgs,
+    stats: {
+      collectionCount: 0,
+      collectionValue: 0,
+      listingsCount: 0,
+      tradesCount: 0,
+    },
   };
 }
 
@@ -279,6 +291,13 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
         // so items are already structurally compatible — no field transforms needed.
         version = 1;
         break;
+      case 1:
+        // Earlier app builds persisted the bundled Profile wishlist. Those IDs
+        // are not catalogue identities and must never survive into release
+        // runtime as if they were a collector's real saved cards.
+        items = items.filter(item => !LEGACY_FIXTURE_CARD_IDS.has(item.cardId));
+        version = 2;
+        break;
       default:
         // Unknown version — cannot migrate safely.
         return null;
@@ -298,7 +317,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>(MOCK_WATCHLIST);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
@@ -393,7 +412,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }
           }
         } catch {
-          // Corrupted JSON — fall back to mock defaults silently
+          // Corrupted local data is ignored. Never replace it with demo cards.
         }
       }
 
@@ -1043,50 +1062,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setScansUsed(Math.max(0, Math.min(count, FREE_SCAN_LIMIT)));
   }, []);
 
-  // Refs so refreshPrices can read the latest collection/watchlist without
-  // them being stale-closure-captured in the useCallback dependency array.
-  const collectionRef = useRef<CollectionItem[]>(collection);
+  // Keep the alert-limit decision current without treating local fixture data
+  // as a source of truth.
   const watchlistRef = useRef<WatchlistItem[]>(watchlist);
-  useEffect(() => { collectionRef.current = collection; }, [collection]);
   useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
 
   const refreshPrices = useCallback(async () => {
     if (isPriceRefreshing) return;
     setIsPriceRefreshing(true);
     try {
-      await fetchRefreshedPrices();
-      const now = new Date();
-
-      // Compute updated arrays using the latest ref values so we can
-      // both set state and persist in the same step — no setTimeout needed.
-      const updatedCollection = collectionRef.current.map(item => ({
-        ...item,
-        card: {
-          ...item.card,
-          price: simulateRefreshedPrice(item.cardId, item.card.price),
-        },
-      }));
-
-      // Also refresh prices on watchlist cards so price-alert thresholds can trigger
-      const updatedWatchlist = watchlistRef.current.map(item => ({
-        ...item,
-        card: {
-          ...item.card,
-          price: simulateRefreshedPrice(item.cardId, item.card.price),
-        },
-      }));
-
-      setCollection(updatedCollection);
-      setWatchlist(updatedWatchlist);
-      setPricesLastUpdated(now);
-
-      // Await persistence so that an immediate restart cannot lose the data.
-      // Errors are caught and re-thrown so callers know the save failed.
-      await saveRefreshedPrices(updatedCollection, updatedWatchlist, now);
+      // Pricing is server-owned. A pull-to-refresh reads the latest persisted
+      // quotes and never manufactures a local price movement.
+      await loadCollection();
+      setPricesLastUpdated(new Date());
     } finally {
       setIsPriceRefreshing(false);
     }
-  }, [isPriceRefreshing]);
+  }, [isPriceRefreshing, loadCollection]);
 
   // Track which watchlist item IDs have already generated a price-alert notification
   // so we don't create duplicates on every re-render.

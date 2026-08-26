@@ -12,7 +12,12 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
 import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
-import DevSubscriptionToggle from '@/components/ui/DevSubscriptionToggle';
+
+// Keep developer-only controls out of the release tab tree entirely. The
+// require is evaluated only in Expo development builds, never in TestFlight.
+const DevSubscriptionToggle = __DEV__
+  ? require('@/components/ui/DevSubscriptionToggle').default
+  : null;
 
 // iOS 26+ liquid glass tab bar
 function NativeTabLayout() {
@@ -149,7 +154,7 @@ export default function TabLayout() {
   return (
     <View style={{ flex: 1 }}>
       {isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />}
-      <DevSubscriptionToggle />
+      {DevSubscriptionToggle ? <DevSubscriptionToggle /> : null}
     </View>
   );
 }

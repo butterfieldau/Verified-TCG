@@ -32,6 +32,8 @@ export interface CatalogCard {
   image_url?: string;
   /** TCGPlayer product ID — used to construct a card image URL when image_url is absent */
   tcgplayerId?: string | null;
+  /** Present on market feeds when the server has a truthful source currency. */
+  currency?: string;
   variants: CatalogVariant[];
 }
 
@@ -166,6 +168,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
   const price = variant?.price ?? 0;
   const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : new Date().toISOString();
+  const currency = variant?.markets?.[0]?.currency ?? card.currency ?? 'AUD';
   const game = card.game.toLowerCase();
   const tcg = game.includes('magic') ? 'magic'
     : game.includes('one piece') ? 'onepiece'
@@ -204,7 +207,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     gradientEnd: '#090909',
     price: {
       raw: price,
-      currency: 'AUD',
+      currency,
       updatedAt,
       change24h: variant?.priceChange24hr ?? undefined,
       change7d: variant?.priceChange7d ?? undefined,

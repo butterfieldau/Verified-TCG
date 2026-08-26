@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { searchCards } from '@/services/cards';
+import { catalogCardToAppCard, MIN_CATALOG_SEARCH_LENGTH, searchCatalog } from '@/services/catalogApi';
 import colors from '@/constants/colors';
 import type { Card, CollectionItem, GradingCompany, CardCondition } from '@/types';
 
@@ -51,10 +51,31 @@ export default function AddCardScreen() {
   const [certNumber, setCertNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [success, setSuccess] = useState(false);
+  const [results, setResults] = useState<Card[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const allCards = searchCards('');
-  const results = query.trim().length > 0 ? searchCards(query) : allCards;
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < MIN_CATALOG_SEARCH_LENGTH) {
+      setResults([]);
+      setSearchLoading(false);
+      setSearchError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setSearchLoading(true);
+      setSearchError(null);
+      searchCatalog(trimmed)
+        .then(response => { if (!cancelled) setResults(response.data.map(catalogCardToAppCard)); })
+        .catch(() => { if (!cancelled) setSearchError('Card search is unavailable. Please try again.'); })
+        .finally(() => { if (!cancelled) setSearchLoading(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query]);
 
   function selectCard(card: Card) {
     setSelectedCard(card);
@@ -76,7 +97,7 @@ export default function AddCardScreen() {
       grading: cardType === 'graded' ? {
         company: grader,
         grade,
-        certNumber: certNumber || `${grader}-${Date.now()}`,
+        certNumber,
         gradedAt: new Date().toISOString().split('T')[0],
       } : undefined,
     };
@@ -167,8 +188,17 @@ export default function AddCardScreen() {
           </View>
 
           <Text style={styles.sectionLabel}>
-            {query ? `Results (${results.length})` : 'All Cards'}
+            {query.trim().length >= MIN_CATALOG_SEARCH_LENGTH ? `Results (${results.length})` : 'Search the catalogue'}
           </Text>
+
+          {searchLoading && <Text style={styles.searchStatus}>Searching cards…</Text>}
+          {!searchLoading && query.trim().length < MIN_CATALOG_SEARCH_LENGTH && (
+            <Text style={styles.searchStatus}>Enter at least {MIN_CATALOG_SEARCH_LENGTH} characters to search real catalogue cards.</Text>
+          )}
+          {!searchLoading && searchError && <Text style={styles.searchStatus}>{searchError}</Text>}
+          {!searchLoading && !searchError && query.trim().length >= MIN_CATALOG_SEARCH_LENGTH && results.length === 0 && (
+            <Text style={styles.searchStatus}>No catalogue cards found.</Text>
+          )}
 
           {results.map(card => (
             <Pressable
@@ -407,6 +437,13 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 12,
+  },
+  searchStatus: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    paddingVertical: 20,
   },
   cardRow: {
     flexDirection: 'row',

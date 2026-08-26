@@ -42,11 +42,6 @@ const statStyles = StyleSheet.create({
 const MENU_ITEMS = [
   { icon: 'bell', label: 'Notifications', badge: null as string | null, route: '/notifications', dynamicBadge: true },
   { icon: 'heart', label: 'Wishlist', route: '/wishlist' },
-  { icon: 'zap', label: 'Event Mode', badge: 'LIVE', route: '/event-mode', highlight: true },
-  { icon: 'git-branch', label: 'Trade Matches', badge: '4', route: '/trade-match' },
-  { icon: 'maximize', label: 'Trade QR', route: '/trade-qr' },
-  { icon: 'package', label: 'My Listings', route: '/sell' },
-  { icon: 'repeat', label: 'Trade Offers', route: '/trade' },
   { icon: 'shield', label: 'Verification', route: '/verification-info' },
   { icon: 'pie-chart', label: 'Portfolio', route: '/portfolio' },
   { icon: 'award', label: 'Pro Identity', route: '/pro-identity', proOnly: true },
@@ -63,8 +58,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
     user, isAuthenticated, signOut, watchlist, collection, portfolio,
-    subscriptionTier, profileTheme,
-    selectedIcon, foundingMemberClaimed,
+    subscriptionTier,
     scansUsed, scanLimit, scanResetDate,
     unreadNotificationCount,
   } = useApp();
@@ -79,28 +73,6 @@ export default function ProfileScreen() {
   const scansExhausted = scansRemaining === 0;
   const scansLow = scansRemaining <= 3 && !scansExhausted;
 
-  // Human-readable label for the active in-app icon selection
-  const ICON_LABELS: Record<string, string> = {
-    original: 'Verified Red',
-    black: 'Verified Black',
-    white: 'Verified White',
-    gold: 'Verified Gold',
-    stealth: 'Stealth',
-    event: 'Event Edition',
-    founding: 'Founding Member',
-  };
-
-  // Map profileTheme id → card background colour for the profile header area.
-  // Intentionally kept minimal — the theme tints the profile card, not the whole screen.
-  const THEME_CARD_COLORS: Record<string, string> = {
-    default:         C.card,
-    carbon:          '#1C1C1E',
-    deep_red:        '#1A0000',
-    collector_black: '#000000',
-    chrome:          '#222222',
-  };
-  const profileCardBg = THEME_CARD_COLORS[profileTheme] ?? C.card;
-
   // NativeTabs reports a doubled top inset for this ScrollView on current
   // liquid-glass iOS. Keep one normal status-bar inset so the title clears the
   // clock, without recreating the oversized black band.
@@ -114,6 +86,9 @@ export default function ProfileScreen() {
   const tcgNames = (user?.tcgPreferences ?? [])
     .map(id => TCG_LIST.find(t => t.id === id)?.shortName ?? id)
     .join(' · ');
+  const cardsForTrade = collection.filter(item => item.isForTrade).length;
+  const cardsForSale = collection.filter(item => item.isForSale).length;
+  const displayValue = portfolio.totalValue;
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background, paddingTop: topPad + 8 }]}>
@@ -173,13 +148,13 @@ export default function ProfileScreen() {
       )}
 
       {/* Profile card — background tinted by the collector's chosen profile theme */}
-      <View style={[styles.profileCard, { backgroundColor: profileCardBg }]}>
+      <View style={[styles.profileCard, { backgroundColor: C.card }]}>
         <View style={styles.avatarRow}>
           {user?.avatarUrl ? (
             <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
           ) : (
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
+              <Text style={styles.avatarText}>{user?.displayName?.trim().charAt(0).toUpperCase() || '?'}</Text>
             </View>
           )}
           <View style={styles.nameBlock}>
@@ -192,20 +167,6 @@ export default function ProfileScreen() {
               )}
             </View>
             <Text style={styles.username}>{user?.username ? `@${user.username}` : 'Guest mode'}</Text>
-            {/* Founding Member badge — shown when Pro user has claimed their badge */}
-            {isPro && foundingMemberClaimed && (
-              <View style={styles.foundingRow}>
-                <Feather name="award" size={11} color="#D4AF37" />
-                <Text style={styles.foundingText}>Founding Member #00381</Text>
-              </View>
-            )}
-            {/* Active in-app icon indicator — shows which icon identity is selected */}
-            {isPro && selectedIcon !== 'original' && (
-              <View style={styles.iconRow}>
-                <Feather name="image" size={10} color={C.mutedForeground} />
-                <Text style={styles.iconLabel}>{ICON_LABELS[selectedIcon] ?? selectedIcon} icon</Text>
-              </View>
-            )}
             <Text style={styles.location}>
               <Feather name="map-pin" size={11} color={C.mutedForeground} />{' '}
               {user?.location ?? 'Explore freely'}
@@ -217,17 +178,17 @@ export default function ProfileScreen() {
           <Text style={styles.bio}>{user.bio}</Text>
         )}
 
-        <Text style={styles.tcgPref}>{tcgNames}</Text>
+        {tcgNames ? <Text style={styles.tcgPref}>{tcgNames}</Text> : null}
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatBlock label="Cards" value={user?.stats.collectionCount ?? collection.length} />
+          <StatBlock label="Cards" value={collection.length} />
           <View style={styles.statDivider} />
-          <StatBlock label="Value" value={`$${((user?.stats.collectionValue ?? portfolio.totalValue) / 1000).toFixed(1)}k`} />
+          <StatBlock label="Value" value={`$${displayValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`} />
           <View style={styles.statDivider} />
-          <StatBlock label="Trades" value={user?.stats.tradesCount ?? 0} />
+          <StatBlock label="For Trade" value={cardsForTrade} />
           <View style={styles.statDivider} />
-          <StatBlock label="Rating" value={user?.stats.rating?.toFixed(1) ?? '—'} />
+          <StatBlock label="For Sale" value={cardsForSale} />
         </View>
       </View>
 
