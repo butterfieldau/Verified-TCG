@@ -120,6 +120,9 @@ export default function ProfileScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
       showsVerticalScrollIndicator={false}
+      // Profile has no pull-to-refresh action. Disable elastic overscroll so
+      // pulling down cannot expose a blank band above its anchored header.
+      bounces={false}
       contentInsetAdjustmentBehavior="never"
       automaticallyAdjustContentInsets={false}
     >
