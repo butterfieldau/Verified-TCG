@@ -16,6 +16,7 @@ import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { getMarketMovers, getMarketMoversCached } from '@/services/market';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import colors from '@/constants/colors';
 import type { MarketMover, TCGId } from '@/types';
 
@@ -35,7 +36,8 @@ export default function MarketScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // The iOS liquid-glass native tab container supplies this safe area itself.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   // Stale-while-revalidate: cached movers render instantly; a background
