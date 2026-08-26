@@ -166,8 +166,8 @@ export default function ProSubscriptionScreen() {
           {/* Subscription Terms link */}
           <Pressable
             onPress={() => {
-              const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'verifiedtcg.com';
-              Linking.openURL(`https://${domain}/vtcg-site/subscription-terms`);
+              const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'verifiedtcg.co';
+              Linking.openURL(`https://${domain}/subscription-terms`);
             }}
             style={styles.termsLink}
           >

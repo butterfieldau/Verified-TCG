@@ -31,7 +31,7 @@
       [
         "expo-router",
         {
-          "origin": "https://replit.com/"
+          "origin": "https://verifiedtcg.co"
         }
       ],
       "expo-font",
@@ -51,7 +51,8 @@
           "color": "#C89B3C",
           "sounds": []
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

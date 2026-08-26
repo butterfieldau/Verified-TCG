@@ -11,11 +11,15 @@
  * When no local value exists (fresh install / new device), the server value
  * is written to AsyncStorage so subsequent sign-outs clear it correctly.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getAccessToken } from "./auth";
 
-export const PREFERRED_TCGS_KEY = '@verified_tcg/preferred_tcgs';
+export const PREFERRED_TCGS_KEY = "@verified_tcg/preferred_tcgs";
 
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(
+  /\/$/,
+  "",
+);
 
 /**
  * Save selected TCGs locally and sync to the API when a token is available.
@@ -25,7 +29,7 @@ export async function savePreferredTcgs(
   games: string[],
   accessToken?: string,
 ): Promise<void> {
-  const joined = games.join(',');
+  const joined = games.join(",");
   await AsyncStorage.setItem(PREFERRED_TCGS_KEY, joined);
 
   const token = accessToken ?? (await getStoredAccessToken());
@@ -60,17 +64,16 @@ export function syncPreferredTcgsAfterSignIn(
       }
       // If neither exists, nothing to do
     })
-    .catch(() => {/* swallow */});
+    .catch(() => {
+      /* swallow */
+    });
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 async function getStoredAccessToken(): Promise<string | null> {
   try {
-    const raw = await AsyncStorage.getItem('@verified_tcg/auth_session');
-    if (!raw) return null;
-    const session = JSON.parse(raw) as { access_token?: string };
-    return session.access_token ?? null;
+    return await getAccessToken();
   } catch {
     return null;
   }
@@ -78,9 +81,9 @@ async function getStoredAccessToken(): Promise<string | null> {
 
 async function syncToApi(joined: string, accessToken: string): Promise<void> {
   await fetch(`${API_BASE}/api/auth/user`, {
-    method: 'PUT',
+    method: "PUT",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ data: { preferred_tcgs: joined } }),

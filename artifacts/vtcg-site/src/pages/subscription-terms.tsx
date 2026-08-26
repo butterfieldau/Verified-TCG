@@ -101,7 +101,7 @@ export default function SubscriptionTerms() {
             </p>
             <p>
               Cancellation instructions and renewal management will be available through your billing provider when in-app purchases are enabled. You can also contact us at{' '}
-              <a href="mailto:support@verifiedtcg.com" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.com</a>{' '}
+              <a href="mailto:support@verifiedtcg.co" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.co</a>{' '}
               for assistance.
             </p>
           </section>
@@ -126,7 +126,7 @@ export default function SubscriptionTerms() {
             </h2>
             <p className="mb-4">
               You may cancel your Verified TCG Pro subscription at any time. Cancellation instructions will be provided through your billing provider once in-app purchases are enabled. You can also contact us at{' '}
-              <a href="mailto:support@verifiedtcg.com" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.com</a>{' '}
+              <a href="mailto:support@verifiedtcg.co" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.co</a>{' '}
               to request cancellation.
             </p>
             <p>
@@ -141,7 +141,7 @@ export default function SubscriptionTerms() {
             </h2>
             <p className="mb-4">
               Refund eligibility will depend on the billing platform used at the time of purchase. Details will be provided when in-app billing is activated. For questions or disputes about charges, contact us at{' '}
-              <a href="mailto:support@verifiedtcg.com" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.com</a>.
+              <a href="mailto:support@verifiedtcg.co" className="text-[#FF1E2D] hover:underline">support@verifiedtcg.co</a>.
             </p>
           </section>
 
@@ -162,8 +162,8 @@ export default function SubscriptionTerms() {
             </h2>
             <p>
               Questions about your subscription? Contact us at{' '}
-              <a href="mailto:support@verifiedtcg.com" className="text-[#FF1E2D] hover:underline">
-                support@verifiedtcg.com
+              <a href="mailto:support@verifiedtcg.co" className="text-[#FF1E2D] hover:underline">
+                support@verifiedtcg.co
               </a>{' '}
               or through the Help section in the Verified TCG app.
             </p>

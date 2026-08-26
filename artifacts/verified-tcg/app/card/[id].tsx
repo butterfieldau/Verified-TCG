@@ -919,7 +919,7 @@ export default function CardDetailScreen() {
             <Pressable
               style={styles.navBtn}
               onPress={() => {
-                const url = `https://verifiedtcg.com/cards/${card.id}`;
+                const url = `https://verifiedtcg.co/cards/${card.id}`;
                 Share.share({
                   title: `${card.name} — Verified TCG`,
                   message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: $${card.price.raw.toLocaleString('en-AU')} AUD\n${url}`,

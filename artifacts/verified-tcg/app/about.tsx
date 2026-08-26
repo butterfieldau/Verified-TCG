@@ -65,7 +65,7 @@ export default function AboutScreen() {
       <Text style={styles.sectionLabel}>Links</Text>
       <View style={[styles.linksCard, { backgroundColor: C.card }]}>
         <Pressable
-          onPress={() => Linking.openURL('https://verifiedtcg.com')}
+          onPress={() => Linking.openURL('https://verifiedtcg.co')}
           style={({ pressed }) => [styles.linkRow, styles.linkBorder, { backgroundColor: pressed ? C.muted : 'transparent' }]}
         >
           <View style={styles.linkIcon}>

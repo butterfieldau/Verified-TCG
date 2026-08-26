@@ -1,10 +1,12 @@
 /**
  * Activity API — fetches the signed-in user's recent activity for the Home screen.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAccessToken } from "./auth";
 
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const SESSION_KEY = '@verified_tcg/auth_session';
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(
+  /\/$/,
+  "",
+);
 
 export interface ActivityItem {
   id: string;
@@ -23,10 +25,7 @@ export interface ActivityItem {
  */
 export async function fetchRecentActivity(limit = 10): Promise<ActivityItem[]> {
   try {
-    const sessionRaw = await AsyncStorage.getItem(SESSION_KEY);
-    if (!sessionRaw) return [];
-    const session = JSON.parse(sessionRaw) as { access_token?: string };
-    const token = session.access_token;
+    const token = await getAccessToken();
     if (!token) return [];
 
     const res = await fetch(`${API_BASE}/api/me/activity?limit=${limit}`, {

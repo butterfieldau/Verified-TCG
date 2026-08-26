@@ -623,7 +623,7 @@ export default function WishlistScreen() {
                     }`,
                 );
                 const shareUrl = user?.username
-                  ? `https://verifiedtcg.com/c/${user.username}/wishlist`
+                  ? `https://verifiedtcg.co/c/${user.username}/wishlist`
                   : null;
                 const message = shareUrl
                   ? `My Verified TCG Wishlist:\n${shareUrl}\n\n${lines.join('\n')}`

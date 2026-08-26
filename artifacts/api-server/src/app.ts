@@ -38,8 +38,8 @@ const corsOptions: cors.CorsOptions = isDev
       origin: ALLOWED_ORIGINS_ENV
         ? ALLOWED_ORIGINS_ENV.split(",").map((o) => o.trim()).filter(Boolean)
         : [
-            "https://verifiedtcg.com",
-            "https://www.verifiedtcg.com",
+            "https://verifiedtcg.co",
+            "https://www.verifiedtcg.co",
           ],
       credentials: true,
     };

@@ -157,7 +157,7 @@ export function LoginScreen() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@verifiedtcg.com"
+              placeholder="admin@verifiedtcg.co"
               autoFocus
               required
               autoComplete="username"
