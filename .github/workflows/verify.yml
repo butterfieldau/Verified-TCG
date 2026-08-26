@@ -30,6 +30,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       SESSION_SECRET: ci-session-secret-must-be-at-least-32-characters
+      ADMIN_SECRET: ci-admin-secret-used-only-for-admin-security-tests
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +46,30 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @workspace/db run build
+      - run: pnpm --filter @workspace/api-server run db:bootstrap
+      - name: Verify fresh database bootstrap schema
+        run: |
+          pnpm --filter @workspace/db exec node --input-type=module --eval '
+            import pg from "pg";
+
+            const required = ["users", "user_sessions", "collection_items", "catalogue_cache_entries"];
+            const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+            await client.connect();
+            try {
+              const result = await client.query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = $$public$$ AND table_name = ANY($1::text[])",
+                [required],
+              );
+              const found = new Set(result.rows.map(({ table_name }) => table_name));
+              const missing = required.filter((table) => !found.has(table));
+              if (missing.length > 0) {
+                throw new Error(`Fresh database bootstrap is missing required tables: ${missing.join(", ")}`);
+              }
+              console.log(`Fresh database bootstrap verified: ${required.join(", ")}`);
+            } finally {
+              await client.end();
+            }
+          '
       - run: pnpm run typecheck
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --filter @workspace/vtcg-web run build
