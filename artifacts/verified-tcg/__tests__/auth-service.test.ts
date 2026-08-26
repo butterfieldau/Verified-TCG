@@ -13,7 +13,10 @@ import * as SecureStore from "expo-secure-store";
 import {
   readPersistedSession,
   restoreSession,
+  resolveAuthApiBase,
+  signInWithPassword,
   signOut,
+  signUp,
   ALL_STORAGE_KEYS,
   type AuthSession,
 } from "../services/auth";
@@ -46,6 +49,8 @@ function makeSession(
 }
 
 beforeEach(async () => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test";
+  delete process.env.EXPO_PUBLIC_DOMAIN;
   await AsyncStorage.clear();
   await SecureStore.deleteItemAsync(SESSION_KEY);
   (fetch as jest.Mock).mockClear();
@@ -53,6 +58,115 @@ beforeEach(async () => {
   for (const key of ALL_STORAGE_KEYS) {
     if (key !== SESSION_KEY) await AsyncStorage.setItem(key, "some-value");
   }
+});
+
+function jsonResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => "application/json" },
+    json: async () => body,
+  } as unknown as Response;
+}
+
+function textResponse(status: number): Response {
+  return {
+    ok: false,
+    status,
+    headers: { get: () => "text/html; charset=utf-8" },
+    json: async () => { throw new Error("not JSON"); },
+  } as unknown as Response;
+}
+
+describe("mobile authentication origin and errors", () => {
+  it("uses the configured public API origin and sends the app version", async () => {
+    const session = makeSession();
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, session));
+
+    await expect(signInWithPassword("TEST@EXAMPLE.COM", "password123")).resolves.toEqual(session);
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.verified.test/api/auth/signin",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "x-app-version": expect.any(String) }),
+      }),
+    );
+  });
+
+  it("falls back to EXPO_PUBLIC_DOMAIN without producing an /api/api path", () => {
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    process.env.EXPO_PUBLIC_DOMAIN = "staging.verified.test";
+    expect(resolveAuthApiBase()).toBe("https://staging.verified.test");
+
+    process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test/api";
+    expect(resolveAuthApiBase()).toBe("https://api.verified.test");
+  });
+
+  it("persists a successful signup session in SecureStore", async () => {
+    const session = makeSession();
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, session));
+
+    await expect(signUp("new@example.com", "password123", "New Collector")).resolves.toEqual(session);
+    await expect(readPersistedSession()).resolves.toBe(JSON.stringify(session));
+  });
+
+  it("keeps API validation and duplicate-account messages", async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(400, { message: "Password must be at least 8 characters" }));
+    await expect(signUp("new@example.com", "short", "New Collector")).rejects.toThrow("Password must be at least 8 characters");
+
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(422, { message: "An account with that email already exists" }));
+    await expect(signUp("new@example.com", "password123", "New Collector")).rejects.toThrow("An account with that email already exists");
+  });
+
+  it("uses a friendly message for bad credentials", async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(401, { message: "Invalid email or password" }));
+    await expect(signInWithPassword("test@example.com", "wrongpassword")).rejects.toThrow("Incorrect email or password.");
+  });
+
+  it("keeps a sanitized application 403 message", async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(403, { message: "Account suspended — contact support" }));
+    await expect(signInWithPassword("test@example.com", "password123")).rejects.toThrow("Account suspended — contact support");
+  });
+
+  it("does not expose upstream HTML for a non-JSON 403", async () => {
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    (fetch as jest.Mock).mockResolvedValueOnce(textResponse(403));
+
+    await expect(signInWithPassword("test@example.com", "password123")).rejects.toThrow("The authentication service could not be reached. Please try again.");
+    expect(warning).toHaveBeenCalledWith(
+      "Verified TCG authentication request failed",
+      expect.objectContaining({
+        status: 403,
+        endpoint: "/api/auth/signin",
+        hostname: "api.verified.test",
+      }),
+    );
+    warning.mockRestore();
+  });
+
+  it("rotates an expired session with the server refresh response", async () => {
+    const expired = makeSession();
+    expired.expires_at = Math.floor(Date.now() / 1000) - 1;
+    const refreshed = makeSession({ subscription_tier: "pro" });
+    await setSession(expired);
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, refreshed));
+
+    await expect(restoreSession()).resolves.toEqual(refreshed);
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.verified.test/api/auth/refresh",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("clears a session when refresh is rejected", async () => {
+    const expired = makeSession();
+    expired.expires_at = Math.floor(Date.now() / 1000) - 1;
+    await setSession(expired);
+    (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(401, { message: "Session expired" }));
+
+    await expect(restoreSession()).resolves.toBeNull();
+    await expect(readPersistedSession()).resolves.toBeNull();
+  });
 });
 
 async function setSession(session: AuthSession): Promise<void> {
@@ -166,6 +280,7 @@ describe("restorePurchases", () => {
     (fetch as jest.Mock).mockResolvedValueOnce({
       ok: false,
       status: 401,
+      headers: { get: () => "application/json" },
       json: async () => ({ message: "Invalid or expired token" }),
     } as Response);
 

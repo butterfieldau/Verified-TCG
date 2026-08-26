@@ -13,7 +13,7 @@ import { test, describe, before, after, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict";
 import supertest from "supertest";
 import { db } from "@workspace/db";
-import { usersTable, passwordResetTokensTable } from "@workspace/db";
+import { usersTable, userSessionsTable, passwordResetTokensTable } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
 import crypto from "node:crypto";
 import app from "../app.js";
@@ -50,6 +50,11 @@ describe("POST /api/auth/signup", () => {
     assert.ok(res.body.refresh_token, "should have refresh_token");
     assert.ok(res.body.user?.id, "should have user.id");
     assert.equal(res.body.user.email, email);
+    const sessions = await db
+      .select({ id: userSessionsTable.id })
+      .from(userSessionsTable)
+      .where(eq(userSessionsTable.userId, res.body.user.id));
+    assert.equal(sessions.length, 1, "signup should persist a refresh session");
   });
 
   test("duplicate email returns 422 with a human-readable message", async () => {
@@ -104,6 +109,24 @@ describe("POST /api/auth/signup", () => {
       display_name: "Short PW",
     });
     assert.equal(res.status, 400);
+  });
+
+  test("suspended accounts return the application 403 message", async () => {
+    const suspended = await createTestUser({
+      email: `${TAG}suspended@example.com`,
+      password: "suspendedpass1",
+    });
+    await db
+      .update(usersTable)
+      .set({ suspendedAt: new Date() })
+      .where(eq(usersTable.id, suspended.user.id));
+
+    const res = await request.post("/api/auth/signin").send({
+      email: suspended.email,
+      password: suspended.password,
+    });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.equal(res.body.message, "Account suspended — contact support");
   });
 });
 
