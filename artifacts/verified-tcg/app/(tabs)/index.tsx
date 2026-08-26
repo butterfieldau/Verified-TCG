@@ -14,6 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import Svg, {
   Path,
   Defs,
@@ -380,7 +381,9 @@ export default function HomeScreen() {
     dismissedEventId !== undefined &&
     dismissedEventId !== featuredEvent.id;
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // NativeTabs already reserves the status-bar area on iOS 26+. Applying
+  // insets.top again adds an empty band above the dashboard content.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const chartData = React.useMemo(() => {

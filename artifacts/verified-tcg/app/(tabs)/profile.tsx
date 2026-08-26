@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { useApp } from '@/context/AppContext';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -100,7 +101,9 @@ export default function ProfileScreen() {
   };
   const profileCardBg = THEME_CARD_COLORS[profileTheme] ?? C.card;
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  // Avoid double-applying the top inset when the iOS liquid-glass NativeTabs
+  // container has already accounted for the status-bar safe area.
+  const topPad = Platform.OS === 'web' ? 67 : isLiquidGlassAvailable() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
   const tcgNames = (user?.tcgPreferences ?? [])
