@@ -70,6 +70,22 @@ async function expectedJournalEntries(): Promise<string[]> {
   );
 }
 
+async function waitForFreshDatabaseConnectionsToClose(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await maintenancePool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM pg_stat_activity
+       WHERE datname = $1
+         AND pid <> pg_backend_pid()`,
+      [DATABASE_NAME],
+    );
+    if (Number(result.rows[0]?.count ?? 0) === 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+
+  assert.fail(`bootstrap test left open database connections for ${DATABASE_NAME}`);
+}
+
 async function schemaFingerprint(
   pool: ReturnType<typeof createDatabasePool>,
   includeJournal = true,
@@ -122,8 +138,13 @@ before(async () => {
 
 after(async () => {
   try {
+    // All pools opened by the bootstrap and the assertions must have closed
+    // before the disposable database is removed. Using DROP ... WITH (FORCE)
+    // races pg's asynchronous connection teardown and can create a late
+    // uncaught error after this test has already passed.
+    await waitForFreshDatabaseConnectionsToClose();
     await maintenancePool.query(
-      `DROP DATABASE IF EXISTS ${quotedIdentifier(DATABASE_NAME)} WITH (FORCE)`,
+      `DROP DATABASE IF EXISTS ${quotedIdentifier(DATABASE_NAME)}`,
     );
   } finally {
     await maintenancePool.end();
