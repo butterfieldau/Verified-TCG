@@ -27,18 +27,15 @@ import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { TCGId, CollectionItem } from '@/types';
-import { getSealedProducts, getSetProgress } from '@/services/collection';
 import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
 
-type CollectionTab = 'cards' | 'sealed' | 'sets' | 'graded';
+type CollectionTab = 'cards' | 'graded';
 
 const COLLECTION_TABS: { label: string; value: CollectionTab }[] = [
   { label: 'Cards', value: 'cards' },
-  { label: 'Sealed', value: 'sealed' },
-  { label: 'Sets', value: 'sets' },
   { label: 'Graded', value: 'graded' },
 ];
 
@@ -49,8 +46,6 @@ const TCG_CHIPS: { label: string; value: TCGId | 'all' }[] = [
   { label: 'One Piece', value: 'onepiece' },
 ];
 
-const SEALED_PRODUCTS = getSealedProducts();
-const SET_PROGRESS = getSetProgress();
 
 export default function CollectionScreen() {
   const insets = useSafeAreaInsets();
@@ -653,62 +648,6 @@ export default function CollectionScreen() {
         ))}
       </ScrollView>
 
-      {/* ── SEALED ── */}
-      {collectionTab === 'sealed' && (
-        <View>
-          {SEALED_PRODUCTS.map(p => (
-            <View key={p.id} style={[styles.sealedRow, { backgroundColor: C.card }]}>
-              <View style={[styles.sealedIcon, { backgroundColor: C.muted }]}>
-                <Feather name="package" size={22} color={C.foreground} />
-              </View>
-              <View style={styles.sealedInfo}>
-                <Text style={styles.sealedName}>{p.name}</Text>
-                <Text style={styles.sealedMeta}>{p.tcg} · Qty: {p.qty}</Text>
-              </View>
-              <Text style={styles.sealedValue}>${p.value.toLocaleString()}</Text>
-            </View>
-          ))}
-          {SEALED_PRODUCTS.length === 0 && (
-            <EmptyState
-              icon="package"
-              title="No sealed products"
-              description="Add sealed boxes, ETBs and products"
-              actionLabel="Add Product"
-              onAction={() => router.push('/add-card')}
-            />
-          )}
-        </View>
-      )}
-
-      {/* ── SETS ── */}
-      {collectionTab === 'sets' && (
-        <View>
-          {SET_PROGRESS.map(s => {
-            const pct = (s.owned / s.total) * 100;
-            return (
-              <View key={s.id} style={[styles.setRow, { backgroundColor: C.card }]}>
-                <View style={styles.setHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.setName}>{s.name}</Text>
-                    <Text style={styles.setMeta}>{s.tcg} · {s.owned}/{s.total} cards</Text>
-                  </View>
-                  <Text style={[styles.setPct, { color: C.primary }]}>
-                    {Math.round(pct)}%
-                  </Text>
-                </View>
-                <View style={[styles.progressBar, { backgroundColor: C.muted }]}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${pct}%`, backgroundColor: C.primary },
-                    ]}
-                  />
-                </View>
-              </View>
-            );
-          })}
-        </View>
-      )}
     </ScrollView>
   );
 }

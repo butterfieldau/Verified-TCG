@@ -28,10 +28,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
-import { getCardById } from '@/services/cards';
 import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
 import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
-import { getCardPassport } from '@/services/matching';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, CollectionItem, WatchlistItem } from '@/types';
@@ -614,7 +612,8 @@ export default function CardDetailScreen() {
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
-  // Catalog API fetch state — populated when the card ID isn't in the local mock store.
+  // Catalog API fetch state. Navigation may include an API-shaped card for a
+  // fast first paint, but the app never resolves a release card from fixtures.
   // Two inline param strategies:
   //   catalogJson  — raw CatalogCard JSON (from search results)
   //   appCardJson  — already-converted Card JSON (from home/market screen taps)
@@ -631,7 +630,7 @@ export default function CardDetailScreen() {
       return null;
     }
   });
-  const [catalogLoading, setCatalogLoading] = useState(!getCardById(id ?? '') && !catalogJson && !appCardJson);
+  const [catalogLoading, setCatalogLoading] = useState(!catalogJson && !appCardJson);
   const [catalogError, setCatalogError] = useState(false);
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
@@ -664,10 +663,9 @@ export default function CardDetailScreen() {
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
   }
 
-  // Fetch card from live catalog when it isn't in the local mock store and
-  // wasn't passed through navigation params (e.g. opened from collection/wishlist).
+  // Fetch cards from the Verified TCG catalogue when navigation did not include
+  // an API result (for example, a persisted collection or wishlist card ID).
   useEffect(() => {
-    if (getCardById(id ?? '')) return; // found locally — no fetch needed
     if (catalogJson) return;           // already initialised from navigation param (CatalogCard)
     if (appCardJson) return;           // already initialised from navigation param (Card)
     if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
@@ -703,7 +701,7 @@ export default function CardDetailScreen() {
 
   // Fetch real graded prices from eBay sold listings (via API server)
   useEffect(() => {
-    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    const resolvedCard = catalogCard;
     if (!resolvedCard) return;
     const controller = new AbortController();
     setGradedLoading(true);
@@ -736,7 +734,7 @@ export default function CardDetailScreen() {
   // completed-sale medians for its chart. The API records nothing when eBay
   // is unavailable or no supported raw/grade evidence exists.
   useEffect(() => {
-    const resolvedCard = getCardById(id ?? '') ?? catalogCard;
+    const resolvedCard = catalogCard;
     if (!resolvedCard) return;
     void triggerPriceSnapshot(
       resolvedCard.id,
@@ -774,12 +772,9 @@ export default function CardDetailScreen() {
       }
     });
 
-  // Resolve card: prefer local mock (instant), fall back to catalog API result.
-  // Use a separate rawCard for the null-guard so TypeScript narrows 'card' to
+  // Resolve cards from the API result. Use a separate rawCard for the null-guard so TypeScript narrows 'card' to
   // type Card after the guards — closures below then capture Card, not Card|null.
-  const localCard = getCardById(id ?? '');
-  const rawCard = localCard ?? catalogCard;
-  const isCatalogCard = !localCard;
+  const rawCard = catalogCard;
 
   // ── Loading / error guards (all hooks already called above) ──────────────
   if (!rawCard && catalogLoading) {
@@ -815,8 +810,9 @@ export default function CardDetailScreen() {
   // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
   const card = rawCard;
 
-  // Passport records only exist for local mock cards
-  const hasPassport = !isCatalogCard && getCardPassport(card.id) !== null;
+  // Card passports are shown only when the server supplies one; fixtures are
+  // intentionally never used as a fallback in release builds.
+  const hasPassport = false;
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;

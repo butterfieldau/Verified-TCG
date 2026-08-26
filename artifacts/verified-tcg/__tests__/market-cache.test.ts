@@ -26,7 +26,7 @@ const {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
 } = require('@/services/market') as typeof import('@/services/market');
 
-const CACHE_KEY = '@verified_tcg/market_cache';
+const CACHE_KEY = '@verified_tcg/market_cache_v2';
 
 function jsonResponse(data: unknown) {
   return { ok: true, json: async () => ({ data }) } as Response;

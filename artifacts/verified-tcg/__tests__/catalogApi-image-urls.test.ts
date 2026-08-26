@@ -8,7 +8,7 @@
  *   - Thumbnail vs. detail size split: list views use 437, detail keeps 1000
  */
 
-import { buildTcgPlayerUrl, resizeTcgPlayerUrl } from '../services/catalogApi';
+import { buildTcgPlayerUrl, catalogCardToAppCard, resizeTcgPlayerUrl } from '../services/catalogApi';
 
 // ── buildTcgPlayerUrl ─────────────────────────────────────────────────────────
 
@@ -73,4 +73,21 @@ test('list views get 437x437, detail view keeps 1000x1000', () => {
   // Thumbnail: smaller resolution, same product ID
   expect(thumbUrl).toContain('fit-in/437x437');
   expect(thumbUrl).toContain(`/${tcgplayerId}.jpg`);
+});
+
+test('catalogCardToAppCard preserves the API snapshot currency', () => {
+  const card = catalogCardToAppCard({
+    id: 'real-card-id',
+    name: 'Real Card',
+    game: 'Pokemon',
+    set_name: 'Real Set',
+    variants: [{
+      id: 'raw',
+      condition: 'Near Mint',
+      price: 120,
+      markets: [{ region: 'source', currency: 'USD', price: 120 }],
+    }],
+  });
+  expect(card.price.currency).toBe('USD');
+  expect(card.price.raw).toBe(120);
 });

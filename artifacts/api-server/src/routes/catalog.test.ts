@@ -10,7 +10,35 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { capByGameFromSorted, extractData, mergePool } from "./catalog.js";
+import {
+  calculateSnapshotMovement,
+  capByGameFromSorted,
+  extractData,
+  mergePool,
+} from "./catalog.js";
+
+// ---------------------------------------------------------------------------
+// Persisted market movement
+// ---------------------------------------------------------------------------
+
+test("snapshot market movement uses comparable non-zero observations", () => {
+  assert.deepEqual(calculateSnapshotMovement(10_000, 12_000), {
+    absoluteCents: 2_000,
+    percent: 20,
+    trend: "up",
+  });
+  assert.deepEqual(calculateSnapshotMovement(10_000, 8_000), {
+    absoluteCents: -2_000,
+    percent: -20,
+    trend: "down",
+  });
+});
+
+test("snapshot market movement rejects zero, missing, and invalid prices", () => {
+  assert.equal(calculateSnapshotMovement(0, 12_000), null);
+  assert.equal(calculateSnapshotMovement(10_000, 0), null);
+  assert.equal(calculateSnapshotMovement(Number.NaN, 12_000), null);
+});
 
 // ---------------------------------------------------------------------------
 // capByGameFromSorted

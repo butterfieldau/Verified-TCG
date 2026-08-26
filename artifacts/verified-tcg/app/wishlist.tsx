@@ -7,7 +7,7 @@
  * When at the limit the bell toggle shows an inline prompt and the Smart Alerts
  * entry point shows a lock state with an upgrade CTA.
  */
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Platform,
   Pressable,
@@ -24,7 +24,11 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MOCK_CARDS } from '@/services/cards';
+import {
+  catalogCardToAppCard,
+  MIN_CATALOG_SEARCH_LENGTH,
+  searchCatalog,
+} from '@/services/catalogApi';
 import colors from '@/constants/colors';
 import type { WatchlistItem, Card } from '@/types';
 import {
@@ -54,16 +58,35 @@ function AddPanel({
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [grade, setGrade] = useState<string>('Raw');
   const [targetPriceText, setTargetPriceText] = useState('');
+  const [searchResults, setSearchResults] = useState<Card[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return MOCK_CARDS;
-    return MOCK_CARDS.filter(
-      c =>
-        c.name.toLowerCase().includes(q) ||
-        c.setName.toLowerCase().includes(q) ||
-        c.tcg.toLowerCase().includes(q),
-    );
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < MIN_CATALOG_SEARCH_LENGTH) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setSearchLoading(true);
+      setSearchError(null);
+      searchCatalog(trimmed)
+        .then((result) => {
+          if (!cancelled) setSearchResults(result.data.map(catalogCardToAppCard));
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSearchResults([]);
+            setSearchError('Card search is unavailable. Please try again.');
+          }
+        })
+        .finally(() => { if (!cancelled) setSearchLoading(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [query]);
 
   function handleConfirm() {
@@ -231,7 +254,15 @@ function AddPanel({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {filtered.map(card => {
+          {searchLoading && <Text style={styles.emptyText}>Searching cards…</Text>}
+          {!searchLoading && query.trim().length < MIN_CATALOG_SEARCH_LENGTH && (
+            <Text style={styles.emptyText}>Enter at least {MIN_CATALOG_SEARCH_LENGTH} characters to search the catalogue.</Text>
+          )}
+          {!searchLoading && searchError && <Text style={styles.emptyText}>{searchError}</Text>}
+          {!searchLoading && !searchError && query.trim().length >= MIN_CATALOG_SEARCH_LENGTH && searchResults.length === 0 && (
+            <Text style={styles.emptyText}>No catalogue cards found.</Text>
+          )}
+          {searchResults.map(card => {
             const already = existingCardIds.has(card.id);
             return (
               <Pressable
@@ -1018,6 +1049,13 @@ const styles = StyleSheet.create({
     color: C.foreground,
   } as any,
   searchResults: { flex: 1 },
+  emptyText: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 18,
+  },
   searchResultRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingVertical: 10, borderRadius: 10, paddingHorizontal: 4,

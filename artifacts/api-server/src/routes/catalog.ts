@@ -1,10 +1,8 @@
 import { Router } from "express";
+import { db } from "@workspace/db";
+import { sql } from "drizzle-orm";
 import {
-  catalogueCacheKey,
-  CatalogueReadFailure,
   justTcg,
-  requireFreshCatalogueReads,
-  withCatalogueCache,
   type CatalogueRead,
 } from "../lib/catalogueProvider.js";
 import {
@@ -110,15 +108,8 @@ router.get("/catalog/games", async (_req, res) => {
       source: "JustTCG",
       ...cacheMetadata(result),
     });
-  } catch (error) {
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Catalog provider unavailable" });
   }
 });
 
@@ -286,15 +277,8 @@ router.get("/catalog/cards", async (req, res) => {
     }
 
     return res.json({ ...body, source: "JustTCG", ...cacheMetadata(result) });
-  } catch (error) {
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Catalog provider unavailable" });
   }
 });
 
@@ -361,262 +345,194 @@ export function mergePool(
   return pool;
 }
 
+type PersistedMarketRow = {
+  card_id: string;
+  current_cents: number;
+  previous_cents: number;
+  currency: string;
+  current_at: Date;
+  previous_at: Date;
+};
+
+export function calculateSnapshotMovement(
+  previousCents: number,
+  currentCents: number,
+): { absoluteCents: number; percent: number; trend: "up" | "down" | "neutral" } | null {
+  if (
+    !Number.isFinite(previousCents) ||
+    !Number.isFinite(currentCents) ||
+    previousCents <= 0 ||
+    currentCents <= 0
+  ) return null;
+  const absoluteCents = currentCents - previousCents;
+  return {
+    absoluteCents,
+    percent: Number(((absoluteCents / previousCents) * 100).toFixed(2)),
+    trend: absoluteCents > 0 ? "up" : absoluteCents < 0 ? "down" : "neutral",
+  };
+}
+
+/**
+ * Market reads are based exclusively on persisted PriceCharting snapshots.
+ * A row is eligible only when it has two non-zero raw observations from the
+ * same provider/currency and the current observation is still fresh. This
+ * intentionally returns no data during a new deployment rather than making
+ * provider search results look like a genuine market movement feed.
+ */
+async function persistedMarketCards(limit = 8) {
+  const result = await db.execute<PersistedMarketRow>(sql`
+    WITH ranked AS (
+      SELECT card_id, price_cents, currency, captured_at,
+        row_number() OVER (
+          PARTITION BY card_id, provider_key, grade_key
+          ORDER BY captured_at DESC
+        ) AS position
+      FROM card_price_snapshots
+      WHERE provider_key = 'pricecharting'
+        AND grade_key = 'raw'
+        AND capture_status = 'success'
+        AND price_cents IS NOT NULL
+        AND price_cents > 0
+        AND captured_at >= NOW() - INTERVAL '14 days'
+    )
+    SELECT current_snapshot.card_id,
+      current_snapshot.price_cents AS current_cents,
+      previous_snapshot.price_cents AS previous_cents,
+      current_snapshot.currency,
+      current_snapshot.captured_at AS current_at,
+      previous_snapshot.captured_at AS previous_at
+    FROM ranked current_snapshot
+    JOIN ranked previous_snapshot
+      ON previous_snapshot.card_id = current_snapshot.card_id
+      AND previous_snapshot.position = 2
+      AND previous_snapshot.currency = current_snapshot.currency
+    WHERE current_snapshot.position = 1
+      AND current_snapshot.captured_at >= NOW() - INTERVAL '36 hours'
+    ORDER BY ABS(
+      (current_snapshot.price_cents - previous_snapshot.price_cents)::numeric
+      / previous_snapshot.price_cents
+    ) DESC
+    LIMIT ${limit}
+  `);
+
+  const shaped = await Promise.all(
+    result.rows.map(async (row) => {
+      const canonical = await readCanonicalPublicCard(row.card_id);
+      if (!canonical.value) return null;
+      const movement = calculateSnapshotMovement(
+        row.previous_cents,
+        row.current_cents,
+      );
+      if (!movement) return null;
+      return {
+        ...canonical.value,
+        variants: [{
+          condition: "Near Mint",
+          price: row.current_cents / 100,
+          priceChange7d: movement.percent,
+          lastUpdated: Math.floor(row.current_at.getTime() / 1000),
+          markets: [{ region: "source", currency: row.currency, price: row.current_cents / 100 }],
+        }],
+        market_price: row.current_cents / 100,
+        previous_price: row.previous_cents / 100,
+        price_change_7d: movement.percent,
+        trend: movement.trend,
+        currency: row.currency,
+        updated_at: row.current_at.toISOString(),
+        previous_observed_at: row.previous_at.toISOString(),
+      };
+    }),
+  );
+  return shaped.filter((card): card is NonNullable<typeof card> => card !== null);
+}
+
+async function persistedRecentlyAddedCards(limit = 8) {
+  const result = await db.execute<{
+    card_id: string;
+    price_cents: number;
+    currency: string;
+    fetched_at: Date;
+  }>(sql`
+    SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at
+    FROM catalogue_external_ids e
+    JOIN current_quotes q
+      ON q.card_id = e.external_id
+      AND q.provider_key = 'pricecharting'
+      AND q.grade_key = 'raw'
+    WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+    ORDER BY e.created_at DESC
+    LIMIT ${limit}
+  `);
+  const shaped = await Promise.all(result.rows.map(async (row) => {
+    const canonical = await readCanonicalPublicCard(row.card_id);
+    if (!canonical.value) return null;
+    return {
+      ...canonical.value,
+      variants: [{
+        condition: "Near Mint",
+        price: row.price_cents / 100,
+        lastUpdated: Math.floor(row.fetched_at.getTime() / 1000),
+        markets: [{ region: "source", currency: row.currency, price: row.price_cents / 100 }],
+      }],
+      currency: row.currency,
+      updated_at: row.fetched_at.toISOString(),
+    };
+  }));
+  return shaped.filter((card): card is NonNullable<typeof card> => card !== null);
+}
+
 /**
  * GET /catalog/market-movers
- * Returns up to 8 cards with the highest absolute 7-day price change across
- * all six supported TCGs (Pokémon, One Piece, MTG, Yu-Gi-Oh!, Disney Lorcana,
- * Dragon Ball Super). Runs parallel JustTCG queries constrained by explicit
- * game= filters, merges into one deduplicated pool, sorts globally by
- * |priceChange7d|, then applies a per-game cap (max 3) to ensure variety.
- * Global ranking is fully preserved — the highest-change card always wins its
- * slot regardless of game.
- * Each result includes top-level market_price, price_change_7d, and trend
- * fields so the client doesn't need to dig into variants.
+ * Returns cards ranked by the absolute movement between the two most recent
+ * comparable persisted PriceCharting raw snapshots. Observations must share
+ * a card, currency, provider, and grade, be positive, and be fresh enough to
+ * avoid presenting stale data as a current market signal.
  */
 router.get("/catalog/market-movers", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(
-      catalogueCacheKey("market-movers"),
-      "market",
-      async () => {
-        const [rPoke1, rPoke2, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all(
-          [
-            justTcg(
-              "/cards?q=Charizard&game=Pokemon&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Umbreon&game=Pokemon&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Black+Lotus&game=Magic%3A+The+Gathering&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false",
-            ),
-            justTcg(
-              "/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false",
-            ),
-          ],
-        );
-        const anyOk = { value: false };
-        requireFreshCatalogueReads([
-          rPoke1,
-          rPoke2,
-          rOp,
-          rMtg,
-          rYgo,
-          rLor,
-          rDbs,
-        ]);
-        const pool = mergePool(
-          extractData(rPoke1, anyOk),
-          extractData(rPoke2, anyOk),
-          extractData(rOp, anyOk),
-          extractData(rMtg, anyOk),
-          extractData(rYgo, anyOk),
-          extractData(rLor, anyOk),
-          extractData(rDbs, anyOk),
-        );
-        if (!anyOk.value) throw new Error("All catalog providers unavailable");
-        const scored = pool
-          .map(enrichCard)
-          .flatMap((card) => {
-            const nm = getNmVariant(card.variants);
-            if (!nm) return [];
-            const price = Number(nm.price ?? 0);
-            if (price < 5) return [];
-            const priceChange7d = Number(nm.priceChange7d ?? 0);
-            return [
-              {
-                game: String(card.game ?? ""),
-                card: {
-                  ...card,
-                  market_price: price,
-                  price_change_7d: priceChange7d,
-                  trend:
-                    priceChange7d >= 0.5
-                      ? "up"
-                      : priceChange7d <= -0.5
-                        ? "down"
-                        : "neutral",
-                },
-                score: Math.abs(priceChange7d),
-              },
-            ];
-          })
-          .sort((a, b) => b.score - a.score);
-        return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-      },
-    );
     return res.json({
-      data: cached.data,
-      source: "JustTCG",
-      cached: cached.cacheStatus !== "miss",
-      cache_status: cached.cacheStatus,
-      revalidation_scheduled: cached.revalidationScheduled || undefined,
+      data: await persistedMarketCards(),
+      source: "VerifiedTCG snapshots",
     });
-  } catch (error) {
-    if (error instanceof CatalogueReadFailure)
-      return res.status(error.status).json(error.body);
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Market data is temporarily unavailable" });
   }
 });
 
 /**
  * GET /catalog/trending
- * Returns up to 8 actively-traded cards across all six supported TCGs, measured
- * by priceChangesCount7d (number of price updates in the past 7 days). Runs
- * parallel queries with explicit game= filters for every supported TCG, merges
- * into one deduplicated pool, sorts globally by priceChangesCount7d, then
- * applies a per-game cap (max 3) to ensure variety. Global ranking is preserved.
+ * Returns the same deterministic, persisted-snapshot market ranking as movers.
+ * Verified TCG does not yet retain an independent popularity signal, so this
+ * endpoint deliberately does not claim synthetic views, searches, or sales.
  */
 router.get("/catalog/trending", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(
-      catalogueCacheKey("trending"),
-      "market",
-      async () => {
-        const [rPoke, rOp, rMtg, rYgo, rLor, rDbs] = await Promise.all([
-          justTcg(
-            "/cards?q=ex&game=Pokemon&limit=20&include_price_history=false",
-          ),
-          justTcg(
-            "/cards?q=Luffy&game=One+Piece&limit=20&include_price_history=false",
-          ),
-          justTcg(
-            "/cards?q=Lightning+Bolt&game=Magic%3A+The+Gathering&limit=20&include_price_history=false",
-          ),
-          justTcg(
-            "/cards?q=Blue-Eyes&game=Yu-Gi-Oh%21&limit=20&include_price_history=false",
-          ),
-          justTcg(
-            "/cards?q=Elsa&game=Disney+Lorcana&limit=20&include_price_history=false",
-          ),
-          justTcg(
-            "/cards?q=Goku&game=Dragon+Ball+Super&limit=20&include_price_history=false",
-          ),
-        ]);
-        const anyOk = { value: false };
-        requireFreshCatalogueReads([rPoke, rOp, rMtg, rYgo, rLor, rDbs]);
-        const pool = mergePool(
-          extractData(rPoke, anyOk),
-          extractData(rOp, anyOk),
-          extractData(rMtg, anyOk),
-          extractData(rYgo, anyOk),
-          extractData(rLor, anyOk),
-          extractData(rDbs, anyOk),
-        );
-        if (!anyOk.value) throw new Error("All catalog providers unavailable");
-        const scored = pool
-          .map(enrichCard)
-          .flatMap((card) => {
-            const nm = getNmVariant(card.variants);
-            if (!nm) return [];
-            const price = Number(nm.price ?? 0);
-            if (price <= 0) return [];
-            return [
-              {
-                game: String(card.game ?? ""),
-                card,
-                score: Number(nm.priceChangesCount7d ?? 0),
-              },
-            ];
-          })
-          .sort((a, b) => b.score - a.score);
-        return capByGameFromSorted(scored, 3, 8).map((s) => s.card);
-      },
-    );
+    const cards = await persistedMarketCards();
     return res.json({
-      data: cached.data,
-      source: "JustTCG",
-      cached: cached.cacheStatus !== "miss",
-      cache_status: cached.cacheStatus,
-      revalidation_scheduled: cached.revalidationScheduled || undefined,
+      // Trend is a deterministic ranking of fresh, comparable snapshot
+      // movements; the same records power movers rather than simulated views.
+      data: cards,
+      source: "VerifiedTCG snapshots",
     });
-  } catch (error) {
-    if (error instanceof CatalogueReadFailure)
-      return res.status(error.status).json(error.body);
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Market data is temporarily unavailable" });
   }
 });
 
 /**
  * GET /catalog/recently-added
- * Returns up to 8 cards representing new catalog additions.
- * Queries Pikachu (broad set coverage across all Pokémon eras) sorted by
- * price descending — surfaces high-value, collector-relevant releases.
- * A separate query for non-Pokémon TCGs is merged in for variety.
+ * Returns canonical cards ordered by their recorded Verified TCG external
+ * identity creation time, with a real current raw quote where available.
+ * This is catalogue provenance, not a fabricated release-date or price sort.
  */
 router.get("/catalog/recently-added", async (_req, res) => {
   try {
-    const cached = await withCatalogueCache(
-      catalogueCacheKey("recently-added"),
-      "market",
-      async () => {
-        const [r1, r2] = await Promise.all([
-          justTcg(
-            "/cards?q=Pikachu&game=Pokemon&limit=20&include_price_history=false",
-          ),
-          justTcg("/cards?q=Luffy&limit=10&include_price_history=false"),
-        ]);
-        const anyOk = { value: false };
-        requireFreshCatalogueReads([r1, r2]);
-        const merged = mergePool(
-          extractData(r1, anyOk),
-          extractData(r2, anyOk),
-        );
-        if (!anyOk.value) throw new Error("All catalog providers unavailable");
-        return merged
-          .map(enrichCard)
-          .flatMap((card) => {
-            const nm = getNmVariant(card.variants);
-            if (!nm) return [];
-            const price = Number(nm.price ?? 0);
-            return price > 0 ? [{ card, price }] : [];
-          })
-          .sort((a, b) => b.price - a.price)
-          .slice(0, 8)
-          .map(({ card }) => card);
-      },
-    );
     return res.json({
-      data: cached.data,
-      source: "JustTCG",
-      cached: cached.cacheStatus !== "miss",
-      cache_status: cached.cacheStatus,
-      revalidation_scheduled: cached.revalidationScheduled || undefined,
+      data: await persistedRecentlyAddedCards(),
+      source: "VerifiedTCG catalogue",
     });
-  } catch (error) {
-    if (error instanceof CatalogueReadFailure)
-      return res.status(error.status).json(error.body);
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Catalogue data is temporarily unavailable" });
   }
 });
 
@@ -755,15 +671,8 @@ router.get("/catalog/cards/:id", async (req, res) => {
       cached: resolved.cached,
       ...(resolved.source === "VerifiedTCG" ? { canonical: true } : {}),
     });
-  } catch (error) {
-    return res
-      .status(503)
-      .json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Catalog provider unavailable",
-      });
+  } catch {
+    return res.status(503).json({ error: "Catalog provider unavailable" });
   }
 });
 

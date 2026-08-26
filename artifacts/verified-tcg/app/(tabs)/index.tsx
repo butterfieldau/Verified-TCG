@@ -393,7 +393,7 @@ export default function HomeScreen() {
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
     return points.filter(point => new Date(point.date).getTime() >= cutoff);
   }, [serverPerformance, portfolioRange]);
-  const displayValue = activeChartPoint?.value ?? serverSummary?.totalValue ?? null;
+  const displayValue = activeChartPoint?.value ?? serverSummary?.totalValue ?? (collection.length === 0 ? 0 : null);
   const gain =
     chartData.length >= 2
       ? chartData[chartData.length - 1]!.value - chartData[0]!.value
@@ -416,11 +416,11 @@ export default function HomeScreen() {
   const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
   const losers = movers.filter(m => m.trend === 'down').sort((a, b) => a.priceChangePercent - b.priceChangePercent).slice(0, 8);
 
-  const marketCards: { card: Card; price: number; change: number | undefined }[] = (() => {
-    if (marketTab === 'gainers') return gainers.map(m => ({ card: m.card, price: m.currentPrice, change: m.priceChangePercent }));
-    if (marketTab === 'losers') return losers.map(m => ({ card: m.card, price: m.currentPrice, change: m.priceChangePercent }));
-    if (marketTab === 'new') return recentCards.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
-    return trending.map(c => ({ card: c, price: c.price.raw, change: c.price.change7d }));
+  const marketCards: { card: Card; price: number; currency: string; change: number | undefined }[] = (() => {
+    if (marketTab === 'gainers') return gainers.map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
+    if (marketTab === 'losers') return losers.map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
+    if (marketTab === 'new') return recentCards.map(c => ({ card: c, price: c.price.raw, currency: c.price.currency, change: c.price.change7d }));
+    return trending.map(c => ({ card: c, price: c.price.raw, currency: c.price.currency, change: c.price.change7d }));
   })();
 
   function handleQuickAction(action: string) {
@@ -478,7 +478,7 @@ export default function HomeScreen() {
             accessibilityLabel="View profile"
             hitSlop={3}
           >
-            <Text style={styles.avatarText}>{user?.displayName?.[0] ?? 'U'}</Text>
+            <Text style={styles.avatarText}>{user?.displayName?.trim().charAt(0).toUpperCase() || '?'}</Text>
           </Pressable>
         </View>
       </View>
@@ -494,16 +494,17 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Prefer server-authoritative value; fall back to local with "Unavailable" */}
-        {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
+        {/* The server owns valuations. An empty collection is the one truthful
+            zero-value state; unpriced non-empty holdings remain unavailable. */}
+        {displayValue !== null ? (
           <>
             <View style={styles.portfolioValueRow}>
               <Text style={styles.portfolioValue}>
-                {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+                {displayValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
               </Text>
-              <Text style={styles.portfolioCurrency}>{serverSummary.currency ?? currency}</Text>
+              <Text style={styles.portfolioCurrency}>{serverSummary?.currency ?? currency}</Text>
             </View>
-            {serverSummary.unrealizedGainPercent !== null && serverSummary.unrealizedGainPercent !== undefined && (
+            {serverSummary?.unrealizedGainPercent !== null && serverSummary?.unrealizedGainPercent !== undefined && (
               <View style={styles.changeBadgeRow}>
                 <View style={[
                   styles.changeBadge,
@@ -554,7 +555,9 @@ export default function HomeScreen() {
             <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
             <Text style={styles.chartUnavailableText}>
               {portfolioRange === '1D' || portfolioRange === '7D'
-                ? `Not enough retained history for ${portfolioRange}`
+                ? collection.length === 0
+                  ? 'Add cards to start tracking your portfolio'
+                  : `Not enough retained history for ${portfolioRange}`
                 : serverPerformance?.historyUnavailableReason ?? 'Price history is not available yet'}
             </Text>
           </View>
@@ -776,7 +779,7 @@ export default function HomeScreen() {
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-            {marketCards.map(({ card, price, change }) => (
+            {marketCards.map(({ card, price, currency: cardCurrency, change }) => (
               <Pressable
                 key={card.id}
                 style={{ gap: 8, width: 110 }}
@@ -789,7 +792,7 @@ export default function HomeScreen() {
                   <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
                   <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                    <Text style={styles.moverPrice}>${price.toLocaleString('en-AU')}</Text>
+                    <Text style={styles.moverPrice}>{cardCurrency} {price.toLocaleString('en-AU')}</Text>
                     {change !== undefined && (
                       <Text style={[styles.moverChange, { color: change >= 0 ? C.positive : C.negative }]}>
                         {change >= 0 ? '+' : ''}{change.toFixed(1)}%
@@ -880,7 +883,7 @@ export default function HomeScreen() {
                 <View>
                   <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
                   <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <Text style={styles.moverPrice}>${card.price.raw.toLocaleString('en-AU')}</Text>
+                  <Text style={styles.moverPrice}>{card.price.currency} {card.price.raw.toLocaleString('en-AU')}</Text>
                 </View>
               </Pressable>
             ))}
