@@ -54,10 +54,12 @@ import {
   restoreSession,
   fetchCurrentUser,
   signInWithPassword,
+  signUp as authSignUp,
   signInWithOAuth,
   signOut as authSignOut,
   deleteAccount as authDeleteAccount,
   updateUserMetadata,
+  type AuthSession,
   type OAuthProvider,
 } from '@/services/auth';
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
@@ -136,6 +138,7 @@ interface AppState {
 
 interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
+  createAccount: (email: string, password: string, displayName: string) => Promise<boolean>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
   deleteAccount: (password: string) => Promise<void>;
@@ -730,23 +733,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const session = await signInWithPassword(email, password);
+  const applyAuthenticatedSession = useCallback((session: AuthSession) => {
     setUser(userFromSession(session));
     setIsAuthenticated(true);
 
-    // Restore subscription tier from the sign-in response
+    // Apply all account-scoped state from the authoritative auth response.
     const meta = session.user.user_metadata ?? {};
-    if (meta.subscription_tier === 'pro') {
-      setSubscriptionTierState('pro');
-    } else {
-      setSubscriptionTierState('free');
-    }
-    if (meta.is_founding_member === true) {
-      setFoundingMemberClaimed(true);
-    }
+    const signedInTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+    setSubscriptionTierState(signedInTier);
+    setFoundingMemberClaimed(meta.is_founding_member === true);
 
-    // Load real collection and notifications from server
+    // Load real account data from the server.
     loadCollection();
     loadNotifications();
 
@@ -762,8 +759,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return snapshot;
     });
 
-    // Hydrate server-authoritative scan count for free users
-    const signedInTier = meta.subscription_tier === 'pro' ? 'pro' : 'free';
+    // Hydrate server-authoritative scan count for free users.
     if (signedInTier === 'free') {
       fetchServerScanCount(session.access_token).then(count => {
         if (typeof count === 'number') setScansUsed(count);
@@ -778,23 +774,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }, [loadCollection, loadNotifications]);
 
+  const signIn = useCallback(async (email: string, password: string) => {
+    const session = await signInWithPassword(email, password);
+    applyAuthenticatedSession(session);
+  }, [applyAuthenticatedSession]);
+
+  const createAccount = useCallback(async (
+    email: string,
+    password: string,
+    displayName: string,
+  ) => {
+    const session = await authSignUp(email, password, displayName);
+    if (!session) return false;
+    applyAuthenticatedSession(session);
+    return true;
+  }, [applyAuthenticatedSession]);
+
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     const session = await signInWithOAuth(provider);
     if (!session) return false;
-    setUser(userFromSession(session));
-    setIsAuthenticated(true);
-    // Run the same post-sign-in initialization as email/password sign-in
-    loadCollection();
-    loadNotifications();
-    registerPushTokenIfPermitted();
-    // Sync TCG preferences bidirectionally after OAuth sign-in
-    const oauthMeta = session.user.user_metadata ?? {};
-    syncPreferredTcgsAfterSignIn(
-      session.access_token,
-      typeof oauthMeta.preferred_tcgs === 'string' ? oauthMeta.preferred_tcgs : null,
-    );
+    applyAuthenticatedSession(session);
     return true;
-  }, [loadCollection, loadNotifications]);
+  }, [applyAuthenticatedSession]);
 
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
@@ -1200,7 +1201,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,
-        signIn, signInWithProvider, signOut, deleteAccount, updateProfile,
+        signIn, createAccount, signInWithProvider, signOut, deleteAccount, updateProfile,
         addToCollection, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,

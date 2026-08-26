@@ -15,13 +15,14 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
-import { signUp } from '@/services/auth';
+import { useApp } from '@/context/AppContext';
 
 const C = colors.dark;
 
 export default function CreateAccountScreen() {
   const insets = useSafeAreaInsets();
   const { next } = useLocalSearchParams<{ next?: string }>();
+  const { createAccount } = useApp();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,8 +45,8 @@ export default function CreateAccountScreen() {
     setError('');
     setLoading(true);
     try {
-      const session = await signUp(email, password, name);
-      if (session) {
+      const signedIn = await createAccount(email, password, name);
+      if (signedIn) {
         // Auto-confirmed — resume the feature that requested the account,
         // otherwise give the new collector the normal onboarding introduction.
         if (next) {

@@ -5,7 +5,11 @@ import { Alert, Platform } from "react-native";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const SESSION_KEY = "@verified_tcg/auth_session";
+// AsyncStorage keys may use the app's @-scoped convention, but Expo
+// SecureStore keys have a stricter character allow-list and reject "@". Keep
+// the two names separate so a successful login/signup can always be persisted.
+const ASYNC_SESSION_KEY = "@verified_tcg/auth_session";
+const SECURE_SESSION_KEY = "verified_tcg_auth_session";
 const USE_SECURE_SESSION_STORAGE = Platform.OS !== "web";
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 
@@ -127,18 +131,18 @@ export async function readPersistedSession(
   useSecureSessionStorage = USE_SECURE_SESSION_STORAGE,
 ): Promise<string | null> {
   if (!useSecureSessionStorage) {
-    return AsyncStorage.getItem(SESSION_KEY);
+    return AsyncStorage.getItem(ASYNC_SESSION_KEY);
   }
 
-  const secureValue = await SecureStore.getItemAsync(SESSION_KEY);
+  const secureValue = await SecureStore.getItemAsync(SECURE_SESSION_KEY);
   if (secureValue) return secureValue;
 
   // Migrate sessions written by earlier releases without retaining an
   // access/refresh token in plaintext app storage.
-  const legacyValue = await AsyncStorage.getItem(SESSION_KEY);
+  const legacyValue = await AsyncStorage.getItem(ASYNC_SESSION_KEY);
   if (legacyValue) {
-    await SecureStore.setItemAsync(SESSION_KEY, legacyValue);
-    await AsyncStorage.removeItem(SESSION_KEY);
+    await SecureStore.setItemAsync(SECURE_SESSION_KEY, legacyValue);
+    await AsyncStorage.removeItem(ASYNC_SESSION_KEY);
   }
   return legacyValue;
 }
@@ -146,9 +150,9 @@ export async function readPersistedSession(
 async function persist(session: AuthSession | null): Promise<void> {
   if (!session) {
     if (USE_SECURE_SESSION_STORAGE) {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
+      await SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
     }
-    await AsyncStorage.removeItem(SESSION_KEY);
+    await AsyncStorage.removeItem(ASYNC_SESSION_KEY);
     return;
   }
 
@@ -160,12 +164,12 @@ async function persist(session: AuthSession | null): Promise<void> {
   const serialized = JSON.stringify({ ...session, expires_at: expiresAt });
 
   if (USE_SECURE_SESSION_STORAGE) {
-    await SecureStore.setItemAsync(SESSION_KEY, serialized);
-    await AsyncStorage.removeItem(SESSION_KEY);
+    await SecureStore.setItemAsync(SECURE_SESSION_KEY, serialized);
+    await AsyncStorage.removeItem(ASYNC_SESSION_KEY);
     return;
   }
 
-  await AsyncStorage.setItem(SESSION_KEY, serialized);
+  await AsyncStorage.setItem(ASYNC_SESSION_KEY, serialized);
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -331,7 +335,7 @@ export async function restoreSession(): Promise<AuthSession | null> {
 
 /** All non-sensitive AsyncStorage keys owned by this app — cleared on sign-out or account deletion. */
 export const ALL_STORAGE_KEYS = [
-  "@verified_tcg/auth_session",
+  ASYNC_SESSION_KEY,
   "@verified_tcg/watchlist",
   "@verified_tcg/prices_v2",
   // Legacy price keys (written by older app versions)

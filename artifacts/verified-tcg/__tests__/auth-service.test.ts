@@ -26,7 +26,8 @@ import { restorePurchases } from "../services/auth";
 // Mock fetch so network calls are controlled per-test
 global.fetch = jest.fn(() => Promise.resolve({ ok: true } as Response));
 
-const SESSION_KEY = "@verified_tcg/auth_session";
+const ASYNC_SESSION_KEY = "@verified_tcg/auth_session";
+const SECURE_SESSION_KEY = "verified_tcg_auth_session";
 
 /** Build a minimal AuthSession stored in the session store. */
 function makeSession(
@@ -52,11 +53,14 @@ beforeEach(async () => {
   process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test";
   delete process.env.EXPO_PUBLIC_DOMAIN;
   await AsyncStorage.clear();
-  await SecureStore.deleteItemAsync(SESSION_KEY);
+  await SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
+  jest.mocked(SecureStore.setItemAsync).mockClear();
+  jest.mocked(SecureStore.getItemAsync).mockClear();
+  jest.mocked(SecureStore.deleteItemAsync).mockClear();
   (fetch as jest.Mock).mockClear();
   // Seed every key so we can verify they are removed
   for (const key of ALL_STORAGE_KEYS) {
-    if (key !== SESSION_KEY) await AsyncStorage.setItem(key, "some-value");
+    if (key !== ASYNC_SESSION_KEY) await AsyncStorage.setItem(key, "some-value");
   }
 });
 
@@ -108,6 +112,10 @@ describe("mobile authentication origin and errors", () => {
 
     await expect(signUp("new@example.com", "password123", "New Collector")).resolves.toEqual(session);
     await expect(readPersistedSession()).resolves.toBe(JSON.stringify(session));
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+      SECURE_SESSION_KEY,
+      expect.any(String),
+    );
   });
 
   it("keeps API validation and duplicate-account messages", async () => {
@@ -170,11 +178,11 @@ describe("mobile authentication origin and errors", () => {
 });
 
 async function setSession(session: AuthSession): Promise<void> {
-  await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
+  await SecureStore.setItemAsync(SECURE_SESSION_KEY, JSON.stringify(session));
 }
 
 async function getSession(): Promise<AuthSession | null> {
-  const raw = await SecureStore.getItemAsync(SESSION_KEY);
+  const raw = await SecureStore.getItemAsync(SECURE_SESSION_KEY);
   return raw ? (JSON.parse(raw) as AuthSession) : null;
 }
 
@@ -291,15 +299,15 @@ describe("restorePurchases", () => {
 describe("session migration", () => {
   it("moves a legacy AsyncStorage session into secure storage", async () => {
     const legacy = makeSession();
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(legacy));
+    await AsyncStorage.setItem(ASYNC_SESSION_KEY, JSON.stringify(legacy));
 
     await expect(readPersistedSession(true)).resolves.toBe(
       JSON.stringify(legacy),
     );
-    await expect(SecureStore.getItemAsync(SESSION_KEY)).resolves.toBe(
+    await expect(SecureStore.getItemAsync(SECURE_SESSION_KEY)).resolves.toBe(
       JSON.stringify(legacy),
     );
-    await expect(AsyncStorage.getItem(SESSION_KEY)).resolves.toBeNull();
+    await expect(AsyncStorage.getItem(ASYNC_SESSION_KEY)).resolves.toBeNull();
   });
 });
 
@@ -322,7 +330,7 @@ describe("signOut", () => {
 
   it("clears the auth session key in particular", async () => {
     await signOut();
-    const session = await AsyncStorage.getItem("@verified_tcg/auth_session");
+    const session = await AsyncStorage.getItem(ASYNC_SESSION_KEY);
     expect(session).toBeNull();
   });
 
