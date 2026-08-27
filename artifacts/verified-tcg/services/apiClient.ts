@@ -44,7 +44,13 @@ export function resolveApiOrigin(): string {
     : `https://${configured}`;
   try {
     const url = new URL(withScheme);
-    const path = url.pathname.replace(/\/$/, '');
+    const pathname = url.pathname;
+    const path =
+      pathname === '/'
+        ? ''
+        : pathname.endsWith('/')
+          ? pathname.slice(0, -1)
+          : pathname;
     if (path && path !== '/api') return '';
     // TestFlight/staging builds must always use TLS. HTTP remains useful only
     // for explicitly configured web/local development.

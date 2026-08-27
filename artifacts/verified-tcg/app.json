@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "co.verifiedtcg.app",
-      "buildNumber": "1"
+      "buildNumber": "2"
     },
     "android": {
       "backgroundColor": "#0A0A0A"
