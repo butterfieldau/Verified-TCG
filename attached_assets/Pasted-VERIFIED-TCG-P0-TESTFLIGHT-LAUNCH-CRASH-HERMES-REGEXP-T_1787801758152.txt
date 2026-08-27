@@ -1,0 +1,264 @@
+VERIFIED TCG — P0 TESTFLIGHT LAUNCH CRASH / HERMES REGEXP
+
+TestFlight build 1.0.0 (1) crashes immediately on physical iPhone before the app becomes usable.
+
+Device:
+
+iPhone18,2
+
+OS:
+
+iOS 27.0 beta (24A5390f)
+
+Bundle:
+
+co.verifiedtcg.app
+
+Crash:
+
+EXC_BAD_ACCESS (SIGSEGV)
+
+Crashed thread:
+
+Hermes JS thread
+
+Native stack contains:
+
+hermes::vm::regExpExec
+
+→ regExpPrototypeSymbolReplace
+
+→ stringPrototypeReplace
+
+→ SIGSEGV
+
+This is a P0 TestFlight launch blocker.
+
+Do not perform a broad refactor.
+
+Do not change backend/database/catalogue architecture.
+
+⸻
+
+PRIMARY SUSPECT
+
+Inspect:
+
+artifacts/verified-tcg/services/apiClient.ts
+
+Current resolveApiOrigin() contains: 
+const path = url.pathname.replace(/\/$/, ''); 
+
+This executes a RegExp-backed String.replace() during API-origin resolution and closely matches the native Hermes crash stack.
+
+Remove this RegExp operation.
+
+Replace it with non-RegExp string logic such as endsWith() + slice().
+
+Example concept: 
+const pathname = url.pathname;
+const path =
+  pathname.length > 1 && pathname.endsWith('/')
+    ? pathname.slice(0, -1)
+    : pathname; 
+
+Preserve existing semantics.
+
+Do not introduce another RegExp-based replacement.
+
+⸻
+
+AUDIT EARLY STARTUP REGEXP REPLACE
+
+Search shipping mobile runtime for every use of:
+
+* .replace(...) with a RegExp
+* .replaceAll(...) with RegExp
+* URL/string normalization using RegExp
+
+Concentrate specifically on modules executed during:
+
+* module import
+* AppContext initialization
+* session restore
+* API configuration
+* root layout startup
+* platform/runtime configuration
+
+Do not indiscriminately rewrite all regex usage.
+
+Remove or replace startup-path RegExp string replacement where equivalent safe string operations are straightforward.
+
+Report every occurrence found and whether it is reachable during launch.
+
+⸻
+
+DO NOT BLAME THE API
+
+The production API is already healthy.
+
+API origin:
+
+https://app.verifiedtcg.co
+
+This crash occurs inside Hermes before normal app interaction.
+
+Do not modify the production API or production database to solve this native crash.
+
+⸻
+
+REGRESSION TEST
+
+Extend api-client.test.ts.
+
+Prove API normalization still handles:
+
+* https://app.verifiedtcg.co
+* https://app.verifiedtcg.co/
+* https://app.verifiedtcg.co/api
+* https://app.verifiedtcg.co/api/
+
+Expected origin:
+
+https://app.verifiedtcg.co
+
+Ensure:
+
+* no /api/api
+* invalid paths rejected
+* HTTPS release restriction preserved
+
+Add a source-level regression assertion if useful that resolveApiOrigin() no longer uses RegExp-backed .replace().
+
+⸻
+
+CHECK NEW ARCHITECTURE / HERMES
+
+The current app uses Hermes and has React Native new architecture enabled.
+
+Do NOT immediately disable Hermes or new architecture.
+
+First make the surgical startup RegExp fix and generate a native release build.
+
+If the crash remains reproducible after removing launch-path RegExp replacement, then investigate Expo SDK 54 / bundled React Native / Hermes compatibility with iOS 27 beta.
+
+Only then consider a controlled comparison build with:
+
+newArchEnabled: false
+
+if supported by the current Expo SDK.
+
+Do not change both variables at once because we need to identify the root cause.
+
+⸻
+
+VALIDATION
+
+Run:
+
+* mobile tests
+* workspace TypeScript
+* Expo config validation
+* iOS production bundle generation
+
+Existing mobile baseline:
+
+151/151
+
+Require zero regression failures.
+
+⸻
+
+TESTFLIGHT BUILD
+
+This fix requires a new native TestFlight build.
+
+Do not reuse Build 1.
+
+Version:
+
+1.0.0
+
+Increment iOS build number:
+
+2
+
+Bundle ID must remain:
+
+co.verifiedtcg.app
+
+API origin must remain:
+
+https://app.verifiedtcg.co
+
+Upload Build 2 to TestFlight.
+
+Do not submit publicly to the App Store.
+
+⸻
+
+PHYSICAL DEVICE ACCEPTANCE
+
+Build 2 must be installed from TestFlight on the same physical iPhone.
+
+Acceptance #1:
+
+tap Verified TCG
+→ app remains open
+→ first UI renders
+→ no crash for at least 30 seconds
+
+Then:
+
+background/foreground
+→ no crash
+
+kill/relaunch 5 times
+→ no crash
+
+Only after launch stability is proven should collector-flow testing continue.
+
+⸻
+
+IF BUILD 2 STILL CRASHES
+
+Capture its crash report and compare:
+
+* exception
+* crashed thread
+* Hermes stack
+* whether regExpExec/stringPrototypeReplace is still present
+
+If the same Hermes native stack remains after no startup-path regex replacement exists, create a diagnostic Build 3 with the smallest supported Hermes/New Architecture compatibility change.
+
+Do NOT mask the problem with try/catch — a native SIGSEGV cannot be safely handled in JS.
+
+⸻
+
+RETURN
+
+1. root-cause assessment
+2. suspected crashing source line
+3. all startup RegExp replace occurrences
+4. files changed
+5. exact fix
+6. tests added
+7. mobile test result
+8. TypeScript
+9. iOS bundle result
+10. new Git SHA
+11. iOS build number
+12. TestFlight upload status
+13. physical Build 2 launch result
+14. five-relaunch result
+15. whether Hermes regExpExec crash remains
+16. whether new architecture was changed
+17. remaining P0 blocker
+
+End with:
+
+# TESTFLIGHT LAUNCH FIXED
+
+or
+
+# TESTFLIGHT LAUNCH STILL BLOCKED
