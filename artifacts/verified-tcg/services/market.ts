@@ -2,11 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Card, MarketMover } from '@/types';
 import { catalogCardToAppCard } from './catalogApi';
 import type { CatalogCard } from './catalogApi';
-
-// Resolve the API base URL the same way catalogApi.ts does.
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
-const API_BASE = `${explicitBase || domainBase}/api`;
+import { apiJson } from './apiClient';
 
 // ── Server response shapes ────────────────────────────────────────────────────
 
@@ -135,19 +131,16 @@ export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void):
 /**
  * Fetches the top market movers from the API server.
  * Cards are sorted server-side by absolute 7-day price change.
- * Returns an empty array on error so callers can show a graceful fallback.
+ * A successful empty array means no comparable movement exists. Errors are
+ * deliberately propagated so the screen can show an unavailable state.
  */
 export async function getMarketMovers(): Promise<MarketMover[]> {
   return singleFlight('market-movers', fetchMarketMovers);
 }
 
 async function fetchMarketMovers(): Promise<MarketMover[]> {
-  if (!API_BASE || API_BASE === '/api') return [];
-  try {
-    const res = await fetch(`${API_BASE}/catalog/market-movers`);
-    if (!res.ok) return [];
-    const body = await res.json();
-    const movers = (body.data as MarketMoverServerCard[]).map((card) => {
+  const body = await apiJson<{ data: MarketMoverServerCard[] }>('/api/catalog/market-movers');
+  const movers = (body.data ?? []).map((card) => {
       const appCard = catalogCardToAppCard(card);
       return {
       card: appCard,
@@ -158,57 +151,40 @@ async function fetchMarketMovers(): Promise<MarketMover[]> {
       currency: card.currency,
       updatedAt: card.updated_at,
     };
-    });
-    if (movers.length > 0) await writeMarketCacheSection('movers', movers);
-    return movers;
-  } catch {
-    return [];
-  }
+  });
+  if (movers.length > 0) await writeMarketCacheSection('movers', movers);
+  return movers;
 }
 
 /**
  * Fetches the deterministic ranking of fresh comparable snapshot movements.
  * Verified TCG does not yet claim a separate social-popularity signal.
- * Returns an empty array on error.
+ * A successful empty array means no persisted trend records exist.
  */
 export async function getTrendingCards(): Promise<Card[]> {
   return singleFlight('trending', fetchTrendingCards);
 }
 
 async function fetchTrendingCards(): Promise<Card[]> {
-  if (!API_BASE || API_BASE === '/api') return [];
-  try {
-    const res = await fetch(`${API_BASE}/catalog/trending`);
-    if (!res.ok) return [];
-    const body = await res.json();
-    const cards = (body.data as CatalogCard[]).map(catalogCardToAppCard);
-    if (cards.length > 0) await writeMarketCacheSection('trending', cards);
-    return cards;
-  } catch {
-    return [];
-  }
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/trending');
+  const cards = (body.data ?? []).map(catalogCardToAppCard);
+  if (cards.length > 0) await writeMarketCacheSection('trending', cards);
+  return cards;
 }
 
 /**
  * Fetches recently-added canonical catalogue records with a current quote when
  * one exists. This is ordered by catalogue provenance, not a fixture or a
  * hand-picked price list.
- * Returns an empty array on error.
+ * A successful empty array means the catalogue has no persisted records yet.
  */
 export async function getRecentlyAddedCards(): Promise<Card[]> {
   return singleFlight('recently-added', fetchRecentlyAddedCards);
 }
 
 async function fetchRecentlyAddedCards(): Promise<Card[]> {
-  if (!API_BASE || API_BASE === '/api') return [];
-  try {
-    const res = await fetch(`${API_BASE}/catalog/recently-added`);
-    if (!res.ok) return [];
-    const body = await res.json();
-    const cards = (body.data as CatalogCard[]).map(catalogCardToAppCard);
-    if (cards.length > 0) await writeMarketCacheSection('recentlyAdded', cards);
-    return cards;
-  } catch {
-    return [];
-  }
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/recently-added');
+  const cards = (body.data ?? []).map(catalogCardToAppCard);
+  if (cards.length > 0) await writeMarketCacheSection('recentlyAdded', cards);
+  return cards;
 }

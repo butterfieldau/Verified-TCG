@@ -5,11 +5,11 @@ jest.mock('expo-constants', () => ({
 
 describe('platform runtime controls', () => {
   beforeEach(() => {
-    process.env.EXPO_PUBLIC_DOMAIN = 'api.verified.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.verified.test';
   });
 
   afterEach(() => {
-    delete process.env.EXPO_PUBLIC_DOMAIN;
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
     jest.restoreAllMocks();
   });
 

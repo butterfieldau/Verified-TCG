@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
-import Constants from "expo-constants";
 import { Alert, Platform } from "react-native";
+import { ApiClientError, apiRequest, resolveApiOrigin } from './apiClient';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,6 @@ import { Alert, Platform } from "react-native";
 const ASYNC_SESSION_KEY = "@verified_tcg/auth_session";
 const SECURE_SESSION_KEY = "verified_tcg_auth_session";
 const USE_SECURE_SESSION_STORAGE = Platform.OS !== "web";
-const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,95 +35,17 @@ export type OAuthProvider = "google" | "apple" | "twitter";
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /**
- * Resolve the public API origin shared by native and web builds.  Auth used to
- * read only EXPO_PUBLIC_API_BASE_URL while the rest of the app also supports
- * EXPO_PUBLIC_DOMAIN. When the explicit setting was absent, native auth sent a
- * relative /api request to the Expo/Replit host instead of the API deployment.
+ * Resolve the explicit public API origin shared by native and web builds.
+ * There is intentionally no Expo/Replit-domain fallback: native authentication
+ * must never send a relative request to the app host or editor preview.
  */
-export function resolveAuthApiBase(): string {
-  const explicit = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").trim();
-  const configured = explicit || process.env.EXPO_PUBLIC_DOMAIN?.trim() || "";
-  if (!configured) return "";
-
-  const withScheme = /^https?:\/\//i.test(configured)
-    ? configured
-    : `https://${configured}`;
-  try {
-    const url = new URL(withScheme);
-    // EXPO_PUBLIC_API_BASE_URL is an origin. Tolerate an accidental /api
-    // suffix without ever producing /api/api/auth/... requests.
-    const pathname = url.pathname.replace(/\/$/, "");
-    if (pathname && pathname !== "/api") return "";
-    return url.origin;
-  } catch {
-    return "";
-  }
-}
-
-function authRequestDiagnostic(
-  path: string,
-  response: Response,
-): void {
-  if (!__DEV__) return;
-  let hostname = "unconfigured";
-  try {
-    hostname = new URL(resolveAuthApiBase()).hostname || hostname;
-  } catch {
-    // Keep the diagnostic safe if the build configuration is invalid.
-  }
-  console.warn("Verified TCG authentication request failed", {
-    status: response.status,
-    contentType: response.headers?.get?.("content-type") ?? "unknown",
-    endpoint: path,
-    hostname,
-  });
-}
+export const resolveAuthApiBase = resolveApiOrigin;
 
 async function request(
   path: string,
   init: RequestInit & { accessToken?: string },
 ): Promise<Response> {
-  const apiBase = resolveAuthApiBase();
-  if (!apiBase) {
-    throw new Error("The authentication service is not configured for this build.");
-  }
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-app-version": APP_VERSION,
-  };
-  if (init.accessToken) headers["Authorization"] = `Bearer ${init.accessToken}`;
-  return fetch(`${apiBase}${path}`, {
-    ...init,
-    headers: { ...headers, ...(init.headers ?? {}) },
-  });
-}
-
-async function parseError(response: Response, path: string): Promise<never> {
-  const contentType = response.headers?.get?.("content-type")?.toLowerCase() ?? "";
-  if (!contentType.includes("application/json")) {
-    authRequestDiagnostic(path, response);
-    if (response.status === 403) {
-      throw new Error("The authentication service could not be reached. Please try again.");
-    }
-    throw new Error("The authentication service returned an unexpected response. Please try again.");
-  }
-
-  const body = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    msg?: string;
-    message?: string;
-    error_description?: string;
-  };
-  if (response.status === 401) {
-    throw new Error("Incorrect email or password.");
-  }
-  throw new Error(
-    body.error_description ??
-    body.message ??
-    body.msg ??
-      body.error ??
-      "The authentication service could not be reached. Please try again.",
-  );
+  return apiRequest(path, init);
 }
 
 export async function readPersistedSession(
@@ -182,7 +103,6 @@ export async function signInWithPassword(
     method: "POST",
     body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/signin");
   const session = (await response.json()) as AuthSession;
   await persist(session);
   return session;
@@ -201,7 +121,6 @@ export async function signUp(
       display_name: displayName.trim(),
     }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/signup");
   const result = (await response.json()) as AuthSession;
   if (result.access_token) await persist(result);
   return result.access_token ? result : null;
@@ -212,7 +131,6 @@ export async function requestPasswordReset(email: string): Promise<void> {
     method: "POST",
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/recover");
 }
 
 export async function resetPassword(
@@ -223,7 +141,6 @@ export async function resetPassword(
     method: "POST",
     body: JSON.stringify({ token, new_password: newPassword }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/reset-password");
 }
 
 export async function changePassword(
@@ -239,7 +156,6 @@ export async function changePassword(
     accessToken: session.access_token,
     body: JSON.stringify({ currentPassword, newPassword }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/change-password");
 }
 
 export async function uploadAvatar(
@@ -254,7 +170,6 @@ export async function uploadAvatar(
     accessToken: session.access_token,
     body: JSON.stringify({ base64, mimeType }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/avatar");
   const result = (await response.json()) as { avatar_url: string };
 
   // Persist the new avatar URL to the cached session
@@ -278,7 +193,6 @@ export async function updateUserMetadata(
     accessToken: session.access_token,
     body: JSON.stringify({ data }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/user");
   const updated = (await response.json()) as AuthSession["user"];
   session.user = updated;
   await persist(session);
@@ -320,14 +234,14 @@ export async function restoreSession(): Promise<AuthSession | null> {
       method: "POST",
       body: JSON.stringify({ refresh_token: session.refresh_token }),
     });
-    if (!response.ok) {
-      await persist(null);
-      return null;
-    }
     const refreshed = (await response.json()) as AuthSession;
     await persist(refreshed);
     return refreshed;
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiClientError && error.kind === 'unauthorized') {
+      await persist(null);
+      return null;
+    }
     // Network unavailable — return the stale session so the user stays logged in offline
     return session;
   }
@@ -378,7 +292,6 @@ export async function deleteAccount(password: string): Promise<void> {
     accessToken: session.access_token,
     body: JSON.stringify({ password }),
   });
-  if (!response.ok) return parseError(response, "/api/auth/account");
 
   // Wipe all local data after the server confirms deletion
   await persist(null).catch(() => {});
@@ -410,7 +323,6 @@ export async function fetchCurrentUser(): Promise<AuthSession["user"] | null> {
     const response = await request("/api/auth/user", {
       accessToken: session.access_token,
     });
-    if (!response.ok) return null;
     return (await response.json()) as AuthSession["user"];
   } catch {
     // Network unavailable — caller falls back to cached session data
@@ -442,7 +354,6 @@ export async function upgradeToPro(): Promise<{
     method: "POST",
     accessToken: session.access_token,
   });
-  if (!response.ok) return parseError(response, "/api/subscription/upgrade");
 
   const result = (await response.json()) as {
     subscription_tier: string;
@@ -488,7 +399,6 @@ export async function restorePurchases(): Promise<{
     method: "POST",
     accessToken: session.access_token,
   });
-  if (!response.ok) return parseError(response, "/api/subscription/restore");
 
   const result = (await response.json()) as {
     subscription_tier: string;

@@ -8,19 +8,12 @@
  */
 
 import { getAccessToken } from './auth';
+import { resolveApiOrigin } from './apiClient';
 
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : '';
-const API_BASE = `${explicitBase || domainBase}/api`;
+const API_BASE = `${resolveApiOrigin()}/api`;
 
 function ebaySoldHistoryApiBase(): string {
-  const configuredBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-  const configuredDomain = process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-    : '';
-  return `${configuredBase || configuredDomain}/api`;
+  return `${resolveApiOrigin()}/api`;
 }
 
 export type PricePeriod = '7D' | '30D' | '90D' | '1Y' | 'All';

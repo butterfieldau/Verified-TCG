@@ -1,9 +1,6 @@
 import type { CollectionItem, PortfolioSummary } from '@/types';
 import { getAccessToken } from './auth';
-
-const explicitBase = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const domainBase = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
-const API_BASE = explicitBase || domainBase;
+import { apiJson, apiRequest } from './apiClient';
 
 // ── Value helper (kept for price-display callers) ─────────────────────────────
 
@@ -35,21 +32,17 @@ export function getItemCurrentValue(item: CollectionItem): number {
 
 // ── Authenticated API helpers ─────────────────────────────────────────────────
 
-async function authHeaders(): Promise<Record<string, string>> {
+async function accessToken(): Promise<string> {
   const token = await getAccessToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
+  if (!token) throw new Error('Your session has expired. Please sign in again.');
+  return token;
 }
 
 // ── Collection API calls ──────────────────────────────────────────────────────
 
 /** Fetch all collection items for the signed-in user from the server. */
 export async function fetchCollection(): Promise<CollectionItem[]> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection`, { headers });
-  if (!res.ok) throw new Error(`Failed to load collection (${res.status})`);
-  return res.json() as Promise<CollectionItem[]>;
+  return apiJson<CollectionItem[]>('/api/collection', { accessToken: await accessToken() });
 }
 
 export interface PaginatedCollection {
@@ -65,21 +58,17 @@ export async function fetchCollectionPage(
   page: number,
   limit: number = 20,
 ): Promise<PaginatedCollection> {
-  const headers = await authHeaders();
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-  const res = await fetch(`${API_BASE}/api/collection?${params}`, { headers });
-  if (!res.ok) throw new Error(`Failed to load collection (${res.status})`);
-  return res.json() as Promise<PaginatedCollection>;
+  return apiJson<PaginatedCollection>(`/api/collection?${params}`, { accessToken: await accessToken() });
 }
 
 /** Add a card to the server collection. Returns the persisted item (server-assigned id). */
 export async function addCollectionItem(
   item: CollectionItem,
 ): Promise<CollectionItem> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection`, {
+  return apiJson<CollectionItem>('/api/collection', {
     method: 'POST',
-    headers,
+    accessToken: await accessToken(),
     body: JSON.stringify({
       cardId: item.cardId,
       card: item.card,
@@ -94,31 +83,24 @@ export async function addCollectionItem(
       isForTrade: item.isForTrade ?? false,
     }),
   });
-  if (!res.ok) throw new Error(`Failed to add card (${res.status})`);
-  return res.json() as Promise<CollectionItem>;
 }
 
 /** Update a collection item's mutable fields. Returns the updated item. */
 export async function updateCollectionItem(
   id: string,
-  patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice'>>,
+  patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice' | 'acquiredAt' | 'currency'>>,
 ): Promise<CollectionItem> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection/${id}`, {
+  return apiJson<CollectionItem>(`/api/collection/${encodeURIComponent(id)}`, {
     method: 'PATCH',
-    headers,
+    accessToken: await accessToken(),
     body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`Failed to update card (${res.status})`);
-  return res.json() as Promise<CollectionItem>;
 }
 
 /** Remove a card from the user's collection on the server. */
 export async function removeCollectionItem(id: string): Promise<void> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/api/collection/${id}`, {
+  await apiRequest(`/api/collection/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers,
+    accessToken: await accessToken(),
   });
-  if (!res.ok) throw new Error(`Failed to remove card (${res.status})`);
 }

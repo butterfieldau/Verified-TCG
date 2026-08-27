@@ -11,36 +11,23 @@
  *
  * URL strategy
  * ──────────────
- * In the Replit preview the Expo app runs as a web page, so a root-relative
- * path (/api/…) is routed through the Replit proxy to the API server.
- * On a physical/emulated native device set EXPO_PUBLIC_API_BASE_URL to the
- * full server URL (e.g. https://your-repl.replit.dev).
+ * The shared API client resolves the explicit public API origin for every
+ * environment. There is no editor/preview-domain fallback for native builds.
  */
 
 import type { WatchlistItem } from '@/types';
 import { getAccessToken } from '@/services/auth';
-
-const API_BASE =
-  (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '') + '/api';
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' };
-
-async function checkResponse(res: Response): Promise<void> {
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Wishlist API ${res.status}: ${body}`);
-  }
-}
+import { apiJson, apiRequest } from './apiClient';
 
 /**
  * Returns headers that include the Bearer token for the active session.
  * Throws if no token is available so callers can skip the request when
  * the collector is not signed in.
  */
-async function authHeaders(): Promise<Record<string, string>> {
+async function authToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) throw new Error('No active session — wishlist request skipped');
-  return { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
+  return token;
 }
 
 // ── Wishlist operations ───────────────────────────────────────────────────────
@@ -62,14 +49,11 @@ async function authHeaders(): Promise<Record<string, string>> {
 export async function syncWishlistToServer(
   items: WatchlistItem[],
 ): Promise<WatchlistItem[]> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/wishlist/sync`, {
+  const data = await apiJson<{ items: WatchlistItem[] }>('/api/wishlist/sync', {
     method: 'POST',
-    headers,
+    accessToken: await authToken(),
     body: JSON.stringify({ items }),
   });
-  await checkResponse(res);
-  const data = (await res.json()) as { items: WatchlistItem[] };
   return Array.isArray(data.items) ? data.items : items;
 }
 
@@ -81,13 +65,11 @@ export async function syncWishlistToServer(
 export async function addWishlistItemToServer(
   item: WatchlistItem,
 ): Promise<void> {
-  const headers = await authHeaders();
-  const res = await fetch(`${API_BASE}/wishlist`, {
+  await apiRequest('/api/wishlist', {
     method: 'POST',
-    headers,
+    accessToken: await authToken(),
     body: JSON.stringify(item),
   });
-  await checkResponse(res);
 }
 
 /**
@@ -98,12 +80,10 @@ export async function addWishlistItemToServer(
 export async function removeWishlistItemFromServer(
   itemId: string,
 ): Promise<void> {
-  const headers = await authHeaders();
-  const res = await fetch(
-    `${API_BASE}/wishlist/${encodeURIComponent(itemId)}`,
-    { method: 'DELETE', headers },
-  );
-  await checkResponse(res);
+  await apiRequest(`/api/wishlist/${encodeURIComponent(itemId)}`, {
+    method: 'DELETE',
+    accessToken: await authToken(),
+  });
 }
 
 /**
@@ -113,14 +93,9 @@ export async function updateWishlistItemOnServer(
   itemId: string,
   patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled'>>,
 ): Promise<void> {
-  const headers = await authHeaders();
-  const res = await fetch(
-    `${API_BASE}/wishlist/${encodeURIComponent(itemId)}`,
-    {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify(patch),
-    },
-  );
-  await checkResponse(res);
+  await apiRequest(`/api/wishlist/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH',
+    accessToken: await authToken(),
+    body: JSON.stringify(patch),
+  });
 }

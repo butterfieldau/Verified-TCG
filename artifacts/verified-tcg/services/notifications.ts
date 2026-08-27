@@ -6,8 +6,7 @@
  */
 
 import { getAccessToken } from './auth';
-
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+import { apiRequest } from './apiClient';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,14 +66,7 @@ export interface NotificationsPage {
 
 async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await getAccessToken();
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
+  return apiRequest(path, { ...init, accessToken: token });
 }
 
 // ── Time formatting ───────────────────────────────────────────────────────────

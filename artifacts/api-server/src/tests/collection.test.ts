@@ -202,6 +202,26 @@ describe("PATCH /api/collection/:id", () => {
     assert.equal(res.body.condition, "good");
   });
 
+  test("persists unit acquisition price, currency and acquisition date on edit", async () => {
+    const res = await request
+      .patch(`/api/collection/${itemId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ acquiredPrice: 100, currency: "USD", acquiredAt: "2025-02-03", quantity: 2 });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.acquiredPrice, 100);
+    assert.equal(res.body.currency, "USD");
+    assert.equal(res.body.acquiredAt, "2025-02-03");
+    assert.equal(res.body.quantity, 2);
+  });
+
+  test("rejects an invalid acquisition date", async () => {
+    const res = await request
+      .patch(`/api/collection/${itemId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ acquiredAt: "not-a-date" });
+    assert.equal(res.status, 400);
+  });
+
   test("returns 404 for unknown item id", async () => {
     const res = await request
       .patch("/api/collection/00000000-0000-0000-0000-000000000000")

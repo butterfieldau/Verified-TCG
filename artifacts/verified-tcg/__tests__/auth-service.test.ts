@@ -88,19 +88,16 @@ describe("mobile authentication origin and errors", () => {
     (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, session));
 
     await expect(signInWithPassword("TEST@EXAMPLE.COM", "password123")).resolves.toEqual(session);
-    expect(fetch).toHaveBeenCalledWith(
-      "https://api.verified.test/api/auth/signin",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "x-app-version": expect.any(String) }),
-      }),
-    );
+    const [url, init] = (fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.verified.test/api/auth/signin");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("x-app-version")).toEqual(expect.any(String));
   });
 
-  it("falls back to EXPO_PUBLIC_DOMAIN without producing an /api/api path", () => {
+  it("uses only the explicit public API origin and normalizes an /api suffix", () => {
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     process.env.EXPO_PUBLIC_DOMAIN = "staging.verified.test";
-    expect(resolveAuthApiBase()).toBe("https://staging.verified.test");
+    expect(resolveAuthApiBase()).toBe("");
 
     process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test/api";
     expect(resolveAuthApiBase()).toBe("https://api.verified.test");
@@ -137,19 +134,9 @@ describe("mobile authentication origin and errors", () => {
   });
 
   it("does not expose upstream HTML for a non-JSON 403", async () => {
-    const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     (fetch as jest.Mock).mockResolvedValueOnce(textResponse(403));
 
     await expect(signInWithPassword("test@example.com", "password123")).rejects.toThrow("The authentication service could not be reached. Please try again.");
-    expect(warning).toHaveBeenCalledWith(
-      "Verified TCG authentication request failed",
-      expect.objectContaining({
-        status: 403,
-        endpoint: "/api/auth/signin",
-        hostname: "api.verified.test",
-      }),
-    );
-    warning.mockRestore();
   });
 
   it("rotates an expired session with the server refresh response", async () => {

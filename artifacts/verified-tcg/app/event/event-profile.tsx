@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
+import { resolveApiOrigin } from '@/services/apiClient';
 
 const C = colors.dark;
 
@@ -44,7 +45,7 @@ function avatarColor(username: string): string {
 }
 
 function getPublicProfileUrl(username: string): string {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const base = resolveApiOrigin() || 'https://verifiedtcg.co';
   return `${base}/profile/${username}`;
 }
 

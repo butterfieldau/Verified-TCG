@@ -21,7 +21,13 @@ import type {
   User,
   PortfolioSummary,
 } from '@/types';
-import { getItemCurrentValue, fetchCollection, addCollectionItem, removeCollectionItem } from '@/services/collection';
+import {
+  getItemCurrentValue,
+  fetchCollection,
+  addCollectionItem,
+  updateCollectionItem,
+  removeCollectionItem,
+} from '@/services/collection';
 import {
   syncWishlistToServer,
   addWishlistItemToServer,
@@ -65,9 +71,7 @@ import {
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 import { clearRecentScans } from '@/services/scanStatePersistence';
-
-// API base for server-side quota sync — same pattern as other service files
-const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+import { apiJson } from '@/services/apiClient';
 
 /**
  * Fetch the authoritative scan count for the current period from the server.
@@ -76,11 +80,7 @@ const _SCAN_API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$
  */
 async function fetchServerScanCount(accessToken: string): Promise<number | null> {
   try {
-    const res = await fetch(`${_SCAN_API_BASE}/api/scan/usage`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { scansUsed?: number };
+    const body = await apiJson<{ scansUsed?: number }>('/api/scan/usage', { accessToken });
     return typeof body.scansUsed === 'number' ? body.scansUsed : null;
   } catch {
     return null;
@@ -99,6 +99,8 @@ interface AppState {
   isAuthenticated: boolean;
   collection: CollectionItem[];
   collectionLoading: boolean;
+  /** A failed server refresh must not be presented as an empty collection. */
+  collectionError: string | null;
   refreshCollection: () => Promise<void>;
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
@@ -151,7 +153,13 @@ interface AppActions {
     showForTrade?: boolean;
     showForSale?: boolean;
   }) => Promise<void>;
-  addToCollection: (item: CollectionItem) => void;
+  /** Persists first; resolves only with the server-assigned canonical holding. */
+  addToCollection: (item: CollectionItem) => Promise<CollectionItem>;
+  /** Updates a persisted holding and immediately replaces the local copy. */
+  updateCollectionHolding: (
+    id: string,
+    patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice' | 'acquiredAt' | 'currency'>>,
+  ) => Promise<CollectionItem>;
   removeFromCollection: (id: string) => void;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
@@ -320,6 +328,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
@@ -597,8 +606,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         return [...filteredServer, ...stillPending];
       });
+      setCollectionError(null);
     } catch {
-      // Network error or unauthenticated — keep current local state (or cached data shown above)
+      // Retain a usable offline cache, but surface the failed refresh so it is
+      // never mistaken for a genuinely empty, up-to-date collection.
+      if (gen === loadGeneration.current) {
+        setCollectionError('Your collection could not be refreshed. Please try again.');
+      }
     } finally {
       // Only the latest generation clears the loading flag.
       if (gen === loadGeneration.current) setCollectionLoading(false);
@@ -809,6 +823,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setIsAuthenticated(false);
     setCollection([]);
+    setCollectionError(null);
     setWatchlist([]);
     setNotifications([]);
     setServerUnreadCount(0);
@@ -831,6 +846,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setIsAuthenticated(false);
     setCollection([]);
+    setCollectionError(null);
     setWatchlist([]);
     setNotifications([]);
     setServerUnreadCount(0);
@@ -889,7 +905,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }, [user]);
 
-  const addToCollection = useCallback((item: CollectionItem) => {
+  const addToCollection = useCallback(async (item: CollectionItem): Promise<CollectionItem> => {
     // Register temp id and fingerprint BEFORE the optimistic insert so any
     // concurrent loadCollection() call can preserve or deduplicate correctly.
     const fp = `${item.cardId}::${item.acquiredAt}`;
@@ -897,27 +913,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pendingFingerprints.current.set(item.id, fp);
     setCollection(prev => [...prev, item]);
 
-    addCollectionItem(item)
-      .then(saved => {
-        // Swap the client-generated temp id for the server-assigned id.
-        pendingItemIds.current.delete(item.id);
-        pendingFingerprints.current.delete(item.id);
-        setCollection(prev =>
-          prev.map(i => i.id === item.id ? saved : i),
-        );
-      })
-      .catch(() => {
-        // Rollback and notify the user.
-        pendingItemIds.current.delete(item.id);
-        pendingFingerprints.current.delete(item.id);
-        setCollection(prev => prev.filter(i => i.id !== item.id));
-        Alert.alert(
-          'Could not save card',
-          'The card was not added to your collection. Please check your connection and try again.',
-          [{ text: 'OK' }],
-        );
-      });
-  }, []);
+    try {
+      const saved = await addCollectionItem(item);
+      // Swap the client-generated temp id for the server-assigned id.
+      pendingItemIds.current.delete(item.id);
+      pendingFingerprints.current.delete(item.id);
+      setCollection(prev =>
+        prev.map(i => i.id === item.id ? saved : i),
+      );
+      // Re-read the server canonical collection so Home, portfolio and
+      // Insights all work from the same persisted holding after a mutation.
+      void loadCollection();
+      return saved;
+    } catch (error) {
+      pendingItemIds.current.delete(item.id);
+      pendingFingerprints.current.delete(item.id);
+      setCollection(prev => prev.filter(i => i.id !== item.id));
+      throw error;
+    }
+  }, [loadCollection]);
+
+  const updateCollectionHolding = useCallback(async (
+    id: string,
+    patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice' | 'acquiredAt' | 'currency'>>,
+  ): Promise<CollectionItem> => {
+    const saved = await updateCollectionItem(id, patch);
+    setCollection(prev => prev.map(item => item.id === id ? saved : item));
+    // Re-read canonical data for every screen that depends on collection state.
+    void loadCollection();
+    return saved;
+  }, [loadCollection]);
 
   const removeFromCollection = useCallback((id: string) => {
     // Register as pending-delete BEFORE the optimistic removal so any
@@ -1197,12 +1222,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, collectionLoading, refreshCollection: loadCollection, portfolio, collectionFilters,
+        collection, collectionLoading, collectionError, refreshCollection: loadCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,
         signIn, createAccount, signInWithProvider, signOut, deleteAccount, updateProfile,
-        addToCollection, removeFromCollection,
+        addToCollection, updateCollectionHolding, removeFromCollection,
         addToWatchlist, removeFromWatchlist, updateWatchlistItem,
         setPortfolioRange, setCollectionFilters, setMarketFilters, setActiveTCG,
         refreshPrices,

@@ -45,6 +45,7 @@ export default function MarketScreen() {
   const insets = useSafeAreaInsets();
   const [movers, setMovers] = useState<MarketMover[]>([]);
   const [moversLoading, setMoversLoading] = useState(true);
+  const [moversError, setMoversError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
 
@@ -58,8 +59,9 @@ export default function MarketScreen() {
     try {
       const data = await getMarketMoversCached(fresh => setMovers(fresh));
       setMovers(data);
-    } catch {
-      // silently keep previous data
+      setMoversError(null);
+    } catch (error) {
+      setMoversError(error instanceof Error ? error.message : 'Market data is unavailable.');
     } finally {
       setMoversLoading(false);
     }
@@ -74,9 +76,10 @@ export default function MarketScreen() {
     setIsRefreshing(true);
     try {
       const data = await getMarketMovers();
-      if (data.length > 0) setMovers(data);
-    } catch {
-      // keep previous data
+      setMovers(data);
+      setMoversError(null);
+    } catch (error) {
+      setMoversError(error instanceof Error ? error.message : 'Market data is unavailable.');
     } finally {
       setIsRefreshing(false);
     }
@@ -165,6 +168,12 @@ export default function MarketScreen() {
           >
             {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
           </ScrollView>
+        ) : moversError ? (
+          <View style={styles.emptySection}>
+            <Feather name="wifi-off" size={32} color={C.muted} />
+            <Text style={styles.emptyTitle}>Market unavailable</Text>
+            <Text style={styles.emptyBody}>{moversError}</Text>
+          </View>
         ) : filteredMovers.length === 0 ? (
           <View style={styles.emptySection}>
             <Feather name="bar-chart-2" size={32} color={C.muted} />
@@ -228,7 +237,7 @@ export default function MarketScreen() {
             </View>
           </Pressable>
         ))}
-        {!moversLoading && filteredMovers.length === 0 && (
+        {!moversLoading && !moversError && filteredMovers.length === 0 && (
           <View style={styles.emptySection}>
             <Text style={styles.emptyBody}>No trending cards for this filter.</Text>
           </View>

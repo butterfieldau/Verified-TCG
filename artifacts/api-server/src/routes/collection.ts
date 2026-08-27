@@ -179,6 +179,11 @@ function validatePostBody(body: Record<string, unknown>): string | null {
 }
 
 function validatePatchBody(body: Record<string, unknown>): string | null {
+  if (body.acquiredAt !== undefined) {
+    if (typeof body.acquiredAt !== "string" || !isValidDateString(body.acquiredAt)) {
+      return "acquiredAt must be a valid ISO date string";
+    }
+  }
   const qty = body.quantity as number | undefined;
   if (qty !== undefined) {
     if (!Number.isInteger(qty) || qty < 1 || qty > 9999)
@@ -287,6 +292,9 @@ router.patch("/collection/:id", requireActiveUser, async (req: AuthRequest, res)
   if (body.isForTrade !== undefined) patch.isForTrade = !!(body.isForTrade);
   if (body.acquiredPrice !== undefined) {
     patch.acquiredPriceCents = Math.round((body.acquiredPrice as number) * 100);
+  }
+  if (body.acquiredAt !== undefined) {
+    patch.acquiredAt = body.acquiredAt as string;
   }
   if (typeof body.currency === "string") {
     patch.acquiredCurrency = body.currency.toUpperCase();
