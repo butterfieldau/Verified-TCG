@@ -6,9 +6,9 @@ import {
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { supportsLiquidGlassTabs } from '@/utils/liquidGlass';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
 import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
@@ -153,7 +153,7 @@ function ClassicTabLayout() {
 export default function TabLayout() {
   return (
     <View style={{ flex: 1 }}>
-      {isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />}
+      {supportsLiquidGlassTabs() ? <NativeTabLayout /> : <ClassicTabLayout />}
       {DevSubscriptionToggle ? <DevSubscriptionToggle /> : null}
     </View>
   );

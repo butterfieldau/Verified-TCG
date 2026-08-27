@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
+import { supportsLiquidGlassTabs } from '@/utils/liquidGlass';
 import { useApp } from '@/context/AppContext';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -73,7 +73,7 @@ export default function ProfileScreen() {
   // clock, without recreating the oversized black band.
   const topPad = Platform.OS === 'web'
     ? 67
-    : isLiquidGlassAvailable()
+    : supportsLiquidGlassTabs()
       ? Math.min(insets.top, 60)
       : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
