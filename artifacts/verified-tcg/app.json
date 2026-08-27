@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "verified-tcg",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "co.verifiedtcg.app",
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "backgroundColor": "#0A0A0A"
