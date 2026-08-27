@@ -1,0 +1,86 @@
+VERIFIED TCG — CREATE FIRST TESTFLIGHT BUILD
+We are ready to begin Apple TestFlight publishing.
+Do NOT start another development task.
+Do NOT redesign or refactor anything.
+Current GitHub main:
+06eaf68cc978151a2bdce8e19d40aa0912284280
+Production API:
+https://app.verifiedtcg.co
+Existing production acceptance has passed.
+GOAL
+Use Replit Publishing / Expo Launch to create the first iOS build and upload it to App Store Connect for internal TestFlight testing.
+APP IDENTITY
+App name:
+Verified TCG
+Version:
+1.0.0
+First iOS build number:
+1
+Use the permanent iOS Bundle ID:
+co.verifiedtcg.app
+Do not generate a temporary/random Bundle ID.
+Once created, this Bundle ID must remain the permanent identity of Verified TCG.
+API
+The iOS build must use:
+EXPO_PUBLIC_API_BASE_URL=https://app.verifiedtcg.co
+Confirm before building that the compiled app does not contain:
+localhost
+Replit editor/preview URLs
+verifiedtcg.co as the API origin
+/api/api
+Expected auth destination:
+https://app.verifiedtcg.co/api/auth/signup
+APPLE
+Start:
+Publishing → Start publishing to the App Store
+Use Expo Launch/Replit's supported Apple publishing flow.
+I will complete Apple Developer authentication, 2FA and any App Store Connect agreements when prompted.
+Do not attempt to bypass Apple authentication.
+If App Store Connect needs a new app record, create/configure it using:
+Name: Verified TCG
+Bundle ID: co.verifiedtcg.app
+Version: 1.0.0
+Do not enable public App Store release.
+This build is for TestFlight only.
+PRO / PAYMENTS
+Do not introduce IAP or card-payment functionality for this TestFlight build.
+There must be no functional purchase CTA promising a purchasable Pro subscription if Apple IAP is not implemented yet.
+Verified TCG does not process collector card purchases/sales.
+BUILD
+Produce the native iOS build.
+Upload it to App Store Connect.
+Wait for Apple processing.
+Once processing completes, make the build available for Internal Testing only.
+Do not submit for public App Store review yet.
+DO NOT CHANGE
+Do not alter:
+production database
+catalogue architecture
+pricing providers
+collection IDs
+canonical-read production flag
+authentication architecture
+API origin
+Only make a code/config change if required for successful iOS compilation or App Store identity, and report it before moving further if it materially changes application behaviour.
+RETURN
+Return:
+Bundle ID
+Apple App ID/App Store Connect app created yes/no
+App version
+iOS build number
+exact source/main SHA used
+API origin embedded
+native iOS build result
+upload result
+App Store Connect processing status
+TestFlight build number
+Internal Testing enabled yes/no
+any Apple warning/error
+any code changes made
+final Git SHA if code changed
+remaining blocker
+exact action I need to perform manually
+End with:
+# TESTFLIGHT BUILD UPLOADED
+or
+# TESTFLIGHT BUILD BLOCKED
