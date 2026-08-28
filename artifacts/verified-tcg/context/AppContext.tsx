@@ -72,6 +72,10 @@ import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 import { clearRecentScans } from '@/services/scanStatePersistence';
 import { apiJson } from '@/services/apiClient';
+import {
+  recordStartupPhase,
+  recoverStartupTask,
+} from '@/services/startupDiagnostics';
 
 /**
  * Fetch the authoritative scan count for the current period from the server.
@@ -320,9 +324,21 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    recordStartupPhase('app-provider', 'success');
+  }, []);
+
   // Configure how in-app notifications are displayed while the app is open.
   // Called once on mount — safe to call on all platforms.
-  useEffect(() => { configureForegroundNotifications(); }, []);
+  useEffect(() => {
+    recordStartupPhase('notification-setup', 'started');
+    try {
+      configureForegroundNotifications();
+      recordStartupPhase('notification-setup', 'success');
+    } catch (error) {
+      recordStartupPhase('notification-setup', 'failure', error, false);
+    }
+  }, []);
 
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -386,11 +402,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Load persisted watchlist, prices, scan state, and alerts from AsyncStorage on mount
   useEffect(() => {
+    const emptyPrices = {
+      collectionPrices: null,
+      watchlistPrices: null,
+      lastUpdated: null,
+    };
     Promise.all([
-      AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
-      loadPersistedPrices(),
-      loadScanState(),
-      loadPersistedAlerts(),
+      recoverStartupTask(
+        'bootstrap-watchlist',
+        AsyncStorage.getItem(WATCHLIST_STORAGE_KEY),
+        null,
+      ),
+      recoverStartupTask('bootstrap-prices', loadPersistedPrices(), emptyPrices),
+      recoverStartupTask('bootstrap-scan-state', loadScanState(), null),
+      recoverStartupTask('bootstrap-alerts', loadPersistedAlerts(), []),
     ]).then(async ([storedWatchlist, persisted, storedScanState, persistedAlerts]) => {
       // Restore watchlist — handles versioned payloads and legacy plain arrays
       if (storedWatchlist !== null) {
@@ -466,6 +491,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         saveAlertState(merged).catch(() => {});
         return merged;
       });
+      recordStartupPhase('bootstrap-processing', 'success');
+    }).catch(error => {
+      recordStartupPhase('bootstrap-processing', 'failure', error, false);
     }).finally(() => {
       setWatchlistLoaded(true);
       setScansLoaded(true);
@@ -657,7 +685,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Restore session on mount (handles app restarts and token refresh)
   useEffect(() => {
+    recordStartupPhase('session-restore', 'started');
     restoreSession().then(async session => {
+      recordStartupPhase('session-restore', 'success');
       if (!session) return;
       setUser(userFromSession(session));
       setIsAuthenticated(true);
@@ -719,7 +749,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fetchMyActiveParticipation().then(p => {
         if (p.eventId) setCurrentEventId(p.eventId);
       }).catch(() => {});
-    }).catch(() => {});
+    }).catch(error => {
+      recordStartupPhase('session-restore', 'failure', error, false);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

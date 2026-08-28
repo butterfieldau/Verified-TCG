@@ -23,15 +23,32 @@ import {
 } from '@expo-google-fonts/rajdhani';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { recordStartupPhase } from '@/services/startupDiagnostics';
 
-installVersionedApiFetch();
+recordStartupPhase('api-fetch-install', 'started');
+try {
+  installVersionedApiFetch();
+  recordStartupPhase('api-fetch-install', 'success');
+} catch (error) {
+  recordStartupPhase('api-fetch-install', 'failure', error, true);
+  throw error;
+}
 
 // Prevent the native splash screen from auto-hiding before assets are loaded.
-SplashScreen.preventAutoHideAsync();
+recordStartupPhase('splash-setup', 'started');
+void SplashScreen.preventAutoHideAsync()
+  .then(() => recordStartupPhase('splash-setup', 'success'))
+  .catch((error) => recordStartupPhase('splash-setup', 'failure', error, false));
+
+recordStartupPhase('font-load', 'started');
 
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
+  useEffect(() => {
+    recordStartupPhase('initial-navigation', 'success');
+  }, []);
+
   return (
     <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
       <Stack.Screen name="index" />
@@ -94,9 +111,13 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
-    }
+    if (fontError) recordStartupPhase('font-load', 'failure', fontError, false);
+    if (fontsLoaded) recordStartupPhase('font-load', 'success');
+    if (!fontsLoaded && !fontError) return;
+
+    void SplashScreen.hideAsync().catch((error) => {
+      recordStartupPhase('splash-setup', 'failure', error, false);
+    });
   }, [fontsLoaded, fontError]);
 
   if (!fontsLoaded && !fontError) return null;

@@ -25,6 +25,7 @@ import {
   type NotificationPrefs,
   type PrivacyPrefs,
 } from '@/services/settingsStore';
+import { recordStartupPhase } from '@/services/startupDiagnostics';
 
 interface SettingsContextType extends AppSettings {
   settingsLoaded: boolean;
@@ -48,9 +49,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // Load from AsyncStorage on mount
   useEffect(() => {
+    recordStartupPhase('settings-provider', 'started');
     loadSettings().then(loaded => {
       setSettings(loaded);
       setSettingsLoaded(true);
+      recordStartupPhase('settings-provider', 'success');
+    }).catch(error => {
+      setSettingsLoaded(true);
+      recordStartupPhase('settings-provider', 'failure', error, false);
     });
   }, []);
 

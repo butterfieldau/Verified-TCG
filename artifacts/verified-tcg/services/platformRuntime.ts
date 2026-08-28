@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { resolveApiOrigin } from './apiClient';
+import { recordStartupPhase } from './startupDiagnostics';
 
 export interface RuntimeConfig {
   maintenanceMode: boolean;
@@ -112,9 +113,13 @@ export function createVersionedApiFetch(
     headers.set('x-app-version', APP_VERSION);
 
     const response = await originalFetch(input, { ...init, headers });
-    void updateRequirementFromResponse(response).then((requirement) => {
-      if (requirement) notify(requirement);
-    });
+    void updateRequirementFromResponse(response)
+      .then((requirement) => {
+        if (requirement) notify(requirement);
+      })
+      .catch((error) => {
+        recordStartupPhase('runtime-config-request', 'failure', error, false);
+      });
     return response;
   }) as RuntimeFetch;
 }

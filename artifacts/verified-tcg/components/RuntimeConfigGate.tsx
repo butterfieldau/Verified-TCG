@@ -19,6 +19,7 @@ import {
   type UpdateRequirement,
   updateRequirementFromConfig,
 } from '@/services/platformRuntime';
+import { recordStartupPhase } from '@/services/startupDiagnostics';
 
 const C = colors.dark;
 
@@ -65,11 +66,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    recordStartupPhase('runtime-config-request', 'started');
     try {
       const next = await fetchRuntimeConfig();
       setConfig(next);
       setUpdateRequired(updateRequirementFromConfig(next));
-    } catch {
+      recordStartupPhase('runtime-config-request', 'success');
+    } catch (error) {
+      recordStartupPhase('runtime-config-request', 'failure', error, false);
       // Preserve offline-capable app behavior. Protected API requests still
       // enforce policy server-side and a 426 response activates this gate.
     } finally {
@@ -78,6 +82,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    recordStartupPhase('runtime-config-gate', 'success');
     const unsubscribeUpdate = onUpdateRequired(setUpdateRequired);
     void refresh();
     const interval = setInterval(() => void refresh(), 60_000);
