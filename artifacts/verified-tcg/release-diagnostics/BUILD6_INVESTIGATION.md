@@ -8,7 +8,10 @@ Date: 2026-08-28 (Australia/Sydney)
 
 Build 7 is not justified and was not created or uploaded.
 
-The supplied Build 6 evidence contains only the native terminal path
+The complete Build 6 `.crash` report confirms Version 1.0.0 (6), bundle
+`co.verifiedtcg.app`, app binary UUID `45e5ea0c-eb35-3bce-a598-6db1c67739a3`,
+Hermes, and a launch-to-crash interval of approximately 0.695 seconds. It
+contains only the native terminal path
 `RCTExceptionsManager reportFatal → reportException → RCTFatal → abort`. It
 does not contain the JavaScript exception message, JavaScript stack, last
 startup phase, or matching Build 6 production bundle/source map. That native
@@ -20,13 +23,15 @@ The successful Expo Launch record has no retained device-runtime logs.
 
 ## Requested diagnostic results
 
-- **Actual JS fatal exception:** unavailable in the supplied Build 6 evidence
+- **Actual JS fatal exception:** absent from the complete Build 6 `.crash`
+  report
 - **JS stack:** unavailable in the supplied Build 6 evidence
 - **Source file and line:** cannot be symbolicated without the Build 6 JS stack
   and its matching bundle/source map
 - **Last Build 6 startup breadcrumb:** unavailable; Build 6 did not contain the
   new breadcrumb instrumentation
-- **Before React root:** unknown
+- **Before React root:** unknown; the 0.695-second crash proves it is very early
+  but does not establish whether root registration/mount completed
 - **Inside an effect:** unknown
 - **Unhandled promise rejection:** unknown for Build 6
 - **Notification startup result:** current browser-accessible runtime reports
@@ -101,8 +106,9 @@ They cannot symbolicate Build 6 without Build 6's original matching artifacts.
 
 Provide either:
 
-1. The complete Build 6 device crash/console log including the React Native
-   JavaScript exception message and stack immediately before `RCTFatal`; or
+1. A live Build 6 device console capture including the React Native JavaScript
+   exception message and stack immediately before `RCTFatal` (the supplied
+   `.crash` file does not include those console lines); or
 2. The matching Build 6 `main.jsbundle` and source map plus its JavaScript
    stack.
 
