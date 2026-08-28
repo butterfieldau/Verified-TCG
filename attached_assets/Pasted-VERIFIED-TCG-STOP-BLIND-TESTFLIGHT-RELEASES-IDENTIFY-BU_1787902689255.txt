@@ -1,0 +1,184 @@
+VERIFIED TCG — STOP BLIND TESTFLIGHT RELEASES / IDENTIFY BUILD 6 FATAL JS EXCEPTION
+We have now shipped multiple TestFlight builds and Build 6 still crashes immediately.
+Do not create Build 7 until the exact JavaScript exception is identified.
+Current crash:
+Version: 1.0.0 (6)
+Bundle: co.verifiedtcg.app
+Device: iPhone18,2
+iOS: 27.0 beta (24A5390f)
+Exception: EXC_CRASH (SIGABRT)
+React Native stack:
+RCTExceptionsManager reportFatal
+→ RCTExceptionsManager reportException
+→ RCTFatal
+→ abort
+This is materially different from the earlier Hermes RegExp SIGSEGV.
+The current crash means an uncaught JS exception is being reported as fatal during application startup.
+RULE
+Do not guess at another source line.
+Do not upload another TestFlight build until we can state:
+Actual JS exception: <message>
+and preferably:
+JS source location: <file:line>
+1. REPRODUCE THE RELEASE STARTUP LOCALLY
+Use the exact native/release configuration used for TestFlight Build 6.
+Do not rely only on Jest.
+Run the production/native bundle in the closest available iOS release environment.
+Capture:
+React Native JS exception message
+JS stack
+native logs immediately before RCTFatal
+startup phase reached
+If Replit cannot run the release binary itself, use the generated production bundle plus source map and collect any startup exception produced during execution.
+2. PRESERVE SOURCE MAPS
+Ensure the iOS production JavaScript bundle generates and preserves its source map.
+The next crash must be symbolicated back to our TypeScript/TSX source.
+Do not discard bundle/source-map artifacts after build.
+Report exact locations of:
+JS bundle
+source map
+without exposing credentials.
+3. INSTALL TEMPORARY STARTUP DIAGNOSTICS
+We need diagnostic breadcrumbs before the React application fully mounts.
+Add minimal release-safe startup diagnostics around these phases:
+JS entry loaded
+installVersionedApiFetch()
+splash-screen setup
+font loading
+RuntimeConfigGate mount
+runtime-config request
+SettingsProvider
+AppProvider mount
+notification handler setup
+AsyncStorage/bootstrap restore
+session restore
+initial navigation
+Do not log tokens, passwords, email addresses, DB credentials or provider secrets.
+Persist only:
+startup step name
+timestamp
+sanitized exception name/message
+sanitized JS stack if available
+Use a local diagnostic store and/or existing safe backend diagnostic endpoint if available.
+4. CAPTURE GLOBAL JS ERROR BEFORE RCTFATAL
+Install a temporary production diagnostic global JS error handler early enough to record the error before React Native calls RCTFatal.
+Preserve React Native's existing fatal behaviour after recording it.
+Do NOT silently swallow fatal exceptions.
+Conceptually:
+obtain existing ErrorUtils global handler
+install wrapper
+capture sanitized:
+error name
+error message
+JS stack
+fatal flag
+last startup breadcrumb
+then call original handler
+This is diagnostic instrumentation, not an attempt to hide the crash.
+5. AUDIT STARTUP ASYNC FAILURES
+Inspect startup paths for promises that can reject without .catch().
+In particular review AppContext.tsx.
+Current mount logic contains a startup:
+Promise.all([...]).then(...).finally(...)
+Ensure the whole Promise chain has an explicit catch or equivalent safe failure path.
+A failure to read one local store must not cause an unhandled fatal startup rejection.
+Also audit:
+SplashScreen.preventAutoHideAsync()
+notification configuration
+font startup
+SecureStore/session restore
+persisted-price restore
+scan state restore
+alert state restore
+runtime config
+Do NOT indiscriminately swallow important errors.
+Startup storage/cache failures should degrade safely where appropriate.
+6. SPECIFIC HIGH-RISK STARTUP CODE
+Review:
+artifacts/verified-tcg/app/_layout.tsx
+It currently executes module-level:
+installVersionedApiFetch();
+and:
+SplashScreen.preventAutoHideAsync();
+Confirm neither can produce an uncaught release exception.
+If a promise is intentionally fire-and-forget, handle its rejection explicitly.
+Review:
+artifacts/verified-tcg/context/AppContext.tsx
+It currently performs multiple storage/bootstrap operations in one Promise.all.
+One rejected promise must not terminate the entire native app.
+Review:
+configureForegroundNotifications()
+which is called immediately when AppProvider mounts.
+Confirm the native notifications module is valid in the actual standalone iOS/TestFlight build.
+7. CHECK NATIVE MODULE COMPATIBILITY
+Current stack:
+Expo ~54.0.27
+React Native 0.81.5
+Hermes
+New Architecture
+expo-notifications
+react-native-keyboard-controller
+Reanimated / Worklets
+Run:
+npx expo-doctor
+and the appropriate Expo dependency compatibility checks.
+Do not casually upgrade dependencies.
+Identify any package version that is unsupported/mismatched with the current Expo SDK/native runtime.
+8. CREATE A STARTUP BISECTION IF MESSAGE IS STILL UNAVAILABLE
+If the exact JS exception cannot be captured immediately, do a controlled startup bisection before another TestFlight upload.
+Produce local/native release candidates that progressively mount:
+A. minimal root View/Text only
+B. fonts + navigation
+C. RuntimeConfigGate
+D. SettingsProvider
+E. AppProvider without notification/bootstrap effects
+F. full AppProvider
+Determine the first layer that reproduces the fatal exception.
+Do not create six TestFlight builds.
+Bisect locally/native first.
+9. ERROR BOUNDARY LIMITATION
+Do not assume the existing React ErrorBoundary protects startup.
+It only catches descendant render/lifecycle errors.
+It does not catch:
+module initialization failures
+async Promise rejection
+event callbacks
+errors before the boundary mounts
+Therefore identify and fix the actual uncaught startup source.
+10. ONLY AFTER ROOT CAUSE
+Once the exact exception is identified:
+fix only that root cause
+add regression test
+run mobile suite
+TypeScript
+Expo Doctor
+production iOS bundle
+release-mode startup test
+Then increment the next TestFlight build number.
+Do not upload until release-mode startup remains alive for at least 60 seconds.
+REQUIRED REPORT BEFORE NEXT BUILD
+Return:
+exact JS fatal exception message
+JS stack
+source file + line
+last startup breadcrumb reached
+whether exception occurs before React root
+whether it occurs inside an effect
+whether it is an unhandled Promise rejection
+notification startup result
+AsyncStorage/bootstrap result
+SecureStore/session result
+runtime-config result
+expo-doctor result
+dependency mismatch findings
+exact root cause
+files changed
+regression test
+release-mode local/native launch result
+next build number
+whether another TestFlight upload is justified
+Do not end this task with “probably”.
+End only with:
+# ROOT STARTUP EXCEPTION IDENTIFIED
+or
+# ROOT STARTUP EXCEPTION NOT YET IDENTIFIED
