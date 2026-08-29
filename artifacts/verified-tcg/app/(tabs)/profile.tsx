@@ -21,6 +21,8 @@ import { ProBadge } from '@/components/ui/ProBadge';
 import { Button } from '@/components/ui/Button';
 import colors from '@/constants/colors';
 import { TCG_LIST } from '@/types';
+import { useSettings } from '@/context/SettingsContext';
+import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
 
 const C = colors.dark;
 
@@ -52,12 +54,26 @@ const MENU_ITEMS = [
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
-    user, isAuthenticated, signOut, watchlist, collection, portfolio,
+    user, isAuthenticated, signOut, watchlist, collection,
     subscriptionTier,
     scansUsed, scanLimit, scanResetDate,
     unreadNotificationCount,
   } = useApp();
+  const { currency } = useSettings();
+  const [valuationSummary, setValuationSummary] = React.useState<CollectionSummary | null>(null);
   const isPro = subscriptionTier === 'pro';
+
+  React.useEffect(() => {
+    if (!isAuthenticated) {
+      setValuationSummary(null);
+      return;
+    }
+    let cancelled = false;
+    fetchCollectionSummary(currency)
+      .then(summary => { if (!cancelled) setValuationSummary(summary); })
+      .catch(() => { if (!cancelled) setValuationSummary(null); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, currency, collection]);
 
   // Format reset date as "1 Sep", "12 Oct", etc.
   const scanResetLabel = scanResetDate.toLocaleDateString('en-AU', {
@@ -83,7 +99,9 @@ export default function ProfileScreen() {
     .join(' · ');
   const cardsForTrade = collection.filter(item => item.isForTrade).length;
   const cardsForSale = collection.filter(item => item.isForSale).length;
-  const displayValue = portfolio.totalValue;
+  // Keep Profile on the same server-side valuation contract as Home and
+  // Collection.  Do not re-price slabs from local/raw card metadata.
+  const displayValue = valuationSummary?.totalValue ?? null;
 
   return (
     <View style={[styles.screen, { backgroundColor: C.background, paddingTop: topPad + 8 }]}>
@@ -179,7 +197,12 @@ export default function ProfileScreen() {
         <View style={styles.statsRow}>
           <StatBlock label="Cards" value={collection.length} />
           <View style={styles.statDivider} />
-          <StatBlock label="Value" value={`$${displayValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`} />
+          <StatBlock
+            label="Value"
+            value={displayValue == null
+              ? '—'
+              : `${currency} ${displayValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`}
+          />
           <View style={styles.statDivider} />
           <StatBlock label="For Trade" value={cardsForTrade} />
           <View style={styles.statDivider} />

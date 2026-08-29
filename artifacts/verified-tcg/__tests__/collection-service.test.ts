@@ -24,6 +24,7 @@ import {
   addCollectionItem,
   updateCollectionItem,
   removeCollectionItem,
+  getItemCurrentValue,
 } from '../services/collection';
 
 const FAKE_API_BASE = ''; // process.env.EXPO_PUBLIC_API_BASE_URL is '' in test env
@@ -76,6 +77,42 @@ describe('fetchCollection', () => {
   it('throws when the response is not ok', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 401 } as Response);
     await expect(fetchCollection()).rejects.toThrow();
+  });
+});
+
+describe('getItemCurrentValue', () => {
+  it('uses the server-resolved PSA 10 quote instead of conflicting raw card metadata', () => {
+    const item = {
+      ...makeCollectionItem(),
+      grading: { company: 'PSA', grade: 10, certNumber: '123' },
+      card: {
+        ...makeCollectionItem().card,
+        price: { raw: 25, psa10: 225, currency: 'AUD', updatedAt: '2025-01-01T00:00:00Z' },
+      },
+      valuation: {
+        priceCents: 22500,
+        price: 225,
+        currency: 'AUD',
+        gradeKey: 'psa_10',
+        updatedAt: '2025-01-01T00:00:00Z',
+      },
+    } as CollectionItem;
+
+    expect(getItemCurrentValue(item)).toBe(225);
+  });
+
+  it('does not silently substitute a raw quote when a graded quote is unavailable', () => {
+    const item = {
+      ...makeCollectionItem(),
+      grading: { company: 'PSA', grade: 10, certNumber: '123' },
+      card: {
+        ...makeCollectionItem().card,
+        price: { raw: 25, currency: 'AUD', updatedAt: '2025-01-01T00:00:00Z' },
+      },
+      valuation: null,
+    } as CollectionItem;
+
+    expect(getItemCurrentValue(item)).toBeNull();
   });
 });
 

@@ -48,7 +48,9 @@ function buildAllocation(
   for (const item of items) {
     const g = groupFn(item);
     if (!g) continue;
-    const v = getItemCurrentValue(item) * item.quantity;
+    const unitValue = getItemCurrentValue(item);
+    if (unitValue == null) continue;
+    const v = unitValue * item.quantity;
     const existing = map.get(g.key);
     if (existing) {
       existing.value += v;
@@ -173,6 +175,7 @@ export default function PortfolioScreen() {
     const buckets = new Map(tiers.map(t => [t.key, { ...t, value: 0 }]));
     for (const item of collection) {
       const price = getItemCurrentValue(item);
+      if (price == null) continue;
       const v = price * item.quantity;
       const tier = tiers.find(t => price >= t.min && price < t.max);
       if (tier) {
@@ -198,7 +201,9 @@ export default function PortfolioScreen() {
   const topPerformers = useMemo(() => {
     return collection
       .map(item => {
-        const currentValue = getItemCurrentValue(item) * item.quantity;
+        const unitValue = getItemCurrentValue(item);
+        if (unitValue == null) return null;
+        const currentValue = unitValue * item.quantity;
         const costBasis = item.acquiredPrice * item.quantity;
         const gainAbs = currentValue - costBasis;
         const gainPct = costBasis > 0 ? (gainAbs / costBasis) * 100 : 0;
@@ -206,7 +211,7 @@ export default function PortfolioScreen() {
         const label = grade ? `${item.card.name} ${grade}` : item.card.name;
         return { name: label, gain: gainPct, value: currentValue, change: gainAbs };
       })
-      .filter(p => p.gain > 0)
+      .filter((p): p is NonNullable<typeof p> => p !== null && p.gain > 0)
       .sort((a, b) => b.gain - a.gain)
       .slice(0, 3);
   }, [collection]);
@@ -215,10 +220,13 @@ export default function PortfolioScreen() {
   const largestHoldings = useMemo(() => {
     return collection
       .map(item => {
-        const value = getItemCurrentValue(item) * item.quantity;
+        const unitValue = getItemCurrentValue(item);
+        if (unitValue == null) return null;
+        const value = unitValue * item.quantity;
         const grade = item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Raw';
         return { name: item.card.name, grade, value, pct: totalValue > 0 ? (value / totalValue) * 100 : 0 };
       })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
       .sort((a, b) => b.value - a.value)
       .slice(0, 4);
   }, [collection, totalValue]);

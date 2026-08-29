@@ -1223,7 +1223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const portfolio = useMemo<PortfolioSummary>(() => {
     const totalValue = collection.reduce(
-      (sum, item) => sum + getItemCurrentValue(item) * item.quantity,
+      (sum, item) => sum + (getItemCurrentValue(item) ?? 0) * item.quantity,
       0,
     );
     const totalCost = collection.reduce(
