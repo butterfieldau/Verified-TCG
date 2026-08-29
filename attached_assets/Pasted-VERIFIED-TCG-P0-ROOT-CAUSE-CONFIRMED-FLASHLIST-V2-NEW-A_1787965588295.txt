@@ -1,0 +1,141 @@
+VERIFIED TCG — P0 ROOT CAUSE CONFIRMED: FLASHLIST V2 / NEW ARCHITECTURE MISMATCH
+STOP DIAGNOSTIC GUESSING. THE BUILD 7 ROOT CRASH HAS NOW BEEN IDENTIFIED FROM THE PHYSICAL IPHONE DEVICE CONSOLE.
+Current TestFlight:
+Verified TCG 1.0.0 (7)
+Bundle:
+co.verifiedtcg.app
+Physical device console fatal:
+Unhandled JS Exception: Error: FlashList v2 is only supported on new architecture
+Startup diagnostics independently recorded:
+phase: fatal-js-error
+message: FlashList v2 is only supported on new architecture
+React Native then terminates through RCTFatal.
+ROOT CAUSE
+The application currently uses:
+@shopify/flash-list v2
+while:
+artifacts/verified-tcg/app.json
+currently contains:
+"newArchEnabled": false
+This is an invalid runtime combination.
+A previous diagnostic change:
+e91a4e3142c0261e5624f4f1fb74c9d0f2ccdb48
+Support legacy architecture in diagnostic iOS build
+intentionally switched the application toward legacy architecture while investigating the earlier Hermes crash.
+That diagnostic configuration must not remain in the release build.
+DECISION
+Do NOT downgrade/remove FlashList merely to conceal this configuration error.
+Verified TCG was designed around the Expo SDK 54 / React Native new-architecture stack.
+Restore the application to the supported New Architecture configuration.
+1. RESTORE NEW ARCHITECTURE
+Change:
+"newArchEnabled": false
+to:
+"newArchEnabled": true
+in:
+artifacts/verified-tcg/app.json
+2. REVERT THE LEGACY-ARCHITECTURE DIAGNOSTIC DEPENDENCY CHANGES
+Inspect commit:
+e91a4e3142c0261e5624f4f1fb74c9d0f2ccdb48
+and its parent.
+Restore the Expo SDK 54-compatible New Architecture dependency configuration that existed before this diagnostic change.
+In particular inspect the diagnostic changes which:
+downgraded react-native-reanimated
+removed react-native-worklets
+added an Expo install exclusion for Reanimated
+Do NOT blindly select versions.
+Use:
+npx expo-doctor
+and the existing pre-diagnostic dependency configuration to restore the versions expected by the project's current Expo SDK.
+FlashList v2 remains installed.
+3. VERIFY GENERATED IOS NATIVE CONFIG
+This is critical.
+Do not assume changing app.json proves the native binary uses New Architecture.
+Regenerate the native iOS build configuration cleanly using the supported Replit/Expo Launch build path.
+Verify the generated native build explicitly has React Native New Architecture enabled.
+Check generated iOS configuration / Pod properties as applicable.
+Return explicit evidence:
+New Architecture in generated iOS build: ENABLED
+Do not upload another TestFlight build if this cannot be proven.
+4. DO NOT REINTRODUCE THE ORIGINAL REGEXP CRASH
+Earlier builds had a Hermes RegExp crash.
+The surgical fix removing startup:
+url.pathname.replace(/\/$/, '')
+must remain.
+Confirm resolveApiOrigin() still uses non-RegExp endsWith()/slice() logic.
+Do not revert that fix while restoring New Architecture.
+5. FLASHLIST RELEASE TEST
+Before TestFlight, create a production iOS JS bundle and verify a route importing FlashList can load without throwing:
+FlashList v2 is only supported on new architecture
+This error must be absent.
+Add a release/config regression guard so we never again ship:
+FlashList v2
++
+newArchEnabled: false
+The build/test should fail before TestFlight if this incompatible combination exists.
+6. EXPO DOCTOR
+Run:
+npx expo-doctor
+Resolve or explicitly classify all New Architecture compatibility problems involving:
+Expo SDK
+React Native
+FlashList
+Reanimated
+Worklets
+Keyboard Controller
+Screens
+Do not upload until the native stack is internally consistent.
+7. TESTS
+Run:
+mobile Jest suite
+workspace TypeScript
+Expo Doctor
+Expo config inspection
+production iOS bundle
+production native iOS build/prebuild validation
+Zero regressions.
+8. BUILD NUMBER
+The physical crash report supplied by the tester is:
+1.0.0 (7)
+Therefore the next TestFlight upload must have a build number greater than 7.
+Use:
+1.0.0 (8)
+unless App Store Connect has already consumed Build 8.
+Do NOT rely solely on the repository's stale ios.buildNumber value.
+Check App Store Connect/Replit Launch and use the next valid monotonically increasing build number.
+Bundle ID remains:
+co.verifiedtcg.app
+API remains:
+https://app.verifiedtcg.co
+9. DO NOT CHANGE
+Do not touch:
+production DB
+API architecture
+catalogue
+pricing
+authentication
+collector data
+UI design
+This task is only restoring a coherent iOS native runtime configuration.
+10. REQUIRED PRE-UPLOAD REPORT
+Before uploading another build return:
+current FlashList version
+previous newArchEnabled value
+corrected newArchEnabled value
+why legacy architecture was present
+Reanimated version before correction
+Reanimated version after correction
+Worklets configuration
+Expo Doctor result
+generated iOS New Architecture evidence
+FlashList production-bundle load test
+Hermes RegExp fix still present yes/no
+mobile test total
+TypeScript result
+exact Git SHA
+next TestFlight build number
+Only after all of those pass may Build 8 be uploaded.
+End:
+# NEW ARCHITECTURE RELEASE CONFIG VERIFIED
+or
+# RELEASE CONFIG STILL BROKEN
