@@ -28,6 +28,7 @@ import {
   updateCollectionItem,
   removeCollectionItem,
 } from '@/services/collection';
+import { refreshVerifiedPricing } from '@/services/verifiedPricing';
 import {
   syncWishlistToServer,
   addWishlistItemToServer,
@@ -953,6 +954,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCollection(prev =>
         prev.map(i => i.id === item.id ? saved : i),
       );
+      // The server owns card mappings and grade-specific quotes. Trigger the
+      // bounded refresh after any successful add (including scanner adds),
+      // then reload the persisted holding when it completes. This never uses
+      // a raw quote as a substitute for a graded one.
+      void refreshVerifiedPricing(saved.cardId, {
+        name: saved.card.name,
+        set: saved.card.setName,
+        number: saved.card.number,
+        game: saved.card.tcg,
+      }).finally(() => {
+        void loadCollection();
+      });
       // Re-read the server canonical collection so Home, portfolio and
       // Insights all work from the same persisted holding after a mutation.
       void loadCollection();
