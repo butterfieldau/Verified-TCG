@@ -1,10 +1,10 @@
 ---
-name: Expo legacy architecture native modules
-description: Native-module compatibility constraints for Expo SDK 54 builds that intentionally disable React Native New Architecture.
+name: Expo architecture compatibility
+description: Native-module compatibility constraints when switching an Expo SDK 54 app between legacy and New Architecture.
 ---
 
-When an Expo SDK 54 diagnostic or release build uses the legacy React Native architecture, keep React Native Reanimated on the latest 3.19.x patch and do not install the standalone React Native Worklets package. Add Expo's install-check exclusion for the SDK-default Reanimated 4 range. Do not autolink `expo-glass-effect`; use a platform/version guard when native iOS 26 tabs only need an availability decision.
+Treat React Native architecture as a dependency-set decision, not an isolated app-config flag. For Expo SDK 54 legacy builds, use Reanimated 3.19.x without standalone Worklets or FlashList v2. For New Architecture builds, use the SDK-default Reanimated 4 plus Worklets; FlashList v2 is valid only in this configuration. Do not autolink `expo-glass-effect` into a legacy iOS archive.
 
-**Why:** Reanimated 4 supports only New Architecture and its iOS podspec aborts installation when `RCT_NEW_ARCH_ENABLED=0`; Reanimated 3.19.x supports React Native 0.81 on the legacy Paper architecture. `expo-glass-effect` also fails a legacy iOS archive because its Fabric child-mount methods do not override methods on the Paper superclass.
+**Why:** Reanimated 4 and FlashList v2 require New Architecture. Reanimated 4 rejects legacy pod installation, while FlashList v2 throws at runtime when Fabric is unavailable. Reanimated 3.19.x supports RN 0.81 legacy Paper. `expo-glass-effect` also fails a legacy archive because its Fabric child-mount methods do not override methods on the Paper superclass.
 
-**How to apply:** Before changing `newArchEnabled` to false, reconcile native dependencies and the lockfile together. Restore the SDK-default Reanimated 4 plus Worklets and reconsider `expo-glass-effect` only when New Architecture is intentionally re-enabled.
+**How to apply:** Any `newArchEnabled` change must update and validate FlashList, Reanimated, Worklets, the lockfile, Expo Doctor, and a clean native prebuild together. Add a regression guard for incompatible architecture/dependency combinations.

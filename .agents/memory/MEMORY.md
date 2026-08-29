@@ -13,4 +13,4 @@
 - [Catalogue cache leases](catalogue-cache-leases.md) — stale provider revalidation is DB-claimed; composed results never promote stale inputs to fresh.
 - [eBay completed-sales evidence](ebay-completed-sales-evidence.md) — Marketplace Insights sales require its Buy OAuth scope and canonical full card identity before pricing or snapshots are trustworthy.
 - [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.
-- [Expo legacy architecture native modules](expo-legacy-architecture-animations.md) — SDK 54 legacy iOS builds require Reanimated 3 and must not autolink expo-glass-effect.
+- [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.

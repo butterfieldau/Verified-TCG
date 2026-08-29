@@ -1,6 +1,11 @@
 jest.mock('expo-constants', () => ({
   __esModule: true,
-  default: { expoConfig: { version: '1.2.3' } },
+  default: {
+    expoConfig: {
+      version: '1.2.3',
+      extra: { apiBaseUrl: 'https://app.verifiedtcg.co' },
+    },
+  },
 }));
 
 import { ApiClientError, apiJson, apiRequest, apiUrl, resolveApiOrigin } from '../services/apiClient';
@@ -32,6 +37,15 @@ describe('shared mobile API client', () => {
     expect(apiUrl('auth/signup')).toBe('https://app.verifiedtcg.co/api/auth/signup');
   });
 
+  it('uses the versioned release origin when no environment override is supplied', () => {
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+
+    expect(resolveApiOrigin()).toBe('https://app.verifiedtcg.co');
+    expect(apiUrl('/api/runtime-config')).toBe(
+      'https://app.verifiedtcg.co/api/runtime-config',
+    );
+  });
+
   it('normalizes an accidental /api suffix without generating /api/api', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) } as Response);
     await apiJson('/api/catalog/cards', { accessToken: 'access-token' });
@@ -61,8 +75,8 @@ describe('shared mobile API client', () => {
     }
   });
 
-  it('rejects an editor-domain fallback when the explicit public origin is absent', () => {
-    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+  it('rejects an editor-domain fallback when the release origin is explicitly disabled', () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = '';
     process.env.EXPO_PUBLIC_DOMAIN = 'editor.replit.dev';
     expect(resolveApiOrigin()).toBe('');
   });
