@@ -69,7 +69,7 @@ export async function fetchCollectionSummary(
 
 // ── Performance History ─────────────────────────────────────────────────────────
 
-export type PerformanceRange = '1M' | '3M' | '6M' | '1Y' | 'ALL';
+export type PerformanceRange = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 
 export interface PerformancePoint {
   date: string;

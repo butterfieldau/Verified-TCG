@@ -553,6 +553,8 @@ router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, re
 });
 
 const PERFORMANCE_RANGES: Record<string, number> = {
+  "1D": 1,
+  "7D": 7,
   "1M": 30,
   "3M": 90,
   "6M": 180,
