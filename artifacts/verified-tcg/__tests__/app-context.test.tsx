@@ -25,8 +25,13 @@ jest.mock('../services/auth', () => ({
 jest.mock('../services/collection', () => ({
   fetchCollection: jest.fn(() => Promise.resolve([])),
   addCollectionItem: jest.fn(),
+  updateCollectionItem: jest.fn(),
   removeCollectionItem: jest.fn(),
   getItemCurrentValue: jest.fn(() => 0),
+}));
+
+jest.mock('../services/verifiedPricing', () => ({
+  refreshVerifiedPricing: jest.fn(() => Promise.resolve({ status: 'available' })),
 }));
 
 jest.mock('../services/wishlistApi', () => ({
@@ -76,6 +81,9 @@ jest.mock('../services/tcgPreferences', () => ({
 import { AppProvider, useApp } from '../context/AppContext';
 import type { AppContextType } from '../context/AppContext';
 import { restoreSession, fetchCurrentUser } from '../services/auth';
+import { addCollectionItem } from '../services/collection';
+import { refreshVerifiedPricing } from '../services/verifiedPricing';
+import type { CollectionItem } from '../types';
 
 // ── Test helper: mount the provider and capture context values ────────────────
 
@@ -363,5 +371,50 @@ describe('AppContext — Pro tier restored from session on mount', () => {
     await mountProviderAsync();
 
     expect(fetchCurrentUser as jest.Mock).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppContext — collection pricing refresh', () => {
+  it('refreshes server pricing with the persisted card identity after an add', async () => {
+    const item = {
+      id: 'temporary-pikachu',
+      cardId: 'pokemon-sm-promos-pikachu-zekrom-gx-promo',
+      card: {
+        id: 'pokemon-sm-promos-pikachu-zekrom-gx-promo',
+        name: 'Pikachu & Zekrom GX',
+        setId: 'sm-promos',
+        setName: 'SM Promos',
+        tcg: 'pokemon',
+        number: 'SM168',
+        rarity: 'promo',
+        year: 2019,
+        gradientStart: '#111111',
+        gradientEnd: '#222222',
+        price: { raw: 0, currency: 'AUD', updatedAt: null },
+      },
+      quantity: 1,
+      condition: 'near_mint',
+      grading: { company: 'PSA', grade: '10', label: 'PSA 10' },
+      acquiredAt: '2026-08-30',
+      acquiredPrice: 100,
+      currency: 'AUD',
+    } as CollectionItem;
+    const persisted = { ...item, id: 'persisted-pikachu' };
+    (addCollectionItem as jest.Mock).mockResolvedValueOnce(persisted);
+    (refreshVerifiedPricing as jest.Mock).mockClear().mockResolvedValueOnce({ status: 'available' });
+
+    const { getValue, unmount } = await mountProviderAsync();
+    await act(async () => {
+      await getValue().addToCollection(item);
+      await Promise.resolve();
+    });
+
+    expect(refreshVerifiedPricing).toHaveBeenCalledWith(item.cardId, {
+      name: 'Pikachu & Zekrom GX',
+      set: 'SM Promos',
+      number: 'SM168',
+      game: 'pokemon',
+    });
+    unmount();
   });
 });

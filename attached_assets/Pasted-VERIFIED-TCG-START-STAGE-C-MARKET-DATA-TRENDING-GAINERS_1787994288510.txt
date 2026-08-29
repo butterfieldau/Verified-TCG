@@ -1,0 +1,306 @@
+VERIFIED TCG — START STAGE C: MARKET DATA + TRENDING + GAINERS/LOSERS + RECENTLY ADDED
+Continue on:
+codex/core-product-repair-community
+Current remote branch tip:
+05811bdc3b3aba9deac5770c96438c0c2a2ef868
+Stage A/B are accepted.
+Do not rewrite or recreate them.
+Do not touch main.
+STAGE C GOAL
+Fix all genuine market-data failures visible in TestFlight:
+Home:
+Trending empty
+Gainers empty
+Losers empty
+New empty
+Recently Added empty
+Market:
+Biggest Movers empty
+Trending Cards empty
+market snapshot state empty/degraded
+category chips visually stuck together
+Use only genuine persisted market/catalogue/pricing data.
+Never fabricate cards, percentages, timestamps, movement, popularity or history.
+1. AUDIT CURRENT MARKET PIPELINE FIRST
+Trace:
+pricing provider
+→ current quotes
+→ historical pricing snapshots
+→ comparable movement calculation
+→ market-movers endpoint
+→ trending endpoint
+→ recently-added endpoint
+→ mobile cache
+→ Home
+→ Market screen
+Determine exactly why production currently returns empty/degraded sections.
+Report root cause before inventing a replacement architecture.
+Existing mobile calls include:
+/api/catalog/market-movers
+/api/catalog/trending
+/api/catalog/recently-added
+Reuse/fix them where appropriate.
+2. MARKET SNAPSHOT DATA
+Biggest Movers, Gainers and Losers require genuine comparable snapshots.
+Ensure pricing snapshot persistence is actually running.
+For each comparable card/grade:
+require:
+same card identity
+same grade key
+same currency
+valid previous price
+valid current price
+non-zero denominator
+acceptable freshness
+Movement:
+(current - previous) / previous × 100
+Do not compare:
+raw yesterday
+vs PSA 10 today.
+Do not compare:
+AUD vs USD.
+Do not treat malformed/provider spikes as valid movement without sanity checks.
+3. GAINERS
+Genuine positive price movement only.
+Sort descending by percentage gain.
+Return enough results for:
+Home preview
+full Market list
+Each result should include:
+card
+image
+game
+set
+collector number
+grade/raw context
+previous value
+current value
+absolute movement
+percentage movement
+currency
+quote timestamp
+4. LOSERS
+Same engine as Gainers.
+Sort most negative first.
+Home and Market must use the same source of truth.
+Do not implement two separate movement algorithms.
+5. BIGGEST MOVERS
+Market Biggest Movers should rank by absolute percentage movement while retaining sign.
+Example:
+A +30%
+B -25%
+C +10%
+order:
+A
+B
+C
+Never invent movement when only one snapshot exists.
+6. TRENDING
+Current endpoint must stop being an unexplained empty list.
+Implement a defensible genuine trending signal.
+Preferred ranking inputs, where available:
+card detail views
+search result click-through
+collection adds
+wishlist adds
+price movement
+recent activity
+Use a recent time window.
+Start simple and deterministic.
+If engagement telemetry is not yet persisted, add the minimum additive event architecture needed.
+Suggested event shape:
+id
+user_id nullable where appropriate
+card_id
+event_type
+created_at
+Event types can include:
+view
+search_click
+collection_add
+wishlist_add
+Do not count fake views.
+Do not randomly rotate cards.
+If there is still not enough genuine engagement data, a fallback ranking may use real price movement + recent catalogue activity, but must remain deterministic and documented.
+7. USER TCG PREFERENCES
+Market content should respect the authenticated account's selected TCG interests.
+Use the actual saved preference model from onboarding/settings.
+Example:
+user selected:
+Pokémon + One Piece
+feeds should prioritise/filter to those games.
+If no preferences exist:
+show all supported games.
+Do not hard-code preferences to the current tester.
+8. RECENTLY ADDED
+Fix /api/catalog/recently-added.
+This must represent genuine newest catalogue additions.
+Source:
+canonical catalogue/provenance insertion timestamps.
+Sort:
+newest first.
+Return:
+card
+image
+game
+set
+collector number
+catalogue-added timestamp
+current quote when available
+Do not require a current quote just to display the card.
+A newly added catalogue card with no price may still appear with:
+Price unavailable
+This is important because the current route may be filtering too aggressively.
+9. HOME MARKET
+Home tabs:
+Trending
+Gainers
+Losers
+New
+Must now render genuine cards.
+Each tab should:
+loading skeleton
+genuine results
+genuine empty state
+retry/error state
+Do not leave giant blank regions.
+Use user TCG preferences.
+10. MARKET PAGE
+Fix:
+Biggest Movers
+Trending Cards
+and category filtering.
+Category filters must operate on genuine loaded data or server query parameters.
+11. FIX FILTER CHIPS
+Current screenshot has chips visually touching:
+All Pokémon One Piece MTG
+Fix:
+proper horizontal gap
+proper internal padding
+horizontal ScrollView
+no compression
+active/inactive state clear
+Preserve current design language.
+Prefer dynamically supported games rather than permanent hard-coding where practical.
+12. REMOVE/REPLACE TRANSACTIONAL MARKETPLACE COPY
+Verified TCG does not process card purchases.
+Remove:
+Marketplace Coming Soon
+and any text claiming users will:
+Buy, sell and trade verified cards directly
+Replace with:
+Market Insights
+if useful genuine data exists,
+otherwise remove the placeholder block.
+Do not add checkout/payment/escrow.
+13. CURRENT DATABASE
+You may use the currently configured database for namespaced runtime acceptance.
+Do not:
+wipe it
+reseed it
+truncate tables
+modify existing customer holdings
+For deterministic movement tests, create only namespaced disposable cards/quotes/snapshots.
+Clean them up afterward.
+14. DETERMINISTIC ACCEPTANCE
+Create disposable test market data:
+Card A:
+same grade/currency
+previous 100
+current 120
+expected:
++20%
+Card B:
+previous 100
+current 80
+expected:
+-20%
+Card C:
+previous 50
+current 50
+expected:
+0%
+Prove:
+Gainers:
+A
+Losers:
+B
+Biggest Movers:
+A/B correctly ranked
+C should not appear as a meaningful mover.
+Add one:
+raw quote + PSA 10 quote
+and prove there is no cross-grade comparison.
+Add one currency mismatch and prove it is excluded.
+15. RECENTLY ADDED ACCEPTANCE
+Create three disposable catalogue records with ordered creation/provenance timestamps.
+Prove newest-first order.
+At least one may have no quote.
+It must still appear.
+Clean all disposable records.
+16. TRENDING ACCEPTANCE
+Create genuine disposable telemetry:
+Card A:
+multiple legitimate view/collection/wishlist events.
+Card B:
+fewer.
+Prove deterministic order.
+Remove events after test.
+If trending uses another legitimate signal, document and test that instead.
+17. CACHE
+Existing mobile market cache must not preserve old empty or pre-release data forever.
+Ensure cache:
+is versioned
+refreshes correctly
+does not overwrite valid cached data with failed requests
+does not mask server recovery
+Pull-to-refresh should force fresh server requests.
+18. TESTS
+Add coverage for:
+gainers
+losers
+biggest movers
+zero denominator
+grade mismatch
+currency mismatch
+recently added ordering
+recently added without quote
+trending deterministic order
+preference filtering
+Home empty/error/success market states
+chip selection/filter behavior where testable
+Run:
+targeted market API tests
+mobile tests
+API TypeScript
+mobile TypeScript
+DB build
+Do not run destructive shared-DB suites if unsafe.
+19. COMMIT
+Commit Stage C separately.
+Push normally to:
+codex/core-product-repair-community
+Do not force-push.
+Do not merge to main.
+Do not start Stage D until Stage C acceptance is green.
+RETURN
+market root cause
+snapshot root cause
+trending root cause
+recently-added root cause
+APIs changed
+DB changes/migration
+preference filtering behavior
+Home result
+Market result
+chip fix
+deterministic acceptance results
+disposable cleanup result
+test totals
+Stage C commit SHA
+remote branch SHA
+remaining blocker
+End:
+# STAGE C COMPLETE
+or
+# STAGE C BLOCKED

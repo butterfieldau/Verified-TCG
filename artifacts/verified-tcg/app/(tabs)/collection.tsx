@@ -65,6 +65,7 @@ export default function CollectionScreen() {
 
   // Server summary for authoritative totals
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   // Client-side windowing: show first `displayCount` of the fully-filtered list.
   // This is correct for both offline (cache) and online (live) data, and
@@ -73,8 +74,18 @@ export default function CollectionScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const loadSummary = useCallback(async () => {
-    const summary = await fetchCollectionSummary(currency);
-    setServerSummary(summary);
+    try {
+      const summary = await fetchCollectionSummary(currency);
+      setServerSummary(summary);
+      setSummaryError(null);
+    } catch (error) {
+      setServerSummary(null);
+      setSummaryError(
+        error instanceof Error
+          ? error.message
+          : 'Portfolio totals are temporarily unavailable.',
+      );
+    }
   }, [currency]);
 
   useEffect(() => {
@@ -155,6 +166,18 @@ export default function CollectionScreen() {
               <Text style={styles.errorText}>{collectionError}</Text>
               <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
                 <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {summaryError && !collectionError && (
+          <View style={styles.errorBox} accessibilityRole="alert">
+            <Feather name="bar-chart-2" size={20} color={C.negative} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <Text style={styles.errorText}>Portfolio totals are unavailable. Your saved cards are still shown below.</Text>
+              <Pressable onPress={() => { void loadSummary(); }} accessibilityRole="button">
+                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry totals</Text>
               </Pressable>
             </View>
           </View>

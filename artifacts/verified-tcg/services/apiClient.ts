@@ -37,8 +37,17 @@ export const API_APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
  * browser preview but is inaccessible or protected on a physical device.
  */
 export function resolveApiOrigin(): string {
+  const environmentOrigin = process.env.EXPO_PUBLIC_API_BASE_URL;
+  const editorOrigin =
+    __DEV__ &&
+    environmentOrigin !== '' &&
+    (!environmentOrigin || environmentOrigin.replace(/\/api\/?$/, '').replace(/\/$/, '') === RELEASE_API_ORIGIN) &&
+    process.env.EXPO_PUBLIC_DOMAIN
+      ? process.env.EXPO_PUBLIC_DOMAIN
+      : null;
   const configured = (
-    process.env.EXPO_PUBLIC_API_BASE_URL ??
+    editorOrigin ??
+    environmentOrigin ??
     (typeof Constants.expoConfig?.extra?.apiBaseUrl === 'string'
       ? Constants.expoConfig.extra.apiBaseUrl
       : RELEASE_API_ORIGIN)

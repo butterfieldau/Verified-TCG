@@ -46,6 +46,16 @@ describe('shared mobile API client', () => {
     );
   });
 
+  it('uses the proxied first-party origin in development instead of cross-origin production', () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://app.verifiedtcg.co';
+    process.env.EXPO_PUBLIC_DOMAIN = 'workspace.replit.dev';
+
+    expect(resolveApiOrigin()).toBe('https://workspace.replit.dev');
+    expect(apiUrl('/api/auth/signup')).toBe(
+      'https://workspace.replit.dev/api/auth/signup',
+    );
+  });
+
   it('normalizes an accidental /api suffix without generating /api/api', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) } as Response);
     await apiJson('/api/catalog/cards', { accessToken: 'access-token' });

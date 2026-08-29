@@ -13,11 +13,9 @@
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getAccessToken } from "./auth";
-import { resolveApiOrigin } from './apiClient';
+import { apiRequest } from './apiClient';
 
 export const PREFERRED_TCGS_KEY = "@verified_tcg/preferred_tcgs";
-
-const API_BASE = resolveApiOrigin();
 
 /**
  * Save selected TCGs locally and sync to the API when a token is available.
@@ -78,12 +76,9 @@ async function getStoredAccessToken(): Promise<string | null> {
 }
 
 async function syncToApi(joined: string, accessToken: string): Promise<void> {
-  await fetch(`${API_BASE}/api/auth/user`, {
+  await apiRequest('/api/auth/user', {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
+    accessToken,
     body: JSON.stringify({ data: { preferred_tcgs: joined } }),
   });
 }

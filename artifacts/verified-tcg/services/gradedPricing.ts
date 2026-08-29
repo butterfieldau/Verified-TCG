@@ -7,9 +7,7 @@
  */
 
 import { getAccessToken } from './auth';
-import { resolveApiOrigin } from './apiClient';
-
-const API_BASE = `${resolveApiOrigin()}/api`;
+import { ApiClientError, apiJson } from './apiClient';
 
 /** Grade key → AUD price. Only keys with real eBay data are present. */
 export type GradedPrices = Record<string, number>;
@@ -55,16 +53,6 @@ export async function fetchGradedPrices(
   signal?: AbortSignal,
   forceRefresh = false,
 ): Promise<GradedPricesResult> {
-  if (!API_BASE || API_BASE === '/api') {
-    return {
-      prices: {},
-      requiresUpgrade: false,
-      configured: false,
-      availability: 'configuration_error',
-      message: 'eBay completed-sale pricing is not configured for this app.',
-    };
-  }
-
   // Return cached result for the session if already fetched
   const cached = sessionCache.get(cardId);
   if (!forceRefresh && cached !== undefined) return cached;
@@ -72,38 +60,17 @@ export async function fetchGradedPrices(
 
   try {
     const token = await getAccessToken();
-  const params = new URLSearchParams({ name, set: setName, game, number });
+    const params = new URLSearchParams({ name, set: setName, game, number });
     if (forceRefresh) params.set('refresh', '1');
-    const res = await fetch(`${API_BASE}/graded-prices?${params.toString()}`, {
-      signal,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    if (res.status === 403) {
-      return {
-        prices: {},
-        requiresUpgrade: true,
-        configured: true,
-        availability: 'permission_error',
-        message: 'Pro access is required to view eBay completed-sale pricing.',
-      };
-    }
-    if (!res.ok) {
-      return {
-        prices: {},
-        requiresUpgrade: false,
-        configured: true,
-        availability: 'upstream_error',
-        message: 'eBay completed-sale pricing is temporarily unavailable. Please try again.',
-      };
-    }
-
-    const body = (await res.json()) as {
+    const body = await apiJson<{
       prices?: GradedPrices;
       configured?: boolean;
       availability?: GradedPricingAvailability;
       message?: string | null;
-    };
+    }>(`/api/graded-prices?${params.toString()}`, {
+      signal,
+      accessToken: token,
+    });
     const result: GradedPricesResult = {
       prices: body.prices ?? {},
       requiresUpgrade: false,
@@ -117,7 +84,35 @@ export async function fetchGradedPrices(
       sessionCache.set(cardId, result);
     }
     return result;
-  } catch {
+  } catch (error) {
+    const clientError = error instanceof ApiClientError ? error : null;
+    if (clientError?.kind === 'forbidden') {
+      return {
+        prices: {},
+        requiresUpgrade: true,
+        configured: true,
+        availability: 'permission_error',
+        message: 'Pro access is required to view eBay completed-sale pricing.',
+      };
+    }
+    if (clientError?.kind === 'configuration') {
+      return {
+        prices: {},
+        requiresUpgrade: false,
+        configured: false,
+        availability: 'configuration_error',
+        message: 'eBay completed-sale pricing is not configured for this app.',
+      };
+    }
+    if (clientError?.kind === 'provider_unavailable' || clientError?.kind === 'server') {
+      return {
+        prices: {},
+        requiresUpgrade: false,
+        configured: true,
+        availability: 'upstream_error',
+        message: clientError.message,
+      };
+    }
     return {
       prices: {},
       requiresUpgrade: false,

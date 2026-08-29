@@ -14,3 +14,4 @@
 - [eBay completed-sales evidence](ebay-completed-sales-evidence.md) — Marketplace Insights sales require its Buy OAuth scope and canonical full card identity before pricing or snapshots are trustworthy.
 - [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.
 - [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.
+- [Mobile API origins](mobile-api-origins.md) — development web previews use the first-party Replit proxy; release builds use the public production origin.

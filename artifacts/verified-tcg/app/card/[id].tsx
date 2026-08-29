@@ -33,7 +33,7 @@ import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
 import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
-import type { Card, CollectionItem, WatchlistItem } from '@/types';
+import type { Card, WatchlistItem } from '@/types';
 import {
   GRADERS,
 } from '@/services/pricingPlus';
@@ -604,7 +604,7 @@ const imgStyles = StyleSheet.create({
 export default function CardDetailScreen() {
   const { id, cardIds, catalogJson, appCardJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string; appCardJson?: string }>();
   const insets = useSafeAreaInsets();
-  const { addToCollection, addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
+  const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const { currency: displayCurrency } = useSettings();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
   const [localInCollection, setLocalInCollection] = useState(false);
@@ -846,25 +846,13 @@ export default function CardDetailScreen() {
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
 
-  async function handleAddToCollection() {
-    const newItem: CollectionItem = {
-      id: `col-${Date.now()}`,
-      cardId: card.id,
-      card,
-      quantity: 1,
-      condition: 'near_mint',
-      acquiredAt: new Date().toISOString().split('T')[0],
-      acquiredPrice: card.price.raw,
-      currency: 'AUD',
-    };
-    try {
-      await addToCollection(newItem);
-      setLocalInCollection(true);
-      setShowAddedBanner(true);
-      setTimeout(() => setShowAddedBanner(false), 2500);
-    } catch (error) {
-      Alert.alert('Could not save card', error instanceof Error ? error.message : 'Please try again.');
-    }
+  function handleAddToCollection() {
+    // Acquisition cost is collector-entered data. Never silently use the
+    // current market quote as historical cost basis.
+    router.push({
+      pathname: '/add-card',
+      params: { cardJson: JSON.stringify(card) },
+    });
   }
 
   function handleWishlistToggle() {

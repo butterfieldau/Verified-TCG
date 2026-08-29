@@ -15,6 +15,7 @@ import {
   capByGameFromSorted,
   extractData,
   mergePool,
+  normalizeTcgName,
 } from "./catalog.js";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,23 @@ test("snapshot market movement rejects zero, missing, and invalid prices", () =>
   assert.equal(calculateSnapshotMovement(0, 12_000), null);
   assert.equal(calculateSnapshotMovement(10_000, 0), null);
   assert.equal(calculateSnapshotMovement(Number.NaN, 12_000), null);
+  assert.equal(calculateSnapshotMovement(100, 601), null, "rejects a >500% spike");
+});
+
+test("snapshot market movement retains a genuine zero change", () => {
+  assert.deepEqual(calculateSnapshotMovement(10_000, 10_000), {
+    absoluteCents: 0,
+    percent: 0,
+    trend: "neutral",
+  });
+});
+
+test("TCG preference aliases normalize to canonical catalogue families", () => {
+  assert.equal(normalizeTcgName("Pokémon"), "pokemon");
+  assert.equal(normalizeTcgName("Pokemon TCG"), "pokemon");
+  assert.equal(normalizeTcgName("One Piece TCG"), "onepiece");
+  assert.equal(normalizeTcgName("MTG"), "magic");
+  assert.equal(normalizeTcgName("Magic: The Gathering"), "magic");
 });
 
 // ---------------------------------------------------------------------------

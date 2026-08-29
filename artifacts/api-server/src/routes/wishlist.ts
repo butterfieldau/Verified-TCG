@@ -22,7 +22,7 @@ import { db } from "@workspace/db";
 import { wishlistItemsTable } from "@workspace/db";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import type { InferInsertModel } from "drizzle-orm";
-import { logActivity } from "./activity.js";
+import { logActivity, logActivitySafely } from "./activity.js";
 
 const wishlistRouter = Router();
 
@@ -210,6 +210,18 @@ wishlistRouter.post("/wishlist/sync", requireActiveUser, async (req: AuthRequest
   const merged = [...finalRows.map(rowToItem)];
   cache.set(userId, merged);
 
+  // Sync is commonly retried. Record only IDs absent from the active baseline,
+  // never updates already present on the server or tombstone conflicts.
+  const loggedNewIds = new Set<string>();
+  for (const item of liveClientItems) {
+    if (!activeById.has(item.id) && !loggedNewIds.has(item.id)) {
+      loggedNewIds.add(item.id);
+      await logActivitySafely(userId, "wishlist_added", item.cardId, item.card?.name ?? null, {
+        cardImageUrl: item.card?.image ?? null,
+      });
+    }
+  }
+
   res.json({ ok: true, items: merged, count: merged.length });
 });
 
@@ -227,6 +239,10 @@ wishlistRouter.post("/wishlist", requireActiveUser, async (req: AuthRequest, res
   }
 
   const row = itemToInsert(userId, item);
+  const existingRow = (await db.select({ itemId: wishlistItemsTable.itemId })
+    .from(wishlistItemsTable)
+    .where(and(eq(wishlistItemsTable.userId, userId), eq(wishlistItemsTable.itemId, item.id), isNull(wishlistItemsTable.deletedAt)))
+    .limit(1))[0];
 
   await db
     .insert(wishlistItemsTable)
@@ -253,8 +269,8 @@ wishlistRouter.post("/wishlist", requireActiveUser, async (req: AuthRequest, res
     : [...existing, item];
   cache.set(userId, updated);
 
-  // Log activity — fire-and-forget
-  logActivity(userId, "wishlist_added", item.cardId, item.card?.name ?? null, {
+  // Upserts are used for idempotency: only a genuinely new active item is an add.
+  if (!existingRow) await logActivitySafely(userId, "wishlist_added", item.cardId, item.card?.name ?? null, {
     cardImageUrl: item.card?.image ?? null,
   });
 

@@ -2,6 +2,7 @@ import type { CollectionItem } from '../types';
 import type { CollectionPerformance, CollectionSummary } from '../services/collectionPerformance';
 import {
   getHomeCollectionCards,
+  hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
 } from '../services/homePortfolio';
@@ -68,6 +69,11 @@ describe('home portfolio view models', () => {
       item('unknown-cost', 90, 0),
     ]);
     expect(cards.map(card => card.item.id)).toEqual(['gain', 'loss', 'unknown-value', 'unknown-cost']);
+  });
+
+  it('keeps a persisted but unpriced holding out of the collection empty state', () => {
+    expect(hasHomeCollectionHoldings([item('unpriced', null)])).toBe(true);
+    expect(hasHomeCollectionHoldings([])).toBe(false);
   });
 
   it('distinguishes one real snapshot from a real multi-point chart', () => {

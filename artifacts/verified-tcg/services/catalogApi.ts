@@ -161,7 +161,9 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
   // Prefer Near Mint, fall back to first variant
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
   const price = variant?.price ?? 0;
-  const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : new Date().toISOString();
+  // A missing source timestamp is meaningful: do not present the mapping time
+  // as if it were a verified quote timestamp.
+  const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : null;
   const currency = variant?.markets?.[0]?.currency ?? card.currency ?? 'AUD';
   const game = card.game.toLowerCase();
   const tcg = game.includes('magic') ? 'magic'
@@ -195,7 +197,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     tcg,
     number: card.number ?? '',
     rarity: mapRarity(card.rarity),
-    year: new Date(updatedAt).getFullYear(),
+    year: updatedAt ? new Date(updatedAt).getFullYear() : 0,
     imageUrl,
     gradientStart: '#202020',
     gradientEnd: '#090909',

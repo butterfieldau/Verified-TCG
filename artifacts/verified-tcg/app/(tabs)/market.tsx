@@ -15,10 +15,12 @@ import { Chip } from '@/components/ui/Chip';
 import { CardImage } from '@/components/ui/CardImage';
 import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
-import { getMarketMovers, getMarketMoversCached } from '@/services/market';
+import { getMarketMoversCached, getTrendingCardsCached } from '@/services/market';
+import { filterByTcg, prioritizeTcgs } from '@/services/marketFeed';
+import { useApp } from '@/context/AppContext';
 import { supportsLiquidGlassTabs } from '@/utils/liquidGlass';
 import colors from '@/constants/colors';
-import type { MarketMover, TCGId } from '@/types';
+import type { Card, MarketMover, TCGId } from '@/types';
 
 const C = colors.dark;
 
@@ -43,11 +45,16 @@ function formatDatasetUpdatedAt(date: string | undefined): string {
 
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
+  const { user, activeTCG: savedActiveTCG } = useApp();
+  const marketCacheScope = `${user?.id ?? 'anonymous'}:${(user?.tcgPreferences ?? []).join(',')}`;
   const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [trending, setTrending] = useState<Card[]>([]);
   const [moversLoading, setMoversLoading] = useState(true);
+  const [trendingLoading, setTrendingLoading] = useState(true);
   const [moversError, setMoversError] = useState<string | null>(null);
+  const [trendingError, setTrendingError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
+  const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>(savedActiveTCG ?? user?.tcgPreferences[0] ?? 'all');
 
   // The iOS liquid-glass native tab container supplies this safe area itself.
   const topPad = Platform.OS === 'web' ? 67 : supportsLiquidGlassTabs() ? 0 : insets.top;
@@ -57,7 +64,7 @@ export default function MarketScreen() {
   // refresh (when stale) pushes fresh data in via the onUpdate callback.
   const loadMovers = useCallback(async () => {
     try {
-      const data = await getMarketMoversCached(fresh => setMovers(fresh));
+      const data = await getMarketMoversCached(fresh => setMovers(fresh), { cacheScope: marketCacheScope });
       setMovers(data);
       setMoversError(null);
     } catch (error) {
@@ -65,28 +72,53 @@ export default function MarketScreen() {
     } finally {
       setMoversLoading(false);
     }
-  }, []);
+  }, [marketCacheScope]);
+
+  const loadTrending = useCallback(async () => {
+    try {
+      const data = await getTrendingCardsCached(fresh => setTrending(fresh), { cacheScope: marketCacheScope });
+      setTrending(data);
+      setTrendingError(null);
+    } catch (error) {
+      setTrendingError(error instanceof Error ? error.message : 'Trending data is unavailable.');
+    } finally {
+      setTrendingLoading(false);
+    }
+  }, [marketCacheScope]);
 
   useEffect(() => {
     loadMovers();
-  }, [loadMovers]);
+    loadTrending();
+  }, [loadMovers, loadTrending]);
 
   // Pull-to-refresh always hits the network (and rewrites the cache)
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const data = await getMarketMovers();
-      setMovers(data);
-      setMoversError(null);
-    } catch (error) {
-      setMoversError(error instanceof Error ? error.message : 'Market data is unavailable.');
+      const [moverResult, trendingResult] = await Promise.allSettled([
+        getMarketMoversCached(undefined, { force: true, cacheScope: marketCacheScope }),
+        getTrendingCardsCached(undefined, { force: true, cacheScope: marketCacheScope }),
+      ]);
+      if (moverResult.status === 'fulfilled') {
+        setMovers(moverResult.value);
+        setMoversError(null);
+      } else {
+        setMoversError(moverResult.reason instanceof Error ? moverResult.reason.message : 'Market data is unavailable.');
+      }
+      if (trendingResult.status === 'fulfilled') {
+        setTrending(trendingResult.value);
+        setTrendingError(null);
+      } else {
+        setTrendingError(trendingResult.reason instanceof Error ? trendingResult.reason.message : 'Trending data is unavailable.');
+      }
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [marketCacheScope]);
 
-  const filteredMovers =
-    activeTCG === 'all' ? movers : movers.filter(m => m.card.tcg === activeTCG);
+  const filteredMovers = filterByTcg(prioritizeTcgs(movers, user?.tcgPreferences ?? []), activeTCG);
+  const filteredTrending = filterByTcg(prioritizeTcgs(trending.map(card => ({ card })), user?.tcgPreferences ?? []), activeTCG)
+    .map(entry => entry.card);
   const latestUpdatedAt = movers.reduce<string | undefined>((latest, mover) =>
     !latest || new Date(mover.updatedAt).getTime() > new Date(latest).getTime()
       ? mover.updatedAt
@@ -140,7 +172,7 @@ export default function MarketScreen() {
       </View>
 
       {/* TCG filter */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips} contentContainerStyle={styles.chipsContent}>
         {TCG_FILTERS.map(f => (
           <Chip
             key={f.value}
@@ -173,6 +205,7 @@ export default function MarketScreen() {
             <Feather name="wifi-off" size={32} color={C.muted} />
             <Text style={styles.emptyTitle}>Market unavailable</Text>
             <Text style={styles.emptyBody}>{moversError}</Text>
+            <Pressable onPress={loadMovers} accessibilityRole="button"><Text style={styles.retry}>Try again</Text></Pressable>
           </View>
         ) : filteredMovers.length === 0 ? (
           <View style={styles.emptySection}>
@@ -209,49 +242,50 @@ export default function MarketScreen() {
         )}
       </View>
 
-      {/* Trending — tap to search */}
+      {/* Trending */}
       <View style={styles.section}>
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Trending Cards</Text>
         </View>
-        {filteredMovers.slice(0, 5).map(m => (
+        {trendingLoading ? (
+          <View style={styles.emptySection}><Text style={styles.emptyBody}>Loading trending cards…</Text></View>
+        ) : trendingError ? (
+          <View style={styles.emptySection}>
+            <Feather name="wifi-off" size={32} color={C.muted} />
+            <Text style={styles.emptyTitle}>Trending unavailable</Text>
+            <Text style={styles.emptyBody}>{trendingError}</Text>
+            <Pressable onPress={loadTrending} accessibilityRole="button"><Text style={styles.retry}>Try again</Text></Pressable>
+          </View>
+        ) : filteredTrending.map(card => (
           <Pressable
-            key={m.card.id}
+            key={card.id}
             style={[styles.rankedRow, { backgroundColor: C.card }]}
-            onPress={() => router.push({ pathname: `/card/${m.card.id}` as any, params: { appCardJson: JSON.stringify(m.card) } })}
+            onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
           >
-            <View style={[styles.rankedThumb, { backgroundColor: m.card.gradientStart, overflow: 'hidden' }]}>
-              {m.card.imageUrl
-                ? <CardImage uri={m.card.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
-                : <Text style={styles.rankedInitial}>{m.card.name[0]}</Text>}
+            <View style={[styles.rankedThumb, { backgroundColor: card.gradientStart, overflow: 'hidden' }]}>
+              {card.imageUrl
+                ? <CardImage uri={card.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
+                : <Text style={styles.rankedInitial}>{card.name[0]}</Text>}
             </View>
             <View style={styles.rankedInfo}>
-              <Text style={styles.rankedName}>{m.card.name}</Text>
-              <Text style={styles.rankedSet}>{m.card.setName}</Text>
+              <Text style={styles.rankedName}>{card.name}</Text>
+              <Text style={styles.rankedSet}>{card.setName}</Text>
             </View>
             <View style={styles.rankedRight}>
-              <Text style={styles.rankedPrice}>{m.currency} {m.currentPrice.toLocaleString()}</Text>
-              <Text style={[styles.moverPct, { color: m.trend === 'up' ? C.positive : C.negative, marginTop: 3 }]}>
-                {m.trend === 'up' ? '+' : ''}{m.priceChangePercent.toFixed(1)}%
-              </Text>
+              <Text style={styles.rankedPrice}>{card.price.raw > 0 ? `${card.price.currency} ${card.price.raw.toLocaleString()}` : 'Price unavailable'}</Text>
+              {card.price.change7d !== undefined && <Text style={[styles.moverPct, { color: card.price.change7d >= 0 ? C.positive : C.negative, marginTop: 3 }]}>
+                {card.price.change7d >= 0 ? '+' : ''}{card.price.change7d.toFixed(1)}%
+              </Text>}
             </View>
           </Pressable>
         ))}
-        {!moversLoading && !moversError && filteredMovers.length === 0 && (
+        {!trendingLoading && !trendingError && filteredTrending.length === 0 && (
           <View style={styles.emptySection}>
             <Text style={styles.emptyBody}>No trending cards for this filter.</Text>
           </View>
         )}
       </View>
 
-      {/* Marketplace — coming soon */}
-      <View style={[styles.section, styles.comingSoonCard, { backgroundColor: C.card }]}>
-        <Feather name="shopping-bag" size={28} color={C.primary} />
-        <Text style={styles.comingSoonTitle}>Marketplace Coming Soon</Text>
-        <Text style={styles.comingSoonBody}>
-          Buy, sell and trade verified cards directly with other collectors. Stay tuned.
-        </Text>
-      </View>
     </ScrollView>
   );
 }
@@ -271,7 +305,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chips: { marginBottom: 20 },
+  chips: { marginBottom: 20, marginHorizontal: -20 },
+  chipsContent: { gap: 10, paddingHorizontal: 20, paddingRight: 32 },
   section: { marginBottom: 24 },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   sectionTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
@@ -306,12 +341,5 @@ const styles = StyleSheet.create({
   emptySection: { alignItems: 'center', paddingVertical: 32, gap: 10 },
   emptyTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   emptyBody: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
-  comingSoonCard: {
-    borderRadius: 16,
-    padding: 28,
-    alignItems: 'center',
-    gap: 10,
-  },
-  comingSoonTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  comingSoonBody: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center', lineHeight: 20 },
+  retry: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.primary },
 });

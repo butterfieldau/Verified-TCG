@@ -29,9 +29,13 @@ import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { useApp } from '@/context/AppContext';
 import {
   getMarketMovers,
+  getMarketGainers,
+  getMarketLosers,
   getTrendingCards,
   getRecentlyAddedCards,
   getMarketMoversCached,
+  getMarketGainersCached,
+  getMarketLosersCached,
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
@@ -46,9 +50,11 @@ import {
 } from '@/services/collectionPerformance';
 import {
   getHomeCollectionCards,
+  hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
 } from '@/services/homePortfolio';
+import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
 import { CardImage } from '@/components/ui/CardImage';
 import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
@@ -57,7 +63,6 @@ const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_i
 const C = colors.dark;
 const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
 
-type MarketTab = 'trending' | 'gainers' | 'losers' | 'new';
 const MARKET_TABS: { id: MarketTab; label: string }[] = [
   { id: 'trending', label: 'Trending' },
   { id: 'gainers', label: 'Gainers' },
@@ -264,11 +269,20 @@ export default function HomeScreen() {
   } = useApp();
 
   const { currency } = useSettings();
+  const marketCacheScope = `${user?.id ?? 'anonymous'}:${(user?.tcgPreferences ?? []).join(',')}`;
   const [marketTab, setMarketTab] = useState<MarketTab>('trending');
   const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [gainers, setGainers] = useState<MarketMover[]>([]);
+  const [losers, setLosers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
   const [recentCards, setRecentCards] = useState<Card[]>([]);
-  const [sectionsLoading, setSectionsLoading] = useState(true);
+  const [marketFeedStatus, setMarketFeedStatus] = useState<Record<'movers' | 'gainers' | 'losers' | 'trending' | 'recent', { loading: boolean; error: string | null }>>({
+    movers: { loading: true, error: null },
+    gainers: { loading: true, error: null },
+    losers: { loading: true, error: null },
+    trending: { loading: true, error: null },
+    recent: { loading: true, error: null },
+  });
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
@@ -301,20 +315,32 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    setSectionsLoading(true);
     setActivityLoading(true);
-
-    Promise.all([
-      getMarketMoversCached(fresh => { if (!cancelled) setMovers(fresh); }),
-      getTrendingCardsCached(fresh => { if (!cancelled) setTrending(fresh); }),
-      getRecentlyAddedCardsCached(fresh => { if (!cancelled) setRecentCards(fresh); }),
-    ])
-      .then(([m, t, r]) => {
-        if (cancelled) return;
-        setMovers(m); setTrending(t); setRecentCards(r);
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setSectionsLoading(false); });
+    const loadFeed = <T,>(
+      key: 'movers' | 'gainers' | 'losers' | 'trending' | 'recent',
+      load: (onUpdate: (data: T) => void) => Promise<T>,
+      setData: (data: T) => void,
+    ) => {
+      setMarketFeedStatus(previous => ({ ...previous, [key]: { loading: true, error: null } }));
+      load(fresh => { if (!cancelled) setData(fresh); })
+        .then(data => { if (!cancelled) setData(data); })
+        .catch(error => {
+          if (!cancelled) setMarketFeedStatus(previous => ({
+            ...previous,
+            [key]: { loading: false, error: error instanceof Error ? error.message : 'Market data is unavailable.' },
+          }));
+        })
+        .finally(() => {
+          if (!cancelled) setMarketFeedStatus(previous => ({
+            ...previous, [key]: { ...previous[key], loading: false },
+          }));
+        });
+    };
+    loadFeed('movers', callback => getMarketMoversCached(callback, { cacheScope: marketCacheScope }), setMovers);
+    loadFeed('gainers', callback => getMarketGainersCached(callback, { cacheScope: marketCacheScope }), setGainers);
+    loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope }), setLosers);
+    loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope }), setTrending);
+    loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope }), setRecentCards);
 
     fetchRecentActivity(10)
       .then(a => { if (!cancelled) setActivity(a); })
@@ -322,20 +348,24 @@ export default function HomeScreen() {
       .finally(() => { if (!cancelled) setActivityLoading(false); });
 
     return () => { cancelled = true; };
-  }, []);
+  }, [marketCacheScope]);
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    const [moversResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
+    const [moversResult, gainersResult, losersResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
-      getMarketMovers(),
-      getTrendingCards(),
-      getRecentlyAddedCards(),
+      getMarketMovers({ cacheScope: marketCacheScope }),
+       getMarketGainers({ cacheScope: marketCacheScope }),
+       getMarketLosers({ cacheScope: marketCacheScope }),
+      getTrendingCards({ cacheScope: marketCacheScope }),
+      getRecentlyAddedCards({ cacheScope: marketCacheScope }),
       fetchRecentActivity(10),
       fetchCollectionSummary(currency),
       fetchCollectionPerformance(performanceRange, currency),
       ]);
     if (moversResult.status === 'fulfilled') setMovers(moversResult.value);
+    if (gainersResult.status === 'fulfilled') setGainers(gainersResult.value);
+    if (losersResult.status === 'fulfilled') setLosers(losersResult.value);
     if (trendingResult.status === 'fulfilled') setTrending(trendingResult.value);
     if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
     if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
@@ -347,7 +377,7 @@ export default function HomeScreen() {
       setSummaryError(true);
     }
     setServerPerformance(performanceResult.status === 'fulfilled' ? performanceResult.value : null);
-  }, [refreshPrices, currency, performanceRange]);
+  }, [refreshPrices, currency, performanceRange, marketCacheScope]);
 
   const retryPortfolio = useCallback(() => {
     setSummaryLoading(true);
@@ -434,17 +464,26 @@ export default function HomeScreen() {
     () => getHomeCollectionCards(collection).slice(0, 5),
     [collection],
   );
+  const hasCollectionHoldings = hasHomeCollectionHoldings(collection);
 
-  // Derive gainers and losers from movers data
-  const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
-  const losers = movers.filter(m => m.trend === 'down').sort((a, b) => a.priceChangePercent - b.priceChangePercent).slice(0, 8);
-
-  const marketCards: { card: Card; price: number; currency: string; change: number | undefined }[] = (() => {
-    if (marketTab === 'gainers') return gainers.map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
-    if (marketTab === 'losers') return losers.map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
-    if (marketTab === 'new') return recentCards.map(c => ({ card: c, price: c.price.raw, currency: c.price.currency, change: c.price.change7d }));
-    return trending.map(c => ({ card: c, price: c.price.raw, currency: c.price.currency, change: c.price.change7d }));
-  })();
+  const marketCards = getMarketFeed(marketTab, movers, trending, recentCards, gainers, losers, user?.tcgPreferences ?? []).slice(0, 8);
+  const activeFeedKey = marketTab === 'trending' ? 'trending' : marketTab === 'new' ? 'recent' : marketTab;
+  const activeFeedStatus = marketFeedStatus[activeFeedKey];
+  const retryMarketFeed = useCallback(() => {
+    setMarketFeedStatus(previous => ({ ...previous, [activeFeedKey]: { loading: true, error: null } }));
+    const request = activeFeedKey === 'gainers'
+      ? getMarketGainers({ cacheScope: marketCacheScope }).then(setGainers)
+      : activeFeedKey === 'losers'
+        ? getMarketLosers({ cacheScope: marketCacheScope }).then(setLosers)
+      : activeFeedKey === 'trending'
+        ? getTrendingCards({ cacheScope: marketCacheScope }).then(setTrending)
+        : getRecentlyAddedCards({ cacheScope: marketCacheScope }).then(setRecentCards);
+    request.catch(error => setMarketFeedStatus(previous => ({
+      ...previous, [activeFeedKey]: { loading: false, error: error instanceof Error ? error.message : 'Market data is unavailable.' },
+    }))).finally(() => setMarketFeedStatus(previous => ({
+      ...previous, [activeFeedKey]: { ...previous[activeFeedKey], loading: false },
+    })));
+  }, [activeFeedKey, marketCacheScope]);
 
   function handleQuickAction(action: string) {
     if (action === 'scan') router.push('/scan');
@@ -694,8 +733,10 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
         )}
-        {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
+        {hasCollectionHoldings ? (
           <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
+            {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
+              <>
 
             {/* Row 1 — server cost basis vs current value, else 1-day change */}
             {serverSummary?.totalCost != null && serverSummary.totalValue != null ? (
@@ -791,6 +832,26 @@ export default function HomeScreen() {
                 <Feather name="chevron-right" size={14} color={C.mutedForeground} />
               </Pressable>
             )}
+              </>
+            ) : (
+              <Pressable
+                style={styles.insightRow}
+                onPress={() => router.push('/(tabs)/collection')}
+                accessibilityRole="button"
+                accessibilityLabel="View your saved collection while pricing is unavailable"
+              >
+                <View style={[styles.insightIcon, { backgroundColor: `${C.primary}18` }]}>
+                  <Feather name="layers" size={14} color={C.primary} />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText}>Your collection is saved</Text>
+                  <Text style={styles.insightSub}>
+                    {homeCollectionCards.length} holding{homeCollectionCards.length === 1 ? '' : 's'} awaiting verified pricing
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={[styles.insightEmpty, { backgroundColor: C.card, borderColor: C.border }]}>
@@ -843,10 +904,17 @@ export default function HomeScreen() {
         </View>
 
         {/* Card carousel */}
-        {sectionsLoading ? (
+        {activeFeedStatus.loading ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
             {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
           </ScrollView>
+        ) : activeFeedStatus.error ? (
+          <View style={styles.marketFeedMessage}>
+            <Text style={styles.emptySection}>Market data is unavailable.</Text>
+            <Pressable onPress={retryMarketFeed} accessibilityRole="button">
+              <Text style={styles.marketRetry}>Try again</Text>
+            </Pressable>
+          </View>
         ) : marketCards.length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
@@ -864,7 +932,7 @@ export default function HomeScreen() {
                   <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
                   <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                    <Text style={styles.moverPrice}>{cardCurrency} {price.toLocaleString('en-AU')}</Text>
+                   <Text style={styles.moverPrice}>{price == null ? 'Price unavailable' : `${cardCurrency} ${price.toLocaleString('en-AU')}`}</Text>
                     {change !== undefined && (
                       <Text style={[styles.moverChange, { color: change >= 0 ? C.positive : C.negative }]}>
                         {change >= 0 ? '+' : ''}{change.toFixed(1)}%
@@ -935,10 +1003,20 @@ export default function HomeScreen() {
             <Text style={styles.seeAll}>Browse all</Text>
           </Pressable>
         </View>
-        {sectionsLoading ? (
+        {marketFeedStatus.recent.loading ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
             {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
           </ScrollView>
+        ) : marketFeedStatus.recent.error ? (
+          <View style={styles.marketFeedMessage}>
+            <Text style={styles.emptySection}>Recently added cards are unavailable.</Text>
+            <Pressable onPress={() => {
+              setMarketFeedStatus(previous => ({ ...previous, recent: { loading: true, error: null } }));
+              getRecentlyAddedCards({ cacheScope: marketCacheScope }).then(setRecentCards).catch(error => setMarketFeedStatus(previous => ({
+                ...previous, recent: { loading: false, error: error instanceof Error ? error.message : 'Market data is unavailable.' },
+              }))).finally(() => setMarketFeedStatus(previous => ({ ...previous, recent: { ...previous.recent, loading: false } })));
+            }} accessibilityRole="button"><Text style={styles.marketRetry}>Try again</Text></Pressable>
+          </View>
         ) : recentCards.length === 0 ? (
           <Text style={styles.emptySection}>No data available right now</Text>
         ) : (
@@ -955,7 +1033,7 @@ export default function HomeScreen() {
                 <View>
                   <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
                   <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
-                  <Text style={styles.moverPrice}>{card.price.currency} {card.price.raw.toLocaleString('en-AU')}</Text>
+                  <Text style={styles.moverPrice}>{card.price.raw > 0 ? `${card.price.currency} ${card.price.raw.toLocaleString('en-AU')}` : 'Price unavailable'}</Text>
                 </View>
               </Pressable>
             ))}
@@ -1209,4 +1287,6 @@ const styles = StyleSheet.create({
   moverSet: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2, width: 110 },
   moverPrice: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
   moverChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  marketFeedMessage: { gap: 8, paddingVertical: 12 },
+  marketRetry: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
 });

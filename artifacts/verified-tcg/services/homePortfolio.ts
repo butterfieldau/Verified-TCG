@@ -55,6 +55,15 @@ export interface HomeCollectionCard {
   gainPercent: number | null;
 }
 
+/**
+ * A collection empty state is about persisted holdings, never about whether a
+ * current market quote has arrived. This keeps an unpriced graded card visible
+ * instead of suggesting the collector has no collection at all.
+ */
+export function hasHomeCollectionHoldings(items: CollectionItem[]): boolean {
+  return items.length > 0;
+}
+
 /** Uses only the server's exact per-holding valuation; card-price fallbacks
  * would make an unavailable valuation appear real. */
 export function getHomeCollectionCards(items: CollectionItem[]): HomeCollectionCard[] {
