@@ -94,10 +94,10 @@ describe("mobile authentication origin and errors", () => {
     expect(new Headers(init.headers).get("x-app-version")).toEqual(expect.any(String));
   });
 
-  it("uses only the explicit public API origin and normalizes an /api suffix", () => {
+  it("uses the versioned public API origin and normalizes an explicit /api suffix", () => {
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     process.env.EXPO_PUBLIC_DOMAIN = "staging.verified.test";
-    expect(resolveAuthApiBase()).toBe("");
+    expect(resolveAuthApiBase()).toBe("https://app.verifiedtcg.co");
 
     process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test/api";
     expect(resolveAuthApiBase()).toBe("https://api.verified.test");

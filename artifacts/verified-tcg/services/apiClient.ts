@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const RELEASE_API_ORIGIN = 'https://app.verifiedtcg.co';
 
 export type ApiErrorKind =
   | 'configuration'
@@ -36,7 +37,12 @@ export const API_APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
  * browser preview but is inaccessible or protected on a physical device.
  */
 export function resolveApiOrigin(): string {
-  const configured = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').trim();
+  const configured = (
+    process.env.EXPO_PUBLIC_API_BASE_URL ??
+    (typeof Constants.expoConfig?.extra?.apiBaseUrl === 'string'
+      ? Constants.expoConfig.extra.apiBaseUrl
+      : RELEASE_API_ORIGIN)
+  ).trim();
   if (!configured) return '';
 
   const withScheme = /^https?:\/\//i.test(configured)

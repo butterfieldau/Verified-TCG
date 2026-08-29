@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "verified-tcg",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "co.verifiedtcg.app",
-      "buildNumber": "3"
+      "buildNumber": "8"
     },
     "android": {
       "backgroundColor": "#0A0A0A"
@@ -25,6 +25,7 @@
       "favicon": "./assets/images/icon.png"
     },
     "extra": {
+      "apiBaseUrl": "https://app.verifiedtcg.co",
       "eas": {
         "projectId": "fde9dffb-2952-4ee6-825a-daff5adb8a92"
       }
