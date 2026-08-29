@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Dimensions,
   Modal,
@@ -23,7 +22,6 @@ import {
 } from 'expo-camera';
 import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
-import type { CollectionItem } from '@/types';
 import { canUseUnlimitedScanner } from '@/services/subscription';
 import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
 import { getAccessToken } from '@/services/auth';
@@ -118,7 +116,6 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const {
     user,
-    addToCollection,
     addToWatchlist,
     subscriptionTier,
     scansUsed,
@@ -393,25 +390,15 @@ export default function ScanScreen() {
     };
   }
 
-  async function handleAddToCollection() {
+  function handleAddToCollection() {
     const raw = getMatchedCard();
     if (!raw) return;
     const card = buildCard(raw);
-    const item: CollectionItem = {
-      id: `col-scan-${Date.now()}`,
-      cardId: card.id, card,
-      quantity: 1, condition: 'near_mint',
-      acquiredAt: new Date().toISOString().split('T')[0],
-      acquiredPrice: 0, currency: 'AUD',
-    };
-    try {
-      await addToCollection(item);
-      setShowActionSheet(false);
-      setConfirmedAction('collection');
-      setScanState('confirmed');
-    } catch (error) {
-      Alert.alert('Could not save card', error instanceof Error ? error.message : 'Please try again.');
-    }
+    setShowActionSheet(false);
+    router.push({
+      pathname: '/add-card',
+      params: { cardJson: JSON.stringify(card) },
+    });
   }
 
   function handleAddToWishlist() {

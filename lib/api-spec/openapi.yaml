@@ -24,6 +24,171 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /catalog/cards:
+    get:
+      operationId: searchCatalogCards
+      tags: [catalog]
+      summary: Search the persisted card catalogue
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Catalogue matches, including an honest empty result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogResponse" }
+        "429": { description: Catalogue provider allowance exhausted. }
+        "503": { description: Catalogue data is unavailable. }
+  /catalog/cards/{id}:
+    get:
+      operationId: getCatalogCard
+      tags: [catalog]
+      summary: Read one canonical card
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Canonical card.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/CatalogCard" }
+                  source: { type: string }
+                  cached: { type: boolean }
+        "404": { description: Card not found. }
+        "503": { description: Catalogue data is unavailable. }
+  /collection:
+    get:
+      operationId: listCollection
+      tags: [collection]
+      summary: List the authenticated collector's persisted holdings
+      responses:
+        "200":
+          description: Holdings with exact-grade valuations when available.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CollectionItem" }
+        "401": { description: Authentication required. }
+    post:
+      operationId: createCollectionItem
+      tags: [collection]
+      summary: Add a holding with collector-entered acquisition details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionMutation" }
+      responses:
+        "201":
+          description: Persisted holding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionItem" }
+        "400": { description: Invalid acquisition details. }
+        "401": { description: Authentication required. }
+  /collection/{id}:
+    patch:
+      operationId: updateCollectionItem
+      tags: [collection]
+      summary: Correct quantity, condition, grading, or acquisition cost
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionMutation" }
+      responses:
+        "200":
+          description: Updated holding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionItem" }
+        "400": { description: Invalid update. }
+        "401": { description: Authentication required. }
+        "404": { description: Holding not found. }
+    delete:
+      operationId: deleteCollectionItem
+      tags: [collection]
+      summary: Remove a holding
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Holding removed. }
+        "401": { description: Authentication required. }
+        "404": { description: Holding not found. }
+  /collection/summary:
+    get:
+      operationId: getCollectionSummary
+      tags: [portfolio]
+      summary: Get authoritative value, cost basis, gain, and coverage
+      parameters:
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Portfolio summary with explicit pricing completeness.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionSummary" }
+        "401": { description: Authentication required. }
+  /collection/performance:
+    get:
+      operationId: getCollectionPerformance
+      tags: [portfolio]
+      summary: Get retained portfolio history and performance
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: [1D, 7D, 1M, 3M, 6M, 1Y, ALL], default: 1M } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Real retained observations; never synthetic backfill.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionPerformance" }
+        "401": { description: Authentication required. }
+  /catalog/market-movers:
+    get:
+      operationId: getMarketMovers
+      tags: [market]
+      summary: Get persisted comparable price movements
+      responses:
+        "200":
+          description: Snapshot-backed market movements.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogResponse" }
+        "503": { description: Market snapshot data is unavailable. }
+  /catalog/trending:
+    get:
+      operationId: getTrendingCards
+      tags: [market]
+      summary: Get deterministic persisted trend rankings
+      responses:
+        "200":
+          description: Persisted trend results.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogResponse" }
+        "503": { description: Trend data is unavailable. }
+  /catalog/recently-added:
+    get:
+      operationId: getRecentlyAddedCards
+      tags: [market]
+      summary: Get recently persisted canonical catalogue records
+      responses:
+        "200":
+          description: Recently added records, with quotes only when available.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogResponse" }
+        "503": { description: Catalogue data is unavailable. }
   /catalog/cards/{id}/ebay-sold-history:
     get:
       operationId: getEbaySoldHistory
@@ -91,6 +256,118 @@ components:
           type: string
       required:
         - status
+    CatalogVariant:
+      type: object
+      properties:
+        condition: { type: string }
+        price: { type: [number, "null"] }
+        lastUpdated: { type: integer }
+        markets:
+          type: array
+          items:
+            type: object
+            properties:
+              region: { type: string }
+              currency: { type: string }
+              price: { type: [number, "null"] }
+    CatalogCard:
+      type: object
+      required: [id, name, game, variants]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        game: { type: string }
+        set: { type: string }
+        set_name: { type: string }
+        number: { type: string }
+        rarity: { type: string }
+        image_url: { type: string }
+        currency: { type: [string, "null"] }
+        variants:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogVariant" }
+      additionalProperties: true
+    CatalogResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogCard" }
+        source: { type: string }
+        cached: { type: boolean }
+        meta:
+          type: object
+          additionalProperties: true
+    CollectionMutation:
+      type: object
+      properties:
+        cardId: { type: string }
+        card: { type: object, additionalProperties: true }
+        quantity: { type: integer, minimum: 1, maximum: 9999 }
+        condition: { type: string, enum: [mint, near_mint, excellent, good, light_played, played, poor] }
+        grading: { type: [object, "null"], additionalProperties: true }
+        acquiredAt: { type: string, format: date }
+        acquiredPrice: { type: number, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        notes: { type: string, maxLength: 2000 }
+        isForSale: { type: boolean }
+        isForTrade: { type: boolean }
+    CollectionItem:
+      allOf:
+        - { $ref: "#/components/schemas/CollectionMutation" }
+        - type: object
+          required: [id, cardId, card, quantity, condition, acquiredAt, acquiredPrice, currency]
+          properties:
+            id: { type: string }
+            valuation:
+              type: [object, "null"]
+              properties:
+                priceCents: { type: integer }
+                price: { type: number }
+                currency: { type: string }
+                gradeKey: { type: string }
+                updatedAt: { type: string, format: date-time }
+    CollectionSummary:
+      type: object
+      required: [totalValue, totalCost, unrealizedGain, cardCount, uniqueCardCount, currency, coverage, completeness]
+      properties:
+        totalValue: { type: [number, "null"] }
+        totalCost: { type: [number, "null"] }
+        unrealizedGain: { type: [number, "null"] }
+        unrealizedGainPercent: { type: [number, "null"] }
+        realisedGain: { type: [number, "null"] }
+        cardCount: { type: integer }
+        uniqueCardCount: { type: integer }
+        currency: { type: string }
+        coverage:
+          type: object
+          required: [pricedHoldings, totalHoldings, ratio, freshHoldings, staleHoldings]
+          properties:
+            pricedHoldings: { type: integer }
+            totalHoldings: { type: integer }
+            ratio: { type: number }
+            freshHoldings: { type: integer }
+            staleHoldings: { type: integer }
+        completeness: { type: string }
+    CollectionPerformance:
+      type: object
+      required: [points, currency, historyAvailable, completeness]
+      properties:
+        points:
+          type: array
+          items:
+            type: object
+            required: [date, value, currency]
+            properties:
+              date: { type: string, format: date }
+              value: { type: number }
+              currency: { type: string }
+        currency: { type: string }
+        historyAvailable: { type: boolean }
+        historyUnavailableReason: { type: [string, "null"] }
+        completeness: { type: string }
+      additionalProperties: true
     EbaySale:
       type: object
       required: [title, endedAt, condition, priceCents, price, currency, url]

@@ -58,7 +58,8 @@ describe('Verified pricing mobile service', () => {
     expect(url).toContain('/api/pricing/cards/card-1');
     expect(url).toContain('displayCurrency=AUD');
     expect(url).not.toContain('PRICECHARTING_API_TOKEN');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer fake-access-token');
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer fake-access-token');
+    expect(new Headers(init.headers).get('x-app-version')).toBeTruthy();
   });
 
   it('preserves unavailable history and null movement', async () => {
@@ -146,7 +147,8 @@ describe('eBay sold-history mobile service', () => {
     expect(url).toContain('grade=psa10');
     expect(url).toContain('displayCurrency=EUR');
     expect(url).not.toContain('EBAY_APP_ID');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer fake-access-token');
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer fake-access-token');
+    expect(new Headers(init.headers).get('x-app-version')).toBeTruthy();
   });
 
   it('preserves a configuration failure instead of returning an ambiguous empty history', async () => {

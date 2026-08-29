@@ -97,7 +97,7 @@ describe("mobile authentication origin and errors", () => {
   it("uses the versioned public API origin and normalizes an explicit /api suffix", () => {
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     process.env.EXPO_PUBLIC_DOMAIN = "staging.verified.test";
-    expect(resolveAuthApiBase()).toBe("https://app.verifiedtcg.co");
+    expect(resolveAuthApiBase()).toBe("https://staging.verified.test");
 
     process.env.EXPO_PUBLIC_API_BASE_URL = "https://api.verified.test/api";
     expect(resolveAuthApiBase()).toBe("https://api.verified.test");

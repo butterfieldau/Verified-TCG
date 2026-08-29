@@ -8,13 +8,7 @@
  */
 
 import { getAccessToken } from './auth';
-import { resolveApiOrigin } from './apiClient';
-
-const API_BASE = `${resolveApiOrigin()}/api`;
-
-function ebaySoldHistoryApiBase(): string {
-  return `${resolveApiOrigin()}/api`;
-}
+import { ApiClientError, apiJson, apiRequest } from './apiClient';
 
 export type PricePeriod = '7D' | '30D' | '90D' | '1Y' | 'All';
 
@@ -30,6 +24,15 @@ export interface PriceHistoryResult {
   /** ISO timestamp of the most recent snapshot, or null if no data */
   updatedAt: string | null;
   source: string;
+  availability:
+    | 'available'
+    | 'no_results'
+    | 'configuration_error'
+    | 'sign_in_required'
+    | 'permission_error'
+    | 'upstream_error'
+    | 'network_error';
+  message?: string | null;
   /** True when the server rejected the request because the user is not Pro. */
   requiresUpgrade?: boolean;
 }
@@ -144,14 +147,6 @@ export async function fetchEbaySoldHistory(
   if (!forceRefresh && hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
   if (forceRefresh) ebaySoldHistoryCache.delete(cacheKey);
 
-  const base = ebaySoldHistoryApiBase();
-  if (!base || base === '/api') {
-    return unavailableEbaySoldHistory(
-      cardId, gradeKey, period, displayCurrency, 'configuration_error',
-      'eBay sold history is not configured for this app.',
-    );
-  }
-
   try {
     const token = await getAccessToken();
     const params = new URLSearchParams({
@@ -163,34 +158,14 @@ export async function fetchEbaySoldHistory(
       period,
       displayCurrency,
     });
-    const res = await fetch(
-      `${base}/catalog/cards/${encodeURIComponent(cardId)}/ebay-sold-history?${params.toString()}`,
+    const body = await apiJson<EbaySoldHistoryResult>(
+      `/api/catalog/cards/${encodeURIComponent(cardId)}/ebay-sold-history?${params.toString()}`,
       {
         signal,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        accessToken: token,
       },
     );
 
-    if (res.status === 401) {
-      return unavailableEbaySoldHistory(
-        cardId, gradeKey, period, displayCurrency, 'sign_in_required',
-        'Sign in again to view eBay sold history.',
-      );
-    }
-    if (res.status === 403) {
-      return unavailableEbaySoldHistory(
-        cardId, gradeKey, period, displayCurrency, 'permission_error',
-        'Pro access is required to view eBay sold history.', true,
-      );
-    }
-    if (!res.ok) {
-      return unavailableEbaySoldHistory(
-        cardId, gradeKey, period, displayCurrency, 'upstream_error',
-        'eBay sold history is temporarily unavailable. Please try again.',
-      );
-    }
-
-    const body = (await res.json()) as EbaySoldHistoryResult;
     const result: EbaySoldHistoryResult = {
       ...body,
       cardId,
@@ -208,6 +183,31 @@ export async function fetchEbaySoldHistory(
     return result;
   } catch (error: unknown) {
     if ((error as Error)?.name === 'AbortError') throw error;
+    const clientError = error instanceof ApiClientError ? error : null;
+    if (clientError?.kind === 'unauthorized') {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'sign_in_required',
+        'Sign in again to view eBay sold history.',
+      );
+    }
+    if (clientError?.kind === 'forbidden') {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'permission_error',
+        'Pro access is required to view eBay sold history.', true,
+      );
+    }
+    if (clientError?.kind === 'configuration') {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'configuration_error',
+        'eBay sold history is not configured for this app.',
+      );
+    }
+    if (clientError?.kind === 'provider_unavailable' || clientError?.kind === 'server') {
+      return unavailableEbaySoldHistory(
+        cardId, gradeKey, period, displayCurrency, 'upstream_error',
+        'eBay sold history is temporarily unavailable. Please try again.',
+      );
+    }
     return unavailableEbaySoldHistory(
       cardId, gradeKey, period, displayCurrency, 'network_error',
       'Couldn’t reach eBay sold history. Check your connection and try again.',
@@ -236,10 +236,6 @@ export async function fetchPriceHistory(
   period: PricePeriod,
   signal?: AbortSignal,
 ): Promise<PriceHistoryResult> {
-  if (!API_BASE || API_BASE === '/api') {
-    return { points: [], updatedAt: null, source: 'ebay_sold' };
-  }
-
   const cacheKey = `${cardId}:${gradeKey}:${period}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
@@ -247,24 +243,48 @@ export async function fetchPriceHistory(
   try {
     const token = await getAccessToken();
     const params = new URLSearchParams({ grade: gradeKey, period });
-    const res = await fetch(
-      `${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/price-history?${params}`,
-      {
-        signal,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      },
+    const body = await apiJson<PriceHistoryResult>(
+      `/api/catalog/cards/${encodeURIComponent(cardId)}/price-history?${params}`,
+      { signal, accessToken: token },
     );
-
-    if (res.status === 403) {
-      return { points: [], updatedAt: null, source: 'ebay_sold', requiresUpgrade: true };
+    const result = {
+      ...body,
+      points: Array.isArray(body.points) ? body.points : [],
+      availability: body.availability ?? (body.points?.length ? 'available' : 'no_results'),
+      message: body.message ?? null,
+    };
+    cache.set(cacheKey, { data: result, fetchedAt: Date.now() });
+    return result;
+  } catch (error: unknown) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    const clientError = error instanceof ApiClientError ? error : null;
+    if (clientError?.kind === 'forbidden') {
+      return {
+        points: [], updatedAt: null, source: 'ebay_sold',
+        availability: 'permission_error',
+        message: 'Pro access is required to view price history.',
+        requiresUpgrade: true,
+      };
     }
-    if (!res.ok) return { points: [], updatedAt: null, source: 'ebay_sold' };
-
-    const body = (await res.json()) as PriceHistoryResult;
-    cache.set(cacheKey, { data: body, fetchedAt: Date.now() });
-    return body;
-  } catch {
-    return { points: [], updatedAt: null, source: 'ebay_sold' };
+    if (clientError?.kind === 'unauthorized') {
+      return {
+        points: [], updatedAt: null, source: 'ebay_sold',
+        availability: 'sign_in_required',
+        message: 'Sign in again to view price history.',
+      };
+    }
+    if (clientError?.kind === 'configuration') {
+      return {
+        points: [], updatedAt: null, source: 'ebay_sold',
+        availability: 'configuration_error',
+        message: 'Price history is not configured for this app.',
+      };
+    }
+    return {
+      points: [], updatedAt: null, source: 'ebay_sold',
+      availability: clientError?.kind === 'provider_unavailable' ? 'upstream_error' : 'network_error',
+      message: clientError?.message ?? 'Price history is temporarily unavailable.',
+    };
   }
 }
 
@@ -280,15 +300,11 @@ export async function triggerPriceSnapshot(
   game: string,
   number: string,
 ): Promise<void> {
-  if (!API_BASE || API_BASE === '/api') return;
   try {
     const token = await getAccessToken();
-    await fetch(`${API_BASE}/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
+    await apiRequest(`/api/catalog/cards/${encodeURIComponent(cardId)}/snapshot-prices`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      accessToken: token,
       body: JSON.stringify({ name, set: setName, game, number }),
     });
   } catch {

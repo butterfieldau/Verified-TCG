@@ -256,6 +256,10 @@ export const ALL_STORAGE_KEYS = [
   "@verified_tcg/collection_prices",
   "@verified_tcg/watchlist_prices",
   "@verified_tcg/prices_last_updated",
+  // Collection cache is user-scoped in memory but the key itself is shared;
+  // clear it on sign-out so a later account can never see the previous
+  // account's holdings while the server request is loading.
+  "@verified_tcg/collection_cache",
   "@verified_tcg/scan_state",
   "@verified_tcg/alerts",
   // Home-screen dismissal banners

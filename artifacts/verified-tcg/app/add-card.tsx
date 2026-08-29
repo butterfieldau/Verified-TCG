@@ -39,7 +39,7 @@ const GRADES = [10, 9.5, 9, 8.5, 8, 7];
 
 export default function AddCardScreen() {
   const insets = useSafeAreaInsets();
-  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const { editId, cardJson } = useLocalSearchParams<{ editId?: string; cardJson?: string }>();
   const { addToCollection, collection, updateCollectionHolding } = useApp();
   const [step, setStep] = useState<Step>('search');
   const [query, setQuery] = useState('');
@@ -80,6 +80,19 @@ export default function AddCardScreen() {
   }, [editingItem]);
 
   useEffect(() => {
+    if (editingItem || !cardJson) return;
+    try {
+      const card = JSON.parse(cardJson) as Card;
+      if (!card?.id || !card?.name) throw new Error('Invalid card');
+      setSelectedCard(card);
+      setStep('details');
+    } catch {
+      setSearchError('This card could not be prepared for adding. Please search for it again.');
+      setStep('search');
+    }
+  }, [cardJson, editingItem]);
+
+  useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < MIN_CATALOG_SEARCH_LENGTH) {
       setResults([]);
@@ -87,10 +100,11 @@ export default function AddCardScreen() {
       setSearchError(null);
       return;
     }
+    setSearchLoading(true);
+    setSearchError(null);
+    setResults([]);
     let cancelled = false;
     const timer = setTimeout(() => {
-      setSearchLoading(true);
-      setSearchError(null);
       searchCatalog(trimmed)
         .then(response => { if (!cancelled) setResults(response.data.map(catalogCardToAppCard)); })
         .catch(() => { if (!cancelled) setSearchError('Card search is unavailable. Please try again.'); })
@@ -110,7 +124,12 @@ export default function AddCardScreen() {
     const parsedPrice = Number(purchasePrice);
     const parsedQuantity = Number(quantity);
     const currency = purchaseCurrency.trim().toUpperCase();
-    if (!purchasePrice.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0 || !Number.isInteger(parsedQuantity) || parsedQuantity < 1 || !/^[A-Z]{3}$/.test(currency) || !/^\d{4}-\d{2}-\d{2}$/.test(acquisitionDate)) {
+    const parsedDate = new Date(`${acquisitionDate}T00:00:00.000Z`);
+    const isValidDate =
+      /^\d{4}-\d{2}-\d{2}$/.test(acquisitionDate) &&
+      !Number.isNaN(parsedDate.getTime()) &&
+      parsedDate.toISOString().slice(0, 10) === acquisitionDate;
+    if (!purchasePrice.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0 || !Number.isInteger(parsedQuantity) || parsedQuantity < 1 || !/^[A-Z]{3}$/.test(currency) || !isValidDate) {
       setSearchError('Enter a valid unit price, 3-letter currency, quantity, and acquisition date.');
       return;
     }

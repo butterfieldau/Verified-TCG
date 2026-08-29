@@ -7,9 +7,7 @@
  */
 
 import { getAccessToken } from './auth';
-import { resolveApiOrigin } from './apiClient';
-
-const API_BASE = resolveApiOrigin();
+import { ApiClientError, apiJson } from './apiClient';
 
 export interface PricingQuote {
   gradeKey: string;
@@ -128,13 +126,6 @@ export interface CardPriceHistoryResult {
 
 export type HistoryPeriod = '7d' | '30d' | '90d' | '180d' | '1y' | 'all';
 
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = await getAccessToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
-}
-
 /** In-memory cache for pricing results (5-min TTL) */
 const pricingCache = new Map<string, { data: CardPricingResult; fetchedAt: number }>();
 const PRICING_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -159,7 +150,7 @@ export async function fetchVerifiedPricing(
   if (hit && Date.now() - hit.fetchedAt < PRICING_CACHE_TTL_MS) return hit.data;
 
   try {
-    const headers = await authHeaders();
+    const token = await getAccessToken();
     const params = new URLSearchParams();
     if (opts.name) params.set('name', opts.name);
     if (opts.set) params.set('set', opts.set);
@@ -168,36 +159,19 @@ export async function fetchVerifiedPricing(
     if (opts.displayCurrency) params.set('displayCurrency', opts.displayCurrency);
 
     const qs = params.toString();
-    const url = `${API_BASE}/api/pricing/cards/${encodeURIComponent(cardId)}${qs ? `?${qs}` : ''}`;
-    const res = await fetch(url, { headers, signal });
-
-    if (!res.ok) {
-      return {
-        cardId,
-        status: 'unavailable',
-        configured: false,
-        queued: false,
-        quotes: [],
-        verifiedMarket: [],
-        source: null,
-        confidence: null,
-        providerMetadata: null,
-        updatedAt: null,
-        isStale: false,
-        errorCode: `http_${res.status}`,
-        message: `Server returned ${res.status}`,
-      };
-    }
-
-    const data = (await res.json()) as CardPricingResult;
+    const data = await apiJson<CardPricingResult>(
+      `/api/pricing/cards/${encodeURIComponent(cardId)}${qs ? `?${qs}` : ''}`,
+      { accessToken: token, signal },
+    );
     pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
     return data;
   } catch (err: unknown) {
     if ((err as Error)?.name === 'AbortError') throw err;
+    const clientError = err instanceof ApiClientError ? err : null;
     return {
       cardId,
       status: 'unavailable',
-      configured: false,
+      configured: clientError?.kind !== 'configuration',
       queued: false,
       quotes: [],
       verifiedMarket: [],
@@ -206,8 +180,8 @@ export async function fetchVerifiedPricing(
       providerMetadata: null,
       updatedAt: null,
       isStale: false,
-      errorCode: 'network_error',
-      message: 'Network error — check connection',
+      errorCode: clientError?.kind ?? 'network_error',
+      message: clientError?.message ?? 'Network error — check connection',
     };
   }
 }
@@ -230,7 +204,7 @@ export async function refreshVerifiedPricing(
   const cacheKey = `${cardId}:${opts.displayCurrency ?? 'AUD'}`;
   pricingCache.delete(cacheKey);
 
-  const headers = await authHeaders();
+  const token = await getAccessToken();
   const params = new URLSearchParams();
   if (opts.name) params.set('name', opts.name);
   if (opts.set) params.set('set', opts.set);
@@ -239,12 +213,11 @@ export async function refreshVerifiedPricing(
   if (opts.displayCurrency) params.set('displayCurrency', opts.displayCurrency);
 
   const qs = params.toString();
-  const url = `${API_BASE}/api/pricing/cards/${encodeURIComponent(cardId)}/refresh${qs ? `?${qs}` : ''}`;
-
   try {
-    const res = await fetch(url, { method: 'POST', headers });
-    if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
-    const data = (await res.json()) as CardPricingResult;
+    const data = await apiJson<CardPricingResult>(
+      `/api/pricing/cards/${encodeURIComponent(cardId)}/refresh${qs ? `?${qs}` : ''}`,
+      { method: 'POST', accessToken: token },
+    );
     pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
     return data;
   } catch {
@@ -265,21 +238,13 @@ export async function fetchVerifiedPriceHistory(
   signal?: AbortSignal,
 ): Promise<CardPriceHistoryResult> {
   try {
-    const headers = await authHeaders();
+    const token = await getAccessToken();
     const params = new URLSearchParams({ grade, period });
     if (displayCurrency) params.set('displayCurrency', displayCurrency);
-    const url = `${API_BASE}/api/pricing/cards/${encodeURIComponent(cardId)}/history?${params}`;
-    const res = await fetch(url, { headers, signal });
-
-    if (res.status === 403) {
-      return { points: [], updatedAt: null, source: null, movement: null, historyAvailable: false };
-    }
-    if (!res.ok) {
-      return { points: [], updatedAt: null, source: null, movement: null, historyAvailable: false };
-    }
-
-    const data = (await res.json()) as CardPriceHistoryResult;
-    return data;
+    return apiJson<CardPriceHistoryResult>(
+      `/api/pricing/cards/${encodeURIComponent(cardId)}/history?${params}`,
+      { accessToken: token, signal },
+    );
   } catch (err: unknown) {
     if ((err as Error)?.name === 'AbortError') throw err;
     return { points: [], updatedAt: null, source: null, movement: null, historyAvailable: false };
