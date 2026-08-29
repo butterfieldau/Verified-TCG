@@ -529,6 +529,61 @@ export function rankEvidenceMatches(
   };
 }
 
+/**
+ * Ranks candidates that are useful for a collector to confirm when the image
+ * does not contain enough independent evidence for an automatic match.
+ *
+ * This deliberately has a separate contract from `rankEvidenceMatches`: it
+ * never drives `topMatch`, never claims a canonical identity, and refuses a
+ * supplied game/set/number that contradicts the returned card.  It exists so
+ * a clearly-read name such as "Grookey" can lead to a manual picker instead
+ * of an unhelpful empty failure state.
+ */
+export function rankConfirmationCandidates(
+  catalogResults: Array<Record<string, unknown>>,
+  extracted: ExtractedCardInfo,
+): Array<{ card: Record<string, unknown>; confidence: number }> {
+  const name = normalizeForMatching(extracted.name);
+  const providerGame = providerGameSlug(extracted.game);
+  const collectorNumber = normalizeCollectorNumber(extracted.number);
+  const setText = normalizeForMatching(extracted.setName);
+  const setCode = normalizeSetCode(extracted.setName);
+
+  // A set code or collector number without a readable name is too broad to
+  // present as an apparently meaningful choice to the user.
+  if (!name) return [];
+
+  return catalogResults
+    .map((card) => {
+      const candidate = normalizeJustTcgCard(card as JustTcgProviderCard);
+      const candidateName = normalizeForMatching(candidate.name);
+      const candidateSet = candidate.setName ? normalizeForMatching(candidate.setName) : "";
+
+      if (providerGame && candidate.gameSlug !== providerGame) return null;
+      if (collectorNumber && !collectorNumberMatches(collectorNumber, candidate.collectorNumber)) return null;
+      if (setText && candidateSet !== setText && (setCode === null || candidate.setCode !== setCode)) return null;
+
+      let confidence = 0;
+      if (candidateName === name) confidence = 75;
+      else if (candidateName.includes(name) || name.includes(candidateName)) confidence = 65;
+      else {
+        const words = name.split(" ").filter(word => word.length > 2);
+        const candidateWords = candidateName.split(" ");
+        const overlap = words.filter(word => candidateWords.includes(word)).length;
+        if (words.length > 0 && overlap / words.length >= 0.75) confidence = 55;
+      }
+      if (confidence === 0) return null;
+
+      if (collectorNumber) confidence += 10;
+      if (setText) confidence += 5;
+      // Keep manual candidates visibly distinct from an automatic recognition.
+      return { card, confidence: Math.min(confidence, 79) };
+    })
+    .filter((candidate): candidate is { card: Record<string, unknown>; confidence: number } => candidate !== null)
+    .sort((a, b) => b.confidence - a.confidence || String(a.card.id).localeCompare(String(b.card.id)))
+    .slice(0, 3);
+}
+
 /** True when durable catalogue evidence makes a network provider read unnecessary. */
 export function hasPersistedRecognitionEvidence(
   catalogResults: Array<Record<string, unknown>>,
@@ -661,18 +716,18 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
     }
 
     // A match is never inferred from a name alone. A readable card must supply
-    // game, set, and collector number, which are then corroborated against the
-    // canonical JustTCG fields. This intentionally fails closed for partial OCR.
+    // game, set, and collector number before it can be opened automatically.
+    // Partial OCR may still produce confirmation candidates for the collector.
     const evidenceStatus = recognitionEvidenceStatus(extracted);
     const imageUnreadable = evidenceStatus === "unreadable";
     const unsupported = evidenceStatus === "unsupported";
     const weakEvidence = evidenceStatus === "insufficient_evidence";
 
     let catalogResults: Array<Record<string, unknown>> = [];
-    if (!evidenceStatus) {
+    if (!imageUnreadable && !unsupported) {
       // A verified local match is sufficient and must stay available if
       // JustTCG is slow or unavailable.
-      catalogResults = await searchPersistedCatalogue(extracted);
+      if (!weakEvidence) catalogResults = await searchPersistedCatalogue(extracted);
       if (!hasPersistedRecognitionEvidence(catalogResults, extracted)) {
         try {
           catalogResults = await searchCatalog(extracted);
@@ -711,7 +766,14 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
     // variants. Do not guess which variant the photograph shows.
     const ambiguous = ranked.ambiguous;
     const hasMatch = Boolean(topMatch) && !ambiguous;
-    const matches = hasMatch ? plausibleMatches.slice(0, 1) : ambiguous ? plausibleMatches.slice(0, 3) : [];
+    const confirmationCandidates = !hasMatch && !imageUnreadable && !unsupported
+      ? rankConfirmationCandidates(catalogResults, extracted)
+      : [];
+    const matches = hasMatch
+      ? plausibleMatches.slice(0, 1)
+      : ambiguous
+        ? plausibleMatches.slice(0, 3)
+        : confirmationCandidates;
     const scansRemaining = isFreeTier ? Math.max(0, FREE_SCAN_LIMIT - newScanCount) : null;
 
     // 8. Persist only sanitized operational facts. Source photos and raw OCR
@@ -753,7 +815,7 @@ router.post("/scan/recognize", requireActiveUser, async (req: AuthRequest, res) 
       },
       matches: matches.map(({ card, confidence }) => ({ card, confidence })),
       topMatch: hasMatch ? { card: topMatch!.card, confidence: topMatch!.confidence } : null,
-      lowConfidence: ambiguous,
+      lowConfidence: ambiguous || confirmationCandidates.length > 0,
       // imageUnreadable = true means GPT returned no text at all — the image
       // was likely blurry, too dark, or the card was partially out of frame.
       // Clients should show a more specific message than "no match found".

@@ -104,13 +104,13 @@ export function parseScanResponse(value: unknown): ScanResult {
     throw new ScanRecognitionError('invalid_response', 'An ambiguous recognition result must include candidates but no top match.');
   }
   if (
-    (recognitionStatus === 'unreadable' ||
-      recognitionStatus === 'unsupported' ||
-      recognitionStatus === 'insufficient_evidence' ||
-      recognitionStatus === 'no_canonical_match') &&
+    (recognitionStatus === 'unreadable' || recognitionStatus === 'unsupported') &&
     (topMatch || allMatches.length > 0)
   ) {
     throw new ScanRecognitionError('invalid_response', `A ${recognitionStatus} recognition result cannot include card candidates.`);
+  }
+  if ((recognitionStatus === 'insufficient_evidence' || recognitionStatus === 'no_canonical_match') && topMatch) {
+    throw new ScanRecognitionError('invalid_response', `A ${recognitionStatus} recognition result cannot include an automatic match.`);
   }
   const extractedSource = record(source.extracted);
   const numeric = (input: unknown): number | undefined =>
@@ -120,8 +120,8 @@ export function parseScanResponse(value: unknown): ScanResult {
     recognitionStatus,
     topMatch,
     matches: allMatches,
-    lowConfidence: source.lowConfidence === true || recognitionStatus === 'ambiguous',
-    imageUnreadable: source.imageUnreadable === true || recognitionStatus === 'unreadable' || recognitionStatus === 'insufficient_evidence',
+    lowConfidence: source.lowConfidence === true || recognitionStatus === 'ambiguous' || allMatches.length > 0,
+    imageUnreadable: source.imageUnreadable === true || recognitionStatus === 'unreadable',
     extracted: {
       name: text(extractedSource?.name),
       setName: text(extractedSource?.setName ?? extractedSource?.set_name),

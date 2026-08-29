@@ -244,7 +244,7 @@ export default function ScanScreen() {
       setScanResult(result);
       setSelectedMatchIndex(result.recognitionStatus === 'matched' ? 0 : null);
 
-      if (result.recognitionStatus === 'ambiguous' && result.matches.length > 0) {
+      if (!result.topMatch && result.matches.length > 0) {
         setScanState('low_confidence');
       } else if (result.recognitionStatus === 'unsupported') {
         setErrorMessage('This card game is not supported by the scanner yet. Search the catalogue manually to check for this card.');

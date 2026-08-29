@@ -45,6 +45,11 @@ describe('scan recognition response handling', () => {
     { recognitionStatus: 'unsupported', topMatch: null, matches: [] },
     { recognitionStatus: 'insufficient_evidence', topMatch: null, matches: [] },
     { recognitionStatus: 'no_canonical_match', topMatch: null, matches: [] },
+    {
+      recognitionStatus: 'insufficient_evidence',
+      topMatch: null,
+      matches: [{ card: { id: 'grookey-1', name: 'Grookey' }, confidence: 75 }],
+    },
   ])('accepts the live %s recognition status contract', (response) => {
     expect(parseScanResponse(response).recognitionStatus).toBe(response.recognitionStatus);
   });
@@ -55,7 +60,7 @@ describe('scan recognition response handling', () => {
     { recognitionStatus: 'unreadable', topMatch: null, matches: [{ card: { id: 'x', name: 'X' }, confidence: 80 }] },
     { recognitionStatus: 'unsupported', topMatch: null, matches: [{ card: { id: 'x', name: 'X' }, confidence: 80 }] },
     { recognitionStatus: 'insufficient_evidence', topMatch: { card: { id: 'x', name: 'X' }, confidence: 80 }, matches: [] },
-    { recognitionStatus: 'no_canonical_match', topMatch: null, matches: [{ card: { id: 'x', name: 'X' }, confidence: 80 }] },
+    { recognitionStatus: 'no_canonical_match', topMatch: { card: { id: 'x', name: 'X' }, confidence: 80 }, matches: [] },
   ])('rejects inconsistent recognition statuses', (response) => {
     expect(() => parseScanResponse(response)).toThrow();
   });

@@ -22,6 +22,7 @@ import app from "../app.js";
 import { createTestUser, setScanCount } from "./helpers.js";
 import {
   hasPersistedRecognitionEvidence,
+  rankConfirmationCandidates,
   rankEvidenceMatches,
   recognitionEvidenceStatus,
   validateImagePayload,
@@ -106,6 +107,17 @@ describe("scan evidence guards", () => {
     assert.equal(recognitionEvidenceStatus({ game: "Digimon", name: "Agumon", setName: "BT1", number: "1/100" }), "unsupported");
     assert.equal(recognitionEvidenceStatus({ game: "Pokemon", name: "Pikachu", setName: "", number: "" }), "insufficient_evidence");
     assert.equal(recognitionEvidenceStatus({ game: "", name: "", setName: "", number: "" }), "unreadable");
+  });
+
+  test("offers name-only confirmation candidates without auto-matching", () => {
+    const candidates = rankConfirmationCandidates([
+      { id: "grookey-001", game: "Pokemon", name: "Grookey", set_name: "First Partner Pack", number: "SWSH001" },
+      { id: "wrong-game", game: "Magic", name: "Grookey", set_name: "Test", number: "1" },
+    ], { game: "Pokemon", name: "Grookey", setName: "", number: "" });
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0]?.card.id, "grookey-001");
+    assert.ok((candidates[0]?.confidence ?? 100) < 80);
+    assert.equal(rankEvidenceMatches([candidates[0]!.card], { game: "Pokemon", name: "Grookey", setName: "", number: "" }).candidates.length, 0);
   });
 
   test("marks multiple canonical variants as ambiguous", () => {
