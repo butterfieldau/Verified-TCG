@@ -729,7 +729,7 @@ describe("GET /collection/performance", () => {
   });
 
   test("accepts valid range params", async () => {
-    for (const range of ["1M", "3M", "6M", "1Y", "ALL"]) {
+    for (const range of ["1D", "7D", "1M", "3M", "6M", "1Y", "ALL"]) {
       const res = await request
         .get(`/api/collection/performance?range=${range}`)
         .set("Authorization", `Bearer ${token}`);

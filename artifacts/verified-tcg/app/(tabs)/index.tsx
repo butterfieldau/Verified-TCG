@@ -35,7 +35,6 @@ import {
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
-import { getItemCurrentValue } from '@/services/collection';
 import { fetchActiveEvents, type EventSummary } from '@/services/eventsApi';
 import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import {
@@ -45,6 +44,11 @@ import {
   type CollectionPerformance,
   type PerformanceRange,
 } from '@/services/collectionPerformance';
+import {
+  getHomeCollectionCards,
+  getHomePerformanceView,
+  getHomePortfolioValueState,
+} from '@/services/homePortfolio';
 import { CardImage } from '@/components/ui/CardImage';
 import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
@@ -251,7 +255,6 @@ export default function HomeScreen() {
     user,
     isAuthenticated,
     collection,
-    portfolio,
     portfolioRange,
     setPortfolioRange,
     refreshPrices,
@@ -273,25 +276,24 @@ export default function HomeScreen() {
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
   const [serverPerformance, setServerPerformance] = useState<CollectionPerformance | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState(false);
 
-  const performanceRange: PerformanceRange =
-    portfolioRange === '3M' || portfolioRange === '1Y' || portfolioRange === 'ALL'
-      ? portfolioRange
-      : '1M';
+  const performanceRange: PerformanceRange = portfolioRange;
 
   useEffect(() => {
     if (!isAuthenticated) return;
     setSummaryLoading(true);
-    Promise.all([
-      fetchCollectionSummary(currency),
-      fetchCollectionPerformance(performanceRange, currency),
-    ])
-      .then(([summary, performance]) => {
-        setServerSummary(summary);
-        setServerPerformance(performance);
+    setSummaryError(false);
+    fetchCollectionSummary(currency)
+      .then(setServerSummary)
+      .catch(() => {
+        setServerSummary(null);
+        setSummaryError(true);
       })
-      .catch(() => setServerSummary(null))
       .finally(() => setSummaryLoading(false));
+    fetchCollectionPerformance(performanceRange, currency)
+      .then(setServerPerformance)
+      .catch(() => setServerPerformance(null));
   }, [isAuthenticated, currency, performanceRange]);
 
   // Chart tooltip state
@@ -324,24 +326,43 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    Promise.all([
+    const [moversResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
+      await Promise.allSettled([
       getMarketMovers(),
       getTrendingCards(),
       getRecentlyAddedCards(),
       fetchRecentActivity(10),
       fetchCollectionSummary(currency),
       fetchCollectionPerformance(performanceRange, currency),
-    ])
-      .then(([m, t, r, a, summary, performance]) => {
-        setMovers(m);
-        setTrending(t);
-        setRecentCards(r);
-        setActivity(a);
-        setServerSummary(summary);
-        setServerPerformance(performance);
-      })
-      .catch(() => {});
+      ]);
+    if (moversResult.status === 'fulfilled') setMovers(moversResult.value);
+    if (trendingResult.status === 'fulfilled') setTrending(trendingResult.value);
+    if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
+    if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
+    if (summaryResult.status === 'fulfilled') {
+      setServerSummary(summaryResult.value);
+      setSummaryError(false);
+    } else {
+      setServerSummary(null);
+      setSummaryError(true);
+    }
+    setServerPerformance(performanceResult.status === 'fulfilled' ? performanceResult.value : null);
   }, [refreshPrices, currency, performanceRange]);
+
+  const retryPortfolio = useCallback(() => {
+    setSummaryLoading(true);
+    setSummaryError(false);
+    fetchCollectionSummary(currency)
+      .then(setServerSummary)
+      .catch(() => {
+        setServerSummary(null);
+        setSummaryError(true);
+      })
+      .finally(() => setSummaryLoading(false));
+    fetchCollectionPerformance(performanceRange, currency)
+      .then(setServerPerformance)
+      .catch(() => setServerPerformance(null));
+  }, [currency, performanceRange]);
 
   // ── Live event banner (real API-backed) ─────────────────────────────────────
   const [featuredEvent, setFeaturedEvent] = useState<EventSummary | null>(null);
@@ -386,14 +407,12 @@ export default function HomeScreen() {
   const topPad = Platform.OS === 'web' ? 67 : supportsLiquidGlassTabs() ? 0 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
-  const chartData = React.useMemo(() => {
-    const points = serverPerformance?.points ?? [];
-    const days = portfolioRange === '1D' ? 1 : portfolioRange === '7D' ? 7 : null;
-    if (days == null) return points;
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    return points.filter(point => new Date(point.date).getTime() >= cutoff);
-  }, [serverPerformance, portfolioRange]);
-  const displayValue = activeChartPoint?.value ?? serverSummary?.totalValue ?? (collection.length === 0 ? 0 : null);
+  const valueState = getHomePortfolioValueState(serverSummary, summaryLoading, summaryError, currency);
+  const performanceView = getHomePerformanceView(serverPerformance, portfolioRange);
+  const chartData = performanceView.kind === 'chart' ? performanceView.points : [];
+  const displayValue = activeChartPoint?.value ?? (
+    valueState.kind === 'empty' || valueState.kind === 'priced' ? valueState.value : null
+  );
   const gain =
     chartData.length >= 2
       ? chartData[chartData.length - 1]!.value - chartData[0]!.value
@@ -411,6 +430,10 @@ export default function HomeScreen() {
 
   const topMover = serverPerformance?.topPerformers[0] ?? null;
   const staleCardCount = serverSummary?.coverage.staleHoldings ?? 0;
+  const homeCollectionCards = React.useMemo(
+    () => getHomeCollectionCards(collection).slice(0, 5),
+    [collection],
+  );
 
   // Derive gainers and losers from movers data
   const gainers = movers.filter(m => m.trend === 'up').sort((a, b) => b.priceChangePercent - a.priceChangePercent).slice(0, 8);
@@ -500,7 +523,7 @@ export default function HomeScreen() {
           <>
             <View style={styles.portfolioValueRow}>
               <Text style={styles.portfolioValue}>
-                {displayValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+                ${displayValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
               </Text>
               <Text style={styles.portfolioCurrency}>{serverSummary?.currency ?? currency}</Text>
             </View>
@@ -527,12 +550,27 @@ export default function HomeScreen() {
                 )}
               </View>
             )}
+            {valueState.kind === 'priced' && valueState.unpricedHoldings > 0 && (
+              <Text style={styles.coverageNote}>
+                Subtotal · {valueState.unpricedHoldings} holding{valueState.unpricedHoldings === 1 ? '' : 's'} unpriced
+              </Text>
+            )}
           </>
         ) : (
-          <View style={styles.portfolioValueRow}>
+          <View style={styles.portfolioUnavailableRow}>
             <Text style={[styles.portfolioValue, { fontSize: 22, color: C.mutedForeground }]}>
-              Unavailable
+              {valueState.kind === 'loading' ? 'Loading…' : 'Unavailable'}
             </Text>
+            {valueState.kind === 'unavailable' && (
+              <Pressable
+                onPress={retryPortfolio}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading portfolio"
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </View>
@@ -544,21 +582,24 @@ export default function HomeScreen() {
 
       {/* ── Interactive chart ───────────────────────────────────────────── */}
       <View style={styles.chartContainer}>
-        {chartData.length >= 2 ? (
+        {performanceView.kind === 'chart' ? (
           <InteractiveChart
             data={chartData}
             isPositive={isPositive}
             onPointSelect={setActiveChartPoint}
           />
+        ) : performanceView.kind === 'initial' ? (
+          <View style={styles.chartUnavailable}>
+            <Feather name="minus" size={18} color={C.mutedForeground} />
+            <Text style={styles.chartUnavailableText}>
+              Initial snapshot recorded · {performanceView.point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {performanceView.point.currency}
+            </Text>
+          </View>
         ) : (
           <View style={styles.chartUnavailable}>
             <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
             <Text style={styles.chartUnavailableText}>
-              {portfolioRange === '1D' || portfolioRange === '7D'
-                ? collection.length === 0
-                  ? 'Add cards to start tracking your portfolio'
-                  : `Not enough retained history for ${portfolioRange}`
-                : serverPerformance?.historyUnavailableReason ?? 'Price history is not available yet'}
+              {performanceView.message}
             </Text>
           </View>
         )}
@@ -622,6 +663,37 @@ export default function HomeScreen() {
             <Text style={styles.seeAll}>View collection →</Text>
           </Pressable>
         </View>
+        {homeCollectionCards.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.collectionCarousel}
+          >
+            {homeCollectionCards.map(({ item, currentValue, currency: valueCurrency, gainPercent }) => (
+              <Pressable
+                key={item.id}
+                style={[styles.collectionPreviewCard, { backgroundColor: C.card, borderColor: C.border }]}
+                onPress={() => router.push(`/card/${item.cardId}` as any)}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.card.name}, ${item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Raw'}, ${currentValue == null ? 'market value unavailable' : `${valueCurrency} ${currentValue.toFixed(2)}`}`}
+              >
+                <View style={[styles.collectionPreviewImage, { backgroundColor: item.card.gradientStart }]}>
+                  <CardImage uri={item.card.imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" />
+                </View>
+                <Text style={styles.collectionPreviewName} numberOfLines={1}>{item.card.name}</Text>
+                <Text style={styles.collectionPreviewGrade}>
+                  {item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Raw'}
+                </Text>
+                <Text style={styles.collectionPreviewValue}>
+                  {currentValue == null ? 'Unavailable' : `${valueCurrency} ${currentValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}`}
+                </Text>
+                <Text style={[styles.collectionPreviewGain, { color: gainPercent == null ? C.mutedForeground : gainPercent >= 0 ? C.positive : C.negative }]}>
+                  {gainPercent == null ? 'Gain unavailable' : `${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}%`}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
         {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
           <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
 
@@ -947,6 +1019,13 @@ const styles = StyleSheet.create({
     color: C.foreground, letterSpacing: -1,
   },
   portfolioCurrency: { fontSize: 15, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  portfolioUnavailableRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  retryButton: {
+    borderWidth: 1, borderColor: C.border, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+  },
+  retryButtonText: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  coverageNote: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 8 },
   changeBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
   changeBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -1031,6 +1110,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, marginTop: 4,
   },
   insightEmptyBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#FFF' },
+
+  // Home collection preview
+  collectionCarousel: { gap: 12, paddingRight: 4, marginBottom: 14 },
+  collectionPreviewCard: {
+    width: 132, borderWidth: 1, borderRadius: 12, padding: 8, gap: 4,
+  },
+  collectionPreviewImage: { height: 126, borderRadius: 8, overflow: 'hidden', marginBottom: 3 },
+  collectionPreviewName: { color: C.foreground, fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  collectionPreviewGrade: { color: C.mutedForeground, fontSize: 10, fontFamily: 'Inter_400Regular' },
+  collectionPreviewValue: { color: C.foreground, fontSize: 11, fontFamily: 'Inter_600SemiBold', marginTop: 2 },
+  collectionPreviewGain: { fontSize: 11, fontFamily: 'Inter_700Bold' },
 
   // Quick actions
   actions: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },
