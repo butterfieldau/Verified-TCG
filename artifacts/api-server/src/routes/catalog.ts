@@ -1,6 +1,8 @@
 import { Router } from "express";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, usersTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
+import jwt from "jsonwebtoken";
+import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import {
   justTcg,
   type CatalogueRead,
@@ -350,6 +352,8 @@ type PersistedMarketRow = {
   current_cents: number;
   previous_cents: number;
   currency: string;
+  grade_key: string;
+  provider_key: string;
   current_at: Date;
   previous_at: Date;
 };
@@ -365,11 +369,54 @@ export function calculateSnapshotMovement(
     currentCents <= 0
   ) return null;
   const absoluteCents = currentCents - previousCents;
+  // Reject implausible multi-fold changes from a pair of observations. This
+  // protects the ranking from provider parsing/currency errors while allowing
+  // a deliberately generous 500% genuine market correction.
+  if (Math.abs(absoluteCents / previousCents) > 5) return null;
   return {
     absoluteCents,
     percent: Number(((absoluteCents / previousCents) * 100).toFixed(2)),
     trend: absoluteCents > 0 ? "up" : absoluteCents < 0 ? "down" : "neutral",
   };
+}
+
+type MarketMode = "movers" | "gainers" | "losers";
+
+function marketMode(value: unknown): MarketMode {
+  return value === "gainers" || value === "losers" ? value : "movers";
+}
+
+function preferredGames(value: string | null | undefined): Set<string> | null {
+  const games = (value ?? "").split(",").map(normalizeTcgName).filter(Boolean);
+  return games.length ? new Set(games) : null;
+}
+
+/** Normalizes persisted onboarding labels and canonical catalogue game names. */
+export function normalizeTcgName(value: string): string {
+  const normalized = value.normalize("NFD").replace(/\p{Diacritic}/gu, "")
+    .toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normalized === "pokemon" || normalized === "pokemontcg") return "pokemon";
+  if (normalized === "onepiece" || normalized === "onepiecetcg") return "onepiece";
+  if (normalized === "magic" || normalized === "mtg" || normalized === "magicthegathering") return "magic";
+  return normalized;
+}
+
+async function optionalPreferredGames(authorization: string | undefined): Promise<Set<string> | null> {
+  if (!authorization?.startsWith("Bearer ") || !process.env.SESSION_SECRET) return null;
+  try {
+    const payload = jwt.verify(authorization.slice(7), process.env.SESSION_SECRET) as { sub?: string };
+    if (!payload.sub) return null;
+    const [user] = await db.select({ preferredTcgs: usersTable.preferredTcgs })
+      .from(usersTable).where(eq(usersTable.id, payload.sub)).limit(1);
+    return preferredGames(user?.preferredTcgs);
+  } catch {
+    // These feeds are public; an invalid optional credential is ignored.
+    return null;
+  }
+}
+
+function matchesPreferences(card: Record<string, unknown>, preferences: Set<string> | null): boolean {
+  return !preferences || preferences.has(normalizeTcgName(String(card.game ?? "")));
 }
 
 /**
@@ -379,106 +426,140 @@ export function calculateSnapshotMovement(
  * intentionally returns no data during a new deployment rather than making
  * provider search results look like a genuine market movement feed.
  */
-async function persistedMarketCards(limit = 8) {
+export async function persistedMarketCards(
+  limit = 8,
+  mode: MarketMode = "movers",
+  grade = "raw",
+  currency?: string,
+  preferences: Set<string> | null = null,
+) {
+  const direction = mode === "gainers"
+    ? sql`AND movement_percent > 0`
+    : mode === "losers"
+      ? sql`AND movement_percent < 0`
+      : sql``;
+  const currencyFilter = currency ? sql`AND currency = ${currency.toUpperCase()}` : sql``;
+  const ordering = mode === "gainers" ? sql`movement_percent DESC`
+    : mode === "losers" ? sql`movement_percent ASC` : sql`ABS(movement_percent) DESC`;
   const result = await db.execute<PersistedMarketRow>(sql`
     WITH ranked AS (
-      SELECT card_id, price_cents, currency, captured_at,
+      SELECT card_id, provider_key, grade_key, price_cents, currency, captured_at,
         row_number() OVER (
-          PARTITION BY card_id, provider_key, grade_key
+          PARTITION BY card_id, provider_key, grade_key, currency
           ORDER BY captured_at DESC
         ) AS position
       FROM card_price_snapshots
       WHERE provider_key = 'pricecharting'
-        AND grade_key = 'raw'
+        AND grade_key = ${grade}
         AND capture_status = 'success'
         AND price_cents IS NOT NULL
         AND price_cents > 0
         AND captured_at >= NOW() - INTERVAL '14 days'
+        ${currencyFilter}
+    ), comparable AS (
+      SELECT current_snapshot.card_id, current_snapshot.provider_key, current_snapshot.grade_key,
+        current_snapshot.price_cents AS current_cents, previous_snapshot.price_cents AS previous_cents,
+        current_snapshot.currency, current_snapshot.captured_at AS current_at,
+        previous_snapshot.captured_at AS previous_at,
+        ((current_snapshot.price_cents - previous_snapshot.price_cents)::numeric
+          / previous_snapshot.price_cents) * 100 AS movement_percent
+      FROM ranked current_snapshot
+      JOIN ranked previous_snapshot ON previous_snapshot.card_id = current_snapshot.card_id
+        AND previous_snapshot.provider_key = current_snapshot.provider_key
+        AND previous_snapshot.grade_key = current_snapshot.grade_key
+        AND previous_snapshot.currency = current_snapshot.currency
+        AND previous_snapshot.position = 2
+      WHERE current_snapshot.position = 1
+        AND current_snapshot.captured_at >= NOW() - INTERVAL '36 hours'
     )
-    SELECT current_snapshot.card_id,
-      current_snapshot.price_cents AS current_cents,
-      previous_snapshot.price_cents AS previous_cents,
-      current_snapshot.currency,
-      current_snapshot.captured_at AS current_at,
-      previous_snapshot.captured_at AS previous_at
-    FROM ranked current_snapshot
-    JOIN ranked previous_snapshot
-      ON previous_snapshot.card_id = current_snapshot.card_id
-      AND previous_snapshot.position = 2
-      AND previous_snapshot.currency = current_snapshot.currency
-    WHERE current_snapshot.position = 1
-      AND current_snapshot.captured_at >= NOW() - INTERVAL '36 hours'
-    ORDER BY ABS(
-      (current_snapshot.price_cents - previous_snapshot.price_cents)::numeric
-      / previous_snapshot.price_cents
-    ) DESC
-    LIMIT ${limit}
+    SELECT * FROM comparable current_snapshot
+    WHERE ABS(movement_percent) <= 500
+      AND movement_percent <> 0 ${direction}
+    ORDER BY ${ordering}, card_id ASC
+    LIMIT ${limit * 5}
   `);
 
   const shaped = await Promise.all(
     result.rows.map(async (row) => {
       const canonical = await readCanonicalPublicCard(row.card_id);
       if (!canonical.value) return null;
+      if (!matchesPreferences(canonical.value, preferences)) return null;
       const movement = calculateSnapshotMovement(
         row.previous_cents,
         row.current_cents,
       );
       if (!movement) return null;
+      const currentAt = new Date(row.current_at);
+      const previousAt = new Date(row.previous_at);
       return {
         ...canonical.value,
         variants: [{
           condition: "Near Mint",
           price: row.current_cents / 100,
           priceChange7d: movement.percent,
-          lastUpdated: Math.floor(row.current_at.getTime() / 1000),
+          lastUpdated: Math.floor(currentAt.getTime() / 1000),
           markets: [{ region: "source", currency: row.currency, price: row.current_cents / 100 }],
         }],
         market_price: row.current_cents / 100,
         previous_price: row.previous_cents / 100,
+        absolute_change: movement.absoluteCents / 100,
         price_change_7d: movement.percent,
         trend: movement.trend,
         currency: row.currency,
-        updated_at: row.current_at.toISOString(),
-        previous_observed_at: row.previous_at.toISOString(),
+        grade: row.grade_key,
+        provider: row.provider_key,
+        updated_at: currentAt.toISOString(),
+        observed_at: currentAt.toISOString(),
+        previous_observed_at: previousAt.toISOString(),
       };
     }),
   );
-  return shaped.filter((card): card is NonNullable<typeof card> => card !== null);
+  return shaped.filter((card): card is NonNullable<typeof card> => card !== null).slice(0, limit);
 }
 
-async function persistedRecentlyAddedCards(limit = 8) {
+export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<string> | null = null) {
   const result = await db.execute<{
     card_id: string;
-    price_cents: number;
-    currency: string;
-    fetched_at: Date;
+    price_cents: number | null;
+    currency: string | null;
+    fetched_at: Date | null;
+    created_at: Date;
   }>(sql`
-    SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at
+    SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at, e.created_at
     FROM catalogue_external_ids e
-    JOIN current_quotes q
+    LEFT JOIN current_quotes q
       ON q.card_id = e.external_id
       AND q.provider_key = 'pricecharting'
       AND q.grade_key = 'raw'
     WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
-    ORDER BY e.created_at DESC
-    LIMIT ${limit}
+    -- Provenance timestamps can be equal during a sync batch; external ID
+    -- makes both this feed and trending's provenance fallback repeatable.
+    ORDER BY e.created_at DESC, e.external_id ASC
+    LIMIT ${limit * 5}
   `);
   const shaped = await Promise.all(result.rows.map(async (row) => {
     const canonical = await readCanonicalPublicCard(row.card_id);
     if (!canonical.value) return null;
+    if (!matchesPreferences(canonical.value, preferences)) return null;
+    const addedAt = new Date(row.created_at);
+    const fetchedAt = row.fetched_at ? new Date(row.fetched_at) : null;
     return {
       ...canonical.value,
       variants: [{
         condition: "Near Mint",
-        price: row.price_cents / 100,
-        lastUpdated: Math.floor(row.fetched_at.getTime() / 1000),
-        markets: [{ region: "source", currency: row.currency, price: row.price_cents / 100 }],
+        ...(row.price_cents === null ? {} : {
+          price: row.price_cents / 100,
+          lastUpdated: Math.floor(fetchedAt!.getTime() / 1000),
+          markets: [{ region: "source", currency: row.currency!, price: row.price_cents / 100 }],
+        }),
       }],
+      market_price: row.price_cents === null ? null : row.price_cents / 100,
       currency: row.currency,
-      updated_at: row.fetched_at.toISOString(),
+      catalogue_added_at: addedAt.toISOString(),
+      updated_at: fetchedAt?.toISOString() ?? null,
     };
   }));
-  return shaped.filter((card): card is NonNullable<typeof card> => card !== null);
+  return shaped.filter((card): card is NonNullable<typeof card> => card !== null).slice(0, limit);
 }
 
 /**
@@ -488,10 +569,16 @@ async function persistedRecentlyAddedCards(limit = 8) {
  * a card, currency, provider, and grade, be positive, and be fresh enough to
  * avoid presenting stale data as a current market signal.
  */
-router.get("/catalog/market-movers", async (_req, res) => {
+router.get("/catalog/market-movers", async (req, res) => {
   try {
+    const preferences = await optionalPreferredGames(req.headers.authorization);
+    const requestedGrade = typeof req.query.grade === "string" && req.query.grade.trim()
+      ? req.query.grade.trim() : "raw";
+    const normalizedGrade = normalizeGradeKey(requestedGrade);
+    const grade = normalizedGrade && isValidGradeKey(normalizedGrade) ? normalizedGrade : "raw";
+    const currency = typeof req.query.currency === "string" ? req.query.currency.trim() : undefined;
     return res.json({
-      data: await persistedMarketCards(),
+      data: await persistedMarketCards(8, marketMode(req.query.mode), grade, currency, preferences),
       source: "VerifiedTCG snapshots",
     });
   } catch {
@@ -501,18 +588,40 @@ router.get("/catalog/market-movers", async (_req, res) => {
 
 /**
  * GET /catalog/trending
- * Returns the same deterministic, persisted-snapshot market ranking as movers.
- * Verified TCG does not yet retain an independent popularity signal, so this
- * endpoint deliberately does not claim synthetic views, searches, or sales.
+ * Ranks real recent collection/wishlist activity. When that persisted signal
+ * is too sparse, it deterministically fills from snapshot movement and then
+ * catalogue provenance; it never invents views, searches, or sales.
  */
-router.get("/catalog/trending", async (_req, res) => {
+router.get("/catalog/trending", async (req, res) => {
   try {
-    const cards = await persistedMarketCards();
+    const preferences = await optionalPreferredGames(req.headers.authorization);
+    const activity = await db.execute<{ card_id: string }>(sql`
+      SELECT entity_id AS card_id
+      FROM activity_log
+      WHERE event_type IN ('card_added', 'wishlist_added')
+        AND entity_id IS NOT NULL
+        AND created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY entity_id
+      ORDER BY COUNT(*) DESC, MAX(created_at) DESC, entity_id ASC
+      LIMIT 40
+    `);
+    const activityCards = (await Promise.all(activity.rows.map(async ({ card_id }) => {
+      const canonical = await readCanonicalPublicCard(card_id);
+      return canonical.value && matchesPreferences(canonical.value, preferences) ? canonical.value : null;
+    }))).filter((card): card is NonNullable<typeof card> => card !== null);
+    // Engagement is authoritative when sufficient. Otherwise the deterministic
+    // fallback is persisted movement followed by catalogue provenance, never a
+    // synthetic popularity score.
+    const fallback = activityCards.length >= 8 ? [] : [
+      ...await persistedMarketCards(8, "movers", "raw", undefined, preferences),
+      ...await persistedRecentlyAddedCards(8, preferences),
+    ];
+    const cards = [...activityCards, ...fallback].filter((card, index, all) =>
+      all.findIndex((other) => other.id === card.id) === index,
+    ).slice(0, 8);
     return res.json({
-      // Trend is a deterministic ranking of fresh, comparable snapshot
-      // movements; the same records power movers rather than simulated views.
       data: cards,
-      source: "VerifiedTCG snapshots",
+      source: activityCards.length >= 8 ? "VerifiedTCG activity" : "VerifiedTCG activity and catalogue",
     });
   } catch {
     return res.status(503).json({ error: "Market data is temporarily unavailable" });
@@ -525,10 +634,10 @@ router.get("/catalog/trending", async (_req, res) => {
  * identity creation time, with a real current raw quote where available.
  * This is catalogue provenance, not a fabricated release-date or price sort.
  */
-router.get("/catalog/recently-added", async (_req, res) => {
+router.get("/catalog/recently-added", async (req, res) => {
   try {
     return res.json({
-      data: await persistedRecentlyAddedCards(),
+      data: await persistedRecentlyAddedCards(8, await optionalPreferredGames(req.headers.authorization)),
       source: "VerifiedTCG catalogue",
     });
   } catch {

@@ -3,11 +3,13 @@ import type { Card, MarketMover } from '@/types';
 import { catalogCardToAppCard } from './catalogApi';
 import type { CatalogCard } from './catalogApi';
 import { apiJson } from './apiClient';
+import { getAccessToken } from './auth';
 
 // ── Server response shapes ────────────────────────────────────────────────────
 
 interface MarketMoverServerCard extends CatalogCard {
   market_price: number;
+  absolute_change: number;
   price_change_7d: number;
   trend: 'up' | 'down' | 'neutral';
   currency: string;
@@ -23,8 +25,20 @@ interface MarketMoverServerCard extends CatalogCard {
 
 // v2 prevents pre-release, provider-search market results from surviving as
 // a release fallback after the snapshot-backed feed ships.
-const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v2';
+const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v3';
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export interface MarketCacheOptions {
+  force?: boolean;
+  /** Stable, non-secret identity + preference fingerprint supplied by the view. */
+  cacheScope?: string;
+}
+
+function scopedCacheKey(scope?: string): string {
+  // Do not put a bearer token in AsyncStorage. Views pass the authenticated
+  // user ID and preference fingerprint; anonymous callers remain isolated.
+  return `${MARKET_CACHE_KEY}:${encodeURIComponent(scope || 'anonymous')}`;
+}
 
 interface MarketCacheSection<T> {
   data: T;
@@ -47,9 +61,9 @@ function singleFlight<T>(key: string, request: () => Promise<T>): Promise<T> {
   return flight;
 }
 
-async function readMarketCache(): Promise<MarketCache> {
+async function readMarketCache(scope?: string): Promise<MarketCache> {
   try {
-    const raw = await AsyncStorage.getItem(MARKET_CACHE_KEY);
+    const raw = await AsyncStorage.getItem(scopedCacheKey(scope));
     return raw ? (JSON.parse(raw) as MarketCache) : {};
   } catch {
     return {};
@@ -65,12 +79,13 @@ let cacheWriteQueue: Promise<void> = Promise.resolve();
 function writeMarketCacheSection<K extends keyof MarketCache>(
   key: K,
   data: NonNullable<MarketCache[K]>['data'],
+  scope?: string,
 ): Promise<void> {
   cacheWriteQueue = cacheWriteQueue.then(async () => {
     try {
-      const cache = await readMarketCache();
+      const cache = await readMarketCache(scope);
       cache[key] = { data, updatedAt: Date.now() } as MarketCache[K];
-      await AsyncStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
+      await AsyncStorage.setItem(scopedCacheKey(scope), JSON.stringify(cache));
     } catch {
       // Cache writes are best-effort
     }
@@ -83,24 +98,29 @@ function writeMarketCacheSection<K extends keyof MarketCache>(
  * - Cache hit  → returns cached data immediately; if past TTL, refreshes in
  *   the background and reports fresh data via `onUpdate`.
  * - Cache miss → awaits the network fetch (the only blocking path).
- * Empty fetch results never overwrite existing cached data.
+ * Successful empty fetch results are authoritative and clear stale cached data.
  */
 async function swrFetch<K extends keyof MarketCache, T extends NonNullable<MarketCache[K]>['data']>(
   key: K,
   fetcher: () => Promise<T>,
   onUpdate?: (fresh: T) => void,
+  options?: MarketCacheOptions,
 ): Promise<T> {
-  const cache = await readMarketCache();
+  // A manual refresh must not be satisfied by an otherwise-fresh cache entry.
+  // Failed requests leave cache untouched; successful empty responses clear it.
+  if (options?.force) return fetcher();
+  const cache = await readMarketCache(options?.cacheScope);
   const section = cache[key] as MarketCacheSection<T> | undefined;
 
-  if (section && Array.isArray(section.data) && section.data.length > 0) {
+  if (section && Array.isArray(section.data)) {
     const isStale = Date.now() - section.updatedAt > MARKET_CACHE_TTL_MS;
     if (isStale) {
       // Background revalidation — never blocks the caller.
       // (The base fetchers write the cache themselves on success.)
       fetcher()
         .then(fresh => {
-          if (fresh.length > 0) onUpdate?.(fresh);
+          // Empty is an authoritative successful response, not a failure.
+          onUpdate?.(fresh);
         })
         .catch(() => {});
     }
@@ -112,18 +132,18 @@ async function swrFetch<K extends keyof MarketCache, T extends NonNullable<Marke
 }
 
 /** Cached variant of getMarketMovers — see swrFetch for semantics. */
-export function getMarketMoversCached(onUpdate?: (fresh: MarketMover[]) => void): Promise<MarketMover[]> {
-  return swrFetch('movers', getMarketMovers, onUpdate);
+export function getMarketMoversCached(onUpdate?: (fresh: MarketMover[]) => void, options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return swrFetch('movers', () => getMarketMovers(options), onUpdate, options);
 }
 
 /** Cached variant of getTrendingCards — see swrFetch for semantics. */
-export function getTrendingCardsCached(onUpdate?: (fresh: Card[]) => void): Promise<Card[]> {
-  return swrFetch('trending', getTrendingCards, onUpdate);
+export function getTrendingCardsCached(onUpdate?: (fresh: Card[]) => void, options?: MarketCacheOptions): Promise<Card[]> {
+  return swrFetch('trending', () => getTrendingCards(options), onUpdate, options);
 }
 
 /** Cached variant of getRecentlyAddedCards — see swrFetch for semantics. */
-export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void): Promise<Card[]> {
-  return swrFetch('recentlyAdded', getRecentlyAddedCards, onUpdate);
+export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void, options?: MarketCacheOptions): Promise<Card[]> {
+  return swrFetch('recentlyAdded', () => getRecentlyAddedCards(options), onUpdate, options);
 }
 
 // ── Live API functions ────────────────────────────────────────────────────────
@@ -134,25 +154,27 @@ export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void):
  * A successful empty array means no comparable movement exists. Errors are
  * deliberately propagated so the screen can show an unavailable state.
  */
-export async function getMarketMovers(): Promise<MarketMover[]> {
-  return singleFlight('market-movers', fetchMarketMovers);
+export async function getMarketMovers(options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return singleFlight(`market-movers:${options?.cacheScope ?? 'anonymous'}`, () => fetchMarketMovers(options?.cacheScope));
 }
 
-async function fetchMarketMovers(): Promise<MarketMover[]> {
-  const body = await apiJson<{ data: MarketMoverServerCard[] }>('/api/catalog/market-movers');
+async function fetchMarketMovers(scope?: string): Promise<MarketMover[]> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Your session has expired. Please sign in again.');
+  const body = await apiJson<{ data: MarketMoverServerCard[] }>('/api/catalog/market-movers', { accessToken: token });
   const movers = (body.data ?? []).map((card) => {
       const appCard = catalogCardToAppCard(card);
       return {
       card: appCard,
       currentPrice: card.market_price,
-      priceChange: (card.market_price * card.price_change_7d) / 100,
+      priceChange: card.absolute_change,
       priceChangePercent: card.price_change_7d,
       trend: card.trend,
       currency: card.currency,
       updatedAt: card.updated_at,
     };
   });
-  if (movers.length > 0) await writeMarketCacheSection('movers', movers);
+  await writeMarketCacheSection('movers', movers, scope);
   return movers;
 }
 
@@ -161,14 +183,16 @@ async function fetchMarketMovers(): Promise<MarketMover[]> {
  * Verified TCG does not yet claim a separate social-popularity signal.
  * A successful empty array means no persisted trend records exist.
  */
-export async function getTrendingCards(): Promise<Card[]> {
-  return singleFlight('trending', fetchTrendingCards);
+export async function getTrendingCards(options?: MarketCacheOptions): Promise<Card[]> {
+  return singleFlight(`trending:${options?.cacheScope ?? 'anonymous'}`, () => fetchTrendingCards(options?.cacheScope));
 }
 
-async function fetchTrendingCards(): Promise<Card[]> {
-  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/trending');
+async function fetchTrendingCards(scope?: string): Promise<Card[]> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Your session has expired. Please sign in again.');
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/trending', { accessToken: token });
   const cards = (body.data ?? []).map(catalogCardToAppCard);
-  if (cards.length > 0) await writeMarketCacheSection('trending', cards);
+  await writeMarketCacheSection('trending', cards, scope);
   return cards;
 }
 
@@ -178,13 +202,15 @@ async function fetchTrendingCards(): Promise<Card[]> {
  * hand-picked price list.
  * A successful empty array means the catalogue has no persisted records yet.
  */
-export async function getRecentlyAddedCards(): Promise<Card[]> {
-  return singleFlight('recently-added', fetchRecentlyAddedCards);
+export async function getRecentlyAddedCards(options?: MarketCacheOptions): Promise<Card[]> {
+  return singleFlight(`recently-added:${options?.cacheScope ?? 'anonymous'}`, () => fetchRecentlyAddedCards(options?.cacheScope));
 }
 
-async function fetchRecentlyAddedCards(): Promise<Card[]> {
-  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/recently-added');
+async function fetchRecentlyAddedCards(scope?: string): Promise<Card[]> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Your session has expired. Please sign in again.');
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/recently-added', { accessToken: token });
   const cards = (body.data ?? []).map(catalogCardToAppCard);
-  if (cards.length > 0) await writeMarketCacheSection('recentlyAdded', cards);
+  await writeMarketCacheSection('recentlyAdded', cards, scope);
   return cards;
 }

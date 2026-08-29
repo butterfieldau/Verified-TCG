@@ -89,7 +89,8 @@ export interface PriceRecord {
   cgc9?: number;
   cgc10?: number;
   currency: string;
-  updatedAt: string;
+  /** Null means the source did not provide a price quote timestamp. */
+  updatedAt: string | null;
   change24h?: number;  // percentage
   change7d?: number;
   change30d?: number;

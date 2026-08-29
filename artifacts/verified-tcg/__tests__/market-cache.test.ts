@@ -14,6 +14,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 jest.mock('@/services/catalogApi', () => ({
   catalogCardToAppCard: (c: any) => c,
 }));
+jest.mock('@/services/auth', () => ({
+  getAccessToken: jest.fn(async () => 'market-test-token'),
+}));
 
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 
@@ -26,7 +29,7 @@ const {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
 } = require('@/services/market') as typeof import('@/services/market');
 
-const CACHE_KEY = '@verified_tcg/market_cache_v2';
+const CACHE_KEY = '@verified_tcg/market_cache_v3:anonymous';
 
 function jsonResponse(data: unknown) {
   return { ok: true, json: async () => ({ data }) } as Response;
@@ -85,6 +88,37 @@ describe('market SWR cache', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('force refresh bypasses fresh cache and retains it when the request is empty', async () => {
+    await getMarketMoversCached();
+    (global as any).fetch = jest.fn(async () => jsonResponse([]));
+
+    const result = await getMarketMoversCached(undefined, { force: true });
+    expect(result).toEqual([]);
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    const cache = JSON.parse((await AsyncStorage.getItem(CACHE_KEY))!);
+    expect(cache.movers.data).toHaveLength(0);
+  });
+
+  it('sends the stored access token as a bearer authorization header', async () => {
+    const fetchMock = mockFetchByEndpoint();
+    (global as any).fetch = fetchMock;
+    await getMarketMoversCached();
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.headers.get('Authorization')).toBe('Bearer market-test-token');
+  });
+
+  it('isolates cached market data by supplied user and preference scope', async () => {
+    await getMarketMoversCached(undefined, { cacheScope: 'user-a:pokemon' });
+    const fetchMock = mockFetchByEndpoint();
+    (global as any).fetch = fetchMock;
+    const fromOtherScope = await getMarketMoversCached(undefined, { cacheScope: 'user-b:magic' });
+
+    expect(fromOtherScope).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v3:user-a%3Apokemon')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v3:user-b%3Amagic')).toBeTruthy();
+  });
+
   it('shares one matching request between concurrent market consumers', async () => {
     const fetchMock = mockFetchByEndpoint();
     (global as any).fetch = fetchMock;
@@ -119,5 +153,20 @@ describe('market SWR cache', () => {
     expect(onUpdate).not.toHaveBeenCalled();
     const after = JSON.parse((await AsyncStorage.getItem(CACHE_KEY))!);
     expect(after.movers.data).toHaveLength(1);
+  });
+
+  it('clears stale cached data and notifies the view on a successful empty revalidation', async () => {
+    await getMarketMoversCached();
+    const cache = JSON.parse((await AsyncStorage.getItem(CACHE_KEY))!);
+    cache.movers.updatedAt = Date.now() - 10 * 60 * 1000;
+    await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    (global as any).fetch = jest.fn(async () => jsonResponse([]));
+
+    const onUpdate = jest.fn();
+    expect(await getMarketMoversCached(onUpdate)).toHaveLength(1);
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(onUpdate).toHaveBeenCalledWith([]);
+    expect(JSON.parse((await AsyncStorage.getItem(CACHE_KEY))!).movers.data).toEqual([]);
   });
 });
