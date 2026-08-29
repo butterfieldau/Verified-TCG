@@ -430,8 +430,13 @@ function preferenceCandidateFilter(cardId: SQL, preferences: Set<string> | null)
     WHERE preference_external.provider_key = 'justtcg'
       AND preference_external.entity_type = 'card'
       AND preference_external.external_id = ${cardId}
-      AND regexp_replace(translate(lower(preference_game.name), 'é', 'e'), '[^a-z0-9]', '', 'g')
-        IN (${sql.join([...preferences].map((value) => sql`${value}`), sql`, `)})
+      AND CASE regexp_replace(translate(lower(preference_game.name), 'é', 'e'), '[^a-z0-9]', '', 'g')
+        WHEN 'pokemontcg' THEN 'pokemon'
+        WHEN 'onepiecetcg' THEN 'onepiece'
+        WHEN 'mtg' THEN 'magic'
+        WHEN 'magicthegathering' THEN 'magic'
+        ELSE regexp_replace(translate(lower(preference_game.name), 'é', 'e'), '[^a-z0-9]', '', 'g')
+      END IN (${sql.join([...preferences].map((value) => sql`${value}`), sql`, `)})
   )`;
 }
 
@@ -614,14 +619,14 @@ router.get("/catalog/trending", async (req, res) => {
   try {
     const preferences = await optionalPreferredGames(req.headers.authorization);
     const activity = await db.execute<{ card_id: string }>(sql`
-      SELECT entity_id AS card_id
-      FROM activity_log
-      WHERE event_type IN ('card_added', 'wishlist_added')
-        AND entity_id IS NOT NULL
-        AND created_at >= NOW() - INTERVAL '7 days'
-        ${preferenceCandidateFilter(sql`entity_id`, preferences)}
-      GROUP BY entity_id
-      ORDER BY COUNT(*) DESC, MAX(created_at) DESC, entity_id ASC
+      SELECT recent_activity.entity_id AS card_id
+      FROM activity_log recent_activity
+      WHERE recent_activity.event_type IN ('card_added', 'wishlist_added')
+        AND recent_activity.entity_id IS NOT NULL
+        AND recent_activity.created_at >= NOW() - INTERVAL '7 days'
+        ${preferenceCandidateFilter(sql`recent_activity.entity_id`, preferences)}
+      GROUP BY recent_activity.entity_id
+      ORDER BY COUNT(*) DESC, MAX(recent_activity.created_at) DESC, recent_activity.entity_id ASC
       LIMIT 40
     `);
     const activityCards = (await Promise.all(activity.rows.map(async ({ card_id }) => {

@@ -120,5 +120,13 @@ describe("Stage C persisted market acceptance (development DB)", () => {
       recent.body.data.findIndex((x: { id: string }) => x.id === ids[1]), "tied provenance timestamps use external ID");
     const trending = await request.get("/api/catalog/trending");
     assert.ok(trending.body.data.findIndex((x: { id: string }) => x.id === ids[0]) < trending.body.data.findIndex((x: { id: string }) => x.id === ids[1]));
+
+    await db.update(usersTable).set({ preferredTcgs: "MTG" }).where(eq(usersTable.id, userId));
+    const magicMovers = await request.get("/api/catalog/market-movers?currency=USD").set("Authorization", `Bearer ${token}`);
+    const magicRecent = await request.get("/api/catalog/recently-added").set("Authorization", `Bearer ${token}`);
+    const magicTrending = await request.get("/api/catalog/trending").set("Authorization", `Bearer ${token}`);
+    assert.deepEqual(magicMovers.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic movers");
+    assert.deepEqual(magicRecent.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic catalogue provenance");
+    assert.deepEqual(magicTrending.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic activity");
   });
 });
