@@ -73,10 +73,18 @@ describe("Stage C persisted market acceptance (development DB)", () => {
       currency: "USD", fetchedAt: new Date(),
     });
     await db.update(usersTable).set({ preferredTcgs: "Pokemon TCG" }).where(eq(usersTable.id, userId));
-    await db.insert(activityLogTable).values([
-      ...Array.from({ length: 3 }, () => ({ userId, eventType: "card_added" as const, entityId: ids[0]!, entityName: "A" })),
-      { userId, eventType: "wishlist_added" as const, entityId: ids[1]!, entityName: "B" },
-    ]);
+    for (let index = 0; index < 3; index++) {
+      const response = await request.post("/api/collection").set("Authorization", `Bearer ${token}`).send({
+        cardId: ids[0], card: { id: ids[0], name: "A" }, acquiredAt: "2025-01-01",
+        quantity: 1, condition: "near_mint",
+      });
+      assert.equal(response.status, 201);
+    }
+    const wishlistAdd = await request.post("/api/wishlist").set("Authorization", `Bearer ${token}`).send({
+      id: `${ns}-wishlist-b`, cardId: ids[1], card: { id: ids[1], name: "B" },
+      desiredGrade: null, targetPrice: null, priceAlertEnabled: false, addedAt: new Date().toISOString(),
+    });
+    assert.equal(wishlistAdd.status, 201);
   });
 
   after(async () => {

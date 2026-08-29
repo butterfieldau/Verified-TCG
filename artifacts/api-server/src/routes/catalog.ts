@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, usersTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import jwt from "jsonwebtoken";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import {
@@ -419,6 +419,22 @@ function matchesPreferences(card: Record<string, unknown>, preferences: Set<stri
   return !preferences || preferences.has(normalizeTcgName(String(card.game ?? "")));
 }
 
+/** SQL equivalent of game-name normalization, evaluated before candidate LIMIT. */
+function preferenceCandidateFilter(cardId: SQL, preferences: Set<string> | null): SQL {
+  if (!preferences?.size) return sql``;
+  return sql`AND EXISTS (
+    SELECT 1 FROM catalogue_external_ids preference_external
+    JOIN catalogue_cards preference_card ON preference_card.id = preference_external.entity_id
+    JOIN catalogue_sets preference_set ON preference_set.id = preference_card.set_id
+    JOIN catalogue_games preference_game ON preference_game.id = preference_set.game_id
+    WHERE preference_external.provider_key = 'justtcg'
+      AND preference_external.entity_type = 'card'
+      AND preference_external.external_id = ${cardId}
+      AND regexp_replace(translate(lower(preference_game.name), 'é', 'e'), '[^a-z0-9]', '', 'g')
+        IN (${sql.join([...preferences].map((value) => sql`${value}`), sql`, `)})
+  )`;
+}
+
 /**
  * Market reads are based exclusively on persisted PriceCharting snapshots.
  * A row is eligible only when it has two non-zero raw observations from the
@@ -439,6 +455,7 @@ export async function persistedMarketCards(
       ? sql`AND movement_percent < 0`
       : sql``;
   const currencyFilter = currency ? sql`AND currency = ${currency.toUpperCase()}` : sql``;
+  const preferenceFilter = preferenceCandidateFilter(sql`current_snapshot.card_id`, preferences);
   const ordering = mode === "gainers" ? sql`movement_percent DESC`
     : mode === "losers" ? sql`movement_percent ASC` : sql`ABS(movement_percent) DESC`;
   const result = await db.execute<PersistedMarketRow>(sql`
@@ -474,7 +491,7 @@ export async function persistedMarketCards(
     )
     SELECT * FROM comparable current_snapshot
     WHERE ABS(movement_percent) <= 500
-      AND movement_percent <> 0 ${direction}
+      AND movement_percent <> 0 ${direction} ${preferenceFilter}
     ORDER BY ${ordering}, card_id ASC
     LIMIT ${limit * 5}
   `);
@@ -532,6 +549,7 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
       AND q.provider_key = 'pricecharting'
       AND q.grade_key = 'raw'
     WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+      ${preferenceCandidateFilter(sql`e.external_id`, preferences)}
     -- Provenance timestamps can be equal during a sync batch; external ID
     -- makes both this feed and trending's provenance fallback repeatable.
     ORDER BY e.created_at DESC, e.external_id ASC
@@ -601,6 +619,7 @@ router.get("/catalog/trending", async (req, res) => {
       WHERE event_type IN ('card_added', 'wishlist_added')
         AND entity_id IS NOT NULL
         AND created_at >= NOW() - INTERVAL '7 days'
+        ${preferenceCandidateFilter(sql`entity_id`, preferences)}
       GROUP BY entity_id
       ORDER BY COUNT(*) DESC, MAX(created_at) DESC, entity_id ASC
       LIMIT 40

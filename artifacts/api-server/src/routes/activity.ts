@@ -112,4 +112,20 @@ export function logActivity(
     .catch(() => {/* swallow logging errors */});
 }
 
+/** Awaitable best-effort writer for mutations whose follow-up reads need to
+ * observe activity immediately. Telemetry failure never fails the mutation. */
+export async function logActivitySafely(
+  userId: string,
+  eventType: ActivityEventType,
+  entityId: string | null,
+  entityName: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await db.insert(activityLogTable).values({
+      userId, eventType, entityId, entityName, metadata: metadata ?? null,
+    });
+  } catch { /* business mutation remains successful */ }
+}
+
 export default router;

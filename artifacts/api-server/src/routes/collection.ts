@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { collectionItemsTable, currentQuotesTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
-import { logActivity } from "./activity.js";
+import { logActivity, logActivitySafely } from "./activity.js";
 import { PROVIDER_KEY } from "../pricing/pricecharting.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { normalizeGradeKey } from "../pricing/grades.js";
@@ -246,9 +246,9 @@ router.post("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     })
     .returning();
 
-  // Log activity — fire-and-forget
+  // A POST always creates a new collection item (PATCH is the update route).
   const cardName = (body.card as Record<string, unknown>)?.name as string | undefined;
-  logActivity(req.userId!, "card_added", body.cardId as string, cardName ?? null, {
+  await logActivitySafely(req.userId!, "card_added", body.cardId as string, cardName ?? null, {
     cardImageUrl: ((body.card as Record<string, unknown>)?.image as string | undefined) ?? null,
   });
 
