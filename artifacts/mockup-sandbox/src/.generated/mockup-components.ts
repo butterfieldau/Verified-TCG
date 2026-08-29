@@ -3,6 +3,9 @@ type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
 export const modules: ModuleMap = {
   "./components/mockups/home-redesign/HomeScreen.tsx": () => import("../components/mockups/home-redesign/HomeScreen.tsx"),
   "./components/mockups/scan-screen/Redesign.tsx": () => import("../components/mockups/scan-screen/Redesign.tsx"),
+  "./components/mockups/verified-tcg-website/LandingPage.tsx": () => import("../components/mockups/verified-tcg-website/LandingPage.tsx"),
+  "./components/mockups/verified-tcg-website/PrivacyPolicy.tsx": () => import("../components/mockups/verified-tcg-website/PrivacyPolicy.tsx"),
+  "./components/mockups/verified-tcg-website/WebApp.tsx": () => import("../components/mockups/verified-tcg-website/WebApp.tsx"),
   "./components/mockups/verified-tcg/AddCard.tsx": () => import("../components/mockups/verified-tcg/AddCard.tsx"),
   "./components/mockups/verified-tcg/CardDetail.tsx": () => import("../components/mockups/verified-tcg/CardDetail.tsx"),
   "./components/mockups/verified-tcg/Collection.tsx": () => import("../components/mockups/verified-tcg/Collection.tsx"),
@@ -13,8 +16,5 @@ export const modules: ModuleMap = {
   "./components/mockups/verified-tcg/Scanner.tsx": () => import("../components/mockups/verified-tcg/Scanner.tsx"),
   "./components/mockups/verified-tcg/Splash.tsx": () => import("../components/mockups/verified-tcg/Splash.tsx"),
   "./components/mockups/verified-tcg/SplashAdvanced.tsx": () => import("../components/mockups/verified-tcg/SplashAdvanced.tsx"),
-  "./components/mockups/verified-tcg/Welcome.tsx": () => import("../components/mockups/verified-tcg/Welcome.tsx"),
-  "./components/mockups/verified-tcg-website/LandingPage.tsx": () => import("../components/mockups/verified-tcg-website/LandingPage.tsx"),
-  "./components/mockups/verified-tcg-website/PrivacyPolicy.tsx": () => import("../components/mockups/verified-tcg-website/PrivacyPolicy.tsx"),
-  "./components/mockups/verified-tcg-website/WebApp.tsx": () => import("../components/mockups/verified-tcg-website/WebApp.tsx")
+  "./components/mockups/verified-tcg/Welcome.tsx": () => import("../components/mockups/verified-tcg/Welcome.tsx")
 };
