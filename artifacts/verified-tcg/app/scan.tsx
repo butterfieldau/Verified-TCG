@@ -24,8 +24,13 @@ import { useApp } from '@/context/AppContext';
 import colors from '@/constants/colors';
 import { canUseUnlimitedScanner } from '@/services/subscription';
 import ScanLimitBanner from '@/components/ui/ScanLimitBanner';
-import { getAccessToken } from '@/services/auth';
-import { ApiClientError, apiRequest } from '@/services/apiClient';
+import {
+  mapScanError,
+  recognizeCard,
+  scanCardToAppCard,
+  type ScanErrorCode as RecognitionErrorCode,
+  type ScanResult,
+} from '@/services/scanRecognition';
 import {
   type RecentScan,
   loadRecentScans,
@@ -44,71 +49,9 @@ const GUIDE_SIDE_W = GUIDE_X; // alias used in mask rects
 
 type ScanState = 'idle' | 'capturing' | 'recognizing' | 'match' | 'low_confidence' | 'error' | 'auto_searching' | 'confirmed';
 
-interface RecognizedCard {
-  card: Record<string, unknown>;
-  confidence: number;
-}
-
-interface ScanResult {
-  topMatch: RecognizedCard | null;
-  matches: RecognizedCard[];
-  lowConfidence: boolean;
-  imageUnreadable: boolean;
-  extracted: { name: string; setName: string; number: string };
-  scansUsed: number;
-  scanLimit: number | null;
-  scansRemaining: number | null;
-}
-
 const MIN_IMAGE_B64_CHARS = 8_000;
 
-type ScanErrorCode = 'image_quality' | 'unreadable' | 'no_match' | 'api_error' | '';
-
-// ── API error type ────────────────────────────────────────────────────────────
-
-class ScanApiError extends Error {
-  code?: string;
-  scansUsed?: number;
-  scanLimit?: number | null;
-  scansRemaining?: number | null;
-
-  constructor(
-    message: string,
-    opts?: {
-      code?: string;
-      scansUsed?: number;
-      scanLimit?: number | null;
-      scansRemaining?: number | null;
-    },
-  ) {
-    super(message);
-    this.name = 'ScanApiError';
-    this.code = opts?.code;
-    this.scansUsed = opts?.scansUsed;
-    this.scanLimit = opts?.scanLimit;
-    this.scansRemaining = opts?.scansRemaining;
-  }
-}
-
-// ── API call ──────────────────────────────────────────────────────────────────
-
-async function recognizeCard(base64Image: string): Promise<ScanResult> {
-  const token = await getAccessToken();
-  try {
-    const response = await apiRequest('/api/scan/recognize', {
-      method: 'POST',
-      accessToken: token,
-      body: JSON.stringify({ image: base64Image, mimeType: 'image/jpeg' }),
-    });
-    return response.json() as Promise<ScanResult>;
-  } catch (error) {
-    const apiError = error as ApiClientError;
-    throw new ScanApiError(
-      error instanceof Error ? error.message : 'Recognition failed. Please try again.',
-      { code: apiError.status === 403 ? 'LIMIT_REACHED' : undefined },
-    );
-  }
-}
+type ScanErrorCode = RecognitionErrorCode | 'image_quality' | '';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +74,7 @@ export default function ScanScreen() {
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [selectedMatchIndex, setSelectedMatchIndex] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [showLimitSheet, setShowLimitSheet] = useState(false);
   const [showActionSheet, setShowActionSheet] = useState(false);
@@ -140,6 +84,7 @@ export default function ScanScreen() {
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
 
   const sessionIdRef = useRef(0);
+  const captureRequestRef = useRef(0);
   const cameraRef = useRef<CameraView>(null);
 
   // ── Animations ────────────────────────────────────────────────────────────
@@ -260,25 +205,27 @@ export default function ScanScreen() {
 
     const sessionAtCapture  = sessionIdRef.current;
     const scanGenAtCapture  = getScanGeneration();
+    const captureRequest = ++captureRequestRef.current;
 
     setScanState('capturing');
 
     try {
       const photo = await cameraRef.current?.takePictureAsync({
         base64: true,
-        quality: 0.5,
-        skipProcessing: true,
+        quality: 0.7,
+        skipProcessing: false,
       });
 
+      if (captureRequest !== captureRequestRef.current) return;
       if (!photo?.base64) {
         setErrorMessage('Could not capture image. Please try again.');
-        setErrorCode('api_error');
+        setErrorCode('unreadable');
         setScanState('error');
         return;
       }
 
-      if (photo.base64.length < MIN_IMAGE_B64_CHARS) {
-        setErrorMessage('The image looks too dark or blank.');
+      if (photo.base64.length < MIN_IMAGE_B64_CHARS || (photo.width && photo.width < 600) || (photo.height && photo.height < 600)) {
+        setErrorMessage('The photo is too small, dark, or blank to read.');
         setErrorCode('image_quality');
         setScanState('error');
         return;
@@ -288,15 +235,30 @@ export default function ScanScreen() {
 
       const result = await recognizeCard(photo.base64);
 
-      if (getScanGeneration() !== scanGenAtCapture) return;
+      if (captureRequest !== captureRequestRef.current || getScanGeneration() !== scanGenAtCapture) return;
 
       if (!canUseUnlimitedScanner(subscriptionTier) && typeof result.scansUsed === 'number') {
         syncScanCount(result.scansUsed);
       }
 
       setScanResult(result);
+      setSelectedMatchIndex(result.recognitionStatus === 'matched' ? 0 : null);
 
-      if (!result.topMatch) {
+      if (result.recognitionStatus === 'ambiguous' && result.matches.length > 0) {
+        setScanState('low_confidence');
+      } else if (result.recognitionStatus === 'unsupported') {
+        setErrorMessage('This card game is not supported by the scanner yet. Search the catalogue manually to check for this card.');
+        setErrorCode('unsupported');
+        setScanState('error');
+      } else if (result.recognitionStatus === 'insufficient_evidence') {
+        setErrorMessage('Key card details could not be read. Retake the photo with the name, set, and number clearly visible.');
+        setErrorCode('unreadable');
+        setScanState('error');
+      } else if (result.recognitionStatus === 'no_canonical_match') {
+        setErrorMessage('We read the card, but could not find a verified catalogue match. Search manually using the text below.');
+        setErrorCode('no_match');
+        setScanState('error');
+      } else if (!result.topMatch) {
         if (result.imageUnreadable) {
           setErrorMessage('Card may be blurry or out of frame.');
           setErrorCode('unreadable');
@@ -304,21 +266,11 @@ export default function ScanScreen() {
         } else {
           const { name, setName, number } = result.extracted;
           const hasExtracted = [name, setName, number].some(f => f.trim() !== '');
-          if (hasExtracted) {
-            const query = [name, setName, number].filter(f => f.trim() !== '').join(' ');
-            setScanState('auto_searching');
-            setTimeout(() => {
-              router.push(`/search?q=${encodeURIComponent(query)}`);
-              setScanResult(null);
-              setErrorMessage('');
-              setErrorCode('');
-              setScanState('idle');
-            }, 2000);
-          } else {
-            setErrorMessage('No matching card found in our catalog.');
-            setErrorCode('no_match');
-            setScanState('error');
-          }
+          setErrorMessage(hasExtracted
+            ? 'No verified match was found. You can search using the text we read.'
+            : 'No matching card found in our catalog.');
+          setErrorCode('no_match');
+          setScanState('error');
         }
       } else if (result.lowConfidence) {
         setScanState('low_confidence');
@@ -343,8 +295,9 @@ export default function ScanScreen() {
           .catch(() => {});
       }
     } catch (err: unknown) {
-      const e = err as Error & { code?: string; scansUsed?: number };
-      if (e.code === 'LIMIT_REACHED') {
+      if (captureRequest !== captureRequestRef.current) return;
+      const e = mapScanError(err);
+      if (e.code === 'quota') {
         setScanState('idle');
         setShowLimitSheet(true);
       } else {
@@ -352,7 +305,7 @@ export default function ScanScreen() {
           syncScanCount(e.scansUsed);
         }
         setErrorMessage(e.message ?? 'Recognition failed. Please try again or search manually.');
-        setErrorCode('api_error');
+        setErrorCode(e.code);
         setScanState('error');
       }
     }
@@ -360,7 +313,10 @@ export default function ScanScreen() {
 
   // ── Post-match actions ────────────────────────────────────────────────────
 
-  function getMatchedCard() { return scanResult?.topMatch?.card ?? null; }
+  const selectedMatch = selectedMatchIndex === null
+    ? null
+    : scanResult?.matches[selectedMatchIndex] ?? scanResult?.topMatch ?? null;
+  function getMatchedCard() { return selectedMatch?.card ?? null; }
 
   function handleConfirm()       { setShowActionSheet(true); }
   function handleSearchManually() {
@@ -369,31 +325,20 @@ export default function ScanScreen() {
     router.push(query ? `/search?q=${encodeURIComponent(query)}` : '/search');
   }
 
-  function buildCard(raw: Record<string, unknown>): import('@/types').Card {
-    return {
-      id:      String(raw.id ?? ''),
-      name:    String(raw.name ?? ''),
-      setId:   String(raw.set ?? raw.set_id ?? ''),
-      setName: String(raw.set_name ?? raw.set ?? ''),
-      tcg:     (String(raw.game ?? 'pokemon').toLowerCase().includes('magic')
-                  ? 'magic'
-                  : String(raw.game ?? '').toLowerCase().includes('yugioh') || String(raw.game ?? '').toLowerCase().includes('yu-gi-oh')
-                    ? 'yugioh'
-                    : 'pokemon') as import('@/types').TCGId,
-      number:        String(raw.number ?? ''),
-      rarity:        'rare',
-      year:          new Date().getFullYear(),
-      imageUrl:      raw.image_url ? String(raw.image_url) : undefined,
-      gradientStart: '#1e293b',
-      gradientEnd:   '#0f172a',
-      price:         { raw: 0, currency: 'AUD', updatedAt: new Date().toISOString() },
-    };
-  }
-
   function handleAddToCollection() {
     const raw = getMatchedCard();
     if (!raw) return;
-    const card = buildCard(raw);
+    let card: import('@/types').Card;
+    try {
+      card = scanCardToAppCard(raw);
+    } catch (error) {
+      const mapped = mapScanError(error);
+      setShowActionSheet(false);
+      setErrorMessage(mapped.message);
+      setErrorCode(mapped.code);
+      setScanState('error');
+      return;
+    }
     setShowActionSheet(false);
     router.push({
       pathname: '/add-card',
@@ -404,7 +349,17 @@ export default function ScanScreen() {
   function handleAddToWishlist() {
     const raw = getMatchedCard();
     if (!raw) return;
-    const card = buildCard(raw);
+    let card: import('@/types').Card;
+    try {
+      card = scanCardToAppCard(raw);
+    } catch (error) {
+      const mapped = mapScanError(error);
+      setShowActionSheet(false);
+      setErrorMessage(mapped.message);
+      setErrorCode(mapped.code);
+      setScanState('error');
+      return;
+    }
     addToWatchlist({
       id: `wish-scan-${Date.now()}`,
       cardId: card.id, card,
@@ -424,10 +379,19 @@ export default function ScanScreen() {
   }
 
   function tryAgain() {
+    captureRequestRef.current += 1;
     setScanResult(null);
     setErrorMessage('');
     setErrorCode('');
     setConfirmedAction('');
+    setSelectedMatchIndex(null);
+    setScanState('idle');
+  }
+
+  function cancelCapture() {
+    captureRequestRef.current += 1;
+    setErrorMessage('');
+    setErrorCode('');
     setScanState('idle');
   }
 
@@ -483,13 +447,13 @@ export default function ScanScreen() {
 
   const isActiveView = scanState === 'idle' || scanState === 'capturing' || scanState === 'recognizing';
   const isMatchView  = scanState === 'match' || scanState === 'low_confidence';
-  const topMatch     = scanResult?.topMatch;
+  const topMatch     = selectedMatch;
   const scansLeft    = scanResult?.scansRemaining ?? (scanLimit - scansUsed);
 
   const hintText = isLimitExhausted
     ? 'Scan limit reached for this month'
     : scanState === 'idle'
-    ? 'Position card in frame, then tap capture'
+    ? 'Fill the guide with one card • avoid glare • tap capture'
     : scanState === 'capturing'
     ? 'Hold steady…'
     : 'Identifying card…';
@@ -620,12 +584,13 @@ export default function ScanScreen() {
       )}
 
       {/* ── Match result (floats over camera) ── */}
-      {isMatchView && topMatch && (
+      {isMatchView && scanResult && (
         <Animated.View style={[
           styles.overlayPanel,
           { top: GUIDE_T, bottom: GUIDE_B, opacity: fadeAnim, transform: [{ scale: pulseAnim }] },
         ]}>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+            {topMatch ? <>
             {scanState === 'low_confidence' && (
               <View style={styles.lowConfBanner}>
                 <Feather name="alert-triangle" size={14} color="#F59E0B" />
@@ -653,7 +618,7 @@ export default function ScanScreen() {
                   <Text style={styles.matchNumber}>#{String(topMatch.card.number)}</Text>
                 ) : null}
                 {typeof topMatch.card.price === 'number' && topMatch.card.price > 0 ? (
-                  <Text style={styles.matchPrice}>${topMatch.card.price.toFixed(2)} USD</Text>
+                  <Text style={styles.matchPrice}>${topMatch.card.price.toFixed(2)} {String(topMatch.card.currency ?? 'USD')}</Text>
                 ) : null}
               </View>
             </View>
@@ -668,15 +633,31 @@ export default function ScanScreen() {
                 </View>
               );
             })()}
-            {(scanResult?.matches?.length ?? 0) > 1 && (
-              <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
-                {scanResult!.matches.slice(1).map((m, i) => (
-                  <View key={i} style={styles.altChip}>
+            </> : (
+              <View style={styles.candidatePrompt}>
+                <Feather name="help-circle" size={28} color="#F59E0B" />
+                <Text style={styles.candidatePromptTitle}>Choose the card you scanned</Text>
+                <Text style={styles.candidatePromptBody}>We found possible matches, but need your confirmation before anything can be saved.</Text>
+              </View>
+            )}
+            {(scanResult.matches.length > 0) && (
+              <>
+                <Text style={styles.candidateLabel}>Choose the matching card before saving</Text>
+                <ScrollView style={styles.altsList} horizontal showsHorizontalScrollIndicator={false}>
+                {scanResult!.matches.map((m, i) => (
+                  <Pressable
+                    key={`${String(m.card.id)}-${i}`}
+                    onPress={() => setSelectedMatchIndex(i)}
+                    style={[styles.altChip, selectedMatchIndex === i && styles.altChipSelected]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${String(m.card.name ?? 'candidate')} at ${m.confidence}% confidence`}
+                  >
                     <Text style={styles.altChipText} numberOfLines={1}>{String(m.card.name ?? '')}</Text>
                     <Text style={styles.altChipConf}>{m.confidence}%</Text>
-                  </View>
+                  </Pressable>
                 ))}
-              </ScrollView>
+                </ScrollView>
+              </>
             )}
           </ScrollView>
         </Animated.View>
@@ -693,7 +674,7 @@ export default function ScanScreen() {
           image_quality: {
             icon: 'sun', iconColor: '#F59E0B',
             title: 'Image too dark or blank',
-            tips: ['Move to a brighter area or enable flash', 'Make sure the card is fully inside the frame', 'Hold the phone steady before tapping Capture'],
+            tips: ['Move to a brighter area or enable flash', 'Fill the guide with one card — keep fingers and glare off the text', 'Hold the phone steady before tapping Capture'],
           },
           unreadable: {
             icon: 'eye-off', iconColor: '#F59E0B',
@@ -705,11 +686,13 @@ export default function ScanScreen() {
             title: 'No matching card found',
             tips: ['Use Search Manually to find it by name', 'Check spelling if you type the name yourself'],
           },
-          api_error: {
-            icon: 'alert-circle', iconColor: C.mutedForeground,
-            title: 'Couldn\'t identify card',
-            tips: ['Check your connection and try again', 'Or use Search Manually to find the card'],
-          },
+          auth: { icon: 'lock', iconColor: '#F59E0B', title: 'Sign in required', tips: ['Sign in again, then return to scan your card'] },
+          quota: { icon: 'camera-off', iconColor: '#F59E0B', title: 'Scan limit reached', tips: ['Upgrade for unlimited scans or wait for your allowance to reset'] },
+          offline: { icon: 'wifi-off', iconColor: C.mutedForeground, title: 'You’re offline', tips: ['Reconnect to the internet, then retry your scan'] },
+          timeout: { icon: 'clock', iconColor: C.mutedForeground, title: 'Recognition timed out', tips: ['Check your connection and retry with the card held steady'] },
+          provider: { icon: 'alert-circle', iconColor: C.mutedForeground, title: 'Recognition is unavailable', tips: ['Try again shortly or search the verified catalogue manually'] },
+          unsupported: { icon: 'slash', iconColor: C.mutedForeground, title: 'Card game not supported', tips: ['Use manual search to check whether this card is in the catalogue'] },
+          invalid_response: { icon: 'alert-circle', iconColor: C.mutedForeground, title: 'Couldn’t verify this result', tips: ['Retake the card photo or try again shortly'] },
           '': { icon: 'alert-circle', iconColor: C.mutedForeground, title: 'Couldn\'t identify card', tips: [] },
         };
         const cfg = errorConfig[errorCode] ?? errorConfig[''];
@@ -720,6 +703,7 @@ export default function ScanScreen() {
           <View style={[styles.overlayPanel, { top: GUIDE_T, bottom: GUIDE_B, alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
             <Feather name={cfg.icon} size={44} color={cfg.iconColor} style={{ marginBottom: 12 }} />
             <Text style={styles.errorTitle}>{cfg.title}</Text>
+            {errorMessage ? <Text style={styles.errorMessage}>{errorMessage}</Text> : null}
             {partialText ? (
               <View style={styles.errorPartialWrap}>
                 <Text style={styles.errorPartialLabel}>Text read from card:</Text>
@@ -841,6 +825,7 @@ export default function ScanScreen() {
 
         {/* Flash · Shutter · Search (active state) */}
         {isActiveView && (
+          <>
           <View style={styles.iconRow}>
             {/* Flash */}
             <Pressable
@@ -906,20 +891,32 @@ export default function ScanScreen() {
               <Feather name="search" size={22} color={isLimitExhausted ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.8)'} />
             </Pressable>
           </View>
+          {(scanState === 'capturing' || scanState === 'recognizing') && (
+            <Pressable onPress={cancelCapture} style={styles.cancelCaptureBtn} accessibilityRole="button" accessibilityLabel="Cancel card recognition">
+              <Text style={styles.cancelCaptureText}>Cancel</Text>
+            </Pressable>
+          )}
+          </>
         )}
 
         {/* Match actions */}
         {isMatchView && (
           <View style={styles.actionStack}>
-            <Pressable
-              onPress={handleConfirm}
-              style={styles.primaryActionBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Confirm match and save card"
-            >
-              <Feather name="check" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>That's the one — save it</Text>
-            </Pressable>
+            {topMatch ? (
+              <Pressable
+                onPress={handleConfirm}
+                style={styles.primaryActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm selected match and save card"
+              >
+                <Feather name="check" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>That’s the one — save it</Text>
+              </Pressable>
+            ) : (
+              <View style={styles.selectCandidateNotice}>
+                <Text style={styles.selectCandidateNoticeText}>Select a candidate above to continue</Text>
+              </View>
+            )}
             <Pressable
               onPress={handleSearchManually}
               style={styles.secondaryActionBtn}
@@ -941,7 +938,7 @@ export default function ScanScreen() {
             <Pressable onPress={tryAgain} style={styles.primaryActionBtn} accessibilityRole="button" accessibilityLabel="Try scanning again">
               <Feather name="camera" size={18} color="#FFFFFF" />
               <Text style={styles.primaryActionText}>
-                {errorCode === 'image_quality' || errorCode === 'unreadable' ? 'Try Again' : 'Scan Again'}
+                {errorCode === 'image_quality' || errorCode === 'unreadable' ? 'Retake Photo' : 'Try Again'}
               </Text>
             </Pressable>
             <Pressable onPress={handleSearchManually} style={styles.secondaryActionBtn} accessibilityRole="button" accessibilityLabel="Search manually">
@@ -1054,7 +1051,7 @@ export default function ScanScreen() {
           </View>
           <Text style={styles.sheetTitle}>Monthly scan limit reached</Text>
           <Text style={styles.sheetBody}>
-            You've used your 30 free scans this month.{'\n'}Resets {resetLabel}.
+            Your scan allowance is currently unavailable.{'\n'}If this was a service error, no scan was consumed. Resets {resetLabel}.
           </Text>
           <Pressable
             onPress={() => { setShowLimitSheet(false); router.push('/pro-subscription'); }}
@@ -1281,6 +1278,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 22,
   },
+  cancelCaptureBtn: {
+    marginTop: -6,
+    minHeight: 36,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelCaptureText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: 'rgba(255,255,255,0.72)' },
   sideBtn: {
     width: 54,
     height: 54,
@@ -1379,6 +1384,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#CC1826',
   },
   primaryActionText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#FFFFFF' },
+  selectCandidateNotice: {
+    minHeight: 52, borderRadius: 14, borderWidth: 1,
+    borderColor: '#F59E0B66', backgroundColor: '#F59E0B16',
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+  },
+  selectCandidateNoticeText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' },
   secondaryActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1435,6 +1446,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6,
     marginRight: 8, borderWidth: 1, borderColor: C.border,
   },
+  altChipSelected: { borderColor: C.primary, backgroundColor: `${C.primary}22` },
+  candidateLabel: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.mutedForeground, marginTop: 4 },
+  candidatePrompt: { alignItems: 'center', gap: 8, paddingVertical: 10 },
+  candidatePromptTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground, textAlign: 'center' },
+  candidatePromptBody: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, lineHeight: 19, textAlign: 'center' },
   altChipText: { fontSize: 12, fontFamily: 'Inter_500Medium', color: C.foreground, maxWidth: 120 },
   altChipConf: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   lcExtractedRow: {
@@ -1445,6 +1461,7 @@ const styles = StyleSheet.create({
 
   // Error panel
   errorTitle: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, marginBottom: 4, textAlign: 'center' },
+  errorMessage: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center', lineHeight: 18 },
   errorPartialWrap: {
     backgroundColor: C.card, borderRadius: 10,
     paddingHorizontal: 14, paddingVertical: 10,
