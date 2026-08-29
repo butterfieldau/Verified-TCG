@@ -47,6 +47,8 @@ interface MarketCacheSection<T> {
 
 interface MarketCache {
   movers?: MarketCacheSection<MarketMover[]>;
+  gainers?: MarketCacheSection<MarketMover[]>;
+  losers?: MarketCacheSection<MarketMover[]>;
   trending?: MarketCacheSection<Card[]>;
   recentlyAdded?: MarketCacheSection<Card[]>;
 }
@@ -136,6 +138,16 @@ export function getMarketMoversCached(onUpdate?: (fresh: MarketMover[]) => void,
   return swrFetch('movers', () => getMarketMovers(options), onUpdate, options);
 }
 
+/** Cached server-ranked gainers; not derived from the absolute mover feed. */
+export function getMarketGainersCached(onUpdate?: (fresh: MarketMover[]) => void, options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return swrFetch('gainers', () => getMarketGainers(options), onUpdate, options);
+}
+
+/** Cached server-ranked losers; not derived from the absolute mover feed. */
+export function getMarketLosersCached(onUpdate?: (fresh: MarketMover[]) => void, options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return swrFetch('losers', () => getMarketLosers(options), onUpdate, options);
+}
+
 /** Cached variant of getTrendingCards — see swrFetch for semantics. */
 export function getTrendingCardsCached(onUpdate?: (fresh: Card[]) => void, options?: MarketCacheOptions): Promise<Card[]> {
   return swrFetch('trending', () => getTrendingCards(options), onUpdate, options);
@@ -155,13 +167,26 @@ export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void, 
  * deliberately propagated so the screen can show an unavailable state.
  */
 export async function getMarketMovers(options?: MarketCacheOptions): Promise<MarketMover[]> {
-  return singleFlight(`market-movers:${options?.cacheScope ?? 'anonymous'}`, () => fetchMarketMovers(options?.cacheScope));
+  return singleFlight(`market-movers:${options?.cacheScope ?? 'anonymous'}`, () => fetchMarketMovers('movers', options?.cacheScope));
 }
 
-async function fetchMarketMovers(scope?: string): Promise<MarketMover[]> {
+export async function getMarketGainers(options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return singleFlight(`market-gainers:${options?.cacheScope ?? 'anonymous'}`, () => fetchMarketMovers('gainers', options?.cacheScope));
+}
+
+export async function getMarketLosers(options?: MarketCacheOptions): Promise<MarketMover[]> {
+  return singleFlight(`market-losers:${options?.cacheScope ?? 'anonymous'}`, () => fetchMarketMovers('losers', options?.cacheScope));
+}
+
+async function fetchMarketMovers(section: 'movers' | 'gainers' | 'losers', scope?: string): Promise<MarketMover[]> {
   const token = await getAccessToken();
-  if (!token) throw new Error('Your session has expired. Please sign in again.');
-  const body = await apiJson<{ data: MarketMoverServerCard[] }>('/api/catalog/market-movers', { accessToken: token });
+  const endpoint = section === 'movers'
+    ? '/api/catalog/market-movers'
+    : `/api/catalog/market-movers?mode=${section}`;
+  const body = await apiJson<{ data: MarketMoverServerCard[] }>(
+    endpoint,
+    token ? { accessToken: token } : undefined,
+  );
   const movers = (body.data ?? []).map((card) => {
       const appCard = catalogCardToAppCard(card);
       return {
@@ -174,7 +199,7 @@ async function fetchMarketMovers(scope?: string): Promise<MarketMover[]> {
       updatedAt: card.updated_at,
     };
   });
-  await writeMarketCacheSection('movers', movers, scope);
+  await writeMarketCacheSection(section, movers, scope);
   return movers;
 }
 
@@ -189,8 +214,7 @@ export async function getTrendingCards(options?: MarketCacheOptions): Promise<Ca
 
 async function fetchTrendingCards(scope?: string): Promise<Card[]> {
   const token = await getAccessToken();
-  if (!token) throw new Error('Your session has expired. Please sign in again.');
-  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/trending', { accessToken: token });
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/trending', token ? { accessToken: token } : undefined);
   const cards = (body.data ?? []).map(catalogCardToAppCard);
   await writeMarketCacheSection('trending', cards, scope);
   return cards;
@@ -208,8 +232,7 @@ export async function getRecentlyAddedCards(options?: MarketCacheOptions): Promi
 
 async function fetchRecentlyAddedCards(scope?: string): Promise<Card[]> {
   const token = await getAccessToken();
-  if (!token) throw new Error('Your session has expired. Please sign in again.');
-  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/recently-added', { accessToken: token });
+  const body = await apiJson<{ data: CatalogCard[] }>('/api/catalog/recently-added', token ? { accessToken: token } : undefined);
   const cards = (body.data ?? []).map(catalogCardToAppCard);
   await writeMarketCacheSection('recentlyAdded', cards, scope);
   return cards;

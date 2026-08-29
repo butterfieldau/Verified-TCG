@@ -28,16 +28,16 @@ export function getMarketFeed(
   movers: MarketMover[],
   trending: Card[],
   recentlyAdded: Card[],
+  gainers: MarketMover[] = [],
+  losers: MarketMover[] = [],
   preferredTcgs: TCGId[] = [],
 ): MarketFeedCard[] {
   let entries: MarketFeedCard[];
   if (tab === 'gainers') {
-    entries = movers.filter(m => m.trend === 'up')
-      .sort((a, b) => b.priceChangePercent - a.priceChangePercent)
+    entries = gainers
       .map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
   } else if (tab === 'losers') {
-    entries = movers.filter(m => m.trend === 'down')
-      .sort((a, b) => a.priceChangePercent - b.priceChangePercent)
+    entries = losers
       .map(m => ({ card: m.card, price: m.currentPrice, currency: m.currency, change: m.priceChangePercent }));
   } else {
     const cards = tab === 'new' ? recentlyAdded : trending;

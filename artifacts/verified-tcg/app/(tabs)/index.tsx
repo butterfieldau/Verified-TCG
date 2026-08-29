@@ -29,9 +29,13 @@ import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { useApp } from '@/context/AppContext';
 import {
   getMarketMovers,
+  getMarketGainers,
+  getMarketLosers,
   getTrendingCards,
   getRecentlyAddedCards,
   getMarketMoversCached,
+  getMarketGainersCached,
+  getMarketLosersCached,
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
@@ -267,10 +271,14 @@ export default function HomeScreen() {
   const marketCacheScope = `${user?.id ?? 'anonymous'}:${(user?.tcgPreferences ?? []).join(',')}`;
   const [marketTab, setMarketTab] = useState<MarketTab>('trending');
   const [movers, setMovers] = useState<MarketMover[]>([]);
+  const [gainers, setGainers] = useState<MarketMover[]>([]);
+  const [losers, setLosers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
   const [recentCards, setRecentCards] = useState<Card[]>([]);
-  const [marketFeedStatus, setMarketFeedStatus] = useState<Record<'movers' | 'trending' | 'recent', { loading: boolean; error: string | null }>>({
+  const [marketFeedStatus, setMarketFeedStatus] = useState<Record<'movers' | 'gainers' | 'losers' | 'trending' | 'recent', { loading: boolean; error: string | null }>>({
     movers: { loading: true, error: null },
+    gainers: { loading: true, error: null },
+    losers: { loading: true, error: null },
     trending: { loading: true, error: null },
     recent: { loading: true, error: null },
   });
@@ -308,7 +316,7 @@ export default function HomeScreen() {
     let cancelled = false;
     setActivityLoading(true);
     const loadFeed = <T,>(
-      key: 'movers' | 'trending' | 'recent',
+      key: 'movers' | 'gainers' | 'losers' | 'trending' | 'recent',
       load: (onUpdate: (data: T) => void) => Promise<T>,
       setData: (data: T) => void,
     ) => {
@@ -328,6 +336,8 @@ export default function HomeScreen() {
         });
     };
     loadFeed('movers', callback => getMarketMoversCached(callback, { cacheScope: marketCacheScope }), setMovers);
+    loadFeed('gainers', callback => getMarketGainersCached(callback, { cacheScope: marketCacheScope }), setGainers);
+    loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope }), setLosers);
     loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope }), setTrending);
     loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope }), setRecentCards);
 
@@ -341,9 +351,11 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    const [moversResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
+    const [moversResult, gainersResult, losersResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
       getMarketMovers({ cacheScope: marketCacheScope }),
+       getMarketGainers({ cacheScope: marketCacheScope }),
+       getMarketLosers({ cacheScope: marketCacheScope }),
       getTrendingCards({ cacheScope: marketCacheScope }),
       getRecentlyAddedCards({ cacheScope: marketCacheScope }),
       fetchRecentActivity(10),
@@ -351,6 +363,8 @@ export default function HomeScreen() {
       fetchCollectionPerformance(performanceRange, currency),
       ]);
     if (moversResult.status === 'fulfilled') setMovers(moversResult.value);
+    if (gainersResult.status === 'fulfilled') setGainers(gainersResult.value);
+    if (losersResult.status === 'fulfilled') setLosers(losersResult.value);
     if (trendingResult.status === 'fulfilled') setTrending(trendingResult.value);
     if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
     if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
@@ -450,13 +464,15 @@ export default function HomeScreen() {
     [collection],
   );
 
-  const marketCards = getMarketFeed(marketTab, movers, trending, recentCards, user?.tcgPreferences ?? []).slice(0, 8);
-  const activeFeedKey = marketTab === 'trending' ? 'trending' : marketTab === 'new' ? 'recent' : 'movers';
+  const marketCards = getMarketFeed(marketTab, movers, trending, recentCards, gainers, losers, user?.tcgPreferences ?? []).slice(0, 8);
+  const activeFeedKey = marketTab === 'trending' ? 'trending' : marketTab === 'new' ? 'recent' : marketTab;
   const activeFeedStatus = marketFeedStatus[activeFeedKey];
   const retryMarketFeed = useCallback(() => {
     setMarketFeedStatus(previous => ({ ...previous, [activeFeedKey]: { loading: true, error: null } }));
-    const request = activeFeedKey === 'movers'
-      ? getMarketMovers({ cacheScope: marketCacheScope }).then(setMovers)
+    const request = activeFeedKey === 'gainers'
+      ? getMarketGainers({ cacheScope: marketCacheScope }).then(setGainers)
+      : activeFeedKey === 'losers'
+        ? getMarketLosers({ cacheScope: marketCacheScope }).then(setLosers)
       : activeFeedKey === 'trending'
         ? getTrendingCards({ cacheScope: marketCacheScope }).then(setTrending)
         : getRecentlyAddedCards({ cacheScope: marketCacheScope }).then(setRecentCards);

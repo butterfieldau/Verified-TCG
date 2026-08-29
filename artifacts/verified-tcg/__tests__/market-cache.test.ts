@@ -24,10 +24,13 @@ process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 // — static imports hoist above the env assignment.
 const {
   getMarketMoversCached,
+  getMarketGainersCached,
+  getMarketLosersCached,
   getTrendingCardsCached,
   getRecentlyAddedCardsCached,
   // eslint-disable-next-line @typescript-eslint/no-var-requires
 } = require('@/services/market') as typeof import('@/services/market');
+const { getAccessToken } = require('@/services/auth') as { getAccessToken: jest.Mock };
 
 const CACHE_KEY = '@verified_tcg/market_cache_v3:anonymous';
 
@@ -51,6 +54,7 @@ function mockFetchByEndpoint() {
 describe('market SWR cache', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
+    getAccessToken.mockResolvedValue('market-test-token');
     (global as any).fetch = mockFetchByEndpoint();
   });
 
@@ -105,6 +109,28 @@ describe('market SWR cache', () => {
     await getMarketMoversCached();
     const init = fetchMock.mock.calls[0][1];
     expect(init.headers.get('Authorization')).toBe('Bearer market-test-token');
+  });
+
+  it('issues anonymous market requests without an authorization header', async () => {
+    getAccessToken.mockResolvedValue(null);
+    const fetchMock = mockFetchByEndpoint();
+    (global as any).fetch = fetchMock;
+    await getMarketMoversCached();
+    expect(fetchMock.mock.calls[0][1].headers.has('Authorization')).toBe(false);
+  });
+
+  it('uses directional endpoint paths and separate cache sections', async () => {
+    const fetchMock = mockFetchByEndpoint();
+    (global as any).fetch = fetchMock;
+    await Promise.all([getMarketGainersCached(), getMarketLosersCached()]);
+
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+      expect.stringContaining('/api/catalog/market-movers?mode=gainers'),
+      expect.stringContaining('/api/catalog/market-movers?mode=losers'),
+    ]));
+    const cache = JSON.parse((await AsyncStorage.getItem(CACHE_KEY))!);
+    expect(cache.gainers.data).toHaveLength(1);
+    expect(cache.losers.data).toHaveLength(1);
   });
 
   it('isolates cached market data by supplied user and preference scope', async () => {
