@@ -8,8 +8,8 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import supertest from "supertest";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
-import { like } from "drizzle-orm";
+import { usersTable, currentQuotesTable } from "@workspace/db";
+import { eq, like } from "drizzle-orm";
 import app from "../app.js";
 import { createTestUser } from "./helpers.js";
 
@@ -279,6 +279,63 @@ describe("DELETE /api/collection/:id", () => {
   test("unauthenticated returns 401", async () => {
     const res = await request.delete(`/api/collection/${itemId}`);
     assert.equal(res.status, 401);
+  });
+});
+
+// ── Exact holding valuation ───────────────────────────────────────────────────
+
+describe("GET /api/collection — exact graded valuation", () => {
+  const cardId = `${TAG}psa10-card`;
+  let token: string;
+
+  before(async () => {
+    const user = await createTestUser({ email: `${TAG}psa10@example.com` });
+    token = user.accessToken;
+    await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        ...cardPayload(cardId),
+        grading: { company: "PSA", grade: 10, certNumber: "psa-test" },
+      });
+    await db.insert(currentQuotesTable).values({
+      cardId,
+      providerKey: "pricecharting",
+      gradeKey: "psa_10",
+      priceCents: 22_500,
+      currency: "AUD",
+      fetchedAt: new Date(),
+    });
+  });
+
+  after(async () => {
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, cardId));
+    await cleanupTaggedUsers();
+  });
+
+  test("returns the PSA 10 quote and never substitutes the raw card price", async () => {
+    const res = await request
+      .get("/api/collection")
+      .set("Authorization", `Bearer ${token}`);
+
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const item = (res.body as Array<Record<string, unknown>>).find(row => row.cardId === cardId);
+    assert.ok(item, "expected persisted graded holding");
+    assert.deepEqual(item.valuation, {
+      priceCents: 22_500,
+      price: 225,
+      currency: "AUD",
+      gradeKey: "psa_10",
+      updatedAt: (item.valuation as { updatedAt: string }).updatedAt,
+    });
+    assert.notEqual((item.valuation as { price: number }).price, 100);
+
+    const summary = await request
+      .get("/api/collection/summary?displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(summary.status, 200, JSON.stringify(summary.body));
+    assert.equal(summary.body.totalValue, 225);
+    assert.equal(summary.body.coverage.pricedHoldings, 1);
   });
 });
 

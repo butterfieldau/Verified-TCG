@@ -5,29 +5,18 @@ import { apiJson, apiRequest } from './apiClient';
 // ── Value helper (kept for price-display callers) ─────────────────────────────
 
 /**
- * Returns the current market value for a single CollectionItem, using the
- * grading-specific price where available (e.g. PSA 10 → price.psa10) and
- * falling back to price.raw. Multiply by item.quantity for total value.
+ * Returns the server-resolved current unit value for a collection holding.
+ *
+ * The API resolves the exact PriceCharting grade key for the persisted
+ * holding.  A graded holding without an exact quote is deliberately null:
+ * raw pricing is not a valid substitute for (for example) PSA 10 pricing.
+ * Multiply a non-null value by item.quantity for the holding total.
  */
-export function getItemCurrentValue(item: CollectionItem): number {
-  const p = item.card.price;
-  const g = item.grading;
-  if (!g) return p.raw;
-  const company = g.company;
-  const grade = Number(g.grade);
-  if (company === 'PSA') {
-    if (grade === 10) return p.psa10 ?? p.raw;
-    if (grade === 9)  return p.psa9  ?? p.raw;
-  }
-  if (company === 'BGS' || company === 'Beckett') {
-    if (grade === 9.5) return p.bgs95 ?? p.raw;
-    if (grade === 9)   return (p as any).bgs9  ?? p.raw;
-  }
-  if (company === 'CGC') {
-    if (grade === 10) return p.cgc10 ?? p.raw;
-    if (grade === 9)  return p.cgc9  ?? p.raw;
-  }
-  return p.raw;
+export function getItemCurrentValue(item: CollectionItem): number | null {
+  const value = item.valuation?.price;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 // ── Authenticated API helpers ─────────────────────────────────────────────────
