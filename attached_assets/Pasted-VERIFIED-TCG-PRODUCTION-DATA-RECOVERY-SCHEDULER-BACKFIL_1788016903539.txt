@@ -1,0 +1,303 @@
+VERIFIED TCG — PRODUCTION DATA RECOVERY + SCHEDULER + BACKFILL + PHYSICAL ACCEPTANCE
+Continue on:
+codex/core-product-repair-community
+Current recent repair commits include:
+bcdc62a scanner candidate fallback
+795b8c7 refresh pricing after add/scan
+a3e42b3 correct Home collection empty-state
+Do not rewrite those.
+We are now fixing the real production blockers.
+You may use the current configured production database carefully.
+We are prioritising getting the live app working.
+GOAL
+Populate and maintain the live data required for:
+collection valuations
+portfolio value
+portfolio history
+Market Biggest Movers
+Home Gainers
+Home Losers
+Trending
+Recently Added
+Then build the next iOS release and verify the scanner on a physical iPhone.
+1. DO NOT BLOCK ON DISPOSABLE POSTGRES
+The previous report says:
+No disposable PostgreSQL is available locally
+That is no longer a blocker.
+Use the current configured production database carefully.
+Do NOT:
+truncate
+reset
+wipe
+reseed broadly
+delete existing user data
+Any temporary acceptance rows must use unique namespaced IDs and must be cleaned up afterward.
+2. AUDIT CURRENT PRODUCTION DATA COUNTS
+Before writing data, report current row counts/state for:
+canonical cards
+canonical sets
+external IDs/mappings
+PriceCharting mappings
+current quotes
+historical price snapshots
+portfolio snapshots
+market/trending event tables if present
+Also report:
+newest catalogue ingestion timestamp
+newest current quote timestamp
+newest historical price snapshot timestamp
+newest portfolio snapshot timestamp
+This establishes exactly what is stale/missing.
+3. RUN CANONICAL CATALOGUE BACKFILL
+The production Market/Recently Added feeds currently return empty persisted data.
+Run the existing approved canonical catalogue import/backfill against the deployed database.
+Use the existing:
+JustTCG fallback/source
+→ canonical Verified TCG catalogue
+architecture.
+Do not create a new catalogue system.
+Do not migrate public IDs.
+Do not remove fallback.
+Backfill:
+games
+sets
+cards
+images
+aliases
+external IDs
+provenance/source records
+Preserve existing canonical records.
+Upsert/idempotent only.
+After backfill report:
+cards before/after
+sets before/after
+external mappings before/after
+failures
+unsupported records
+4. PRICECHARTING MAPPING BACKFILL
+For canonical cards that are actively used by:
+user collections
+recent catalogue records
+scanner/search results
+ensure PriceCharting mapping exists where a legitimate match is possible.
+Prioritise collection-held cards first.
+Do not guess low-confidence mappings.
+For ambiguous matches:
+record unresolved mapping rather than attaching the wrong product.
+5. REFRESH ACTIVE COLLECTION PRICES NOW
+Run a controlled immediate refresh for cards currently held in user collections.
+For each unique holding card:
+determine required grade keys.
+Example:
+raw holding
+→ raw
+PSA 10 holding
+→ psa_10
+Fetch/update exact current quotes.
+Respect PriceCharting throttle/retry/cache rules.
+Do not blindly fetch every possible grade for every card.
+Afterward report:
+unique held cards
+mapped
+unmapped
+quotes refreshed
+exact-grade quotes found
+exact-grade quotes unavailable
+provider errors
+6. FIX THE PRODUCTION SCHEDULER
+Existing protected route:
+/api/pricing/scheduler/run
+must actually run automatically.
+Configure a secure recurring scheduler using the deployment platform or an appropriate external scheduler already available to the project.
+Do not expose the endpoint publicly without authentication.
+Use the existing scheduler secret/auth mechanism.
+Do not print the scheduler secret.
+Minimum job responsibilities:
+refresh relevant market pricing
+persist current quotes
+persist historical pricing snapshots
+update current-day portfolio snapshots where appropriate
+Choose a sensible cadence consistent with existing provider limits.
+For market data, twice daily is acceptable unless the existing design specifies otherwise.
+Verify the scheduler with a real manual invocation first.
+Then verify recurrence is configured.
+Return:
+Production pricing scheduler: ACTIVE
+only if you can prove it.
+7. MARKET SNAPSHOT RECOVERY
+Market currently says:
+No market snapshot yet
+After catalogue/pricing backfill:
+run the real snapshot process enough to establish valid comparable market records.
+Do not fabricate historical movement.
+If production only has one real point after recovery:
+Biggest Movers may still truthfully remain empty until a second real snapshot exists.
+However:
+confirm the next scheduled snapshot will create the comparison.
+For acceptance only, namespaced controlled rows may be used to prove the movement algorithm, then removed.
+8. RECENTLY ADDED MUST WORK IMMEDIATELY
+/api/catalog/recently-added
+should not require price history.
+After canonical backfill, confirm it returns real canonical records immediately.
+A card without a quote must still be returned.
+Test production-shaped endpoint.
+Required:
+HTTP 200
+data count > 0
+real canonical cards
+newest-first ordering
+9. TRENDING MUST NOT DEPEND ON NONEXISTENT DATA ONLY
+Audit /api/catalog/trending.
+If it currently requires market history that production does not yet have, implement a truthful deterministic initial ranking using genuine available signals.
+Permitted real signals:
+current price activity
+recent catalogue additions
+real views
+collection adds
+wishlist adds
+search clicks
+Do not randomize.
+Do not fabricate engagement.
+With sparse data, use genuine fallback ranking and document it.
+Production endpoint should return useful cards once genuine catalogue data exists.
+10. VERIFY USER PREFERENCE FILTERING
+Make sure empty preference state does NOT filter every market result out.
+Verify:
+no TCG preference
+→ all supported TCGs
+Pokémon selected
+→ Pokémon
+Pokémon + One Piece
+→ both
+Check actual production user preference slug normalization.
+11. VERIFY THE EXISTING REAL HOLDINGS
+Use an existing account only for READ verification unless explicitly safe.
+Confirm the app/API can resolve the real examples already observed:
+Pikachu & Zekrom GX
+grade:
+PSA 10
+and:
+Umbreon ex 161/131
+Raw
+Trace:
+card identity
+→ provider mapping
+→ grade key
+→ quote
+→ collection valuation
+Report exactly why each is:
+priced
+or:
+unavailable.
+If a legitimate PriceCharting quote exists but our app fails to map it:
+fix the mapping.
+12. PRODUCTION API ACCEPTANCE
+After recovery, test:
+/api/catalog/recently-added
+/api/catalog/trending
+/api/catalog/market-movers
+authenticated:
+/api/collection
+/api/collection/summary
+/api/collection/performance
+Report:
+status
+row/result counts
+timestamp/freshness
+Do not hide empty results.
+13. SCANNER FAST PATH — PHYSICAL ACCEPTANCE
+The scanner change is not accepted until measured on the real app.
+Required normal workflow:
+photo
+→ extract name + collector number
+→ catalogue search
+→ candidate results
+Target:
+2–4 seconds
+Test at minimum:
+clear modern Pokémon card
+a full-art card
+promo/card number such as SM168
+Measure:
+image prep ms
+OCR/identity extraction ms
+search ms
+total ms
+If total is still >4 seconds:
+inspect which stage is slow and optimise it.
+Do not call scanner complete because a test fixture passed.
+14. SCANNER SEARCH BEHAVIOUR
+If OCR produces only:
+Grookey
+return Grookey candidates quickly.
+If it produces:
+Grookey + card number
+strongly rank exact number matches.
+If no exact match:
+show best candidates.
+Never spend ~10 seconds then give only a dead-end error when usable OCR text exists.
+15. BUILD NEXT TESTFLIGHT ONLY AFTER DATA RECOVERY
+Do not create another build before production API checks are usable.
+Once:
+collection prices improved
+Recently Added populated
+Trending populated
+scheduler active
+scanner fast path ready
+build the next iOS TestFlight release.
+Preserve:
+Bundle ID:
+co.verifiedtcg.app
+Version:
+1.0.0
+Use next unused build number.
+16. PHYSICAL IPHONE ACCEPTANCE
+Test:
+launch
+login
+Home
+portfolio value
+real collection cards
+no false empty-state
+Collection pricing
+Profile value consistency
+Recently Added
+Trending
+Market
+Search
+scanner speed
+kill/relaunch
+Only then call the core app functional.
+17. DO NOT START COMMUNITY
+Community remains frozen.
+No new:
+posts
+follows
+messages
+giveaways
+until this passes.
+FINAL REPORT
+Return:
+production catalogue counts before/after
+quote counts before/after
+newest quote timestamp
+newest price snapshot timestamp
+scheduler configuration
+scheduler verification
+held-card pricing coverage
+Pikachu & Zekrom PSA 10 result
+Umbreon raw result
+Recently Added production count
+Trending production count
+Movers production count
+portfolio summary result
+portfolio history result
+scanner timing results
+TestFlight build number
+physical iPhone acceptance
+commits pushed
+remaining blockers
+End only with:
+# VERIFIED TCG PRODUCTION DATA + CORE APP WORKING
+or
+# VERIFIED TCG STILL BLOCKED
