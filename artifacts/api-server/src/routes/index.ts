@@ -30,6 +30,7 @@ import adminTrustRouter from "./adminTrust";
 import adminOperationsRouter from "./adminOperations";
 import adminIntelligenceRouter from "./adminIntelligence";
 import adminConfigurationRouter from "./adminConfiguration";
+import catalogueOperationsRouter from "./catalogueOperations";
 
 const router: IRouter = Router();
 
@@ -51,6 +52,7 @@ router.use(subscriptionRouter);
 router.use(scanRouter);
 router.use(priceHistoryRouter);
 router.use(pricingRouter);
+router.use(catalogueOperationsRouter);
 router.use(eventsRouter);
 router.use(notificationsRouter);
 router.use(collectorsRouter);
