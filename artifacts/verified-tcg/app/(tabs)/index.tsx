@@ -50,6 +50,7 @@ import {
 } from '@/services/collectionPerformance';
 import {
   getHomeCollectionCards,
+  hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
 } from '@/services/homePortfolio';
@@ -463,6 +464,7 @@ export default function HomeScreen() {
     () => getHomeCollectionCards(collection).slice(0, 5),
     [collection],
   );
+  const hasCollectionHoldings = hasHomeCollectionHoldings(collection);
 
   const marketCards = getMarketFeed(marketTab, movers, trending, recentCards, gainers, losers, user?.tcgPreferences ?? []).slice(0, 8);
   const activeFeedKey = marketTab === 'trending' ? 'trending' : marketTab === 'new' ? 'recent' : marketTab;
@@ -731,8 +733,10 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
         )}
-        {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
+        {hasCollectionHoldings ? (
           <View style={[styles.insightCard, { backgroundColor: C.card, borderColor: C.border }]}>
+            {serverSummary?.totalValue != null && serverSummary.totalValue > 0 ? (
+              <>
 
             {/* Row 1 — server cost basis vs current value, else 1-day change */}
             {serverSummary?.totalCost != null && serverSummary.totalValue != null ? (
@@ -824,6 +828,26 @@ export default function HomeScreen() {
                     {staleCardCount} card{staleCardCount !== 1 ? 's' : ''} with outdated pricing
                   </Text>
                   <Text style={styles.insightSub}>Price data not updated in 30+ days</Text>
+                </View>
+                <Feather name="chevron-right" size={14} color={C.mutedForeground} />
+              </Pressable>
+            )}
+              </>
+            ) : (
+              <Pressable
+                style={styles.insightRow}
+                onPress={() => router.push('/(tabs)/collection')}
+                accessibilityRole="button"
+                accessibilityLabel="View your saved collection while pricing is unavailable"
+              >
+                <View style={[styles.insightIcon, { backgroundColor: `${C.primary}18` }]}>
+                  <Feather name="layers" size={14} color={C.primary} />
+                </View>
+                <View style={styles.insightBody}>
+                  <Text style={styles.insightText}>Your collection is saved</Text>
+                  <Text style={styles.insightSub}>
+                    {homeCollectionCards.length} holding{homeCollectionCards.length === 1 ? '' : 's'} awaiting verified pricing
+                  </Text>
                 </View>
                 <Feather name="chevron-right" size={14} color={C.mutedForeground} />
               </Pressable>
