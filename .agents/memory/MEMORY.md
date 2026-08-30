@@ -15,3 +15,4 @@
 - [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.
 - [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.
 - [Mobile API origins](mobile-api-origins.md) — development web previews use the first-party Replit proxy; release builds use the public production origin.
+- [Catalogue images are optional](catalogue-images-optional.md) — canonical cards remain readable without provider images; UI fallbacks must prevent missing artwork from blanking data.

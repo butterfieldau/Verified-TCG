@@ -40,9 +40,10 @@ describe("Stage 3C canonical public DTO boundaries", () => {
     assert.equal("id" in (card.variants[0] ?? {}), false);
   });
 
-  test("rejects an incomplete canonical row without a primary image", () => {
+  test("keeps a canonical card available when the provider has no image", () => {
     const card = shapeCanonicalCard({ ...completeRow, image_url: null });
-    assert.equal(card, null);
+    assert.ok(card);
+    assert.equal(card.image_url, null);
   });
 
   test("requires the public fields needed for a compatible card response", () => {

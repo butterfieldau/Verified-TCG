@@ -127,8 +127,7 @@ export function shapeCanonicalCard(
     !row.external_id ||
     !row.name ||
     !row.game ||
-    !row.set_name ||
-    !row.image_url
+    !row.set_name
   )
     return null;
   return {
