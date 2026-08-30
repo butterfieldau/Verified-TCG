@@ -7,20 +7,15 @@
  * POST /pricing/scheduler/run               — enqueue batch pricing (admin)
  */
 import { Router } from "express";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logger } from "../lib/logger.js";
 import {
   getPricing,
   getPricingMappingState,
   refreshPricing,
-  refreshPricingForScheduler,
-  recordSchedulerIdentityFailure,
   getPriceHistory,
 } from "../pricing/service.js";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
-import { captureAllPortfolioSnapshots } from "../pricing/portfolio.js";
 import { pricingReadLimiter, pricingRefreshLimiter } from "../lib/rateLimiters.js";
 import {
   isPCConfigured,
@@ -28,6 +23,12 @@ import {
   PROVIDER_LABEL,
 } from "../pricing/pricecharting.js";
 import { resolveCatalogCardById } from "./catalog.js";
+import {
+  runScheduledPricingBatch,
+  selectCardsForScheduledRefresh,
+} from "../pricing/scheduler.js";
+
+export { selectCardsForScheduledRefresh } from "../pricing/scheduler.js";
 
 const router = Router();
 
@@ -99,67 +100,6 @@ function catalogIdentityUnavailable(cardId: string) {
     errorCode: "catalog_identity_unavailable",
     message: "Stored pricing is unavailable and card identity could not be resolved safely",
   };
-}
-
-interface ScheduledCardRow extends Record<string, unknown> {
-  card_id: string;
-  card_data: Record<string, unknown>;
-}
-
-/**
- * Fair bounded scheduler selection. Never-attempted cards come first, then
- * cards whose mapping/quote was refreshed least recently. The query spans the
- * complete eligible set rather than repeatedly reading a fixed first page.
- */
-export async function selectCardsForScheduledRefresh(
-  maxCards: number,
-  options: { cardIdPrefix?: string } = {},
-): Promise<Array<{ cardId: string; cardData: Record<string, unknown> }>> {
-  const result = await db.execute<ScheduledCardRow>(sql`
-    WITH eligible AS (
-      SELECT card_id, card_data, created_at, 1 AS source_priority
-      FROM collection_items
-      UNION ALL
-      SELECT card_id, card_data, created_at, 2 AS source_priority
-      FROM wishlist_items
-      WHERE deleted_at IS NULL
-      UNION ALL
-      SELECT card_id, card_data, created_at, 3 AS source_priority
-      FROM sold_archive_items
-    ),
-    deduped AS (
-      SELECT DISTINCT ON (card_id)
-        card_id, card_data, created_at
-      FROM eligible
-      ORDER BY card_id, source_priority, created_at
-    ),
-    attempts AS (
-      SELECT card_id, MAX(updated_at) AS last_attempt
-      FROM card_provider_mappings
-      WHERE provider_key = 'pricecharting'
-      GROUP BY card_id
-    ),
-    quote_refreshes AS (
-      SELECT card_id, MAX(fetched_at) AS last_quote
-      FROM current_quotes
-      WHERE provider_key = 'pricecharting'
-      GROUP BY card_id
-    )
-    SELECT d.card_id, d.card_data
-    FROM deduped d
-    LEFT JOIN attempts a ON a.card_id = d.card_id
-    LEFT JOIN quote_refreshes q ON q.card_id = d.card_id
-    WHERE (${options.cardIdPrefix ?? null}::text IS NULL OR d.card_id LIKE ${`${options.cardIdPrefix ?? ""}%`})
-    ORDER BY
-      GREATEST(
-        COALESCE(a.last_attempt, '-infinity'::timestamptz),
-        COALESCE(q.last_quote, '-infinity'::timestamptz)
-      ) ASC,
-      d.created_at ASC,
-      d.card_id ASC
-    LIMIT ${maxCards}
-  `);
-  return result.rows.map(row => ({ cardId: row.card_id, cardData: row.card_data }));
 }
 
 // ── GET /pricing/cards/:id ────────────────────────────────────────────────────
@@ -324,45 +264,22 @@ router.post("/pricing/scheduler/run", async (req, res): Promise<void> => {
   }
 
   try {
-    const eligibleRows = await selectCardsForScheduledRefresh(maxCards);
-
-    const cards = eligibleRows.map(row => ({ cardId: row.cardId }));
-
-    // Background work remains bounded by maxCards and every provider attempt
-    // passes through the shared one-request-per-second queue.
-    void (async () => {
-      const verifiedCards: Array<{
-        cardId: string;
-        name: string;
-        set?: string;
-        number?: string;
-        game?: string;
-      }> = [];
-      for (let index = 0; index < cards.length; index += 10) {
-        const batch = cards.slice(index, index + 10);
-        const resolved = await Promise.all(
-          batch.map(async card => {
-            const catalogCard = await resolveCatalogCardById(card.cardId).catch(() => null);
-            const identity = catalogCard ? identityFromCatalogCard(catalogCard.card) : null;
-            if (!identity) {
-              await recordSchedulerIdentityFailure(card.cardId);
-              return null;
-            }
-            return { cardId: card.cardId, ...identity };
-          }),
-        );
-        verifiedCards.push(...resolved.filter((card): card is NonNullable<typeof card> => card !== null));
-      }
-      await Promise.allSettled(verifiedCards.map(card => refreshPricingForScheduler(card)));
-      await captureAllPortfolioSnapshots();
-    })().catch((err: unknown) => {
-      logger.error({ err }, "Scheduled pricing/snapshot batch failed");
+    const result = await runScheduledPricingBatch({
+      maxCards,
+      trigger: "admin",
+      force: body["force"] === true,
     });
-
     res.json({
-      queued: cards.length,
-      configured: true,
-      selectedEligibleCards: eligibleRows.length,
+      queued: result.selectedCards,
+      configured: result.configured,
+      status: result.status,
+      bucket: result.bucket,
+      selectedEligibleCards: result.selectedCards,
+      identityFailures: result.identityFailures,
+      refreshSucceeded: result.refreshSucceeded,
+      refreshFailed: result.refreshFailed,
+      snapshotsCaptured: result.snapshotsCaptured,
+      snapshotsSkipped: result.snapshotsSkipped,
     });
   } catch (err) {
     logger.error({ err }, "POST /pricing/scheduler/run error");

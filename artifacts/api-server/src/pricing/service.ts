@@ -343,7 +343,11 @@ async function persistProviderMetadata(cardId: string, detail: PCProductDetail):
     );
 }
 
-function runMappedRefresh(cardId: string, providerProductId: string): Promise<void> {
+function runMappedRefresh(
+  cardId: string,
+  providerProductId: string,
+  propagateFailures = false,
+): Promise<void> {
   const key = `${cardId}:${PROVIDER_KEY}`;
   const existing = matchInFlight.get(key);
   if (existing) return existing;
@@ -354,6 +358,7 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
     const detail = await priceChartingProvider.getProductDetail(providerProductId, { bypassCache: true });
     if (!detail) {
       await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
+      if (propagateFailures) throw new Error("PriceCharting product refresh returned no data");
       return;
     }
     await persistProviderMetadata(cardId, detail);
@@ -364,6 +369,7 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
     .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Pricing refresh failed");
       await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh").catch(() => {});
+      if (propagateFailures) throw err;
     })
     .finally(() => matchInFlight.delete(key));
 
@@ -377,6 +383,7 @@ function runMappedRefresh(cardId: string, providerProductId: string): Promise<vo
 async function runBackgroundMatch(
   cardId: string,
   input: { name: string; set?: string; number?: string; game?: string },
+  propagateFailures = false,
 ): Promise<void> {
   const key = `${cardId}:${PROVIDER_KEY}`;
   const existing = matchInFlight.get(key);
@@ -390,6 +397,7 @@ async function runBackgroundMatch(
     const products = await priceChartingProvider.searchProducts(query);
     if (!products) {
       await recordProviderHealth(false, "PriceCharting search failed", "search");
+      if (propagateFailures) throw new Error("PriceCharting search returned no data");
       return;
     }
     await recordProviderHealth(true, undefined, "search");
@@ -464,11 +472,13 @@ async function runBackgroundMatch(
         await recordProviderHealth(true, undefined, "product_refresh");
       } else {
         await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh");
+        if (propagateFailures) throw new Error("PriceCharting product refresh returned no data");
       }
     }
   })()
     .catch((err: unknown) => {
       logger.error({ err, cardId }, "Background pricing match failed");
+      if (propagateFailures) throw err;
     })
     .finally(() => {
       matchInFlight.delete(key);
@@ -863,7 +873,7 @@ export async function refreshPricingForScheduler(
 
   const mapping = await getExistingMapping(opts.cardId);
   if (mapping?.status === "matched" && mapping.providerProductId) {
-    await runMappedRefresh(opts.cardId, mapping.providerProductId);
+    await runMappedRefresh(opts.cardId, mapping.providerProductId, true);
     return;
   }
 
@@ -872,7 +882,7 @@ export async function refreshPricingForScheduler(
     set: opts.set,
     number: opts.number,
     game: opts.game,
-  });
+  }, true);
 }
 
 /**

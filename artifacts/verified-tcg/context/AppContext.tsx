@@ -72,7 +72,11 @@ import {
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 import { clearRecentScans } from '@/services/scanStatePersistence';
-import { apiJson } from '@/services/apiClient';
+import {
+  ApiClientError,
+  apiJson,
+  type ApiErrorKind,
+} from '@/services/apiClient';
 import {
   recordStartupPhase,
   recoverStartupTask,
@@ -105,7 +109,7 @@ interface AppState {
   collection: CollectionItem[];
   collectionLoading: boolean;
   /** A failed server refresh must not be presented as an empty collection. */
-  collectionError: string | null;
+  collectionError: CollectionRefreshIssue | null;
   refreshCollection: () => Promise<void>;
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
@@ -207,7 +211,7 @@ interface AppActions {
   setCurrentEventId: (id: string | null) => void;
 }
 
-type AppContextType = AppState & AppActions;
+export type AppContextType = AppState & AppActions;
 
 const AppContext = createContext<AppContextType | null>(null);
 
@@ -222,7 +226,52 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
-const COLLECTION_CACHE_KEY = '@verified_tcg/collection_cache';
+const COLLECTION_CACHE_PREFIX = '@verified_tcg/collection_cache_v2';
+
+export interface CollectionRefreshIssue {
+  kind: ApiErrorKind | 'unknown';
+  message: string;
+  endpoint: string | null;
+  recoverable: boolean;
+}
+
+interface CollectionCachePayload {
+  ownerId: string;
+  items: CollectionItem[];
+  timestamp: string;
+}
+
+function collectionCacheKey(userId: string): string {
+  return `${COLLECTION_CACHE_PREFIX}:${encodeURIComponent(userId)}`;
+}
+
+function collectionRefreshIssue(error: unknown): CollectionRefreshIssue {
+  if (error instanceof ApiClientError) {
+    const messages: Partial<Record<ApiErrorKind, string>> = {
+      configuration: 'This app build cannot reach the Verified TCG service. Check for an updated build.',
+      network: 'You appear to be offline. Your saved collection is still available.',
+      timeout: 'The collection refresh timed out. Your saved collection is still available.',
+      unauthorized: 'Your session has expired. Sign in again to refresh your collection.',
+      forbidden: 'This account cannot refresh its collection right now.',
+      update_required: 'Update Verified TCG before refreshing your collection.',
+      rate_limited: 'Too many refreshes were requested. Wait a moment, then try again.',
+      provider_unavailable: 'Live collection data is temporarily unavailable. Your saved collection is still shown.',
+      server: 'The Verified TCG service could not refresh your collection. Your saved collection is still shown.',
+    };
+    return {
+      kind: error.kind,
+      message: messages[error.kind] ?? error.message,
+      endpoint: error.endpoint ?? null,
+      recoverable: error.kind !== 'unauthorized' && error.kind !== 'update_required',
+    };
+  }
+  return {
+    kind: 'unknown',
+    message: 'Your collection could not be refreshed. Your saved collection is still shown.',
+    endpoint: null,
+    recoverable: true,
+  };
+}
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -345,7 +394,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
-  const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [collectionError, setCollectionError] = useState<CollectionRefreshIssue | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
@@ -586,16 +635,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Load collection from server ────────────────────────────────────────────
 
-  const loadCollection = useCallback(async () => {
+  const loadCollection = useCallback(async (ownerIdOverride?: string) => {
     const gen = ++loadGeneration.current; // capture before first await
+    const ownerId = ownerIdOverride ?? currentUserIdRef.current;
+    if (!ownerId) {
+      setCollectionLoading(false);
+      return;
+    }
     setCollectionLoading(true);
 
     // Show cached collection immediately so the screen isn't blank while fetching
     try {
-      const cached = await AsyncStorage.getItem(COLLECTION_CACHE_KEY);
+      const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
       if (cached && gen === loadGeneration.current) {
-        const { items } = JSON.parse(cached) as { items: CollectionItem[]; timestamp: string };
-        if (Array.isArray(items) && items.length > 0) {
+        const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
+        if (cachedOwnerId === ownerId && Array.isArray(items)) {
           setCollection(items);
         }
       }
@@ -608,8 +662,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Persist the fresh list so the next cold launch has it immediately
       AsyncStorage.setItem(
-        COLLECTION_CACHE_KEY,
-        JSON.stringify({ items: serverItems, timestamp: new Date().toISOString() }),
+        collectionCacheKey(ownerId),
+        JSON.stringify({ ownerId, items: serverItems, timestamp: new Date().toISOString() }),
       ).catch(() => {});
 
       setCollection(prev => {
@@ -636,11 +690,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return [...filteredServer, ...stillPending];
       });
       setCollectionError(null);
-    } catch {
+    } catch (error) {
       // Retain a usable offline cache, but surface the failed refresh so it is
       // never mistaken for a genuinely empty, up-to-date collection.
       if (gen === loadGeneration.current) {
-        setCollectionError('Your collection could not be refreshed. Please try again.');
+        const issue = collectionRefreshIssue(error);
+        setCollectionError(issue);
+        if (issue.kind === 'unauthorized') {
+          authSignOut().catch(() => {});
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       }
     } finally {
       // Only the latest generation clears the loading flag.
@@ -701,7 +761,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (restoredTier === 'pro') setSubscriptionTierState('pro');
       if (meta.is_founding_member === true) setFoundingMemberClaimed(true);
 
-      loadCollection();
+      loadCollection(session.user.id);
       loadNotifications();
 
       // Fetch fresh profile data from the server so edits made on another
@@ -791,7 +851,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFoundingMemberClaimed(meta.is_founding_member === true);
 
     // Load real account data from the server.
-    loadCollection();
+    loadCollection(session.user.id);
     loadNotifications();
 
     // Register push token silently if permission already granted — no prompt.
@@ -847,8 +907,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
-    // Clear collection cache so the next user doesn't see stale data
-    AsyncStorage.removeItem(COLLECTION_CACHE_KEY).catch(() => {});
+    // Clear only the active account's collection cache. Other accounts keep
+    // their own offline cache and can never read this account's payload.
+    const ownerId = currentUserIdRef.current;
+    if (ownerId) AsyncStorage.removeItem(collectionCacheKey(ownerId)).catch(() => {});
     // Clear scan history so it never leaks to the next user regardless of
     // which tabs are mounted (tabs are lazily mounted in Expo).
     clearRecentScans().catch(() => {});

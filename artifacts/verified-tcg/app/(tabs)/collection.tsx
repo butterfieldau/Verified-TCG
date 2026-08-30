@@ -163,10 +163,15 @@ export default function CollectionScreen() {
           <View style={styles.errorBox} accessibilityRole="alert">
             <Feather name="alert-circle" size={20} color={C.negative} />
             <View style={{ flex: 1, gap: 6 }}>
-              <Text style={styles.errorText}>{collectionError}</Text>
-              <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
-                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
-              </Pressable>
+              <Text style={styles.errorText}>{collectionError.message}</Text>
+              {collectionError.endpoint && (
+                <Text style={styles.errorDetail}>Failed while refreshing {collectionError.endpoint}</Text>
+              )}
+              {collectionError.recoverable && (
+                <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
+                  <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         )}
@@ -871,6 +876,11 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
     textAlign: 'center',
     paddingHorizontal: 20,
+  },
+  errorDetail: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
   },
   retryBtn: {
     paddingHorizontal: 20,

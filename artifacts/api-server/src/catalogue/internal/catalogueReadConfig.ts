@@ -1,4 +1,6 @@
-/** Server-only kill switch. Disabled by default so JustTCG remains unchanged. */
+/** Canonical reads are the default; operators can explicitly disable them. */
 export function canonicalCatalogueReadsEnabled(env = process.env): boolean {
-  return /^(1|true|yes|on)$/i.test(env.CANONICAL_CATALOGUE_READS_ENABLED ?? "");
+  const configured = env.CANONICAL_CATALOGUE_READS_ENABLED;
+  if (configured == null || configured.trim() === "") return true;
+  return !/^(0|false|no|off)$/i.test(configured);
 }

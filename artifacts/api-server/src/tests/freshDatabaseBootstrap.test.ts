@@ -35,6 +35,7 @@ const REQUIRED_TABLES = [
   "pricing_providers",
   "current_quotes",
   "portfolio_snapshots",
+  "pricing_scheduler_runs",
   "telemetry_events",
   "catalogue_cache_entries",
   "catalogue_games",
@@ -159,7 +160,7 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 72);
+      assert.equal(beforeSecondBootstrap.tables.length, 73);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }

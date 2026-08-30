@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { runMigrations } from "./lib/migrate";
 import { recoverQueuedRefreshJobs } from "./routes/adminOperations";
+import { startPricingScheduler } from "./pricing/scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -32,6 +33,7 @@ runMigrations()
         process.exit(1);
       }
       logger.info({ port }, "Server listening");
+      startPricingScheduler();
     });
   })
   .catch((err) => {

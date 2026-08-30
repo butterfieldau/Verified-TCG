@@ -615,6 +615,29 @@ const TABLE_MIGRATIONS: string[] = [
     finished_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS pricing_scheduler_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    snapshot_bucket TEXT NOT NULL UNIQUE,
+    trigger TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    max_cards INTEGER NOT NULL,
+    selected_cards INTEGER NOT NULL DEFAULT 0,
+    identity_failures INTEGER NOT NULL DEFAULT 0,
+    refresh_succeeded INTEGER NOT NULL DEFAULT 0,
+    refresh_failed INTEGER NOT NULL DEFAULT 0,
+    snapshots_captured INTEGER NOT NULL DEFAULT 0,
+    snapshots_skipped INTEGER NOT NULL DEFAULT 0,
+    snapshots_failed INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    error_message TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS pricing_scheduler_runs_status_started_idx
+    ON pricing_scheduler_runs (status, started_at DESC)`,
+  `ALTER TABLE pricing_scheduler_runs
+    ADD COLUMN IF NOT EXISTS snapshots_failed INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS pricing_overrides (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     card_id TEXT NOT NULL,

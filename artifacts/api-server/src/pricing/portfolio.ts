@@ -252,13 +252,28 @@ export async function capturePortfolioSnapshot(userId: string): Promise<boolean>
 }
 
 export async function captureAllPortfolioSnapshots(): Promise<number> {
+  return (await captureAllPortfolioSnapshotsDetailed()).captured;
+}
+
+export async function captureAllPortfolioSnapshotsDetailed(): Promise<{
+  captured: number;
+  skipped: number;
+  failed: number;
+}> {
   const userRows = await db
     .selectDistinct({ userId: collectionItemsTable.userId })
     .from(collectionItemsTable);
 
   let captured = 0;
+  let skipped = 0;
+  let failed = 0;
   for (const { userId } of userRows) {
-    if (await capturePortfolioSnapshot(userId)) captured += 1;
+    try {
+      if (await capturePortfolioSnapshot(userId)) captured += 1;
+      else skipped += 1;
+    } catch {
+      failed += 1;
+    }
   }
-  return captured;
+  return { captured, skipped, failed };
 }
