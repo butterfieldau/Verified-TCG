@@ -11,6 +11,7 @@ export const modules: ModuleMap = {
   "./components/mockups/verified-tcg/CardDetailOrbit.tsx": () => import("../components/mockups/verified-tcg/CardDetailOrbit.tsx"),
   "./components/mockups/verified-tcg/CardDetailRich.tsx": () => import("../components/mockups/verified-tcg/CardDetailRich.tsx"),
   "./components/mockups/verified-tcg/Collection.tsx": () => import("../components/mockups/verified-tcg/Collection.tsx"),
+  "./components/mockups/verified-tcg/CollectionPulse.tsx": () => import("../components/mockups/verified-tcg/CollectionPulse.tsx"),
   "./components/mockups/verified-tcg/Discover.tsx": () => import("../components/mockups/verified-tcg/Discover.tsx"),
   "./components/mockups/verified-tcg/Home.tsx": () => import("../components/mockups/verified-tcg/Home.tsx"),
   "./components/mockups/verified-tcg/Onboarding.tsx": () => import("../components/mockups/verified-tcg/Onboarding.tsx"),
