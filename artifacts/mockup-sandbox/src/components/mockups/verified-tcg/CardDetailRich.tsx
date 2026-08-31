@@ -35,7 +35,7 @@ const population: Record<string, number> = {
   "CGC 10": 309,
 };
 
-const chartColors = ["#e22536", "#f0b84a", "#d88a5b", "#b7a4d9"];
+const chartColors = ["#e22536", "#b31f35", "#f05a63", "#b7a4d9"];
 const chartPath = "M0 98 L20 85 L42 92 L63 69 L85 72 L108 41 L131 50 L154 28 L176 34 L198 20 L220 39 L242 33 L264 54 L286 46 L308 60 L330 47 L360 52";
 const collectionHoldings = [
   { label: "PSA 10", grader: "PSA", pop: 536, value: "$3,648.74", initial: 1 },
@@ -47,9 +47,9 @@ function DetailChart({ graded, selectedGrades }: { graded: boolean; selectedGrad
   const scale = selectedGrades.length > 1 ? 0.82 : 1;
   return (
     <svg className="chart" viewBox="0 0 360 112" preserveAspectRatio="none" aria-label={`${selectedGrades.length} series three month verified price history`}>
-      <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#f0b84a" stopOpacity=".24" /><stop offset="1" stopColor="#f0b84a" stopOpacity="0" /></linearGradient></defs>
+      <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#e22536" stopOpacity=".24" /><stop offset="1" stopColor="#e22536" stopOpacity="0" /></linearGradient></defs>
       <path d={`${chartPath} L360 112 L0 112Z`} fill="url(#area)" />
-      {selectedGrades.map((label, index) => <path key={label} d={chartPath} fill="none" stroke={graded ? chartColors[index % chartColors.length] : "#f0b84a"} strokeWidth={index === 0 ? "2.5" : "2"} strokeLinecap="round" opacity={index === 0 ? 1 : .88} transform={`translate(0 ${index * 5}) scale(1 ${scale})`} />)}
+      {selectedGrades.map((label, index) => <path key={label} d={chartPath} fill="none" stroke={graded ? chartColors[index % chartColors.length] : "#e22536"} strokeWidth={index === 0 ? "2.5" : "2"} strokeLinecap="round" opacity={index === 0 ? 1 : .88} transform={`translate(0 ${index * 5}) scale(1 ${scale})`} />)}
     </svg>
   );
 }
