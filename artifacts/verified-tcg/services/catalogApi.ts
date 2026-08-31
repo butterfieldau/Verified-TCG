@@ -1,5 +1,6 @@
 import type { Card, CardRarity } from '@/types';
-import { ApiClientError, apiJson } from './apiClient';
+import { ApiClientError, apiJson, apiRequest } from './apiClient';
+import { getAccessToken } from './auth';
 
 export interface CatalogVariant {
   id: string;
@@ -123,6 +124,16 @@ export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promis
     if (error instanceof ApiClientError && error.kind === 'not_found') return null;
     throw error;
   }
+}
+
+/** Record one explicit card-detail view; failures never block the card screen. */
+export async function recordCatalogCardLookup(id: string): Promise<void> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) return;
+  await apiRequest(`/api/catalog/cards/${encodeURIComponent(id)}/lookup`, {
+    method: 'POST',
+    accessToken,
+  });
 }
 
 export async function searchCatalog(query: string, signal?: AbortSignal, page: number = 1): Promise<CatalogResponse> {

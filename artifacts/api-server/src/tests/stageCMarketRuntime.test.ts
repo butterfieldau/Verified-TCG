@@ -11,7 +11,7 @@ import {
   catalogueExternalIdsTable, catalogueGamesTable, catalogueSetsTable,
   currentQuotesTable, db, pool, usersTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import app from "../app.js";
 import { createTestUser, deleteTestUser } from "./helpers.js";
 
@@ -90,6 +90,7 @@ describe("Stage C persisted market acceptance (development DB)", () => {
   after(async () => {
     try {
       await db.delete(activityLogTable).where(eq(activityLogTable.userId, userId));
+      await db.execute(sql`DELETE FROM card_lookup_buckets WHERE card_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
       await db.delete(currentQuotesTable).where(inArray(currentQuotesTable.cardId, ids));
       await db.delete(cardPriceSnapshotsTable).where(inArray(cardPriceSnapshotsTable.cardId, ids));
       await db.delete(catalogueExternalIdsTable).where(inArray(catalogueExternalIdsTable.externalId, ids));
@@ -120,6 +121,14 @@ describe("Stage C persisted market acceptance (development DB)", () => {
       recent.body.data.findIndex((x: { id: string }) => x.id === ids[1]), "tied provenance timestamps use external ID");
     const trending = await request.get("/api/catalog/trending");
     assert.ok(trending.body.data.findIndex((x: { id: string }) => x.id === ids[0]) < trending.body.data.findIndex((x: { id: string }) => x.id === ids[1]));
+    assert.equal((await request.post(`/api/catalog/cards/${ids[0]}/lookup`)).status, 401);
+    assert.equal((await request.post(`/api/catalog/cards/${ids[0]}/lookup`).set("Authorization", `Bearer ${token}`)).status, 204);
+    assert.equal((await request.post(`/api/catalog/cards/${ids[0]}/lookup`).set("Authorization", `Bearer ${token}`)).status, 204);
+    assert.equal((await request.post(`/api/catalog/cards/${ids[1]}/lookup`).set("Authorization", `Bearer ${token}`)).status, 204);
+    const lookupTrending = await request.get("/api/catalog/trending-lookups");
+    assert.deepEqual(lookupTrending.body.data.slice(0, 2).map((x: { id: string }) => x.id), [ids[0], ids[1]]);
+    assert.equal(lookupTrending.body.refresh_hours, 12);
+    assert.equal(lookupTrending.body.data[0].trending_lookup_count, 1, "repeat views from one collector count once per card and bucket");
 
     await db.update(usersTable).set({ preferredTcgs: "MTG" }).where(eq(usersTable.id, userId));
     const magicMovers = await request.get("/api/catalog/market-movers?currency=USD").set("Authorization", `Bearer ${token}`);

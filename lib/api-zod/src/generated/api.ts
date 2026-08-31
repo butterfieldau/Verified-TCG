@@ -99,6 +99,49 @@ export const GetCatalogCardResponse = zod.object({
 
 
 /**
+ * Records only an anonymous aggregate count for the current 12-hour window.
+ * @summary Record an aggregate card-detail lookup
+ */
+export const RecordCatalogCardLookupParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RecordCatalogCardLookupResponse = zod.void()
+
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+export const GetTrendingCardLookupsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "window_start": zod.coerce.date().nullish(),
+  "window_end": zod.coerce.date().nullish(),
+  "refresh_hours": zod.literal(12)
+})
+
+
+/**
  * @summary List the authenticated collector's persisted holdings
  */
 export const listCollectionResponseOneQuantityMax = 9999;
@@ -514,3 +557,6 @@ export const GetEbaySoldHistoryResponse = zod.object({
 }).nullable(),
   "returnedAt": zod.coerce.date()
 })
+
+// End generated API validators.
+

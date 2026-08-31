@@ -25,7 +25,7 @@ interface MarketMoverServerCard extends CatalogCard {
 
 // v2 prevents pre-release, provider-search market results from surviving as
 // a release fallback after the snapshot-backed feed ships.
-const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v3';
+const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v4';
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MarketCacheOptions {
@@ -50,6 +50,7 @@ interface MarketCache {
   gainers?: MarketCacheSection<MarketMover[]>;
   losers?: MarketCacheSection<MarketMover[]>;
   trending?: MarketCacheSection<Card[]>;
+  lookupTrending?: MarketCacheSection<Card[]>;
   recentlyAdded?: MarketCacheSection<Card[]>;
 }
 
@@ -153,6 +154,10 @@ export function getTrendingCardsCached(onUpdate?: (fresh: Card[]) => void, optio
   return swrFetch('trending', () => getTrendingCards(options), onUpdate, options);
 }
 
+export function getLookupTrendingCardsCached(onUpdate?: (fresh: Card[]) => void, options?: MarketCacheOptions): Promise<Card[]> {
+  return swrFetch('lookupTrending', () => getLookupTrendingCards(options), onUpdate, options);
+}
+
 /** Cached variant of getRecentlyAddedCards — see swrFetch for semantics. */
 export function getRecentlyAddedCardsCached(onUpdate?: (fresh: Card[]) => void, options?: MarketCacheOptions): Promise<Card[]> {
   return swrFetch('recentlyAdded', () => getRecentlyAddedCards(options), onUpdate, options);
@@ -210,6 +215,21 @@ async function fetchMarketMovers(section: 'movers' | 'gainers' | 'losers', scope
  */
 export async function getTrendingCards(options?: MarketCacheOptions): Promise<Card[]> {
   return singleFlight(`trending:${options?.cacheScope ?? 'anonymous'}`, () => fetchTrendingCards(options?.cacheScope));
+}
+
+export async function getLookupTrendingCards(options?: MarketCacheOptions): Promise<Card[]> {
+  return singleFlight(`lookup-trending:${options?.cacheScope ?? 'anonymous'}`, () => fetchLookupTrendingCards(options?.cacheScope));
+}
+
+async function fetchLookupTrendingCards(scope?: string): Promise<Card[]> {
+  const token = await getAccessToken();
+  const body = await apiJson<{ data: CatalogCard[] }>(
+    '/api/catalog/trending-lookups',
+    token ? { accessToken: token } : undefined,
+  );
+  const cards = (body.data ?? []).map(catalogCardToAppCard);
+  await writeMarketCacheSection('lookupTrending', cards, scope);
+  return cards;
 }
 
 async function fetchTrendingCards(scope?: string): Promise<Card[]> {

@@ -51,6 +51,7 @@ const REQUIRED_TABLES = [
   "catalogue_source_records",
   "catalogue_import_jobs",
   "catalogue_import_errors",
+  "card_lookup_buckets",
 ] as const;
 
 let maintenancePool: ReturnType<typeof createDatabasePool>;
@@ -163,7 +164,7 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 76);
+      assert.equal(beforeSecondBootstrap.tables.length, 77);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }

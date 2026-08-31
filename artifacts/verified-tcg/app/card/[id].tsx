@@ -29,7 +29,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
-import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
+import { fetchCatalogCard, catalogCardToAppCard, recordCatalogCardLookup } from '@/services/catalogApi';
 import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
@@ -683,6 +683,11 @@ export default function CardDetailScreen() {
       .finally(() => setCatalogLoading(false));
     return () => controller.abort();
   }, [id, catalogJson, appCardJson]);
+
+  useEffect(() => {
+    if (!id) return;
+    recordCatalogCardLookup(id).catch(() => {});
+  }, [id]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;

@@ -32,6 +32,7 @@ import type {
   GetCollectionSummaryParams,
   GetCollectionValueHistoryParams,
   GetEbaySoldHistoryParams,
+  GetTrendingCardLookups200,
   HealthStatus,
   SearchCatalogCardsParams
 } from './api.schemas';
@@ -134,6 +135,9 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+// End generated API.
+
 export const getSearchCatalogCardsUrl = (params: SearchCatalogCardsParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -211,7 +215,12 @@ export function useSearchCatalogCards<TData = Awaited<ReturnType<typeof searchCa
 
   return withQueryKey(query, queryOptions.queryKey);
 }
-// End of generated API definitions.
+
+
+
+
+
+
 
 export const getGetCatalogCardUrl = (id: string,) => {
 
@@ -278,6 +287,155 @@ export function useGetCatalogCard<TData = Awaited<ReturnType<typeof getCatalogCa
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetCatalogCardQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRecordCatalogCardLookupUrl = (id: string,) => {
+
+
+
+
+  return `/api/catalog/cards/${id}/lookup`
+}
+
+/**
+ * Records only an anonymous aggregate count for the current 12-hour window.
+ * @summary Record an aggregate card-detail lookup
+ */
+export const recordCatalogCardLookup = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getRecordCatalogCardLookupUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRecordCatalogCardLookupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['recordCatalogCardLookup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordCatalogCardLookup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  recordCatalogCardLookup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordCatalogCardLookupMutationResult = NonNullable<Awaited<ReturnType<typeof recordCatalogCardLookup>>>
+
+    export type RecordCatalogCardLookupMutationError = ErrorType<void>
+
+    /**
+ * @summary Record an aggregate card-detail lookup
+ */
+export const useRecordCatalogCardLookup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordCatalogCardLookup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRecordCatalogCardLookupMutationOptions(options));
+    }
+
+export const getGetTrendingCardLookupsUrl = () => {
+
+
+
+
+  return `/api/catalog/trending-lookups`
+}
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+export const getTrendingCardLookups = async ( options?: Parameters<typeof customFetch>[1]): Promise<GetTrendingCardLookups200> => {
+
+  return customFetch<GetTrendingCardLookups200>(getGetTrendingCardLookupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTrendingCardLookupsQueryKey = () => {
+    return [
+    `/api/catalog/trending-lookups`
+    ] as const;
+    }
+
+
+export const getGetTrendingCardLookupsQueryOptions = <TData = Awaited<ReturnType<typeof getTrendingCardLookups>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTrendingCardLookupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrendingCardLookups>>> = ({ signal }) => getTrendingCardLookups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTrendingCardLookupsQueryResult = NonNullable<Awaited<ReturnType<typeof getTrendingCardLookups>>>
+export type GetTrendingCardLookupsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+
+export function useGetTrendingCardLookups<TData = Awaited<ReturnType<typeof getTrendingCardLookups>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTrendingCardLookupsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1148,7 +1306,9 @@ export function useGetEbaySoldHistory<TData = Awaited<ReturnType<typeof getEbayS
   return withQueryKey(query, queryOptions.queryKey);
 }
 
-export {};
-const __generatedApiEnd = true;
+
+
+
+
 
 

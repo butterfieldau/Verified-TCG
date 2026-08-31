@@ -292,6 +292,16 @@ export type GetCatalogCard200 = {
   cached?: boolean;
 };
 
+export type GetTrendingCardLookups200 = {
+  data: CatalogCard[];
+  source?: string;
+  /** @nullable */
+  window_start?: string | null;
+  /** @nullable */
+  window_end?: string | null;
+  refresh_hours: 12;
+};
+
 export type GetCollectionSummaryParams = {
 displayCurrency?: string;
 };

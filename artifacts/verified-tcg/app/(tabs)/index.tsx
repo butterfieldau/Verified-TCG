@@ -37,6 +37,8 @@ import {
   getMarketGainersCached,
   getMarketLosersCached,
   getTrendingCardsCached,
+  getLookupTrendingCards,
+  getLookupTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
 import { fetchActiveEvents, type EventSummary } from '@/services/eventsApi';
@@ -297,6 +299,7 @@ export default function HomeScreen() {
   const [gainers, setGainers] = useState<MarketMover[]>([]);
   const [losers, setLosers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
+  const [lookupTrending, setLookupTrending] = useState<Card[]>([]);
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [marketFeedStatus, setMarketFeedStatus] = useState<Record<'movers' | 'gainers' | 'losers' | 'trending' | 'recent', { loading: boolean; error: string | null }>>({
     movers: { loading: true, error: null },
@@ -306,6 +309,10 @@ export default function HomeScreen() {
     recent: { loading: true, error: null },
   });
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [lookupTrendingStatus, setLookupTrendingStatus] = useState<{ loading: boolean; error: string | null }>({
+    loading: true,
+    error: null,
+  });
   const [activityLoading, setActivityLoading] = useState(false);
 
   // Server-authoritative collection summary for portfolio totals
@@ -363,6 +370,21 @@ export default function HomeScreen() {
     loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope }), setLosers);
     loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope }), setTrending);
     loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope }), setRecentCards);
+    setLookupTrendingStatus({ loading: true, error: null });
+    getLookupTrendingCardsCached(
+      fresh => { if (!cancelled) setLookupTrending(fresh); },
+      { cacheScope: marketCacheScope },
+    )
+      .then(data => { if (!cancelled) setLookupTrending(data); })
+      .catch(error => {
+        if (!cancelled) setLookupTrendingStatus({
+          loading: false,
+          error: error instanceof Error ? error.message : 'Trending data is unavailable.',
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLookupTrendingStatus(previous => ({ ...previous, loading: false }));
+      });
 
     fetchRecentActivity(10)
       .then(a => { if (!cancelled) setActivity(a); })
@@ -374,12 +396,13 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     await refreshPrices();
-    const [moversResult, gainersResult, losersResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
+    const [moversResult, gainersResult, losersResult, trendingResult, lookupTrendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
       getMarketMovers({ cacheScope: marketCacheScope }),
        getMarketGainers({ cacheScope: marketCacheScope }),
        getMarketLosers({ cacheScope: marketCacheScope }),
       getTrendingCards({ cacheScope: marketCacheScope }),
+      getLookupTrendingCards({ cacheScope: marketCacheScope }),
       getRecentlyAddedCards({ cacheScope: marketCacheScope }),
       fetchRecentActivity(10),
       fetchCollectionSummary(currency),
@@ -389,6 +412,7 @@ export default function HomeScreen() {
     if (gainersResult.status === 'fulfilled') setGainers(gainersResult.value);
     if (losersResult.status === 'fulfilled') setLosers(losersResult.value);
     if (trendingResult.status === 'fulfilled') setTrending(trendingResult.value);
+    if (lookupTrendingResult.status === 'fulfilled') setLookupTrending(lookupTrendingResult.value);
     if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
     if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
     if (summaryResult.status === 'fulfilled') {
@@ -902,6 +926,64 @@ export default function HomeScreen() {
       {/* ── Market ────────────────────────────────────────────────────────── */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>Trending</Text>
+            <Text style={styles.sectionSubtitle}>Most looked-up cards · refreshes every 12 hours</Text>
+          </View>
+          <Feather name="activity" size={18} color={C.primary} />
+        </View>
+        {lookupTrendingStatus.loading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : lookupTrendingStatus.error ? (
+          <View style={styles.marketFeedMessage}>
+            <Text style={styles.emptySection}>Trending lookups are unavailable.</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setLookupTrendingStatus({ loading: true, error: null });
+                getLookupTrendingCards({ cacheScope: marketCacheScope })
+                  .then(setLookupTrending)
+                  .catch(error => setLookupTrendingStatus({
+                    loading: false,
+                    error: error instanceof Error ? error.message : 'Trending data is unavailable.',
+                  }))
+                  .finally(() => setLookupTrendingStatus(previous => ({ ...previous, loading: false })));
+              }}
+            >
+              <Text style={styles.marketRetry}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : lookupTrending.length === 0 ? (
+          <Text style={styles.emptySection}>Popular card lookups will appear here as collectors browse.</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {lookupTrending.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8, width: 110 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}, trending lookup`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <Text style={styles.moverPrice}>
+                    {card.price.raw > 0 ? `${card.price.currency} ${card.price.raw.toLocaleString('en-AU')}` : 'Price unavailable'}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* ── Market ────────────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Market</Text>
           <Pressable
             onPress={() => router.push('/(tabs)/market')}
@@ -1314,6 +1396,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 14,
   },
   sectionTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground },
+  sectionSubtitle: { marginTop: 3, fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   seeAll: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.primary },
   emptySection: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, paddingVertical: 8 },
   moverName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, width: 110 },

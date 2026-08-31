@@ -62,6 +62,41 @@ paths:
                   cached: { type: boolean }
         "404": { description: Card not found. }
         "503": { description: Catalogue data is unavailable. }
+  /catalog/cards/{id}/lookup:
+    post:
+      operationId: recordCatalogCardLookup
+      tags: [catalog]
+      summary: Record an aggregate card-detail lookup
+      description: Records only an anonymous aggregate count for the current 12-hour window.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Lookup recorded. }
+        "401": { description: Authentication required. }
+        "404": { description: Card not found. }
+        "503": { description: Lookup aggregation is unavailable. }
+  /catalog/trending-lookups:
+    get:
+      operationId: getTrendingCardLookups
+      tags: [catalog]
+      summary: Get cards with the most aggregate lookups in the current 12-hour window
+      responses:
+        "200":
+          description: Real aggregate lookup ranking with catalogue data and persisted quotes when available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, refresh_hours]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogCard" }
+                  source: { type: string }
+                  window_start: { type: [string, "null"], format: date-time }
+                  window_end: { type: [string, "null"], format: date-time }
+                  refresh_hours: { type: integer, const: 12 }
+        "503": { description: Trending data is unavailable. }
   /collection:
     get:
       operationId: listCollection

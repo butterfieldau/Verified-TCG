@@ -14,6 +14,11 @@ import {
   recordCatalogueReadMetric,
   deduplicatePublicCards,
 } from "../catalogue/internal/catalogueReadService.js";
+import {
+  getTrendingLookups,
+  recordCardLookup,
+} from "../catalogue/internal/cardLookupAggregation.js";
+import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const router = Router();
 
@@ -706,6 +711,42 @@ router.get("/catalog/trending", async (req, res) => {
 });
 
 /**
+ * GET /catalog/trending-lookups
+ * Ranks cards by genuine card-detail lookups in the current 12-hour UTC bucket.
+ * Search text and collector identities are never stored.
+ */
+router.get("/catalog/trending-lookups", async (req, res) => {
+  try {
+    const preferences = await optionalPreferredGames(req.headers.authorization);
+    const lookups = await getTrendingLookups(40);
+    const ranked = await Promise.all(lookups.map(async lookup => {
+      const canonical = await readCanonicalPublicCard(lookup.cardId);
+      if (!canonical.value || !matchesPreferences(canonical.value, preferences)) return null;
+      return { card: canonical.value, lookup };
+    }));
+    const cards = await enrichCardsWithCurrentRawQuotes(
+      ranked.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+        .slice(0, 8)
+        .map(entry => ({
+          ...entry.card,
+          trending_lookup_count: entry.lookup.lookupCount,
+          trending_window_start: entry.lookup.bucketStart,
+          trending_window_end: entry.lookup.bucketEnd,
+        })),
+    );
+    return res.json({
+      data: cards,
+      source: "VerifiedTCG aggregate card lookups",
+      window_start: lookups[0]?.bucketStart ?? null,
+      window_end: lookups[0]?.bucketEnd ?? null,
+      refresh_hours: 12,
+    });
+  } catch {
+    return res.status(503).json({ error: "Trending data is temporarily unavailable" });
+  }
+});
+
+/**
  * GET /catalog/recently-added
  * Returns canonical cards ordered by their recorded Verified TCG external
  * identity creation time, with a real current raw quote where available.
@@ -859,6 +900,20 @@ router.get("/catalog/cards/:id", async (req, res) => {
     });
   } catch {
     return res.status(503).json({ error: "Catalog provider unavailable" });
+  }
+});
+
+router.post("/catalog/cards/:id/lookup", requireActiveUser, async (req: AuthRequest, res) => {
+  try {
+    const cardId = String(req.params.id ?? "").trim();
+    const canonical = await readCanonicalPublicCard(cardId);
+    if (!canonical.value) {
+      return res.status(404).json({ error: "Card not found" });
+    }
+    await recordCardLookup(cardId, req.userId!);
+    return res.status(204).send();
+  } catch {
+    return res.status(503).json({ error: "Lookup could not be recorded" });
   }
 });
 

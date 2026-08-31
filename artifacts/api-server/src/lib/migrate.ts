@@ -786,6 +786,19 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Index for fast per-user activity reads (newest first)
   `CREATE INDEX IF NOT EXISTS activity_log_user_created_at_idx
      ON activity_log (user_id, created_at DESC)`,
+  // Anonymous aggregate card-detail lookup buckets for the Home Trending feed.
+  // No raw search text, user IDs, IP addresses, or device identifiers are kept.
+  `CREATE TABLE IF NOT EXISTS card_lookup_buckets (
+     card_id TEXT NOT NULL,
+     bucket_start TIMESTAMPTZ NOT NULL,
+     lookup_count INTEGER NOT NULL DEFAULT 0,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT card_lookup_buckets_card_bucket_uniq UNIQUE (card_id, bucket_start),
+     CONSTRAINT card_lookup_buckets_count_nonnegative CHECK (lookup_count >= 0)
+   )`,
+  `CREATE INDEX IF NOT EXISTS card_lookup_buckets_bucket_count_idx
+     ON card_lookup_buckets (bucket_start DESC, lookup_count DESC)`,
   `CREATE INDEX IF NOT EXISTS user_reports_status_created_idx
      ON user_reports (status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS user_reports_assignee_status_idx
