@@ -391,6 +391,43 @@ describe("pickBestMatch", () => {
     assert.equal(result.status, "matched");
     assert.equal(result.candidate?.id, "2");
   });
+
+  test("matches a unique exact promo identity despite PriceCharting's generic set label", () => {
+    const result = pickBestMatch(
+      { name: "Pikachu & Zekrom GX", set: "SM Promos", number: "SM168", game: "pokemon" },
+      [
+        { id: "other", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Promo", cardNumber: "SM248" },
+        { id: "exact", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Promo", cardNumber: "SM168" },
+        { id: "team-up", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Team Up", cardNumber: "33" },
+      ],
+    );
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "exact");
+  });
+
+  test("matches a unique exact identity when PriceCharting omits the printed denominator", () => {
+    const result = pickBestMatch(
+      { name: "Umbreon ex - 161/131", set: "SV: Prismatic Evolutions", number: "161/131", game: "pokemon" },
+      [
+        { id: "base", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "60" },
+        { id: "exact", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "161" },
+      ],
+    );
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "exact");
+  });
+
+  test("keeps same-name same-number reprints in review", () => {
+    const result = pickBestMatch(
+      { name: "Charizard", set: "Unknown Set", number: "4/102", game: "pokemon" },
+      [
+        { id: "base", name: "Charizard", consoleName: "Pokemon Base Set", cardNumber: "4" },
+        { id: "celebrations", name: "Charizard", consoleName: "Pokemon Celebrations", cardNumber: "4" },
+      ],
+    );
+    assert.equal(result.status, "review_required");
+    assert.equal(result.candidate, null);
+  });
 });
 
 // ── PriceCharting adapter with injected fetch ─────────────────────────────────

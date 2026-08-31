@@ -121,8 +121,14 @@ function lcsRatio(a: string, b: string): number {
 
 /** Score a card name against a candidate name (0–1). */
 function scoreName(input: string, candidate: string): number {
-  const jacc = wordJaccard(input, candidate);
-  const lcs  = lcsRatio(input, candidate);
+  // Canonical catalogue names sometimes include the collector number while
+  // PriceCharting exposes it as a separate "#..." suffix. Compare identity
+  // names without that explicit identifier so "Umbreon ex - 161/131" and
+  // "Umbreon ex #161" do not look like different cards.
+  const cleanInput = stripCardNumber(input);
+  const cleanCandidate = stripCardNumber(candidate);
+  const jacc = wordJaccard(cleanInput, cleanCandidate);
+  const lcs  = lcsRatio(cleanInput, cleanCandidate);
   // Weighted average, slightly favour exact word overlap
   return jacc * 0.7 + lcs * 0.3;
 }
@@ -136,9 +142,15 @@ function scoreSet(input: string | undefined, candidate: string): number {
 /** Score a card number match (0 or 1). */
 function scoreNumber(input: string | undefined, candidate: string | undefined): number {
   if (!input || !candidate) return 0.5; // unknown — partial credit
-  const normInput = input.replace(/^0+/, "").toLowerCase().trim();
-  const normCand  = candidate.replace(/^0+/, "").toLowerCase().trim();
-  return normInput === normCand ? 1 : 0;
+  const normalizePart = (part: string) => part.replace(/^0+/, "").toLowerCase().trim();
+  const inputParts = input.split("/").map(normalizePart);
+  const candidateParts = candidate.split("/").map(normalizePart);
+  if (inputParts.join("/") === candidateParts.join("/")) return 1;
+  // PriceCharting commonly omits the printed denominator (for example
+  // catalogue 161/131 is provider #161). A shared numerator is accepted only
+  // as identifier evidence; pickBestMatch still requires a unique exact-name
+  // candidate before this can bypass fuzzy set scoring.
+  return inputParts[0] && inputParts[0] === candidateParts[0] ? 1 : 0;
 }
 
 /** Score a game match (0 or 1). */
@@ -189,6 +201,14 @@ export function pickBestMatch(
 
   let status: MappingStatus;
   let level: MatchResult["level"];
+  const exactIdentityCandidates = ranked.filter(({ candidate, score }) =>
+    score.number === 1 &&
+    normalizeString(stripCardNumber(input.name)) === normalizeString(stripCardNumber(candidate.name)),
+  );
+  const hasUniqueExactIdentity =
+    Boolean(normalizedInputNumber) &&
+    exactIdentityCandidates.length === 1 &&
+    exactIdentityCandidates[0]!.candidate.id === bestCandidate.id;
 
   if (identifierIsMissingOrWrong) {
     // Card number evidence is required for an automatic persisted mapping.
@@ -196,6 +216,12 @@ export function pickBestMatch(
     // name/set similarity.
     status = "review_required";
     level = "ambiguous";
+  } else if (hasUniqueExactIdentity) {
+    // A unique provider candidate with the same explicit collector number and
+    // exact card name is stronger evidence than fuzzy set aliases such as
+    // "SM Promos" versus PriceCharting's generic "Pokemon Promo".
+    status = "matched";
+    level = "strong";
   } else if (
     bestScore.total >= MATCH_STRONG_THRESHOLD &&
     (!runnerUp || bestScore.total - runnerUp.score.total >= 0.08)
