@@ -111,6 +111,11 @@ export default function RootLayout() {
     if (fontsLoaded) recordStartupPhase('font-load', 'success');
     if (!fontsLoaded && !fontError) return;
 
+    if (typeof document !== 'undefined') {
+      document.getElementById('startup-splash')?.remove();
+      document.getElementById('startup-splash-styles')?.remove();
+    }
+
     void SplashScreen.hideAsync().catch((error) => {
       recordStartupPhase('splash-setup', 'failure', error, false);
     });
