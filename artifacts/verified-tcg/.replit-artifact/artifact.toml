@@ -4,7 +4,7 @@ title = "Verified TCG"
 description = "Verified TCG is a premium trading card platform mobile app for collectors, traders, and investors. It lets users scan cards, track collection value, verify cards, check market pricing, and buy/sell across multiple TCG ecosystems (Pokémon, Magic: The Gathering, One Piece, etc.). Built with React Native + Expo + TypeScript with a dark-first premium aesthetic inspired by Apple × StockX × modern fintech."
 version = "1.0.0"
 id = "artifacts/verified-tcg"
-router = "expo-domain"
+router = "path"
 
 [[services]]
 name = "expo"
