@@ -136,7 +136,11 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
   return withQueryKey(query, queryOptions.queryKey);
 }
 
-// End generated API.
+
+
+
+
+
 
 export const getSearchCatalogCardsUrl = (params: SearchCatalogCardsParams,) => {
   const normalizedParams = new URLSearchParams();

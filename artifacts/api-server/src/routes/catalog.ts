@@ -110,7 +110,19 @@ async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
       AND price_cents > 0
       AND card_id IN (${sql.join(cardIds.map(id => sql`${id}`), sql`, `)})
   `);
-  const byCardId = new Map(quotes.rows.map(row => [row.card_id, row]));
+  return enrichCardsWithQuoteRows(cards, quotes.rows);
+}
+
+export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
+  cards: T[],
+  rows: Array<{
+    card_id: string;
+    price_cents: number;
+    currency: string;
+    fetched_at: Date;
+  }>,
+): T[] {
+  const byCardId = new Map(rows.map(row => [row.card_id, row]));
   return cards.map(card => {
     const quote = typeof card.id === "string" ? byCardId.get(card.id) : undefined;
     if (!quote) return card;
@@ -127,12 +139,13 @@ async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
       ...card,
       currency: quote.currency,
       market_price: quote.price_cents / 100,
+      pricing_source: "PriceCharting",
       updated_at: new Date(quote.fetched_at).toISOString(),
       variants: [
         pricedVariant,
         ...existing.filter(variant => variant.condition !== "Near Mint"),
       ],
-    };
+    } as T;
   });
 }
 
@@ -222,6 +235,8 @@ router.get("/catalog/cards", async (req, res) => {
           return res.json({
             data: await enrichCardsWithCurrentRawQuotes(canonical),
             source: "VerifiedTCG",
+            catalogue_source: "VerifiedTCG",
+            pricing_source: "PriceCharting",
             canonical: true,
             cached: fallbackResult.cached ?? false,
           });
@@ -236,6 +251,8 @@ router.get("/catalog/cards", async (req, res) => {
           return res.json({
             data: await enrichCardsWithCurrentRawQuotes(canonical),
             source: "VerifiedTCG",
+            catalogue_source: "VerifiedTCG",
+            pricing_source: "PriceCharting",
             canonical: true,
             cached: fallbackResult.cached ?? false,
           });
@@ -264,6 +281,13 @@ router.get("/catalog/cards", async (req, res) => {
               : delivery === "mixed"
                 ? "VerifiedTCG+JustTCG"
                 : "JustTCG",
+          catalogue_source:
+            delivery === "canonical"
+              ? "VerifiedTCG"
+              : delivery === "mixed"
+                ? "VerifiedTCG + JustTCG"
+                : "JustTCG",
+          pricing_source: "PriceCharting",
           canonical: delivery !== "justtcg",
           cached: fallbackResult.cached ?? false,
         });
@@ -290,10 +314,12 @@ router.get("/catalog/cards", async (req, res) => {
           } | null) ?? {}),
         };
         if (Array.isArray(body.data))
-          body.data = body.data.map(enrichCard);
+          body.data = await enrichCardsWithCurrentRawQuotes(body.data.map(enrichCard));
         return res.json({
           ...body,
           source: "JustTCG",
+          catalogue_source: "JustTCG",
+          pricing_source: "PriceCharting",
           ...cacheMetadata(fallbackResult),
         });
       }
@@ -330,13 +356,19 @@ router.get("/catalog/cards", async (req, res) => {
         {}),
     };
     if (body && Array.isArray(body.data)) {
-      body.data = body.data.map((card) => {
+      body.data = await enrichCardsWithCurrentRawQuotes(body.data.map((card) => {
         const enriched = enrichCard(card);
         return enriched;
-      });
+      }));
     }
 
-    return res.json({ ...body, source: "JustTCG", ...cacheMetadata(result) });
+    return res.json({
+      ...body,
+      source: "JustTCG",
+      catalogue_source: "JustTCG",
+      pricing_source: "PriceCharting",
+      ...cacheMetadata(result),
+    });
   } catch {
     return res.status(503).json({ error: "Catalog provider unavailable" });
   }
@@ -581,6 +613,7 @@ export async function persistedMarketCards(
           markets: [{ region: "source", currency: row.currency, price: row.current_cents / 100 }],
         }],
         market_price: row.current_cents / 100,
+        pricing_source: "PriceCharting",
         previous_price: row.previous_cents / 100,
         absolute_change: movement.absoluteCents / 100,
         price_change_7d: movement.percent,
@@ -635,6 +668,7 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
         }),
       }],
       market_price: row.price_cents === null ? null : row.price_cents / 100,
+      pricing_source: row.price_cents === null ? null : "PriceCharting",
       currency: row.currency,
       catalogue_added_at: addedAt.toISOString(),
       updated_at: fetchedAt?.toISOString() ?? null,

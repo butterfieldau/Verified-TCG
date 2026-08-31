@@ -30,6 +30,8 @@ export interface CatalogCard {
   tcgplayerId?: string | null;
   /** Present on market feeds when the server has a truthful source currency. */
   currency?: string;
+  market_price?: number | null;
+  pricing_source?: string | null;
   variants: CatalogVariant[];
 }
 
@@ -37,6 +39,8 @@ export interface CatalogResponse {
   data: CatalogCard[];
   meta?: { total?: number; limit?: number; offset?: number; hasMore?: boolean };
   source?: string;
+  catalogue_source?: string;
+  pricing_source?: string;
   cached?: boolean;
 }
 
@@ -171,7 +175,12 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
 export function catalogCardToAppCard(card: CatalogCard): Card {
   // Prefer Near Mint, fall back to first variant
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
-  const price = variant?.price ?? 0;
+  const hasVerifiedRawPrice =
+    card.pricing_source === 'PriceCharting' &&
+    typeof variant?.price === 'number' &&
+    Number.isFinite(variant.price) &&
+    variant.price > 0;
+  const price = hasVerifiedRawPrice ? variant!.price! : 0;
   // A missing source timestamp is meaningful: do not present the mapping time
   // as if it were a verified quote timestamp.
   const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : null;
@@ -214,6 +223,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     gradientEnd: '#090909',
     price: {
       raw: price,
+      available: hasVerifiedRawPrice,
       currency,
       updatedAt,
       change24h: variant?.priceChange24hr ?? undefined,

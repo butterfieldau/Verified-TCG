@@ -35,6 +35,10 @@ export interface CatalogCard {
   image_url?: string;
   /** @nullable */
   currency?: string | null;
+  /** @nullable */
+  market_price?: number | null;
+  /** @nullable */
+  pricing_source?: string | null;
   variants: CatalogVariant[];
   [key: string]: unknown;
  }
@@ -44,6 +48,8 @@ export type CatalogResponseMeta = { [key: string]: unknown };
 export interface CatalogResponse {
   data: CatalogCard[];
   source?: string;
+  catalogue_source?: string;
+  pricing_source?: string;
   cached?: boolean;
   meta?: CatalogResponseMeta;
 }
@@ -404,3 +410,4 @@ export const GetEbaySoldHistoryDisplayCurrency = {
   CAD: 'CAD',
   NZD: 'NZD',
 } as const;
+

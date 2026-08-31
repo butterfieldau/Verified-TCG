@@ -45,13 +45,14 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
   const showImage = !!card.imageUrl && !imgError;
+  const hasPrice = card.price.available === true;
 
   return (
     <Pressable
       style={[styles.resultRow, { backgroundColor: C.card }]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, $${card.price.raw.toLocaleString()} raw`}
+      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, ${hasPrice ? `$${card.price.raw.toLocaleString()} raw` : 'price unavailable'}`}
     >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
@@ -74,9 +75,11 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
         <Text style={styles.resultRarity}>{card.rarity.replace(/_/g, ' ')}</Text>
       </View>
       <View style={styles.resultPricing}>
-        <Text style={styles.resultPrice}>${card.price.raw.toLocaleString()}</Text>
-        <Text style={styles.resultPriceLabel}>Raw</Text>
-        {card.price.change7d !== undefined && (
+        <Text style={[styles.resultPrice, !hasPrice && styles.resultPriceUnavailable]}>
+          {hasPrice ? `$${card.price.raw.toLocaleString()}` : 'Unavailable'}
+        </Text>
+        <Text style={styles.resultPriceLabel}>{hasPrice ? 'Raw' : 'Price'}</Text>
+        {hasPrice && card.price.change7d !== undefined && (
           <View style={styles.resultChangeRow}>
             <Feather
               name={card.price.change7d >= 0 ? 'arrow-up' : 'arrow-down'}
@@ -91,7 +94,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
             </Text>
           </View>
         )}
-        {card.price.change30d !== undefined && (
+        {hasPrice && card.price.change30d !== undefined && (
           <View style={styles.resultChangeRow}>
             <Feather
               name={card.price.change30d >= 0 ? 'arrow-up' : 'arrow-down'}
@@ -106,7 +109,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
             </Text>
           </View>
         )}
-        {card.price.psa10 && (
+        {hasPrice && card.price.psa10 && (
           <>
             <Text style={[styles.resultPrice, { marginTop: 4 }]}>${card.price.psa10.toLocaleString()}</Text>
             <Text style={styles.resultPriceLabel}>PSA 10</Text>
@@ -130,6 +133,7 @@ export default function SearchScreen() {
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteLoadingMore, setRemoteLoadingMore] = useState(false);
   const [remoteError, setRemoteError] = useState('');
+  const [remoteSources, setRemoteSources] = useState<{ catalogue?: string; pricing?: string }>({});
   const [trendingMovers, setTrendingMovers] = useState<MarketMover[]>([]);
 
   // Ref tracking the current search query so stale requests don't overwrite
@@ -178,6 +182,10 @@ export default function SearchScreen() {
         .then(result => {
           if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return; // stale
           setRemoteResults(result.data ?? []);
+          setRemoteSources({
+            catalogue: result.catalogue_source ?? result.source,
+            pricing: result.pricing_source,
+          });
           setRemoteHasMore(result.meta?.hasMore ?? false);
           setRemotePage(1);
         })
@@ -185,6 +193,7 @@ export default function SearchScreen() {
           if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return;
           if (error?.name === 'AbortError') return;
           setRemoteResults([]);
+          setRemoteSources({});
           setRemoteError(handleApiError(error));
         })
         .finally(() => {
@@ -354,7 +363,9 @@ export default function SearchScreen() {
                   </View>
                 ) : null}
                 {!remoteError && remoteResults.length > 0 ? (
-                  <Text style={styles.liveSource}>Live catalogue and pricing · JustTCG</Text>
+                  <Text style={styles.liveSource}>
+                    Catalogue · {remoteSources.catalogue ?? 'Verified TCG'}  •  Market prices · {remoteSources.pricing ?? 'PriceCharting'}
+                  </Text>
                 ) : null}
               </View>
             )}
@@ -497,6 +508,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: `${C.mutedForeground}99`,
     textTransform: 'capitalize',
+  },
+  resultPriceUnavailable: {
+    color: C.mutedForeground,
+    fontSize: 11,
   },
   resultPricing: { alignItems: 'flex-end' },
   resultPrice: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },

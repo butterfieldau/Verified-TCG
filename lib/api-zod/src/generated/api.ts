@@ -47,6 +47,8 @@ export const SearchCatalogCardsResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -59,6 +61,8 @@ export const SearchCatalogCardsResponse = zod.object({
 }))
 })),
   "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
   "cached": zod.boolean().optional(),
   "meta": zod.record(zod.string(), zod.unknown()).optional()
 })
@@ -82,6 +86,8 @@ export const GetCatalogCardResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -123,6 +129,8 @@ export const GetTrendingCardLookupsResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -421,6 +429,8 @@ export const GetMarketMoversResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -433,6 +443,8 @@ export const GetMarketMoversResponse = zod.object({
 }))
 })),
   "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
   "cached": zod.boolean().optional(),
   "meta": zod.record(zod.string(), zod.unknown()).optional()
 })
@@ -452,6 +464,8 @@ export const GetTrendingCardsResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -464,6 +478,8 @@ export const GetTrendingCardsResponse = zod.object({
 }))
 })),
   "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
   "cached": zod.boolean().optional(),
   "meta": zod.record(zod.string(), zod.unknown()).optional()
 })
@@ -483,6 +499,8 @@ export const GetRecentlyAddedCardsResponse = zod.object({
   "rarity": zod.string().optional(),
   "image_url": zod.string().optional(),
   "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
   "variants": zod.array(zod.object({
   "condition": zod.string().optional(),
   "price": zod.number().nullish(),
@@ -495,6 +513,8 @@ export const GetRecentlyAddedCardsResponse = zod.object({
 }))
 })),
   "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
   "cached": zod.boolean().optional(),
   "meta": zod.record(zod.string(), zod.unknown()).optional()
 })
@@ -558,5 +578,4 @@ export const GetEbaySoldHistoryResponse = zod.object({
   "returnedAt": zod.coerce.date()
 })
 
-// End generated API validators.
 

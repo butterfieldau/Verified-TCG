@@ -14,9 +14,30 @@ import {
   calculateSnapshotMovement,
   capByGameFromSorted,
   extractData,
+  enrichCardsWithQuoteRows,
   mergePool,
   normalizeTcgName,
 } from "./catalog.js";
+
+test("search quote enrichment joins PriceCharting quotes to exact external IDs", () => {
+  const cards = [
+    { id: "justtcg-one-piece-luffy", name: "Monkey.D.Luffy", game: "One Piece", variants: [] },
+    { id: "justtcg-pokemon-pikachu", name: "Pikachu", game: "Pokemon", variants: [] },
+    { id: "unmatched", name: "No quote", game: "Pokemon", variants: [{ condition: "Near Mint", price: 99 }] },
+  ];
+  const enriched: Record<string, unknown>[] = enrichCardsWithQuoteRows<Record<string, unknown>>(cards, [
+    { card_id: "justtcg-one-piece-luffy", price_cents: 12_345, currency: "AUD", fetched_at: new Date("2026-09-01T00:00:00Z") },
+    { card_id: "justtcg-pokemon-pikachu", price_cents: 6_789, currency: "AUD", fetched_at: new Date("2026-09-01T00:00:00Z") },
+  ]);
+
+  assert.equal(enriched[0]!.market_price, 123.45);
+  assert.equal(enriched[0]!.pricing_source, "PriceCharting");
+  assert.equal((enriched[0]!.variants as Array<{ price: number }>)[0]!.price, 123.45);
+  assert.equal(enriched[1]!.market_price, 67.89);
+  assert.equal(enriched[1]!.pricing_source, "PriceCharting");
+  assert.equal(enriched[2]!.pricing_source, undefined);
+  assert.equal((enriched[2]!.variants as Array<{ price: number }>)[0]!.price, 99);
+});
 
 // ---------------------------------------------------------------------------
 // Persisted market movement

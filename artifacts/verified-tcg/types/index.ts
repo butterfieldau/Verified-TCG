@@ -82,6 +82,8 @@ export interface GradingRecord {
 
 export interface PriceRecord {
   raw: number;
+  /** True only when raw is backed by a verified provider quote. */
+  available?: boolean;
   psa9?: number;
   psa10?: number;
   bgs9?: number;
