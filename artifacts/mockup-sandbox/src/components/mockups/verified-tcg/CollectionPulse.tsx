@@ -1,57 +1,83 @@
 import React, { useMemo, useState } from "react";
-import { Search, SlidersHorizontal, ArrowUpRight, Sparkles, Grid2X2, List, Check } from "lucide-react";
+import { ArrowDownUp, ArrowUpRight, Check, ChevronDown, Grid2X2, List, MoreHorizontal, Search, SlidersHorizontal, Sparkles, TrendingUp, X } from "lucide-react";
 import { AppShell } from "./_shared/AppShell";
-import { MOCK_CARDS } from "./_shared/data";
+import { MOCK_CARDS, MOCK_USER } from "./_shared/data";
 import { CardThumbnail } from "./_shared/CardThumbnail";
 import "./CollectionPulse.css";
 
 type Filter = "All" | "Pokémon" | "Graded" | "Raw" | "For Sale";
+type Sort = "value" | "name" | "recent";
 
 export function CollectionPulse() {
   const [filter, setFilter] = useState<Filter>("All");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
-  const [saved, setSaved] = useState<number[]>([]);
+  const [sort, setSort] = useState<Sort>("value");
+  const [saved, setSaved] = useState<number[]>([6]);
   const filters: Filter[] = ["All", "Pokémon", "Graded", "Raw", "For Sale"];
-  const cards = useMemo(() => MOCK_CARDS.filter((card) => {
-    const matchesQuery = card.name.toLowerCase().includes(query.toLowerCase()) || card.set.toLowerCase().includes(query.toLowerCase());
-    const matchesFilter = filter === "All" || (filter === "Graded" && !!card.grade) || (filter === "Raw" && !card.grade) || filter === "Pokémon" || filter === "For Sale";
-    return matchesQuery && matchesFilter;
-  }), [filter, query]);
+  const cards = useMemo(() => MOCK_CARDS
+    .filter((card) => {
+      const normalizedQuery = query.trim().toLowerCase();
+      const matchesQuery = card.name.toLowerCase().includes(normalizedQuery) || card.set.toLowerCase().includes(normalizedQuery);
+      const matchesFilter = filter === "All" || (filter === "Graded" && !!card.grade) || (filter === "Raw" && !card.grade) || filter === "Pokémon" || (filter === "For Sale" && [1, 5].includes(card.id));
+      return matchesQuery && matchesFilter;
+    })
+    .sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : sort === "recent" ? b.id - a.id : b.value - a.value), [filter, query, sort]);
   const toggleSave = (id: number) => setSaved((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
   return (
     <AppShell active="Collection">
       <main className="collection-pulse pb-28 text-[#f3f0e9]">
-        <header className="px-5 pt-10">
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-[.24em] text-[#f04444]">Vault / 06</p>
-              <h1 className="tcg-title text-[2.35rem] font-bold leading-none tracking-tight">MY COLLECTION</h1>
+        <header className="collection-header">
+          <div className="collection-header__top">
+            <div className="collection-identity">
+              <div className="collection-avatar">AM</div>
+              <div>
+                <p className="collection-kicker">ALEX MERCER / VAULT 06</p>
+                <h1 className="tcg-title collection-title">Collection</h1>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <button aria-label="Search collection" onClick={() => setSearchOpen((open) => !open)} className="pulse-tap rounded-full bg-[#18181b] p-2.5"><Search size={18} /></button>
-              <button aria-label="Filter collection" onClick={() => setFilter("Graded")} className="pulse-tap rounded-full bg-[#18181b] p-2.5"><SlidersHorizontal size={18} /></button>
+            <div className="collection-actions">
+              <button aria-label={searchOpen ? "Close search" : "Search collection"} onClick={() => { setSearchOpen((open) => !open); if (searchOpen) setQuery(""); }} className="pulse-tap collection-icon-button">{searchOpen ? <X size={17} /> : <Search size={17} />}</button>
+              <button aria-label="Collection menu" onClick={() => setSort(sort === "value" ? "recent" : "value")} className="pulse-tap collection-icon-button"><MoreHorizontal size={18} /></button>
             </div>
           </div>
-          {searchOpen && <div className="pulse-enter mb-4 flex items-center gap-2 rounded-xl border border-white/10 bg-[#18181b] px-3 py-2"><Search size={15} className="text-zinc-500" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search card or set" className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600" /></div>}
-          <div className="flex items-end justify-between">
-            <div><p className="text-xs text-zinc-500">247 cards · $34,890 total</p><p className="mt-2 flex items-center gap-1 text-xs font-bold text-emerald-400"><ArrowUpRight size={13} /> 12.4% this month</p></div>
-            <div className="text-right"><p className="text-[10px] uppercase tracking-widest text-zinc-600">Last synced</p><p className="mt-1 text-xs text-zinc-400">Today, 09:42</p></div>
-          </div>
+          {searchOpen && <div className="pulse-enter collection-search"><Search size={15} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search card or set" /><span>{cards.length}</span></div>}
         </header>
-        <section className="mx-5 mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#201f20] p-4">
-          <div className="flex items-start justify-between">
-            <div><div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-zinc-500"><Sparkles size={13} className="text-[#f04444]" /> Vault pulse</div><p className="max-w-[210px] text-sm font-semibold leading-snug">Your Dragon Frontiers cards moved up <span className="text-emerald-400">$640</span> this week.</p></div>
-            <div className="animate-[float-mark_4s_ease-in-out_infinite] text-3xl font-black text-[#f04444]">01</div>
+
+        <section className="collection-portfolio pulse-enter">
+          <div className="portfolio-orbit portfolio-orbit--one" />
+          <div className="portfolio-orbit portfolio-orbit--two" />
+          <div className="portfolio-heading"><span>Portfolio value</span><span className="portfolio-live"><i /> Live</span></div>
+          <p className="portfolio-value">${MOCK_USER.portfolioValue.toLocaleString()}</p>
+          <div className="portfolio-change"><ArrowUpRight size={15} /> $3,840 <span>· 12.4% this month</span></div>
+          <div className="portfolio-chart" aria-label="Portfolio value trending upward">
+            {[28, 38, 31, 48, 43, 58, 53, 72, 64, 82, 76, 94].map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
           </div>
-          <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full w-[72%] rounded-full bg-[#f04444]" /></div>
-          <p className="mt-2 text-[10px] text-zinc-500">Top performer · Rayquaza Gold Star</p>
+          <div className="portfolio-footer"><span><b>{MOCK_USER.totalCards}</b> cards tracked</span><span><b>{MOCK_USER.gradedCards}</b> graded</span><span className="portfolio-sync">Synced 09:42</span></div>
         </section>
-        <div className="scrollbar-hide mt-6 flex gap-2 overflow-x-auto px-5">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={`pulse-tap whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold ${filter === item ? "bg-[#f04444] text-white" : "bg-[#18181b] text-zinc-400"}`}>{filter === item && <Check size={12} className="mr-1 inline" />}{item}</button>)}</div>
-        <div className="mt-6 flex items-center justify-between px-5"><p className="text-xs text-zinc-500">{cards.length} cards showing</p><div className="flex rounded-lg bg-[#18181b] p-1"><button aria-label="Grid view" onClick={() => setView("grid")} className={`pulse-tap rounded p-1.5 ${view === "grid" ? "bg-[#3a393b] text-white" : "text-zinc-600"}`}><Grid2X2 size={14} /></button><button aria-label="List view" onClick={() => setView("list")} className={`pulse-tap rounded p-1.5 ${view === "list" ? "bg-[#3a393b] text-white" : "text-zinc-600"}`}><List size={14} /></button></div></div>
-         <div className={view === "grid" ? "collection-grid" : "collection-list"}>{cards.map((card) => <div key={card.id} className={`card-wrap pulse-enter relative ${view === "list" ? "collection-list-card" : "collection-grid-card"}`}><div className={view === "list" ? "collection-list-thumb" : "collection-grid-thumb"}><CardThumbnail card={card} /></div><button aria-label={`Save ${card.name}`} onClick={() => toggleSave(card.id)} className="pulse-tap absolute right-2 top-2 z-10 rounded-full bg-black/55 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-sm">{saved.includes(card.id) ? "SAVED" : "SAVE"}</button>{view === "list" && <div className="min-w-0"><p className="truncate text-sm font-bold">{card.name}</p><p className="mt-1 text-xs text-zinc-500">{card.set}</p><span className="grade-shimmer mt-2 inline-block rounded bg-[#2e2d2f] px-2 py-1 text-[10px] font-bold text-[#f3f0e9]">{card.grade}</span></div>}</div>)}</div>
-        {cards.length === 0 && <div className="mx-5 mt-8 rounded-2xl border border-dashed border-white/15 p-8 text-center"><p className="text-sm font-bold">Nothing in this slice.</p><p className="mt-2 text-xs text-zinc-500">Try another filter or search term.</p></div>}
+
+        <section className="pulse-feature pulse-enter">
+          <div className="pulse-feature__label"><Sparkles size={13} /> Vault pulse <span>01 / 06</span></div>
+          <div className="pulse-feature__body">
+            <div><h2>Rayquaza is carrying the vault.</h2><p>Dragon Frontiers is up <strong>$640</strong> this week.</p></div>
+            <div className="pulse-feature__trend"><TrendingUp size={17} /><span>+18.6%</span></div>
+          </div>
+          <button className="pulse-feature__link pulse-tap" onClick={() => { setQuery("Rayquaza"); setSearchOpen(true); }}>View card <ArrowUpRight size={14} /></button>
+        </section>
+
+        <div className="collection-toolbar">
+          <div className="collection-section-title"><span>Library</span><small>{cards.length} of 247 showing</small></div>
+          <div className="collection-toolbar__actions">
+            <button aria-label="Change sort order" onClick={() => setSort(sort === "value" ? "name" : sort === "name" ? "recent" : "value")} className="pulse-tap sort-button"><ArrowDownUp size={13} /> {sort === "value" ? "Value" : sort === "name" ? "Name" : "Recent"} <ChevronDown size={13} /></button>
+            <div className="view-toggle"><button aria-label="Grid view" aria-pressed={view === "grid"} onClick={() => setView("grid")} className={`pulse-tap ${view === "grid" ? "is-active" : ""}`}><Grid2X2 size={14} /></button><button aria-label="List view" aria-pressed={view === "list"} onClick={() => setView("list")} className={`pulse-tap ${view === "list" ? "is-active" : ""}`}><List size={15} /></button></div>
+          </div>
+        </div>
+        <div className="scrollbar-hide collection-filters">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={`pulse-tap collection-filter ${filter === item ? "is-active" : ""}`}>{filter === item && <Check size={12} />}{item}</button>)}</div>
+
+        <div className={view === "grid" ? "collection-grid" : "collection-list"}>{cards.map((card, index) => <div key={card.id} className={`card-wrap pulse-enter relative ${view === "list" ? "collection-list-card" : "collection-grid-card"}`} style={{ animationDelay: `${index * 70}ms` }}><div className={view === "list" ? "collection-list-thumb" : "collection-grid-thumb"}><CardThumbnail card={card} /></div><button aria-label={`${saved.includes(card.id) ? "Remove" : "Save"} ${card.name} ${saved.includes(card.id) ? "from saved cards" : "to saved cards"}`} onClick={() => toggleSave(card.id)} className={`pulse-tap card-save ${saved.includes(card.id) ? "is-saved" : ""}`}>{saved.includes(card.id) ? "SAVED" : "SAVE"}</button>{view === "list" && <div className="collection-list-copy"><p>{card.name}</p><span>{card.set} · {card.number}</span><strong>${card.value.toLocaleString()}</strong><em>{card.grade}</em></div>}</div>)}</div>
+        {cards.length === 0 && <div className="collection-empty"><SlidersHorizontal size={19} /><p>No cards match this slice.</p><span>Try another filter or clear your search.</span><button className="pulse-tap" onClick={() => { setFilter("All"); setQuery(""); }}>Reset view</button></div>}
       </main>
     </AppShell>
   );
