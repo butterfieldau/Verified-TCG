@@ -122,16 +122,18 @@ export function CardDetailRich() {
                 <div><label className="field-label">Grade</label><button className="select-control selected" onClick={() => setGrade(grade === "10" ? gradeOptions[grader][0] : "10")}>{grader} {grade}<ChevronDown size={14} /></button></div>
               </div>
             )}
-            {mode === "Graded" && <div className="option-list">{gradeOptions[grader].map((option) => <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>{grader} {option}</button>)}</div>}
             {mode === "Graded" && (
-              <div className="grade-pop-summary" aria-label={`${selectedGrade} population`}>
-                <div>
-                  <span className="grade-pop-summary__label">Population</span>
-                  <strong>{population[selectedGrade]?.toLocaleString() ?? "Unavailable"}</strong>
-                  <span className="grade-pop-summary__detail">cards recorded at {selectedGrade}</span>
+              <>
+                <div className="option-list">
+                  {gradeOptions[grader].map((option) => (
+                    <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>
+                      <span className="grade-option__grade">{grader} {option}</span>
+                      <span className="grade-option__pop">POP {population[`${grader} ${option}`]?.toLocaleString() ?? "—"}</span>
+                    </button>
+                  ))}
                 </div>
-                <button className="grade-pop-summary__link" onClick={() => setMode("POP")}>View full POP <span>→</span></button>
-              </div>
+                <button className="inline-pop-link" onClick={() => setMode("POP")}>View full POP <span>→</span></button>
+              </>
             )}
             <div className="availability"><span>●</span> {mode === "Raw" ? <><strong>Raw / ungraded</strong> · broad market estimate</> : <><strong>{selectedGrade}</strong> · exact grade match available</>}</div>
             <DetailChart graded={mode === "Graded"} />

@@ -113,26 +113,18 @@
 }
 .option-list button {
   border: 1px solid #343b46; border-radius: 7px; background: #15181d;
-  padding: 7px 9px; color: #b7c0cc; font-size: 11px;
+  padding: 6px 9px 7px; color: #b7c0cc; font-size: 11px;
+  display: grid; gap: 2px; text-align: left;
 }
 .option-list button.active { border-color: #e22536; background: rgba(226,37,54,.14); color: #fff; }
-.grade-pop-summary {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-top: 12px; padding: 10px 11px; border: 1px solid rgba(142,227,214,.24);
-  border-radius: 8px; background: rgba(142,227,214,.06);
+.grade-option__grade { font-weight: 700; }
+.grade-option__pop { color: #7fced0; font-size: 9px; letter-spacing: .01em; }
+.option-list button.active .grade-option__pop { color: #8ee3d6; }
+.inline-pop-link {
+  border: 0; background: transparent; color: #8ee3d6; padding: 10px 0 0;
+  font-size: 10px; font-weight: 700;
 }
-.grade-pop-summary__label {
-  display: block; color: #8b96a3; font-size: 9px; text-transform: uppercase; letter-spacing: .08em;
-}
-.grade-pop-summary strong {
-  display: inline-block; margin-top: 2px; color: #8ee3d6; font-family: Rajdhani, sans-serif;
-  font-size: 20px; line-height: 1;
-}
-.grade-pop-summary__detail { margin-left: 7px; color: #8b96a3; font-size: 9px; }
-.grade-pop-summary__link {
-  flex: none; border: 0; background: transparent; color: #dce8ed; font-size: 10px; font-weight: 700;
-}
-.grade-pop-summary__link span { color: #8ee3d6; font-size: 14px; margin-left: 3px; }
+.inline-pop-link span { margin-left: 3px; font-size: 13px; }
 .availability {
   display: flex; gap: 7px; align-items: center; margin-top: 13px; padding-top: 12px;
   border-top: 1px solid #282c33; color: #9ca3af; font-size: 11px;
