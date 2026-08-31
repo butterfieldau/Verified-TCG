@@ -37,6 +37,11 @@ const population: Record<string, number> = {
 
 const chartColors = ["#e22536", "#f0b84a", "#d88a5b", "#b7a4d9"];
 const chartPath = "M0 98 L20 85 L42 92 L63 69 L85 72 L108 41 L131 50 L154 28 L176 34 L198 20 L220 39 L242 33 L264 54 L286 46 L308 60 L330 47 L360 52";
+const collectionHoldings = [
+  { label: "PSA 10", grader: "PSA", pop: 536, value: "$3,648.74", initial: 1 },
+  { label: "PSA 9", grader: "PSA", pop: 2916, value: "$1,480.00", initial: 0 },
+  { label: "BGS 9.5", grader: "BGS", pop: 188, value: "$2,090.00", initial: 0 },
+];
 
 function DetailChart({ graded, selectedGrades }: { graded: boolean; selectedGrades: string[] }) {
   const scale = selectedGrades.length > 1 ? 0.82 : 1;
@@ -54,7 +59,9 @@ export function CardDetailRich() {
   const [grader, setGrader] = useState("PSA");
   const [grade, setGrade] = useState("10");
   const [rawQty, setRawQty] = useState(0);
-  const [gradedQty, setGradedQty] = useState(1);
+  const [gradedQty, setGradedQty] = useState<Record<string, number>>(
+    Object.fromEntries(collectionHoldings.map((holding) => [holding.label, holding.initial])),
+  );
   const [range, setRange] = useState("3M");
   const [selectedGrades, setSelectedGrades] = useState<string[]>(["PSA 10"]);
   const selectedGrade = mode === "Raw" ? "Raw" : `${grader} ${grade}`;
@@ -158,20 +165,21 @@ export function CardDetailRich() {
             </div>
             <div className="graded-collection-card">
               <div className="graded-collection-card__top">
-                <div>
-                  <span className="section-kicker">Graded copies</span>
-                  <strong className="graded-collection-card__title">PSA 10</strong>
-                  <span className="graded-collection-card__meta">Holfoil · Pop. 536 · exact match</span>
+                <div><span className="section-kicker">Graded copies</span><strong className="graded-collection-card__title">Your slabs</strong></div>
+                <span className="graded-collection-card__total">{collectionHoldings.reduce((sum, holding) => sum + (gradedQty[holding.label] ?? 0), 0)} owned</span>
+              </div>
+              <div className="graded-collection-card__labels"><span>Grade · population</span><span>Owned</span><span>Value</span></div>
+              {collectionHoldings.map((holding) => (
+                <div className="graded-holding-row" key={holding.label}>
+                  <span className="grade-mark">{holding.grader}</span>
+                  <div className="graded-holding-copy"><strong>{holding.label}</strong><small>Pop. {holding.pop.toLocaleString()} · exact match</small></div>
+                  <div className="quantity"><button onClick={() => setGradedQty((current) => ({ ...current, [holding.label]: Math.max(0, (current[holding.label] ?? 0) - 1) }))} aria-label={`Remove ${holding.label}`}><Minus size={12} /></button><b>{gradedQty[holding.label] ?? 0}</b><button onClick={() => setGradedQty((current) => ({ ...current, [holding.label]: (current[holding.label] ?? 0) + 1 }))} aria-label={`Add ${holding.label}`}><Plus size={12} /></button></div>
+                  <span className="graded-holding-value">{holding.value}</span>
                 </div>
-                <span className="grade-mark">PSA</span>
-              </div>
-              <div className="graded-collection-card__value">
-                <div><span>Holding value</span><strong>$3,648.74</strong></div>
-                <div className="graded-collection-card__owned"><span>Owned</span><div className="quantity"><button onClick={() => setGradedQty(Math.max(0, gradedQty - 1))} aria-label="Remove graded card"><Minus size={13} /></button><b>{gradedQty}</b><button onClick={() => setGradedQty(gradedQty + 1)} aria-label="Add graded card"><Plus size={13} /></button></div></div>
-              </div>
-              <button className="graded-add-button" onClick={() => setGradedQty(gradedQty + 1)}><Plus size={14} /> Add another PSA 10</button>
+              ))}
+              <div className="graded-collection-card__footer"><span>Combined holding value</span><strong>$7,218.74</strong></div>
             </div>
-            <button className="add-graded">Choose a different grade <span>→</span></button>
+            <button className="add-graded">Choose another grade <span>→</span></button>
           </section>
         </>
       )}
