@@ -155,7 +155,6 @@ export default function CardDetailScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}
       >
         <Pressable onPress={() => setShowInspect(true)} style={styles.hero} accessibilityRole="button" accessibilityLabel="Inspect card image">
-          <View style={styles.heroGlow} />
           <Image source={require('@/assets/images/pikachu-zekrom.png')} style={styles.heroImage} resizeMode="cover" />
           <Text style={styles.heroCaption}>Tap image to inspect</Text>
         </Pressable>
@@ -254,7 +253,6 @@ function makeStyles(C: ReturnType<typeof useColors>) {
     iconButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 20, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceStrong },
     scrollContent: { paddingHorizontal: 12 },
     hero: { height: 260, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-    heroGlow: { position: 'absolute', width: 210, height: 210, borderRadius: 110, backgroundColor: C.accent, opacity: 0.55 },
     heroImage: { width: 155, height: 216, borderRadius: 12, borderWidth: 4, borderColor: C.textSecondary, transform: [{ rotate: '2deg' }] },
     heroCaption: { position: 'absolute', bottom: 4, color: C.mutedForeground, fontSize: 10, letterSpacing: 0.3 },
     identityCard: { padding: 15, borderWidth: 1, borderColor: C.border, borderRadius: 13, backgroundColor: C.card, marginBottom: 12 },
