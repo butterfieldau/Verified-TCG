@@ -85,6 +85,10 @@ export async function selectCardsForScheduledRefresh(
       FROM wishlist_items WHERE deleted_at IS NULL
       UNION ALL
       SELECT card_id, card_data, created_at, 3 AS source_priority FROM sold_archive_items
+      UNION ALL
+      SELECT external_id AS card_id, '{}'::jsonb AS card_data, created_at, 4 AS source_priority
+      FROM catalogue_external_ids
+      WHERE provider_key = 'justtcg' AND entity_type = 'card'
     ), deduped AS (
       SELECT DISTINCT ON (card_id) card_id, card_data, created_at
       FROM eligible ORDER BY card_id, source_priority, created_at
@@ -150,7 +154,7 @@ export async function runScheduledPricingBatch(input: {
   force?: boolean;
   now?: Date;
 }): Promise<PricingSchedulerResult> {
-  const maxCards = Math.min(Math.max(input.maxCards ?? 50, 1), 200);
+  const maxCards = Math.min(Math.max(input.maxCards ?? 200, 1), 200);
   const bucket = snapshotBucketFor(input.now ?? new Date());
   const empty = {
     bucket,

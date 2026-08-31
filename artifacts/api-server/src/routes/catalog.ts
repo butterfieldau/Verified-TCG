@@ -80,6 +80,57 @@ function getNmVariant(variants: unknown): Record<string, unknown> | null {
   return arr.find((v) => v.condition === "Near Mint") ?? arr[0]!;
 }
 
+type QuoteEnrichableCard = Record<string, unknown> & { id?: unknown; variants?: unknown };
+
+/**
+ * Attach only persisted, provider-backed raw quotes to catalogue cards.
+ * Catalogue identity and pricing have separate provenance; a catalogue result
+ * without a current quote remains explicitly unpriced.
+ */
+async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
+  cards: T[],
+): Promise<T[]> {
+  const cardIds = [...new Set(cards.map(card => typeof card.id === "string" ? card.id : "").filter(Boolean))];
+  if (cardIds.length === 0) return cards;
+  const quotes = await db.execute<{
+    card_id: string;
+    price_cents: number;
+    currency: string;
+    fetched_at: Date;
+  }>(sql`
+    SELECT card_id, price_cents, currency, fetched_at
+    FROM current_quotes
+    WHERE provider_key = 'pricecharting'
+      AND grade_key = 'raw'
+      AND price_cents > 0
+      AND card_id IN (${sql.join(cardIds.map(id => sql`${id}`), sql`, `)})
+  `);
+  const byCardId = new Map(quotes.rows.map(row => [row.card_id, row]));
+  return cards.map(card => {
+    const quote = typeof card.id === "string" ? byCardId.get(card.id) : undefined;
+    if (!quote) return card;
+    const existing = Array.isArray(card.variants)
+      ? card.variants as Array<Record<string, unknown>>
+      : [];
+    const pricedVariant = {
+      condition: "Near Mint",
+      price: quote.price_cents / 100,
+      lastUpdated: Math.floor(new Date(quote.fetched_at).getTime() / 1000),
+      markets: [{ region: "source", currency: quote.currency, price: quote.price_cents / 100 }],
+    };
+    return {
+      ...card,
+      currency: quote.currency,
+      market_price: quote.price_cents / 100,
+      updated_at: new Date(quote.fetched_at).toISOString(),
+      variants: [
+        pricedVariant,
+        ...existing.filter(variant => variant.condition !== "Near Mint"),
+      ],
+    };
+  });
+}
+
 function positiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
@@ -164,7 +215,7 @@ router.get("/catalog/cards", async (req, res) => {
             "canonical",
           );
           return res.json({
-            data: canonical,
+            data: await enrichCardsWithCurrentRawQuotes(canonical),
             source: "VerifiedTCG",
             canonical: true,
             cached: fallbackResult.cached ?? false,
@@ -178,13 +229,15 @@ router.get("/catalog/cards", async (req, res) => {
             "canonical",
           );
           return res.json({
-            data: canonical,
+            data: await enrichCardsWithCurrentRawQuotes(canonical),
             source: "VerifiedTCG",
             canonical: true,
             cached: fallbackResult.cached ?? false,
           });
         }
-        const data = deduplicatePublicCards(canonical, fallbackCards).slice(0, limit);
+        const data = await enrichCardsWithCurrentRawQuotes(
+          deduplicatePublicCards(canonical, fallbackCards).slice(0, limit),
+        );
         const canonicalCardsDelivered = canonical.length;
         const delivery =
           canonicalCardsDelivered === 0
@@ -629,10 +682,10 @@ router.get("/catalog/trending", async (req, res) => {
       ORDER BY COUNT(*) DESC, MAX(recent_activity.created_at) DESC, recent_activity.entity_id ASC
       LIMIT 40
     `);
-    const activityCards = (await Promise.all(activity.rows.map(async ({ card_id }) => {
+    const activityCards = await enrichCardsWithCurrentRawQuotes((await Promise.all(activity.rows.map(async ({ card_id }) => {
       const canonical = await readCanonicalPublicCard(card_id);
       return canonical.value && matchesPreferences(canonical.value, preferences) ? canonical.value : null;
-    }))).filter((card): card is NonNullable<typeof card> => card !== null);
+    }))).filter((card): card is NonNullable<typeof card> => card !== null));
     // Engagement is authoritative when sufficient. Otherwise the deterministic
     // fallback is persisted movement followed by catalogue provenance, never a
     // synthetic popularity score.
