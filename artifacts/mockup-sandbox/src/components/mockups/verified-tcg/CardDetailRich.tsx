@@ -150,18 +150,28 @@ export function CardDetailRich() {
           </section>
 
           <section className="panel">
-            <div className="panel-heading"><h2>Add to collection</h2><small>Total value · $3,873.75</small></div>
+            <div className="panel-heading"><h2>Your collection</h2><small>Total value · $3,873.75</small></div>
             <div className="collection-line">
               <span className="grade-mark raw">RAW</span><div className="collection-copy"><strong>Ungraded</strong><small>Holfoil</small></div>
               <div className="quantity"><button onClick={() => setRawQty(Math.max(0, rawQty - 1))} aria-label="Remove raw card"><Minus size={13} /></button><b>{rawQty}</b><button onClick={() => setRawQty(rawQty + 1)} aria-label="Add raw card"><Plus size={13} /></button></div>
               <div className="line-value">{rawQty ? "$225" : "—"}</div>
             </div>
-            <div className="collection-line">
-              <span className="grade-mark">PSA</span><div className="collection-copy"><strong>PSA 10</strong><small>Pop. 536 · Holfoil</small></div>
-              <div className="quantity"><button onClick={() => setGradedQty(Math.max(0, gradedQty - 1))} aria-label="Remove graded card"><Minus size={13} /></button><b>{gradedQty}</b><button onClick={() => setGradedQty(gradedQty + 1)} aria-label="Add graded card"><Plus size={13} /></button></div>
-              <div className="line-value">$3,649</div>
+            <div className="graded-collection-card">
+              <div className="graded-collection-card__top">
+                <div>
+                  <span className="section-kicker">Graded copies</span>
+                  <strong className="graded-collection-card__title">PSA 10</strong>
+                  <span className="graded-collection-card__meta">Holfoil · Pop. 536 · exact match</span>
+                </div>
+                <span className="grade-mark">PSA</span>
+              </div>
+              <div className="graded-collection-card__value">
+                <div><span>Holding value</span><strong>$3,648.74</strong></div>
+                <div className="graded-collection-card__owned"><span>Owned</span><div className="quantity"><button onClick={() => setGradedQty(Math.max(0, gradedQty - 1))} aria-label="Remove graded card"><Minus size={13} /></button><b>{gradedQty}</b><button onClick={() => setGradedQty(gradedQty + 1)} aria-label="Add graded card"><Plus size={13} /></button></div></div>
+              </div>
+              <button className="graded-add-button" onClick={() => setGradedQty(gradedQty + 1)}><Plus size={14} /> Add another PSA 10</button>
             </div>
-            <button className="add-graded">+ Add a graded card</button>
+            <button className="add-graded">Choose a different grade <span>→</span></button>
           </section>
         </>
       )}
