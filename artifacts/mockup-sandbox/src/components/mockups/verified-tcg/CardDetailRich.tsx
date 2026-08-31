@@ -123,17 +123,14 @@ export function CardDetailRich() {
               </div>
             )}
             {mode === "Graded" && (
-              <>
-                <div className="option-list">
-                  {gradeOptions[grader].map((option) => (
-                    <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>
-                      <span className="grade-option__grade">{grader} {option}</span>
-                      <span className="grade-option__pop">POP {population[`${grader} ${option}`]?.toLocaleString() ?? "—"}</span>
-                    </button>
-                  ))}
-                </div>
-                <button className="inline-pop-link" onClick={() => setMode("POP")}>View full POP <span>→</span></button>
-              </>
+              <div className="option-list">
+                {gradeOptions[grader].map((option) => (
+                  <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>
+                    <span className="grade-option__grade">{grader} {option}</span>
+                    <span className="grade-option__pop">POP {population[`${grader} ${option}`]?.toLocaleString() ?? "—"}</span>
+                  </button>
+                ))}
+              </div>
             )}
             <div className="availability"><span>●</span> {mode === "Raw" ? <><strong>Raw / ungraded</strong> · broad market estimate</> : <><strong>{selectedGrade}</strong> · exact grade match available</>}</div>
             <DetailChart graded={mode === "Graded"} />
