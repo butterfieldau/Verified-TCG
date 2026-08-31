@@ -41,7 +41,7 @@ import {
   normalizeGradeKey,
 } from "./grades.js";
 import type { GradeKey } from "./grades.js";
-import { pickBestMatch } from "./matcher.js";
+import { buildMatchSearchQueries, pickBestMatch } from "./matcher.js";
 import { convertCents, buildConversionProvenance } from "./fx.js";
 import {
   aggregateVerifiedMarketValue,
@@ -57,6 +57,7 @@ type PCOperation = "product_refresh" | "search" | "explicit_refresh" | "bulk_imp
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+const NON_MATCH_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 /** Stable UTC bucket used to deduplicate one AM and one PM capture per day. */
 export function snapshotBucketFor(date: Date): string {
@@ -533,9 +534,15 @@ async function runBackgroundMatch(
   const job = (async () => {
     if (!priceChartingProvider.isConfigured()) return;
 
-    // Search PC for candidates
-    const query = [input.name, input.set, input.game].filter(Boolean).join(" ");
-    const products = await priceChartingProvider.searchProducts(query);
+    // Search by exact card name + collector number first. This avoids making a
+    // low-confidence same-name mapping when the provider has multiple prints.
+    // Fall back to name/set/game only when the provider has no numbered result.
+    let products: Awaited<ReturnType<typeof priceChartingProvider.searchProducts>> = [];
+    for (const query of buildMatchSearchQueries(input)) {
+      products = await priceChartingProvider.searchProducts(query);
+      if (!products) break;
+      if (products.length > 0) break;
+    }
     if (!products) {
       await recordProviderHealth(false, "PriceCharting search failed", "search");
       if (propagateFailures) throw new Error("PriceCharting search returned no data");
@@ -698,11 +705,14 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
 
   // Mapping exists but is review_required or unmatched
   if (mapping.status === "review_required") {
+    const retryQueued = configured &&
+      Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS;
+    if (retryQueued) void runBackgroundMatch(cardId, { name, set, number, game });
     return {
       cardId,
       status: "review_required",
       configured,
-      queued: false,
+      queued: retryQueued,
       quotes: [],
       ...emptyMarket,
       source: { ...baseSource, productId: mapping.providerProductId ?? null },
@@ -712,16 +722,21 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       },
       updatedAt: mapping.updatedAt.toISOString(),
       isStale: false,
-      message: "Match requires review — prices unavailable until resolved",
+      message: retryQueued
+        ? "Rechecking card identity with PriceCharting"
+        : "Match requires review — prices unavailable until resolved",
     };
   }
 
   if (mapping.status === "unmatched") {
+    const retryQueued = configured &&
+      Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS;
+    if (retryQueued) void runBackgroundMatch(cardId, { name, set, number, game });
     return {
       cardId,
       status: "unmatched",
       configured,
-      queued: false,
+      queued: retryQueued,
       quotes: [],
       ...emptyMarket,
       source: baseSource,
@@ -731,7 +746,9 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       },
       updatedAt: mapping.updatedAt.toISOString(),
       isStale: false,
-      message: "No matching product found in provider catalog",
+      message: retryQueued
+        ? "Rechecking card identity with PriceCharting"
+        : "No matching product found in provider catalog",
     };
   }
 

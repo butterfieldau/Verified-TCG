@@ -215,6 +215,7 @@ describe("pcPriceToCents", () => {
 // ── Matching algorithm ────────────────────────────────────────────────────────
 
 import {
+  buildMatchSearchQueries,
   normalizeString,
   scoreSingle,
   pickBestMatch,
@@ -237,6 +238,30 @@ describe("normalizeString", () => {
 
   test("collapses multiple spaces", () => {
     assert.equal(normalizeString("  Bulbasaur  "), "bulbasaur");
+  });
+});
+
+describe("provider search query construction", () => {
+  test("uses card name plus collector number before a broad contextual fallback", () => {
+    assert.deepEqual(
+      buildMatchSearchQueries({
+        name: "Umbreon ex",
+        number: "161/131",
+        set: "Prismatic Evolutions",
+        game: "pokemon",
+      }),
+      [
+        "Umbreon ex 161/131",
+        "Umbreon ex Prismatic Evolutions pokemon",
+      ],
+    );
+  });
+
+  test("uses the contextual query when the canonical card has no collector number", () => {
+    assert.deepEqual(
+      buildMatchSearchQueries({ name: "Ancient Mew", set: "Promos", game: "pokemon" }),
+      ["Ancient Mew Promos pokemon"],
+    );
   });
 });
 

@@ -34,6 +34,22 @@ export interface MatchInput {
   game?: string;
 }
 
+/**
+ * Build conservative provider search queries. A collector number is the
+ * strongest available identity signal, so search for it with the card name
+ * first. The broader contextual query remains as a fallback for providers
+ * whose search index does not include collector numbers.
+ */
+export function buildMatchSearchQueries(input: MatchInput): string[] {
+  const name = input.name.trim();
+  const number = input.number?.trim();
+  const exact = number ? [name, number].filter(Boolean).join(" ") : "";
+  const contextual = [name, input.set?.trim(), input.game?.trim()]
+    .filter(Boolean)
+    .join(" ");
+  return [...new Set([exact, contextual].filter(Boolean))];
+}
+
 export interface MatchScore {
   total: number;     // 0–1
   name: number;      // 0–1

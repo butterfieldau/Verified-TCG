@@ -217,6 +217,16 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
             chart or a synthetic historical curve. */}
         {data.length === 1 && (
           <>
+            <SvgLine
+              x1={padL + 18}
+              y1={yOf(data[0]!.value)}
+              x2={width - padR - 18}
+              y2={yOf(data[0]!.value)}
+              stroke={chartColor}
+              strokeWidth={2}
+              strokeDasharray="5,7"
+              opacity={0.45}
+            />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={11} fill={chartColor} opacity={0.16} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={5} fill={chartColor} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={2.5} fill="#FFFFFF" />
@@ -647,7 +657,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Tracking started with this verified portfolio value
+              Initial verified baseline — historical movement will appear as prices are retained
             </Text>
           </View>
         ) : (
