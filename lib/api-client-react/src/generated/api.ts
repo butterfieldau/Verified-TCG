@@ -21,11 +21,14 @@ import type {
 
 import type {
   CatalogResponse,
+  CollectionImportCommit,
+  CollectionImportPreview,
   CollectionItem,
   CollectionMutation,
   CollectionPerformance,
   CollectionSummary,
   CollectionValueHistory,
+  CommitCollectionCsvImportBody,
   EbaySoldHistoryResponse,
   GetCatalogCard200,
   GetCollectionPerformanceParams,
@@ -34,6 +37,7 @@ import type {
   GetEbaySoldHistoryParams,
   GetTrendingCardLookups200,
   HealthStatus,
+  PreviewCollectionCsvImportBody,
   SearchCatalogCardsParams
 } from './api.schemas';
 
@@ -598,6 +602,149 @@ export const useCreateCollectionItem = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getCreateCollectionItemMutationOptions(options));
+    }
+
+export const getPreviewCollectionCsvImportUrl = () => {
+
+
+
+
+  return `/api/collection/import/preview`
+}
+
+/**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const previewCollectionCsvImport = async (previewCollectionCsvImportBody: PreviewCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportPreview> => {
+
+  return customFetch<CollectionImportPreview>(getPreviewCollectionCsvImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(previewCollectionCsvImportBody)
+  }
+);}
+
+
+
+
+
+export const getPreviewCollectionCsvImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext> => {
+
+const mutationKey = ['previewCollectionCsvImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewCollectionCsvImport>>, {data: BodyType<PreviewCollectionCsvImportBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewCollectionCsvImport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewCollectionCsvImportMutationResult = NonNullable<Awaited<ReturnType<typeof previewCollectionCsvImport>>>
+    export type PreviewCollectionCsvImportMutationBody = BodyType<PreviewCollectionCsvImportBody>
+    export type PreviewCollectionCsvImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const usePreviewCollectionCsvImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewCollectionCsvImport>>,
+        TError,
+        {data: BodyType<PreviewCollectionCsvImportBody>},
+        TContext
+      > => {
+      return useMutation(getPreviewCollectionCsvImportMutationOptions(options));
+    }
+
+export const getCommitCollectionCsvImportUrl = (jobId: string,) => {
+
+
+
+
+  return `/api/collection/import/${jobId}/commit`
+}
+
+/**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const commitCollectionCsvImport = async (jobId: string,
+    commitCollectionCsvImportBody: CommitCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportCommit> => {
+
+  return customFetch<CollectionImportCommit>(getCommitCollectionCsvImportUrl(jobId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(commitCollectionCsvImportBody)
+  }
+);}
+
+
+
+
+
+export const getCommitCollectionCsvImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext> => {
+
+const mutationKey = ['commitCollectionCsvImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof commitCollectionCsvImport>>, {jobId: string;data: BodyType<CommitCollectionCsvImportBody>}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  commitCollectionCsvImport(jobId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CommitCollectionCsvImportMutationResult = NonNullable<Awaited<ReturnType<typeof commitCollectionCsvImport>>>
+    export type CommitCollectionCsvImportMutationBody = BodyType<CommitCollectionCsvImportBody>
+    export type CommitCollectionCsvImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const useCommitCollectionCsvImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof commitCollectionCsvImport>>,
+        TError,
+        {jobId: string;data: BodyType<CommitCollectionCsvImportBody>},
+        TContext
+      > => {
+      return useMutation(getCommitCollectionCsvImportMutationOptions(options));
     }
 
 export const getUpdateCollectionItemUrl = (id: string,) => {

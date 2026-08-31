@@ -174,6 +174,9 @@ app.use(cookieParser());
 // All other endpoints keep the tighter default via the second parser.
 app.use("/api/scan", express.json({ limit: "12mb" }));
 app.use("/api/auth/avatar", express.json({ limit: "8mb" }));
+// Collection CSV imports are bounded again by the route (1 MiB / 1,000 rows).
+// The slightly larger JSON limit accounts for string escaping overhead.
+app.use("/api/collection/import", express.json({ limit: "2mb" }));
 app.use(
   "/api/ebay/account-deletion",
   express.raw({ type: "application/json", limit: "100kb" }),

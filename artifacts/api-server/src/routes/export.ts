@@ -8,8 +8,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { collectionItemsTable, usersTable, wishlistItemsTable } from "@workspace/db";
-import { eq, isNull } from "drizzle-orm";
-import { requireActiveUser, requireProUser, type AuthRequest } from "../lib/authMiddleware.js";
+import { eq } from "drizzle-orm";
+import { requireProUser, type AuthRequest } from "../lib/authMiddleware.js";
 
 const exportRouter = Router();
 
@@ -27,21 +27,31 @@ exportRouter.get(
         .orderBy(collectionItemsTable.createdAt);
 
       const csvRows: string[] = [
-        // Header
+        // Stable v1 import/export contract. New versions must use a new version
+        // value and remain explicitly detected by the importer.
         [
+          "Verified TCG CSV Version",
+          "Source",
+          "Card ID",
           "Card Name",
-          "Set",
-          "Number",
           "TCG",
+          "Set",
+          "Set Code",
+          "Card Number",
           "Rarity",
+          "Finish",
           "Condition",
           "Graded",
           "Grade Company",
           "Grade",
+          "Grade Designation",
+          "Grade Original",
+          "Certificate Number",
+          "Graded Date",
           "Quantity",
           "Acquired Date",
-          "Purchase Price (AUD)",
-          "Current Raw Value (AUD)",
+          "Acquisition Currency",
+          "Acquisition Unit Price",
           "For Sale",
           "For Trade",
           "Notes",
@@ -53,23 +63,31 @@ exportRouter.get(
       for (const row of rows) {
         const card = (row.cardData ?? {}) as Record<string, any>;
         const grading = row.gradingData as Record<string, any> | null;
-        const price = card?.price ?? {};
 
         csvRows.push(
           [
+            "1",
+            "Verified TCG",
+            row.cardId,
             card?.name ?? "",
-            card?.setName ?? "",
-            card?.number ?? "",
             card?.tcg ?? "",
+            card?.setName ?? "",
+            card?.setCode ?? "",
+            card?.number ?? "",
             card?.rarity ?? "",
+            card?.finish ?? card?.variance ?? (card?.isFoil ? "Foil" : "Normal"),
             row.condition ?? "",
             row.isGraded ? "Yes" : "No",
             grading?.company ?? "",
             grading?.grade ?? "",
+            grading?.designation ?? "",
+            grading?.original ?? "",
+            grading?.certNumber ?? "",
+            grading?.gradedAt ?? "",
             row.quantity,
             row.acquiredAt ?? "",
+            row.acquiredCurrency ?? "AUD",
             (row.acquiredPriceCents / 100).toFixed(2),
-            price?.raw != null ? Number(price.raw).toFixed(2) : "",
             row.isForSale ? "Yes" : "No",
             row.isForTrade ? "Yes" : "No",
             row.notes ?? "",
@@ -88,7 +106,7 @@ exportRouter.get(
       );
       res.send(csv);
     } catch (err) {
-      console.error("[export] GET /api/me/export/collection.csv:", err);
+      req.log?.error({ err }, "Collection CSV export failed");
       res.status(500).json({ message: "Failed to export collection" });
     }
   },
@@ -152,7 +170,7 @@ exportRouter.get(
           grading: r.gradingData,
           acquiredAt: r.acquiredAt,
           acquiredPrice: r.acquiredPriceCents / 100,
-          currency: "AUD",
+          currency: r.acquiredCurrency ?? "AUD",
           notes: r.notes,
           isForSale: r.isForSale,
           isForTrade: r.isForTrade,
@@ -178,7 +196,7 @@ exportRouter.get(
       );
       res.json(payload);
     } catch (err) {
-      console.error("[export] GET /api/me/export/account.json:", err);
+      req.log?.error({ err }, "Account export failed");
       res.status(500).json({ message: "Failed to export account data" });
     }
   },

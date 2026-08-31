@@ -252,6 +252,108 @@ export const CreateCollectionItemResponse = zod.object({
 
 
 /**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const previewCollectionCsvImportBodyContentMax = 1048576;
+
+export const previewCollectionCsvImportBodyFilenameMax = 255;
+
+export const previewCollectionCsvImportBodySourceCurrencyRegExp = new RegExp('^[A-Za-z]{3}$');
+
+
+export const PreviewCollectionCsvImportBody = zod.object({
+  "content": zod.string().max(previewCollectionCsvImportBodyContentMax),
+  "filename": zod.string().max(previewCollectionCsvImportBodyFilenameMax).optional(),
+  "sourceCurrency": zod.string().regex(previewCollectionCsvImportBodySourceCurrencyRegExp).optional()
+})
+
+export const previewCollectionCsvImportResponseRowsItemRowNumberMin = 2;
+
+export const previewCollectionCsvImportResponseRowsItemCandidateCountMin = 0;
+
+
+export const previewCollectionCsvImportResponseRowsItemAcquiredPriceMin = 0;
+
+
+
+export const PreviewCollectionCsvImportResponse = zod.object({
+  "jobId": zod.string().uuid(),
+  "source": zod.enum(['collectr', 'verified_tcg']),
+  "schemaVersion": zod.literal(1),
+  "contentSha256": zod.string(),
+  "status": zod.string().optional(),
+  "summary": zod.object({
+  "total": zod.number().int(),
+  "matched": zod.number().int(),
+  "watchlistOnly": zod.number().int(),
+  "invalid": zod.number().int(),
+  "ambiguous": zod.number().int(),
+  "unmatched": zod.number().int(),
+  "duplicate": zod.number().int(),
+  "priced": zod.number().int()
+}),
+  "rows": zod.array(zod.object({
+  "rowNumber": zod.number().int().min(previewCollectionCsvImportResponseRowsItemRowNumberMin),
+  "status": zod.enum(['matched', 'watchlist_only', 'ambiguous', 'invalid', 'unmatched', 'duplicate']),
+  "isWatchlistOnly": zod.boolean(),
+  "cardId": zod.string().optional(),
+  "canonicalCardId": zod.string().optional(),
+  "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "candidateCount": zod.number().int().min(previewCollectionCsvImportResponseRowsItemCandidateCountMin).optional(),
+  "error": zod.string().optional(),
+  "quantity": zod.number().int().min(1).optional(),
+  "condition": zod.string().optional(),
+  "acquiredAt": zod.coerce.date().optional(),
+  "acquiredPrice": zod.number().min(previewCollectionCsvImportResponseRowsItemAcquiredPriceMin).optional(),
+  "currency": zod.string().optional(),
+  "notes": zod.string().optional(),
+  "finish": zod.string().optional(),
+  "variance": zod.string().optional(),
+  "grading": zod.record(zod.string(), zod.unknown()).optional(),
+  "desiredGrade": zod.string().optional(),
+  "supportedGrade": zod.boolean().optional(),
+  "pricingAvailable": zod.boolean().optional()
+}))
+})
+
+
+/**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const CommitCollectionCsvImportParams = zod.object({
+  "jobId": zod.coerce.string().uuid()
+})
+
+export const commitCollectionCsvImportBodyContentSha256RegExp = new RegExp('^[a-f0-9]{64}$');
+export const commitCollectionCsvImportBodySourceCurrencyRegExp = new RegExp('^[A-Za-z]{3}$');
+
+
+export const CommitCollectionCsvImportBody = zod.object({
+  "contentSha256": zod.string().regex(commitCollectionCsvImportBodyContentSha256RegExp),
+  "sourceCurrency": zod.string().regex(commitCollectionCsvImportBodySourceCurrencyRegExp).optional()
+})
+
+export const CommitCollectionCsvImportResponse = zod.object({
+  "jobId": zod.string().uuid(),
+  "status": zod.enum(['committed']),
+  "replayed": zod.boolean().optional(),
+  "summary": zod.object({
+  "holdingsAdded": zod.number().int(),
+  "wishlistAdded": zod.number().int(),
+  "skipped": zod.number().int(),
+  "duplicates": zod.number().int(),
+  "unsupportedGrades": zod.number().int()
+}),
+  "rows": zod.array(zod.object({
+  "rowNumber": zod.number().int(),
+  "status": zod.enum(['holding_added', 'wishlist_added', 'wishlist_existing', 'duplicate', 'skipped']),
+  "cardId": zod.string().optional(),
+  "reason": zod.string().optional()
+}))
+})
+
+
+/**
  * @summary Correct quantity, condition, grading, or acquisition cost
  */
 export const UpdateCollectionItemParams = zod.object({

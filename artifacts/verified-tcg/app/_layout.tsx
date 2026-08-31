@@ -69,6 +69,7 @@ function RootLayoutNav() {
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="portfolio" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="import-collection" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collection-insights" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collection-archive" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="verification-info" options={{ animation: 'slide_from_right' }} />

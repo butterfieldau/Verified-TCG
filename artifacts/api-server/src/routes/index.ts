@@ -8,6 +8,7 @@ import certificationRouter from "./certification";
 import gradedPricesRouter from "./gradedPrices";
 import ebayAccountDeletionRouter from "./ebayAccountDeletion";
 import collectionRouter from "./collection";
+import collectionImportRouter from "./collectionImport";
 import supportRouter from "./support";
 import subscriptionRouter from "./subscription";
 import scanRouter from "./scan";
@@ -48,6 +49,7 @@ router.use(ebayAccountDeletionRouter);
 // are matched before the wildcard /:id handlers
 router.use(collectionSellRouter);
 router.use(collectionValueHistoryRouter);
+router.use(collectionImportRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
 router.use(subscriptionRouter);

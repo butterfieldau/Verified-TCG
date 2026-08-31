@@ -164,15 +164,15 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 77);
+      assert.equal(beforeSecondBootstrap.tables.length, 78);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }
 
-      assert.equal(beforeSecondBootstrap.migrations.length, 7);
+      assert.equal(beforeSecondBootstrap.migrations.length, 8);
       assert.equal(
         new Set(beforeSecondBootstrap.migrations).size,
-        7,
+        8,
         "each recorded migration must be present exactly once",
       );
       assert.deepEqual(

@@ -170,6 +170,25 @@ export function getModerationTableDDL(): readonly string[] {
  * already-migrated database is always safe.
  */
 const TABLE_MIGRATIONS: string[] = [
+  `CREATE TABLE IF NOT EXISTS collection_import_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    content_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'previewed',
+    source_currency TEXT,
+    normalized_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+    preview_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    commit_summary JSONB,
+    commit_results JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    committed_at TIMESTAMPTZ,
+    CONSTRAINT collection_import_jobs_user_hash_uniq UNIQUE (user_id, content_sha256)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_import_jobs_user_created_idx
+     ON collection_import_jobs (user_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS follows (
     follower_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     followee_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

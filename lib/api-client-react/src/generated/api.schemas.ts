@@ -120,6 +120,126 @@ export type CollectionItem = CollectionMutation & {
   valuation?: CollectionItemValuation;
 }, 'cardId' | 'card' | 'quantity' | 'condition' | 'acquiredAt' | 'acquiredPrice' | 'currency'>>;
 
+export type CollectionImportPreviewRowStatus = typeof CollectionImportPreviewRowStatus[keyof typeof CollectionImportPreviewRowStatus];
+
+
+export const CollectionImportPreviewRowStatus = {
+  matched: 'matched',
+  watchlist_only: 'watchlist_only',
+  ambiguous: 'ambiguous',
+  invalid: 'invalid',
+  unmatched: 'unmatched',
+  duplicate: 'duplicate',
+} as const;
+
+export type CollectionImportPreviewRowCard = { [key: string]: unknown };
+
+export type CollectionImportPreviewRowGrading = { [key: string]: unknown };
+
+export interface CollectionImportPreviewRow {
+  /** @minimum 2 */
+  rowNumber: number;
+  status: CollectionImportPreviewRowStatus;
+  isWatchlistOnly: boolean;
+  cardId?: string;
+  canonicalCardId?: string;
+  card?: CollectionImportPreviewRowCard;
+  /** @minimum 0 */
+  candidateCount?: number;
+  error?: string;
+  /** @minimum 1 */
+  quantity?: number;
+  condition?: string;
+  acquiredAt?: string;
+  /** @minimum 0 */
+  acquiredPrice?: number;
+  currency?: string;
+  notes?: string;
+  finish?: string;
+  variance?: string;
+  grading?: CollectionImportPreviewRowGrading;
+  desiredGrade?: string;
+  supportedGrade?: boolean;
+  pricingAvailable?: boolean;
+}
+
+export type CollectionImportPreviewSource = typeof CollectionImportPreviewSource[keyof typeof CollectionImportPreviewSource];
+
+
+export const CollectionImportPreviewSource = {
+  collectr: 'collectr',
+  verified_tcg: 'verified_tcg',
+} as const;
+
+export type CollectionImportPreviewSchemaVersion = typeof CollectionImportPreviewSchemaVersion[keyof typeof CollectionImportPreviewSchemaVersion];
+
+
+export const CollectionImportPreviewSchemaVersion = {
+  NUMBER_1: 1,
+} as const;
+
+export type CollectionImportPreviewSummary = {
+  total: number;
+  matched: number;
+  watchlistOnly: number;
+  invalid: number;
+  ambiguous: number;
+  unmatched: number;
+  duplicate: number;
+  priced: number;
+};
+
+export interface CollectionImportPreview {
+  jobId: string;
+  source: CollectionImportPreviewSource;
+  schemaVersion: CollectionImportPreviewSchemaVersion;
+  contentSha256: string;
+  status?: string;
+  summary: CollectionImportPreviewSummary;
+  rows: CollectionImportPreviewRow[];
+}
+
+export type CollectionImportCommitStatus = typeof CollectionImportCommitStatus[keyof typeof CollectionImportCommitStatus];
+
+
+export const CollectionImportCommitStatus = {
+  committed: 'committed',
+} as const;
+
+export type CollectionImportCommitSummary = {
+  holdingsAdded: number;
+  wishlistAdded: number;
+  skipped: number;
+  duplicates: number;
+  unsupportedGrades: number;
+};
+
+export type CollectionImportCommitRowsItemStatus = typeof CollectionImportCommitRowsItemStatus[keyof typeof CollectionImportCommitRowsItemStatus];
+
+
+export const CollectionImportCommitRowsItemStatus = {
+  holding_added: 'holding_added',
+  wishlist_added: 'wishlist_added',
+  wishlist_existing: 'wishlist_existing',
+  duplicate: 'duplicate',
+  skipped: 'skipped',
+} as const;
+
+export type CollectionImportCommitRowsItem = {
+  rowNumber: number;
+  status: CollectionImportCommitRowsItemStatus;
+  cardId?: string;
+  reason?: string;
+};
+
+export interface CollectionImportCommit {
+  jobId: string;
+  status: CollectionImportCommitStatus;
+  replayed?: boolean;
+  summary: CollectionImportCommitSummary;
+  rows: CollectionImportCommitRowsItem[];
+}
+
 export type CollectionSummaryCoverage = {
   pricedHoldings: number;
   totalHoldings: number;
@@ -306,6 +426,22 @@ export type GetTrendingCardLookups200 = {
   /** @nullable */
   window_end?: string | null;
   refresh_hours: 12;
+};
+
+export type PreviewCollectionCsvImportBody = {
+  /** @maxLength 1048576 */
+  content: string;
+  /** @maxLength 255 */
+  filename?: string;
+  /** @pattern ^[A-Za-z]{3}$ */
+  sourceCurrency?: string;
+};
+
+export type CommitCollectionCsvImportBody = {
+  /** @pattern ^[a-f0-9]{64}$ */
+  contentSha256: string;
+  /** @pattern ^[A-Za-z]{3}$ */
+  sourceCurrency?: string;
 };
 
 export type GetCollectionSummaryParams = {
