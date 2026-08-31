@@ -28,6 +28,7 @@ import {
   updateCollectionItem,
   removeCollectionItem,
 } from '@/services/collection';
+import { fetchCollectionValueHistory } from '@/services/collectionPerformance';
 import { refreshVerifiedPricing } from '@/services/verifiedPricing';
 import {
   syncWishlistToServer,
@@ -227,6 +228,9 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
 const COLLECTION_CACHE_PREFIX = '@verified_tcg/collection_cache_v2';
+const EMPTY_PORTFOLIO_CHART_DATA: PortfolioSummary['chartData'] = {
+  '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
+};
 
 export interface CollectionRefreshIssue {
   kind: ApiErrorKind | 'unknown';
@@ -395,6 +399,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
   const [collectionError, setCollectionError] = useState<CollectionRefreshIssue | null>(null);
+  const [portfolioChartData, setPortfolioChartData] =
+    useState<PortfolioSummary['chartData']>(EMPTY_PORTFOLIO_CHART_DATA);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
@@ -428,6 +434,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [scanResetDate, setScanResetDate] = useState<Date>(() =>
     nextMonthFirstDay(new Date()),
   );
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
+      return;
+    }
+    let cancelled = false;
+    fetchCollectionValueHistory('ALL', 'AUD')
+      .then(history => {
+        if (!cancelled) setPortfolioChartData(history.chartData);
+      })
+      .catch(() => {
+        if (!cancelled) setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, collection]);
 
   /**
    * Quota period guard — fires on mount and whenever the reset date changes.
@@ -1318,12 +1342,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currency: 'AUD',
       cardCount,
       uniqueCardCount,
-      // Chart history is a separate task — provide empty ranges as placeholder
-      chartData: {
-        '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
-      },
+      chartData: portfolioChartData,
     };
-  }, [collection]);
+  }, [collection, portfolioChartData]);
 
   return (
     <AppContext.Provider

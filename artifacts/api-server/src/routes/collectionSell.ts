@@ -9,15 +9,17 @@ import {
   currentQuotesTable,
   portfolioSnapshotsTable,
 } from "@workspace/db";
-import { and, eq, gte, desc, asc } from "drizzle-orm";
+import { and, eq, gte, desc, asc, isNull } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity } from "./activity.js";
 import { convertCents } from "../pricing/fx.js";
 import { PROVIDER_KEY } from "../pricing/pricecharting.js";
 import {
   calculatePortfolioValuation,
+  calculatePortfolioValueHistory,
   capturePortfolioSnapshot,
   gradeKeyForHolding,
+  portfolioChartData,
 } from "../pricing/portfolio.js";
 
 const router = Router();
@@ -235,6 +237,7 @@ router.post("/collection/:id/sell", requireActiveUser, async (req: AuthRequest, 
         acquiredPriceCents: item.acquiredPriceCents,
         acquiredCurrency: item.acquiredCurrency,
         acquiredAt: item.acquiredAt,
+        ownershipStartedAt: item.ownershipStartedAt ?? item.acquiredAt,
         // Sale price is the total proceeds for this disposal transaction.
         salePriceCents,
         saleCurrency: currency.toUpperCase(),
@@ -297,7 +300,10 @@ router.get("/collection/archive", requireActiveUser, async (req: AuthRequest, re
   const rows = await db
     .select()
     .from(soldArchiveItemsTable)
-    .where(eq(soldArchiveItemsTable.userId, req.userId!))
+    .where(and(
+      eq(soldArchiveItemsTable.userId, req.userId!),
+      isNull(soldArchiveItemsTable.restoredAt),
+    ))
     .orderBy(desc(soldArchiveItemsTable.soldAt));
 
   const items = await Promise.all(
@@ -318,7 +324,11 @@ router.get("/collection/archive/:id", requireActiveUser, async (req: AuthRequest
   const [row] = await db
     .select()
     .from(soldArchiveItemsTable)
-    .where(and(eq(soldArchiveItemsTable.id, id), eq(soldArchiveItemsTable.userId, req.userId!)))
+    .where(and(
+      eq(soldArchiveItemsTable.id, id),
+      eq(soldArchiveItemsTable.userId, req.userId!),
+      isNull(soldArchiveItemsTable.restoredAt),
+    ))
     .limit(1);
 
   if (!row) {
@@ -334,7 +344,11 @@ router.patch("/collection/archive/:id", requireActiveUser, async (req: AuthReque
   const [existing] = await db
     .select()
     .from(soldArchiveItemsTable)
-    .where(and(eq(soldArchiveItemsTable.id, id), eq(soldArchiveItemsTable.userId, req.userId!)))
+    .where(and(
+      eq(soldArchiveItemsTable.id, id),
+      eq(soldArchiveItemsTable.userId, req.userId!),
+      isNull(soldArchiveItemsTable.restoredAt),
+    ))
     .limit(1);
 
   if (!existing) {
@@ -393,7 +407,11 @@ router.post("/collection/archive/:id/restore", requireActiveUser, async (req: Au
     const [archiveRow] = await tx
       .select()
       .from(soldArchiveItemsTable)
-      .where(and(eq(soldArchiveItemsTable.id, id), eq(soldArchiveItemsTable.userId, req.userId!)))
+      .where(and(
+        eq(soldArchiveItemsTable.id, id),
+        eq(soldArchiveItemsTable.userId, req.userId!),
+        isNull(soldArchiveItemsTable.restoredAt),
+      ))
       .limit(1)
       .for("update");
     if (!archiveRow) return null;
@@ -409,12 +427,20 @@ router.post("/collection/archive/:id/restore", requireActiveUser, async (req: Au
         isGraded: archiveRow.isGraded,
         gradingData: (archiveRow.gradingData as Record<string, unknown> | null) ?? null,
         acquiredAt: archiveRow.acquiredAt ?? new Date().toISOString().slice(0, 10),
+        ownershipStartedAt: new Date().toISOString().slice(0, 10),
         acquiredPriceCents: archiveRow.acquiredPriceCents,
         acquiredCurrency: archiveRow.acquiredCurrency,
         notes: archiveRow.notes,
       })
       .returning();
-    await tx.delete(soldArchiveItemsTable).where(eq(soldArchiveItemsTable.id, archiveRow.id));
+    await tx
+      .update(soldArchiveItemsTable)
+      .set({
+        restoredAt: new Date(),
+        restoredCollectionItemId: restored!.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(soldArchiveItemsTable.id, archiveRow.id));
     return restored!;
   });
 
@@ -505,10 +531,14 @@ router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, re
   const soldRows = await db
     .select()
     .from(soldArchiveItemsTable)
-    .where(eq(soldArchiveItemsTable.userId, req.userId!));
+    .where(and(
+      eq(soldArchiveItemsTable.userId, req.userId!),
+      isNull(soldArchiveItemsTable.restoredAt),
+    ));
   const realised = await aggregateRealisedGain(soldRows, displayCurrency);
   await capturePortfolioSnapshot(req.userId!);
   const movements = await loadSnapshotMovements(req.userId!, displayCurrency);
+  const valueHistory = await calculatePortfolioValueHistory(req.userId!, 36_500, displayCurrency);
   const ratio =
     valuation.totalHoldings > 0
       ? valuation.pricedHoldings / valuation.totalHoldings
@@ -549,6 +579,7 @@ router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, re
     todayMovement: movements.todayMovement,
     movement30d: movements.movement30d,
     completeness,
+    chartData: portfolioChartData(valueHistory.points),
   });
 });
 
@@ -571,49 +602,20 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
     isValidCurrency(req.query["displayCurrency"])
       ? req.query["displayCurrency"].toUpperCase()
       : "AUD";
-  const sinceDate = new Date(Date.now() - PERFORMANCE_RANGES[range]! * 24 * 60 * 60 * 1_000)
-    .toISOString()
-    .slice(0, 10);
-
   await capturePortfolioSnapshot(req.userId!);
-  const [snapshots, soldRows, valuation] = await Promise.all([
-    db
-      .select()
-      .from(portfolioSnapshotsTable)
-      .where(
-        and(
-          eq(portfolioSnapshotsTable.userId, req.userId!),
-          gte(portfolioSnapshotsTable.snapshotDate, sinceDate),
-        ),
-      )
-      .orderBy(asc(portfolioSnapshotsTable.snapshotDate)),
+  const [valueHistory, soldRows, valuation] = await Promise.all([
+    calculatePortfolioValueHistory(req.userId!, PERFORMANCE_RANGES[range]!, displayCurrency),
     db
       .select()
       .from(soldArchiveItemsTable)
-      .where(eq(soldArchiveItemsTable.userId, req.userId!)),
+      .where(and(
+        eq(soldArchiveItemsTable.userId, req.userId!),
+        isNull(soldArchiveItemsTable.restoredAt),
+      )),
     calculatePortfolioValuation(req.userId!, displayCurrency),
   ]);
 
-  const points = [];
-  let historyConversionComplete = true;
-  for (const snapshot of snapshots) {
-    const [valueCents, costCents] = await Promise.all([
-      convertCents(snapshot.totalValueCents, snapshot.currency, displayCurrency),
-      convertCents(snapshot.totalCostCents, snapshot.currency, displayCurrency),
-    ]);
-    if (valueCents == null || costCents == null) {
-      historyConversionComplete = false;
-      continue;
-    }
-    points.push({
-      date: snapshot.snapshotDate,
-      value: valueCents / 100,
-      valueCents,
-      cost: costCents / 100,
-      costCents,
-      currency: displayCurrency,
-    });
-  }
+  const points = valueHistory.points;
 
   const realised = await aggregateRealisedGain(soldRows, displayCurrency);
   const performers = valuation.holdings
@@ -654,16 +656,14 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
     }))
     .sort((a, b) => b.value - a.value);
 
-  const historyAvailable = points.length >= 2 && historyConversionComplete;
+  const historyAvailable = valueHistory.historyAvailable;
   res.json({
     range,
     currency: displayCurrency,
     historyAvailable,
     historyUnavailableReason: historyAvailable
       ? null
-      : !historyConversionComplete
-        ? "Historical values could not be converted to the selected currency"
-        : "At least two complete daily portfolio snapshots are required",
+      : valueHistory.historyUnavailableReason,
     points,
     history: points,
     totalValue: dollars(valuation.totalValueCents),

@@ -24,8 +24,9 @@ import {
   cardProviderMappingsTable,
   currentQuotesTable,
   cardPriceSnapshotsTable,
+  providerPriceHistoryTable,
 } from "@workspace/db";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import app from "../app.js";
 import { createTestUser } from "./helpers.js";
 import { pool } from "@workspace/db";
@@ -736,5 +737,231 @@ describe("GET /collection/performance", () => {
       assert.equal(res.status, 200, `Failed for range=${range}: ${JSON.stringify(res.body)}`);
       assert.equal(res.body.range, range);
     }
+  });
+});
+
+describe("GET /collection/value-history", () => {
+  let token: string;
+  let collectionAId: string;
+  const cardA = `${TAG}history-a`;
+  const cardB = `${TAG}history-b`;
+  const dateDaysAgo = (days: number) =>
+    new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+
+  before(async () => {
+    const user = await createTestUser({ email: `${TAG}value-history@example.com` });
+    token = user.accessToken;
+    const createdA = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...cardPayload(cardA), acquiredAt: dateDaysAgo(40), quantity: 2 });
+    collectionAId = createdA.body.id;
+    await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...cardPayload(cardB), acquiredAt: dateDaysAgo(5), quantity: 1 });
+
+    await db.insert(providerPriceHistoryTable).values([
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_000,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_200,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 500,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+    ]);
+    await db.insert(currentQuotesTable).values([
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_300,
+        currency: "AUD",
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 700,
+        currency: "AUD",
+      },
+    ]);
+    const sold = await request
+      .post(`/api/collection/${collectionAId}/sell`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        quantity: 1,
+        salePrice: 13,
+        currency: "AUD",
+        soldAt: dateDaysAgo(1),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+  });
+
+  after(async () => {
+    await db.delete(currentQuotesTable).where(inArray(currentQuotesTable.cardId, [cardA, cardB]));
+    await db.delete(providerPriceHistoryTable).where(inArray(providerPriceHistoryTable.cardId, [cardA, cardB]));
+    await cleanupTaggedUsers();
+  });
+
+  test("uses acquisition dates, quantities, historical prices, and current quotes", async () => {
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.historyAvailable, true);
+    assert.deepEqual(
+      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
+      [
+        [dateDaysAgo(10), 20],
+        [dateDaysAgo(2), 29],
+        [dateDaysAgo(1), 17],
+        [dateDaysAgo(0), 20],
+      ],
+    );
+  });
+
+  test("populates summary chartData from the same real series", async () => {
+    const res = await request
+      .get("/api/collection/summary?displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(
+      res.body.chartData.ALL.map((point: { date: string; value: number }) => [point.date, point.value]),
+      [
+        [dateDaysAgo(10), 20],
+        [dateDaysAgo(2), 29],
+        [dateDaysAgo(1), 17],
+        [dateDaysAgo(0), 20],
+      ],
+    );
+  });
+
+  test("keeps sold quantities in pre-sale history and removes them after sale", async () => {
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    const points = new Map(
+      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
+    );
+    assert.equal(points.get(dateDaysAgo(2)), 29);
+    assert.equal(points.get(dateDaysAgo(0)), 20);
+  });
+
+  test("ends fully liquidated portfolios at zero instead of the last owned value", async () => {
+    const liquidatedCard = `${TAG}history-liquidated`;
+    const user = await createTestUser({ email: `${TAG}liquidated@example.com` });
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        ...cardPayload(liquidatedCard),
+        acquiredAt: dateDaysAgo(20),
+        quantity: 1,
+      });
+    await db.insert(providerPriceHistoryTable).values([
+      {
+        cardId: liquidatedCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 2_500,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: liquidatedCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 2_600,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+    ]);
+    const sold = await request
+      .post(`/api/collection/${created.body.id}/sell`)
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 25,
+        currency: "AUD",
+        soldAt: dateDaysAgo(3),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.points.at(-1).date, dateDaysAgo(0));
+    assert.equal(res.body.points.at(-1).value, 0);
+    assert.equal(
+      res.body.points.find((point: { date: string }) => point.date === dateDaysAgo(3)).value,
+      0,
+    );
+
+    await db.insert(currentQuotesTable).values({
+      cardId: liquidatedCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 2_700,
+      currency: "AUD",
+    });
+    const restored = await request
+      .post(`/api/collection/archive/${sold.body.id}/restore`)
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(restored.status, 201, JSON.stringify(restored.body));
+
+    const restoredHistory = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    const restoredPoints = new Map(
+      restoredHistory.body.points.map(
+        (point: { date: string; value: number }) => [point.date, point.value],
+      ),
+    );
+    assert.equal(restoredPoints.get(dateDaysAgo(2)), 0, "sold interval must remain zero");
+    assert.equal(restoredPoints.get(dateDaysAgo(0)), 27, "restored ownership resumes today");
+
+    const resold = await request
+      .post(`/api/collection/${restored.body.id}/sell`)
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 27,
+        currency: "AUD",
+        soldAt: dateDaysAgo(0),
+      });
+    assert.equal(resold.status, 201, JSON.stringify(resold.body));
+    const resoldHistory = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(resoldHistory.body.points.at(-1).value, 0);
+
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, liquidatedCard));
+    await db
+      .delete(providerPriceHistoryTable)
+      .where(eq(providerPriceHistoryTable.cardId, liquidatedCard));
+  });
+
+  test("requires authentication", async () => {
+    const res = await request.get("/api/collection/value-history");
+    assert.equal(res.status, 401);
   });
 });

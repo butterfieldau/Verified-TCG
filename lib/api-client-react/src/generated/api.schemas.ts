@@ -9,6 +9,187 @@ export interface HealthStatus {
   status: string;
 }
 
+export type CatalogVariantMarketsItem = {
+  region?: string;
+  currency?: string;
+  /** @nullable */
+  price?: number | null;
+};
+
+export interface CatalogVariant {
+  condition?: string;
+  /** @nullable */
+  price?: number | null;
+  lastUpdated?: number;
+  markets?: CatalogVariantMarketsItem[];
+}
+
+export interface CatalogCard {
+  id: string;
+  name: string;
+  game: string;
+  set?: string;
+  set_name?: string;
+  number?: string;
+  rarity?: string;
+  image_url?: string;
+  /** @nullable */
+  currency?: string | null;
+  variants: CatalogVariant[];
+  [key: string]: unknown;
+ }
+
+export type CatalogResponseMeta = { [key: string]: unknown };
+
+export interface CatalogResponse {
+  data: CatalogCard[];
+  source?: string;
+  cached?: boolean;
+  meta?: CatalogResponseMeta;
+}
+
+export type CollectionMutationCard = { [key: string]: unknown };
+
+export type CollectionMutationCondition = typeof CollectionMutationCondition[keyof typeof CollectionMutationCondition];
+
+
+export const CollectionMutationCondition = {
+  mint: 'mint',
+  near_mint: 'near_mint',
+  excellent: 'excellent',
+  good: 'good',
+  light_played: 'light_played',
+  played: 'played',
+  poor: 'poor',
+} as const;
+
+/**
+ * @nullable
+ */
+export type CollectionMutationGrading = { [key: string]: unknown } | null;
+
+export interface CollectionMutation {
+  cardId?: string;
+  card?: CollectionMutationCard;
+  /**
+     * @minimum 1
+     * @maximum 9999
+     */
+  quantity?: number;
+  condition?: CollectionMutationCondition;
+  /** @nullable */
+  grading?: CollectionMutationGrading;
+  acquiredAt?: string;
+  /** @minimum 0 */
+  acquiredPrice?: number;
+  /**
+     * @minLength 3
+     * @maxLength 3
+     */
+  currency?: string;
+  /** @maxLength 2000 */
+  notes?: string;
+  isForSale?: boolean;
+  isForTrade?: boolean;
+}
+
+/**
+ * @nullable
+ */
+export type CollectionItemValuation = {
+  priceCents?: number;
+  price?: number;
+  currency?: string;
+  gradeKey?: string;
+  updatedAt?: string;
+} | null;
+
+export type CollectionItem = CollectionMutation & {
+  id: string;
+  /** @nullable */
+  valuation?: CollectionItemValuation;
+} & Required<Pick<CollectionMutation & {
+  id: string;
+  /** @nullable */
+  valuation?: CollectionItemValuation;
+}, 'cardId' | 'card' | 'quantity' | 'condition' | 'acquiredAt' | 'acquiredPrice' | 'currency'>>;
+
+export type CollectionSummaryCoverage = {
+  pricedHoldings: number;
+  totalHoldings: number;
+  ratio: number;
+  freshHoldings: number;
+  staleHoldings: number;
+};
+
+export interface PortfolioValuePoint {
+  date: string;
+  value: number;
+  currency: string;
+}
+
+export type CollectionSummaryChartData = {[key: string]: PortfolioValuePoint[]};
+
+export interface CollectionSummary {
+  /** @nullable */
+  totalValue: number | null;
+  /** @nullable */
+  totalCost: number | null;
+  /** @nullable */
+  unrealizedGain: number | null;
+  /** @nullable */
+  unrealizedGainPercent?: number | null;
+  /** @nullable */
+  realisedGain?: number | null;
+  cardCount: number;
+  uniqueCardCount: number;
+  currency: string;
+  coverage: CollectionSummaryCoverage;
+  completeness: string;
+  chartData: CollectionSummaryChartData;
+}
+
+export type CollectionValueHistoryRange = typeof CollectionValueHistoryRange[keyof typeof CollectionValueHistoryRange];
+
+
+export const CollectionValueHistoryRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type CollectionValueHistoryChartData = {[key: string]: PortfolioValuePoint[]};
+
+export interface CollectionValueHistory {
+  range: CollectionValueHistoryRange;
+  currency: string;
+  points: PortfolioValuePoint[];
+  chartData: CollectionValueHistoryChartData;
+  historyAvailable: boolean;
+  /** @nullable */
+  historyUnavailableReason?: string | null;
+}
+
+export type CollectionPerformancePointsItem = {
+  date: string;
+  value: number;
+  currency: string;
+};
+
+export interface CollectionPerformance {
+  points: CollectionPerformancePointsItem[];
+  currency: string;
+  historyAvailable: boolean;
+  /** @nullable */
+  historyUnavailableReason?: string | null;
+  completeness: string;
+  [key: string]: unknown;
+ }
+
 export interface EbaySale {
   title: string;
   endedAt: string;
@@ -88,6 +269,68 @@ export interface EbaySoldHistoryResponse {
   movement: EbaySoldHistoryMovement | null;
   returnedAt: string;
 }
+
+export type SearchCatalogCardsParams = {
+/**
+ * @minLength 2
+ */
+q: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetCatalogCard200 = {
+  data: CatalogCard;
+  source?: string;
+  cached?: boolean;
+};
+
+export type GetCollectionSummaryParams = {
+displayCurrency?: string;
+};
+
+export type GetCollectionPerformanceParams = {
+range?: GetCollectionPerformanceRange;
+displayCurrency?: string;
+};
+
+export type GetCollectionPerformanceRange = typeof GetCollectionPerformanceRange[keyof typeof GetCollectionPerformanceRange];
+
+
+export const GetCollectionPerformanceRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type GetCollectionValueHistoryParams = {
+range?: GetCollectionValueHistoryRange;
+displayCurrency?: string;
+};
+
+export type GetCollectionValueHistoryRange = typeof GetCollectionValueHistoryRange[keyof typeof GetCollectionValueHistoryRange];
+
+
+export const GetCollectionValueHistoryRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
 
 export type GetEbaySoldHistoryParams = {
 /**

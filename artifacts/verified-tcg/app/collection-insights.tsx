@@ -6,7 +6,7 @@
  * cost basis, allocations, and high/low performers — never mock.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -31,6 +31,7 @@ import {
   type PerformanceAllocation,
   type PerformanceCard,
 } from '@/services/collectionPerformance';
+import Svg, { Defs, LinearGradient, Path, Stop } from 'react-native-svg';
 
 const C = colors.dark;
 
@@ -50,9 +51,10 @@ function fmtSigned(n: number | null | undefined, pct: number | null | undefined,
   return `${sign}${currency} ${Math.abs(n).toLocaleString('en-AU', { maximumFractionDigits: 0 })}${pctStr}`;
 }
 
-// ─── Chart (bar-based for compatibility) ──────────────────────────────────────
+// ─── Chart ─────────────────────────────────────────────────────────────────────
 
 function PerformanceChart({ points }: { points: { date: string; value: number }[] }) {
+  const [width, setWidth] = React.useState(320);
   if (points.length === 0) return null;
   const values = points.map(p => p.value);
   const min = Math.min(...values);
@@ -65,22 +67,30 @@ function PerformanceChart({ points }: { points: { date: string; value: number }[
   const firstVal = values[0] ?? 0;
   const isUp = lastVal >= firstVal;
 
+  const linePath = points.map((point, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * width;
+    const y = 8 + (1 - (point.value - min) / range) * (H - 16);
+    return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
   return (
-    <View style={chartStyles.wrap}>
-      <View style={chartStyles.barArea}>
-        {points.map((p, i) => {
-          const normH = Math.max(3, ((p.value - min) / range) * (H - 4));
-          const isCurrent = i === points.length - 1;
-          return (
-            <View key={i} style={chartStyles.barCol}>
-              <View style={[
-                chartStyles.bar,
-                { height: normH, backgroundColor: isUp ? C.positive : C.negative, opacity: isCurrent ? 1 : 0.55 },
-              ]} />
-            </View>
-          );
-        })}
-      </View>
+    <View style={chartStyles.wrap} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
+      <Svg width={width} height={H}>
+        <Defs>
+          <LinearGradient id="insightsHistoryGradient" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor={isUp ? C.positive : C.negative} stopOpacity={0.28} />
+            <Stop offset="100%" stopColor={isUp ? C.positive : C.negative} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Path d={`${linePath} L ${width} ${H} L 0 ${H} Z`} fill="url(#insightsHistoryGradient)" />
+        <Path
+          d={linePath}
+          stroke={isUp ? C.positive : C.negative}
+          strokeWidth={2}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
       <View style={chartStyles.xRow}>
         <Text style={chartStyles.axisLabel}>{formatDateLabel(firstLabel)}</Text>
         <Text style={chartStyles.axisLabel}>{formatDateLabel(lastLabel)}</Text>
@@ -102,9 +112,6 @@ function formatDateLabel(iso: string): string {
 
 const chartStyles = StyleSheet.create({
   wrap: { width: '100%' },
-  barArea: { flexDirection: 'row', alignItems: 'flex-end', height: 80, gap: 2, marginBottom: 4 },
-  barCol: { flex: 1, justifyContent: 'flex-end' },
-  bar: { width: '100%', borderRadius: 2 },
   xRow: { flexDirection: 'row', justifyContent: 'space-between' },
   axisLabel: { fontSize: 10, color: C.mutedForeground, fontFamily: 'Inter_400Regular' },
 });

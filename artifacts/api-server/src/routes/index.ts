@@ -23,6 +23,7 @@ import adminRouter from "./admin";
 import adminAuthRouter from "./adminAuth";
 import adminTeamRouter from "./adminTeam";
 import collectionSellRouter from "./collectionSell";
+import collectionValueHistoryRouter from "./collectionValueHistory";
 import pricingRouter from "./pricing";
 import adminGovernanceRouter from "./adminGovernance";
 import collectorAnnouncementsRouter from "./collectorAnnouncements";
@@ -46,6 +47,7 @@ router.use(ebayAccountDeletionRouter);
 // /collection/summary, /collection/archive, /collection/performance
 // are matched before the wildcard /:id handlers
 router.use(collectionSellRouter);
+router.use(collectionValueHistoryRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
 router.use(subscriptionRouter);

@@ -35,6 +35,9 @@ export const collectionItemsTable = pgTable("collection_items", {
 
   // Acquisition
   acquiredAt: text("acquired_at").notNull(),  // ISO date string
+  // Start of the current ownership interval. Null means the original
+  // acquisition date; restored holdings resume ownership on the restore date.
+  ownershipStartedAt: text("ownership_started_at"),
   acquiredPriceCents: integer("acquired_price_cents").notNull().default(0),  // minor units
   acquiredCurrency: text("acquired_currency").notNull().default("AUD"),  // ISO 4217
 

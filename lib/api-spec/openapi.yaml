@@ -153,6 +153,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CollectionPerformance" }
         "401": { description: Authentication required. }
+  /collection/value-history:
+    get:
+      operationId: getCollectionValueHistory
+      tags: [portfolio]
+      summary: Get portfolio value history derived from collection holdings
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: [1D, 7D, 1M, 3M, 6M, 1Y, ALL], default: ALL } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Historical portfolio points from persisted holdings and prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionValueHistory" }
+        "401": { description: Authentication required. }
   /catalog/market-movers:
     get:
       operationId: getMarketMovers
@@ -330,7 +345,7 @@ components:
                 updatedAt: { type: string, format: date-time }
     CollectionSummary:
       type: object
-      required: [totalValue, totalCost, unrealizedGain, cardCount, uniqueCardCount, currency, coverage, completeness]
+      required: [totalValue, totalCost, unrealizedGain, cardCount, uniqueCardCount, currency, coverage, completeness, chartData]
       properties:
         totalValue: { type: [number, "null"] }
         totalCost: { type: [number, "null"] }
@@ -350,6 +365,37 @@ components:
             freshHoldings: { type: integer }
             staleHoldings: { type: integer }
         completeness: { type: string }
+        chartData:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/PortfolioValuePoint"
+    PortfolioValuePoint:
+      type: object
+      required: [date, value, currency]
+      properties:
+        date: { type: string, format: date }
+        value: { type: number }
+        currency: { type: string }
+    CollectionValueHistory:
+      type: object
+      required: [range, currency, points, chartData, historyAvailable]
+      properties:
+        range:
+          type: string
+          enum: [1D, 7D, 1M, 3M, 6M, 1Y, ALL]
+        currency: { type: string }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioValuePoint" }
+        chartData:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: "#/components/schemas/PortfolioValuePoint" }
+        historyAvailable: { type: boolean }
+        historyUnavailableReason: { type: [string, "null"] }
     CollectionPerformance:
       type: object
       required: [points, currency, historyAvailable, completeness]

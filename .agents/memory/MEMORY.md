@@ -16,3 +16,4 @@
 - [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.
 - [Mobile API origins](mobile-api-origins.md) — development web previews use the first-party Replit proxy; release builds use the public production origin.
 - [Catalogue images are optional](catalogue-images-optional.md) — canonical cards remain readable without provider images; UI fallbacks must prevent missing artwork from blanking data.
+- [Portfolio history follows ownership](portfolio-history-ownership.md) — historical value includes sold quantities before disposal and records zero after final liquidation.

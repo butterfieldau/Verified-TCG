@@ -37,6 +37,10 @@ const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password
  * already-migrated database is always safe.
  */
 const COLUMN_MIGRATIONS: string[] = [
+  `ALTER TABLE collection_items ADD COLUMN IF NOT EXISTS ownership_started_at TEXT`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS ownership_started_at TEXT`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS restored_collection_item_id UUID`,
   // Added: subscription tier and founding-member flag for Pro persistence
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,

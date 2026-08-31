@@ -294,6 +294,8 @@ export const soldArchiveItemsTable = pgTable(
     acquiredCurrency: text("acquired_currency").notNull().default("AUD"),
     /** ISO date string of acquisition */
     acquiredAt: text("acquired_at"),
+    /** Start of the ownership interval that ended with this sale */
+    ownershipStartedAt: text("ownership_started_at"),
 
     // ── Sale details ──────────────────────────────────────────────────────────
     /** Sale price in minor units */
@@ -302,6 +304,10 @@ export const soldArchiveItemsTable = pgTable(
     saleCurrency: text("sale_currency").notNull().default("AUD"),
     /** ISO date string of sale */
     soldAt: text("sold_at").notNull(),
+    /** When this archived quantity was restored to active ownership */
+    restoredAt: timestamp("restored_at", { withTimezone: true }),
+    /** Active collection row created by the restore */
+    restoredCollectionItemId: uuid("restored_collection_item_id"),
 
     /** Optional venue/platform of sale */
     venue: text("venue"),

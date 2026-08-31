@@ -53,6 +53,7 @@ export interface CollectionSummary {
   movement30d: CollectionMovement | null;
   // Meta
   completeness: string;    // human-readable note e.g. "72% of holdings priced"
+  chartData?: Record<PerformanceRange, PerformancePoint[]>;
 }
 
 /**
@@ -65,6 +66,33 @@ export async function fetchCollectionSummary(
 ): Promise<CollectionSummary> {
   const params = new URLSearchParams({ displayCurrency });
   return apiJson<CollectionSummary>(`/api/collection/summary?${params}`, { accessToken: await accessToken() });
+}
+
+export async function fetchCollectionValueHistory(
+  range: PerformanceRange = 'ALL',
+  displayCurrency = 'AUD',
+): Promise<{
+  points: PerformancePoint[];
+  chartData: Record<PerformanceRange, PerformancePoint[]>;
+  historyAvailable: boolean;
+  historyUnavailableReason?: string | null;
+}> {
+  const params = new URLSearchParams({ range, displayCurrency });
+  const raw = await apiJson<{
+    points?: PerformancePoint[];
+    chartData?: Partial<Record<PerformanceRange, PerformancePoint[]>>;
+    historyAvailable?: boolean;
+    historyUnavailableReason?: string | null;
+  }>(`/api/collection/value-history?${params}`, { accessToken: await accessToken() });
+  const empty: Record<PerformanceRange, PerformancePoint[]> = {
+    '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [], 'ALL': [],
+  };
+  return {
+    points: raw.points ?? [],
+    chartData: { ...empty, ...(raw.chartData ?? {}) },
+    historyAvailable: raw.historyAvailable ?? false,
+    historyUnavailableReason: raw.historyUnavailableReason,
+  };
 }
 
 // ── Performance History ─────────────────────────────────────────────────────────

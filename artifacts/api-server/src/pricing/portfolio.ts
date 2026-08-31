@@ -2,9 +2,12 @@ import { db } from "@workspace/db";
 import {
   collectionItemsTable,
   currentQuotesTable,
+  providerPriceHistoryTable,
+  cardPriceSnapshotsTable,
   portfolioSnapshotsTable,
+  soldArchiveItemsTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { convertCents } from "./fx.js";
 import { normalizeGradeKey } from "./grades.js";
 import type { GradeKey } from "./grades.js";
@@ -40,6 +43,317 @@ export interface PortfolioValuation {
   unrealizedGainPercent: number | null;
   valuationComplete: boolean;
   costBasisComplete: boolean;
+}
+
+export interface PortfolioValueHistoryPoint {
+  date: string;
+  valueCents: number;
+  value: number;
+  currency: string;
+  pricedHoldings: number;
+  totalHoldings: number;
+}
+
+export interface PortfolioValueHistory {
+  points: PortfolioValueHistoryPoint[];
+  currency: string;
+  historyAvailable: boolean;
+  historyUnavailableReason: string | null;
+}
+
+const PORTFOLIO_HISTORY_RANGES: Record<string, number> = {
+  "1D": 1,
+  "7D": 7,
+  "1M": 30,
+  "3M": 90,
+  "6M": 180,
+  "1Y": 365,
+  "ALL": 36_500,
+};
+
+function isoDateDaysAgo(days: number, now = new Date()): string {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function rowDate(value: string | null | undefined): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
+  const date = value.slice(0, 10);
+  return Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? null : date;
+}
+
+/**
+ * Build a portfolio series from the collector's persisted holdings and
+ * provider history. A point is emitted only when every holding owned on that
+ * date has a known price; this prevents changing price coverage from looking
+ * like portfolio performance.
+ *
+ * The daily provider history is preferred because it is the canonical,
+ * deduplicated history. Timestamped snapshots fill gaps for older captures.
+ * The current quote is used only for today's point, never to backfill the
+ * past.
+ */
+export async function calculatePortfolioValueHistory(
+  userId: string,
+  periodDays = PORTFOLIO_HISTORY_RANGES.ALL!,
+  displayCurrency = "AUD",
+): Promise<PortfolioValueHistory> {
+  const currency = displayCurrency.trim().toUpperCase();
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const [activeRows, archivedRows] = await Promise.all([
+    db
+      .select()
+      .from(collectionItemsTable)
+      .where(eq(collectionItemsTable.userId, userId)),
+    db
+      .select()
+      .from(soldArchiveItemsTable)
+      .where(eq(soldArchiveItemsTable.userId, userId)),
+  ]);
+  const rows = [
+    ...activeRows.map(row => ({
+      ...row,
+      acquiredAt: row.ownershipStartedAt ?? row.acquiredAt,
+      soldAt: null as string | null,
+    })),
+    ...archivedRows.map(row => ({
+      cardId: row.cardId,
+      quantity: row.quantity,
+      isGraded: row.isGraded,
+      gradingData: row.gradingData,
+      acquiredAt: row.ownershipStartedAt ?? row.acquiredAt,
+      soldAt: row.soldAt,
+    })),
+  ];
+
+  if (rows.length === 0) {
+    return {
+      points: [],
+      currency,
+      historyAvailable: false,
+      historyUnavailableReason: "No items in collection",
+    };
+  }
+
+  const cardIds = [...new Set(rows.map(row => row.cardId))];
+  const [quoteRows, dailyRows, timestampedRows] = await Promise.all([
+    db
+      .select()
+      .from(currentQuotesTable)
+      .where(and(
+        eq(currentQuotesTable.providerKey, PROVIDER_KEY),
+        inArray(currentQuotesTable.cardId, cardIds),
+      )),
+    db
+      .select()
+      .from(providerPriceHistoryTable)
+      .where(and(
+        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        inArray(providerPriceHistoryTable.cardId, cardIds),
+      )),
+    db
+      .select()
+      .from(cardPriceSnapshotsTable)
+      .where(and(
+        eq(cardPriceSnapshotsTable.providerKey, PROVIDER_KEY),
+        inArray(cardPriceSnapshotsTable.cardId, cardIds),
+        eq(cardPriceSnapshotsTable.captureStatus, "success"),
+      )),
+  ]);
+
+  const quoteMap = new Map<string, QuoteRow>();
+  for (const quote of quoteRows) {
+    const gradeKey = normalizeGradeKey(quote.gradeKey);
+    if (gradeKey) quoteMap.set(`${quote.cardId}:${gradeKey}`, quote);
+  }
+
+  type HistoricalPrice = {
+    date: string;
+    priceCents: number;
+    currency: string;
+    recordedAt: number;
+    priority: number;
+  };
+  const historyMap = new Map<string, Map<string, HistoricalPrice>>();
+  const addHistory = (
+    cardId: string,
+    gradeKeyValue: string,
+    priceCents: number | null,
+    sourceCurrency: string,
+    date: string,
+    recordedAt: number,
+    priority: number,
+  ) => {
+    if (priceCents == null || !Number.isFinite(priceCents) || priceCents < 0) return;
+    const key = `${cardId}:${gradeKeyValue}`;
+    const dates = historyMap.get(key) ?? new Map<string, HistoricalPrice>();
+    const existing = dates.get(date);
+    if (
+      !existing ||
+      priority > existing.priority ||
+      (priority === existing.priority && recordedAt >= existing.recordedAt)
+    ) {
+      dates.set(date, {
+        date,
+        priceCents,
+        currency: sourceCurrency.toUpperCase(),
+        recordedAt,
+        priority,
+      });
+    }
+    historyMap.set(key, dates);
+  };
+
+  for (const row of dailyRows) {
+    const gradeKey = normalizeGradeKey(row.gradeKey);
+    const date = rowDate(row.snapshotDate);
+    if (gradeKey && date) {
+      // Daily provider history is canonical when both tables contain a date.
+      addHistory(row.cardId, gradeKey, row.priceCents, row.currency, date, row.recordedAt.getTime(), 2);
+    }
+  }
+  for (const row of timestampedRows) {
+    const gradeKey = normalizeGradeKey(row.gradeKey);
+    const date = rowDate(row.capturedAt.toISOString());
+    if (gradeKey && date) {
+      addHistory(row.cardId, gradeKey, row.priceCents, row.currency, date, row.capturedAt.getTime(), 1);
+    }
+  }
+
+  const historyByKey = new Map<string, HistoricalPrice[]>();
+  for (const [key, dates] of historyMap) {
+    historyByKey.set(key, [...dates.values()].sort((a, b) => a.date.localeCompare(b.date)));
+  }
+
+  const acquisitionDates = rows
+    .map(row => rowDate(row.acquiredAt))
+    .filter((date): date is string => date !== null);
+  const requestedStart = isoDateDaysAgo(Math.max(1, periodDays), now);
+  const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
+    ? acquisitionDates.sort()[0] ?? requestedStart
+    : requestedStart;
+  const dates = new Set<string>([today]);
+  for (const date of acquisitionDates) {
+    if (date >= startDate && date <= today) dates.add(date);
+  }
+  for (const row of rows) {
+    const sold = rowDate(row.soldAt);
+    if (sold && sold >= startDate && sold <= today) dates.add(sold);
+  }
+  for (const history of historyByKey.values()) {
+    for (const point of history) {
+      if (point.date >= startDate && point.date <= today) dates.add(point.date);
+    }
+  }
+
+  const points: PortfolioValueHistoryPoint[] = [];
+  const conversionCache = new Map<string, number | null>();
+  for (const date of [...dates].sort()) {
+    const activeRows = rows.filter(row => {
+      const acquired = rowDate(row.acquiredAt);
+      const sold = rowDate(row.soldAt);
+      return acquired !== null && acquired <= date && (sold === null || date < sold);
+    });
+    if (activeRows.length === 0) {
+      const collectionHadStarted = rows.some(row => {
+        const acquired = rowDate(row.acquiredAt);
+        return acquired !== null && acquired <= date;
+      });
+      if (collectionHadStarted) {
+        points.push({
+          date,
+          valueCents: 0,
+          value: 0,
+          currency,
+          pricedHoldings: 0,
+          totalHoldings: 0,
+        });
+      }
+      continue;
+    }
+
+    let valueCents = 0;
+    let complete = true;
+    for (const row of activeRows) {
+      const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
+      if (!gradeKey) {
+        complete = false;
+        break;
+      }
+
+      const quote = date === today ? quoteMap.get(`${row.cardId}:${gradeKey}`) : undefined;
+      let price: HistoricalPrice | null = quote
+        ? {
+            date,
+            priceCents: quote.priceCents,
+            currency: quote.currency,
+            recordedAt: quote.fetchedAt.getTime(),
+            priority: 3,
+          }
+        : null;
+      if (!price) {
+        const history = historyByKey.get(`${row.cardId}:${gradeKey}`) ?? [];
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+          if (history[index]!.date <= date) {
+            price = history[index]!;
+            break;
+          }
+        }
+      }
+      if (!price) {
+        complete = false;
+        break;
+      }
+
+      const conversionKey = `${price.priceCents}:${price.currency}:${currency}`;
+      let converted = conversionCache.get(conversionKey);
+      if (converted === undefined) {
+        converted = await convertCents(price.priceCents, price.currency, currency);
+        conversionCache.set(conversionKey, converted);
+      }
+      if (converted == null) {
+        complete = false;
+        break;
+      }
+      valueCents += converted * row.quantity;
+    }
+
+    if (complete) {
+      points.push({
+        date,
+        valueCents,
+        value: valueCents / 100,
+        currency,
+        pricedHoldings: activeRows.length,
+        totalHoldings: activeRows.length,
+      });
+    }
+  }
+
+  return {
+    points,
+    currency,
+    historyAvailable: points.length >= 2,
+    historyUnavailableReason: points.length >= 2
+      ? null
+      : "At least two complete portfolio price observations are required",
+  };
+}
+
+export function portfolioChartData(
+  points: PortfolioValueHistoryPoint[],
+  now = new Date(),
+) {
+  return Object.fromEntries(
+    Object.entries(PORTFOLIO_HISTORY_RANGES).map(([range, days]) => [
+      range,
+      days >= PORTFOLIO_HISTORY_RANGES.ALL!
+        ? points
+        : points.filter(point => point.date >= isoDateDaysAgo(days, now)),
+    ]),
+  ) as Record<keyof typeof PORTFOLIO_HISTORY_RANGES, PortfolioValueHistoryPoint[]>;
 }
 
 function normalizedGrade(value: unknown): number | null {
