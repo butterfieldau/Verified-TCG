@@ -23,6 +23,18 @@ const prices: Record<string, string> = {
   "CGC 10": "$3,020.00",
 };
 
+const population: Record<string, number> = {
+  "PSA 8": 1842,
+  "PSA 9": 2916,
+  "PSA 10": 536,
+  "BGS 9": 412,
+  "BGS 9.5": 188,
+  "BGS 10": 74,
+  "CGC 8": 1036,
+  "CGC 9": 1724,
+  "CGC 10": 309,
+};
+
 function DetailChart({ graded }: { graded: boolean }) {
   return (
     <svg className="chart" viewBox="0 0 360 112" preserveAspectRatio="none" aria-label="Three month verified price history">
@@ -111,6 +123,16 @@ export function CardDetailRich() {
               </div>
             )}
             {mode === "Graded" && <div className="option-list">{gradeOptions[grader].map((option) => <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>{grader} {option}</button>)}</div>}
+            {mode === "Graded" && (
+              <div className="grade-pop-summary" aria-label={`${selectedGrade} population`}>
+                <div>
+                  <span className="grade-pop-summary__label">Population</span>
+                  <strong>{population[selectedGrade]?.toLocaleString() ?? "Unavailable"}</strong>
+                  <span className="grade-pop-summary__detail">cards recorded at {selectedGrade}</span>
+                </div>
+                <button className="grade-pop-summary__link" onClick={() => setMode("POP")}>View full POP <span>→</span></button>
+              </div>
+            )}
             <div className="availability"><span>●</span> {mode === "Raw" ? <><strong>Raw / ungraded</strong> · broad market estimate</> : <><strong>{selectedGrade}</strong> · exact grade match available</>}</div>
             <DetailChart graded={mode === "Graded"} />
             <div className="chart-labels"><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span></div>
