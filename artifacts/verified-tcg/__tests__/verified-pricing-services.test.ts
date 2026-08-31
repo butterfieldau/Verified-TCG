@@ -79,6 +79,44 @@ describe('Verified pricing mobile service', () => {
     expect(result.movement).toBeNull();
   });
 
+  it('does not cache a pending match ahead of the provider result', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-card', status: 'pending_match', configured: true,
+        queued: true, quotes: [], verifiedMarket: [], source: null,
+        confidence: null, providerMetadata: null, updatedAt: null, isStale: false,
+      }))
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-card', status: 'available', configured: true,
+        queued: false,
+        quotes: [{ gradeKey: 'raw', label: 'Raw', priceCents: 1250, price: 12.5, currency: 'AUD', originalPriceCents: 800, originalCurrency: 'USD' }],
+        verifiedMarket: [], source: null, confidence: null, providerMetadata: null,
+        updatedAt: '2026-08-31T00:00:00.000Z', isStale: false,
+      }));
+
+    const pending = await fetchVerifiedPricing('pending-card', { displayCurrency: 'AUD' });
+    const available = await fetchVerifiedPricing('pending-card', { displayCurrency: 'AUD' });
+
+    expect(pending.status).toBe('pending_match');
+    expect(available.status).toBe('available');
+    expect(available.quotes[0]?.gradeKey).toBe('raw');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a failed pricing request distinct from a genuinely unpriced card', async () => {
+    mockFetch.mockResolvedValueOnce(response({}, false));
+
+    await expect(fetchVerifiedPricing('network-error-card', { displayCurrency: 'AUD' }))
+      .rejects.toThrow('temporarily unavailable');
+  });
+
+  it('keeps a failed price-history request distinct from empty retained history', async () => {
+    mockFetch.mockResolvedValueOnce(response({}, false));
+
+    await expect(fetchVerifiedPriceHistory('history-error-card', 'raw', '30d', 'AUD'))
+      .rejects.toThrow('temporarily unavailable');
+  });
+
   it.each([
     ['7d', '7d'],
     ['30d', '30d'],

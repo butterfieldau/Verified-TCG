@@ -1143,36 +1143,43 @@ export async function getPriceHistory(opts: {
     )
     .orderBy(cardPriceSnapshotsTable.capturedAt);
 
-  // Preserve access to pre-Stage-2A provider history without pretending it has
-  // timestamp precision. New captures always use card_price_snapshots.
-  const legacyRows = snapshotRows.length === 0
-    ? await db
-      .select()
-      .from(providerPriceHistoryTable)
-      .where(and(
-        eq(providerPriceHistoryTable.cardId, cardId),
-        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
-        eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
-      ))
-      .orderBy(providerPriceHistoryTable.snapshotDate)
-    : [];
+  // Retained daily history predates the timestamped snapshot table. Read both
+  // so an initial new capture does not hide an existing multi-day price graph.
+  // A timestamped capture wins for its calendar day because it has the more
+  // precise observation; daily rows fill only days without such a capture.
+  const legacyRows = await db
+    .select()
+    .from(providerPriceHistoryTable)
+    .where(and(
+      eq(providerPriceHistoryTable.cardId, cardId),
+      eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+      eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
+      gte(providerPriceHistoryTable.snapshotDate, since.toISOString().slice(0, 10)),
+    ))
+    .orderBy(providerPriceHistoryTable.snapshotDate);
 
-  const pointsSource = snapshotRows.length > 0
-    ? snapshotRows.filter((row) => row.priceCents != null).map((row) => ({
-        date: row.capturedAt.toISOString(),
-        priceCents: row.priceCents!,
-        currency: row.currency,
-        recordedAt: row.capturedAt,
-      }))
-    : legacyRows
-      .filter((row) => new Date(row.snapshotDate) >= since)
+  const snapshotDays = new Set(
+    snapshotRows.map((row) => row.capturedAt.toISOString().slice(0, 10)),
+  );
+  const pointsSource = [
+    ...legacyRows
       .filter((row) => row.priceCents > 0)
+      .filter((row) => !snapshotDays.has(row.snapshotDate))
       .map((row) => ({
         date: row.snapshotDate,
         priceCents: row.priceCents,
         currency: row.currency,
         recordedAt: row.recordedAt,
-      }));
+      })),
+    ...snapshotRows
+      .filter((row) => row.priceCents != null && row.priceCents > 0)
+      .map((row) => ({
+        date: row.capturedAt.toISOString(),
+        priceCents: row.priceCents!,
+        currency: row.currency,
+        recordedAt: row.capturedAt,
+      })),
+  ].sort((left, right) => left.recordedAt.getTime() - right.recordedAt.getTime());
 
   // FX conversion
   let fxRate: number | null = null;
@@ -1213,7 +1220,11 @@ export async function getPriceHistory(opts: {
     cardId,
     gradeKey: canonicalGradeKey,
     points,
-    source: snapshotRows.length > 0 ? "pricecharting_snapshots" : PROVIDER_KEY,
+    source: snapshotRows.length > 0 && legacyRows.length > 0
+      ? "pricecharting_retained_history_and_snapshots"
+      : snapshotRows.length > 0
+        ? "pricecharting_snapshots"
+        : PROVIDER_KEY,
     historyAvailable: points.length >= 2,
     movement,
     updatedAt: latestRow?.recordedAt?.toISOString() ?? null,

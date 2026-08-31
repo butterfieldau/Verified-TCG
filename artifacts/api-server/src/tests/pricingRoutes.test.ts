@@ -275,6 +275,57 @@ describe("GET /pricing/cards/:id/history", () => {
     const res = await request.get("/api/pricing/cards/x/history");
     assert.equal(res.status, 401);
   });
+
+  test("merges retained daily history with a newer timestamped capture", async () => {
+    const cardId = `${TAG}merged-history`;
+    const now = new Date();
+    const earlier = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1_000);
+    const earlierDate = earlier.toISOString().slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
+
+    await db.insert(providerPriceHistoryTable).values({
+      cardId,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 10_000,
+      currency: "USD",
+      snapshotDate: earlierDate,
+      recordedAt: earlier,
+    });
+    await db.insert(cardPriceSnapshotsTable).values({
+      cardId,
+      providerKey: "pricecharting",
+      providerProductId: `${TAG}history-product`,
+      gradeKey: "raw",
+      priceCents: 12_000,
+      currency: "USD",
+      capturedAt: now,
+      snapshotBucket: `${today}:PM`,
+      captureStatus: "success",
+    });
+
+    try {
+      const res = await request
+        .get(`/api/pricing/cards/${encodeURIComponent(cardId)}/history?grade=raw&period=30d&displayCurrency=USD`)
+        .set("Authorization", `Bearer ${token}`);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.historyAvailable, true);
+      assert.equal(res.body.points.length, 2);
+      assert.equal(res.body.points[0]?.priceCents, 10_000);
+      assert.equal(res.body.points[1]?.priceCents, 12_000);
+      assert.equal(res.body.movement?.percent, 20);
+      assert.equal(res.body.source, "pricecharting_retained_history_and_snapshots");
+    } finally {
+      await db.delete(cardPriceSnapshotsTable).where(and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
+      ));
+      await db.delete(providerPriceHistoryTable).where(and(
+        eq(providerPriceHistoryTable.cardId, cardId),
+        eq(providerPriceHistoryTable.providerKey, "pricecharting"),
+      ));
+    }
+  });
 });
 
 // ── POST /pricing/scheduler/run — admin secret ────────────────────────────────

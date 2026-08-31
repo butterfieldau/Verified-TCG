@@ -122,11 +122,13 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
   const gradId = isPositive ? 'chartGreen' : 'chartRed';
 
   // Map data index → pixel x
-  const xOf = (i: number) =>
-    padL + (i / Math.max(data.length - 1, 1)) * (width - padL - padR);
+  const xOf = (i: number) => data.length === 1
+    ? width / 2
+    : padL + (i / Math.max(data.length - 1, 1)) * (width - padL - padR);
   // Map value → pixel y
-  const yOf = (v: number) =>
-    padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
+  const yOf = (v: number) => data.length === 1
+    ? (padT + (height - padB)) / 2
+    : padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
 
   // Build smooth SVG path (monotone cubic)
   function buildPath() {
@@ -210,6 +212,16 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+
+        {/* One persisted observation is a real starting point, not a missing
+            chart or a synthetic historical curve. */}
+        {data.length === 1 && (
+          <>
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={11} fill={chartColor} opacity={0.16} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={5} fill={chartColor} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={2.5} fill="#FFFFFF" />
+          </>
+        )}
 
         {/* Crosshair */}
         {activeX !== null && activeY !== null && (
@@ -628,10 +640,14 @@ export default function HomeScreen() {
             onPointSelect={setActiveChartPoint}
           />
         ) : performanceView.kind === 'initial' ? (
-          <View style={styles.chartUnavailable}>
-            <Feather name="minus" size={18} color={C.mutedForeground} />
-            <Text style={styles.chartUnavailableText}>
-              Initial snapshot recorded · {performanceView.point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {performanceView.point.currency}
+          <View>
+            <InteractiveChart
+              data={[performanceView.point]}
+              isPositive
+              onPointSelect={setActiveChartPoint}
+            />
+            <Text style={styles.initialSnapshotText}>
+              Tracking started with this verified portfolio value
             </Text>
           </View>
         ) : (
@@ -1139,6 +1155,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
+  },
+  initialSnapshotText: {
+    color: C.mutedForeground,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    marginTop: -8,
   },
 
   // Range pills

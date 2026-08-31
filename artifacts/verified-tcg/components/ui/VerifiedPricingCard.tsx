@@ -186,11 +186,34 @@ export default function VerifiedPricingCard({
   const [pricingLoading, setPricingLoading] = useState(true);
   const [pricingError, setPricingError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [pollAttempt, setPollAttempt] = useState(0);
 
   const [selectedGradeKey, setSelectedGradeKey] = useState<string>('raw');
   const [history, setHistory] = useState<CardPriceHistoryResult | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('30d');
+
+  const pricingOptions = {
+    name: card.name,
+    set: card.setName,
+    number: card.number,
+    game: card.tcg,
+    displayCurrency,
+  };
+
+  const updatePricing = useCallback((result: CardPricingResult) => {
+    setPricing(result);
+    // Keep a user's selected grade when it is still available. A newly matched
+    // card selects the provider's first real quote, rather than leaving a raw
+    // placeholder selected when only a graded quote exists.
+    setSelectedGradeKey(previous =>
+      result.quotes.some(quote => quote.gradeKey === previous)
+        ? previous
+        : result.quotes[0]?.gradeKey ?? 'raw',
+    );
+    setPollAttempt(result.status === 'pending_match' || result.queued ? 1 : 0);
+  }, []);
 
   // Load pricing on mount / card change
   useEffect(() => {
@@ -202,21 +225,13 @@ export default function VerifiedPricingCard({
     fetchVerifiedPricing(
       card.id,
       {
-        name: card.name,
-        set: card.setName,
-        number: card.number,
-        game: card.tcg,
-        displayCurrency,
+        ...pricingOptions,
       },
       controller.signal,
     )
       .then(result => {
         if (cancelled) return;
-        setPricing(result);
-        // Default to first quote's gradeKey
-        if (result.quotes.length > 0 && result.quotes[0]) {
-          setSelectedGradeKey(result.quotes[0].gradeKey);
-        }
+        updatePricing(result);
       })
       .catch(() => {
         if (!cancelled) setPricingError(true);
@@ -227,7 +242,33 @@ export default function VerifiedPricingCard({
 
     return () => { cancelled = true; controller.abort(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card.id, displayCurrency]);
+  }, [card.id, displayCurrency, updatePricing]);
+
+  // The first pricing read starts the server-side match asynchronously. Poll a
+  // small, bounded number of times so a real provider result appears on the
+  // card that initiated it instead of requiring the collector to leave/reopen
+  // the screen. Pending results are deliberately never stored in the client
+  // cache (see verifiedPricing.ts).
+  useEffect(() => {
+    if (!pricing || pollAttempt === 0 || pollAttempt > 3) return;
+    if (pricing.status !== 'pending_match' && !pricing.queued) return;
+
+    let cancelled = false;
+    const delay = [1_500, 3_000, 6_000][pollAttempt - 1] ?? 6_000;
+    const timer = setTimeout(() => {
+      fetchVerifiedPricing(card.id, pricingOptions)
+        .then(result => {
+          if (cancelled) return;
+          updatePricing(result);
+          if (result.status === 'pending_match' || result.queued) {
+            setPollAttempt(previous => previous + 1);
+          }
+        })
+        .catch(() => { if (!cancelled) setPricingError(true); });
+    }, delay);
+    return () => { cancelled = true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id, pricing?.status, pricing?.queued, pollAttempt, updatePricing]);
 
   // Load history when grade or period changes (Pro only)
   useEffect(() => {
@@ -235,11 +276,12 @@ export default function VerifiedPricingCard({
     let cancelled = false;
     const controller = new AbortController();
     setHistoryLoading(true);
+    setHistoryError(false);
     setHistory(null);
 
     fetchVerifiedPriceHistory(card.id, selectedGradeKey, historyPeriod, displayCurrency, controller.signal)
       .then(result => { if (!cancelled) setHistory(result); })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setHistoryError(true); })
       .finally(() => { if (!cancelled) setHistoryLoading(false); });
 
     return () => { cancelled = true; controller.abort(); };
@@ -249,20 +291,14 @@ export default function VerifiedPricingCard({
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const result = await refreshVerifiedPricing(card.id, {
-        name: card.name,
-        set: card.setName,
-        number: card.number,
-        game: card.tcg,
-        displayCurrency,
-      });
-      setPricing(result);
+      const result = await refreshVerifiedPricing(card.id, pricingOptions);
+      updatePricing(result);
     } catch {
-      // silently keep old data
+      setPricingError(true);
     } finally {
       setRefreshing(false);
     }
-  }, [card, displayCurrency]);
+  }, [card.id, pricingOptions, updatePricing]);
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (pricingLoading) {
@@ -504,7 +540,11 @@ export default function VerifiedPricingCard({
             loading={historyLoading}
           />
 
-          {history && !history.historyAvailable && !historyLoading && (
+          {historyError && !historyLoading ? (
+            <Text style={vpStyles.historyUnavailableText}>
+              Unable to load price history. Please try again.
+            </Text>
+          ) : history && !history.historyAvailable && !historyLoading && (
             <Text style={vpStyles.historyUnavailableText}>
               History not yet available for this period
             </Text>

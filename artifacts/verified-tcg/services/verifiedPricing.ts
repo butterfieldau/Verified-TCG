@@ -7,7 +7,7 @@
  */
 
 import { getAccessToken } from './auth';
-import { ApiClientError, apiJson } from './apiClient';
+import { apiJson } from './apiClient';
 
 export interface PricingQuote {
   gradeKey: string;
@@ -78,6 +78,7 @@ export type PricingStatus =
   | 'stale'
   | 'pending_match'
   | 'review_required'
+  | 'unmatched'
   | 'unavailable';
 
 export interface CardPricingResult {
@@ -131,6 +132,15 @@ const pricingCache = new Map<string, { data: CardPricingResult; fetchedAt: numbe
 const PRICING_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * A pending response means the server has only just started its real provider
+ * match.  Caching it would freeze a card detail on "Matching in progress" for
+ * five minutes even after the server has persisted the real raw/graded quotes.
+ */
+function isTransientPricingResult(result: CardPricingResult): boolean {
+  return result.status === 'pending_match' || result.queued;
+}
+
+/**
  * Fetch verified market pricing for a card.
  * Returns status-rich result — never fabricates prices.
  */
@@ -163,26 +173,15 @@ export async function fetchVerifiedPricing(
       `/api/pricing/cards/${encodeURIComponent(cardId)}${qs ? `?${qs}` : ''}`,
       { accessToken: token, signal },
     );
-    pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
+    if (!isTransientPricingResult(data)) {
+      pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
+    }
     return data;
   } catch (err: unknown) {
-    if ((err as Error)?.name === 'AbortError') throw err;
-    const clientError = err instanceof ApiClientError ? err : null;
-    return {
-      cardId,
-      status: 'unavailable',
-      configured: clientError?.kind !== 'configuration',
-      queued: false,
-      quotes: [],
-      verifiedMarket: [],
-      source: null,
-      confidence: null,
-      providerMetadata: null,
-      updatedAt: null,
-      isStale: false,
-      errorCode: clientError?.kind ?? 'network_error',
-      message: clientError?.message ?? 'Network error — check connection',
-    };
+    // Transport failures must remain failures. Treating a 5xx/network problem
+    // as a genuine unpriced card makes the UI say "No pricing data" and masks
+    // a retryable problem with the public API or provider.
+    throw err;
   }
 }
 
@@ -221,7 +220,8 @@ export async function refreshVerifiedPricing(
     pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
     return data;
   } catch {
-    // On error, re-fetch the current stored result
+    // On error, re-fetch the current stored result. The read path deliberately
+    // propagates a real API/network failure to the caller.
     return fetchVerifiedPricing(cardId, opts);
   }
 }
@@ -246,7 +246,7 @@ export async function fetchVerifiedPriceHistory(
       { accessToken: token, signal },
     );
   } catch (err: unknown) {
-    if ((err as Error)?.name === 'AbortError') throw err;
-    return { points: [], updatedAt: null, source: null, movement: null, historyAvailable: false };
+    // Empty history is a valid, server-declared state. A failed request is not.
+    throw err;
   }
 }
