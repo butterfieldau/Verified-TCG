@@ -56,8 +56,14 @@ export default function MarketScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>(savedActiveTCG ?? user?.tcgPreferences[0] ?? 'all');
 
-  // The iOS liquid-glass native tab container supplies this safe area itself.
-  const topPad = Platform.OS === 'web' ? 67 : supportsLiquidGlassTabs() ? 0 : insets.top;
+  // Market is a scroll view, so it must retain one status-bar inset on iOS.
+  // NativeTabs can report a larger duplicate inset on liquid-glass devices;
+  // cap it rather than zeroing it, otherwise the header sits behind the clock.
+  const topPad = Platform.OS === 'web'
+    ? 67
+    : supportsLiquidGlassTabs()
+      ? Math.min(insets.top, 60)
+      : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   // Stale-while-revalidate: cached movers render instantly; a background
