@@ -82,6 +82,7 @@ import {
   recordStartupPhase,
   recoverStartupTask,
 } from '@/services/startupDiagnostics';
+import { useSettings } from '@/context/SettingsContext';
 
 /**
  * Fetch the authoritative scan count for the current period from the server.
@@ -378,6 +379,7 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const { currency } = useSettings();
   useEffect(() => {
     recordStartupPhase('app-provider', 'success');
   }, []);
@@ -656,16 +658,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Monotonically increasing counter; each loadCollection call captures it on
   // entry so a stale response cannot overwrite a newer one.
   const loadGeneration = useRef(0);
+  const activeCollectionLoadKey = useRef<string | null>(null);
 
   // ── Load collection from server ────────────────────────────────────────────
 
   const loadCollection = useCallback(async (ownerIdOverride?: string) => {
-    const gen = ++loadGeneration.current; // capture before first await
     const ownerId = ownerIdOverride ?? currentUserIdRef.current;
     if (!ownerId) {
       setCollectionLoading(false);
       return;
     }
+    const loadKey = `${ownerId}:${currency}`;
+    if (activeCollectionLoadKey.current === loadKey) return;
+    activeCollectionLoadKey.current = loadKey;
+    const gen = ++loadGeneration.current; // capture before first await
     setCollectionLoading(true);
 
     // Show cached collection immediately so the screen isn't blank while fetching
@@ -680,7 +686,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore cache read errors */ }
 
     try {
-      const serverItems = await fetchCollection();
+      const serverItems = await fetchCollection(currency);
       // If a newer loadCollection started after this one, discard this result.
       if (gen !== loadGeneration.current) return;
 
@@ -727,10 +733,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     } finally {
+      if (activeCollectionLoadKey.current === loadKey) {
+        activeCollectionLoadKey.current = null;
+      }
       // Only the latest generation clears the loading flag.
       if (gen === loadGeneration.current) setCollectionLoading(false);
     }
-  }, []);
+  }, [currency]);
+  const loadCollectionRef = useRef(loadCollection);
+  useEffect(() => {
+    loadCollectionRef.current = loadCollection;
+  }, [loadCollection]);
 
   // ── Notifications ───────────────────────────────────────────────────────────
 
@@ -852,9 +865,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { currentUserIdRef.current = user?.id ?? null; }, [user]);
 
   useEffect(() => {
+    if (isAuthenticated) void loadCollection();
+  }, [currency, isAuthenticated, loadCollection]);
+
+  useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'active' && isAuthenticatedRef.current) {
-        loadCollection();
+        loadCollectionRef.current();
         // Refresh notifications on app focus so new server-side alerts appear
         loadNotifications();
       }

@@ -41,4 +41,20 @@ describe('catalog cards without a quote', () => {
     expect(card.price.available).toBe(true);
     expect(card.price.currency).toBe('AUD');
   });
+
+  it('accepts the persisted PriceCharting market price when a feed omits variant pricing', () => {
+    const card = catalogCardToAppCard({
+      id: 'feed-priced',
+      name: 'Umbreon',
+      game: 'Pokemon',
+      pricing_source: 'pricecharting',
+      market_price: 1312.4,
+      currency: 'USD',
+      variants: [],
+    });
+
+    expect(card.price.raw).toBe(1312.4);
+    expect(card.price.available).toBe(true);
+    expect(card.price.currency).toBe('USD');
+  });
 });

@@ -32,7 +32,14 @@ const item = (id: string, valuation: number | null, acquiredPrice = 100): Collec
   acquiredPrice,
   currency: 'AUD',
   valuation: valuation == null ? null : {
-    priceCents: valuation * 100, price: valuation, currency: 'AUD', gradeKey: 'raw', updatedAt: '2025-01-01',
+    priceCents: valuation * 100,
+    price: valuation,
+    currency: 'AUD',
+    gradeKey: 'raw',
+    updatedAt: '2025-01-01',
+    costBasis: acquiredPrice > 0 ? acquiredPrice : null,
+    gain: acquiredPrice > 0 ? valuation - acquiredPrice : null,
+    gainPercent: acquiredPrice > 0 ? ((valuation - acquiredPrice) / acquiredPrice) * 100 : null,
   },
   card: {
     id, name: id, setId: 'set', setName: 'Set', tcg: 'pokemon', number: '1',

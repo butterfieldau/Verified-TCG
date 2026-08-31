@@ -891,6 +891,14 @@ describe("GET /collection/value-history", () => {
         cardId: cardB,
         providerKey: "pricecharting",
         gradeKey: "raw",
+        priceCents: 400,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
         priceCents: 500,
         currency: "AUD",
         snapshotDate: dateDaysAgo(2),
@@ -930,7 +938,7 @@ describe("GET /collection/value-history", () => {
     await cleanupTaggedUsers();
   });
 
-  test("uses acquisition dates, quantities, historical prices, and current quotes", async () => {
+  test("backcasts today's holdings before acquisition using retained prices and current quotes", async () => {
     const res = await request
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
@@ -939,9 +947,8 @@ describe("GET /collection/value-history", () => {
     assert.deepEqual(
       res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
       [
-        [dateDaysAgo(10), 20],
-        [dateDaysAgo(2), 29],
-        [dateDaysAgo(1), 17],
+        [dateDaysAgo(10), 14],
+        [dateDaysAgo(2), 17],
         [dateDaysAgo(0), 20],
       ],
     );
@@ -955,26 +962,26 @@ describe("GET /collection/value-history", () => {
     assert.deepEqual(
       res.body.chartData.ALL.map((point: { date: string; value: number }) => [point.date, point.value]),
       [
-        [dateDaysAgo(10), 20],
-        [dateDaysAgo(2), 29],
-        [dateDaysAgo(1), 17],
+        [dateDaysAgo(10), 14],
+        [dateDaysAgo(2), 17],
         [dateDaysAgo(0), 20],
       ],
     );
   });
 
-  test("keeps sold quantities in pre-sale history and removes them after sale", async () => {
+  test("uses only quantities still held today throughout the market-history series", async () => {
     const res = await request
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
     const points = new Map(
       res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
     );
-    assert.equal(points.get(dateDaysAgo(2)), 29);
+    assert.equal(points.get(dateDaysAgo(10)), 14);
+    assert.equal(points.get(dateDaysAgo(2)), 17);
     assert.equal(points.get(dateDaysAgo(0)), 20);
   });
 
-  test("ends fully liquidated portfolios at zero instead of the last owned value", async () => {
+  test("excludes fully liquidated cards and backcasts them again after restore", async () => {
     const liquidatedCard = `${TAG}history-liquidated`;
     const user = await createTestUser({ email: `${TAG}liquidated@example.com` });
     const created = await request
@@ -1018,12 +1025,7 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${user.accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.points.at(-1).date, dateDaysAgo(0));
-    assert.equal(res.body.points.at(-1).value, 0);
-    assert.equal(
-      res.body.points.find((point: { date: string }) => point.date === dateDaysAgo(3)).value,
-      0,
-    );
+    assert.deepEqual(res.body.points, []);
 
     await db.insert(currentQuotesTable).values({
       cardId: liquidatedCard,
@@ -1045,8 +1047,9 @@ describe("GET /collection/value-history", () => {
         (point: { date: string; value: number }) => [point.date, point.value],
       ),
     );
-    assert.equal(restoredPoints.get(dateDaysAgo(2)), 0, "sold interval must remain zero");
-    assert.equal(restoredPoints.get(dateDaysAgo(0)), 27, "restored ownership resumes today");
+    assert.equal(restoredPoints.get(dateDaysAgo(10)), 25);
+    assert.equal(restoredPoints.get(dateDaysAgo(2)), 26);
+    assert.equal(restoredPoints.get(dateDaysAgo(0)), 27);
 
     const resold = await request
       .post(`/api/collection/${restored.body.id}/sell`)
@@ -1061,7 +1064,7 @@ describe("GET /collection/value-history", () => {
     const resoldHistory = await request
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${user.accessToken}`);
-    assert.equal(resoldHistory.body.points.at(-1).value, 0);
+    assert.deepEqual(resoldHistory.body.points, []);
 
     await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, liquidatedCard));
     await db

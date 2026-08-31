@@ -30,8 +30,9 @@ async function accessToken(): Promise<string> {
 // ── Collection API calls ──────────────────────────────────────────────────────
 
 /** Fetch all collection items for the signed-in user from the server. */
-export async function fetchCollection(): Promise<CollectionItem[]> {
-  return apiJson<CollectionItem[]>('/api/collection', { accessToken: await accessToken() });
+export async function fetchCollection(displayCurrency = 'AUD'): Promise<CollectionItem[]> {
+  const params = new URLSearchParams({ displayCurrency });
+  return apiJson<CollectionItem[]>(`/api/collection?${params}`, { accessToken: await accessToken() });
 }
 
 export interface PaginatedCollection {
@@ -46,8 +47,9 @@ export interface PaginatedCollection {
 export async function fetchCollectionPage(
   page: number,
   limit: number = 20,
+  displayCurrency = 'AUD',
 ): Promise<PaginatedCollection> {
-  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  const params = new URLSearchParams({ page: String(page), limit: String(limit), displayCurrency });
   return apiJson<PaginatedCollection>(`/api/collection?${params}`, { accessToken: await accessToken() });
 }
 

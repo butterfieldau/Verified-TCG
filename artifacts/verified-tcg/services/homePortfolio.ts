@@ -71,18 +71,17 @@ export function getHomeCollectionCards(items: CollectionItem[]): HomeCollectionC
     .map(item => {
       const currentValue = item.valuation?.price;
       const hasValuation = typeof currentValue === 'number' && Number.isFinite(currentValue);
-      const hasComparableCost =
-        typeof item.acquiredPrice === 'number' &&
-        Number.isFinite(item.acquiredPrice) &&
-        item.acquiredPrice > 0 &&
-        item.valuation?.currency === item.currency;
+      const serverGainPercent = item.valuation?.gainPercent;
       return {
         item,
         currentValue: hasValuation ? currentValue : null,
         currency: hasValuation ? item.valuation!.currency : null,
-        gainPercent: hasValuation && hasComparableCost
-          ? ((currentValue! - item.acquiredPrice) / item.acquiredPrice) * 100
-          : null,
+        gainPercent:
+          hasValuation &&
+          typeof serverGainPercent === 'number' &&
+          Number.isFinite(serverGainPercent)
+            ? serverGainPercent
+            : null,
       };
     })
     .sort((a, b) => {

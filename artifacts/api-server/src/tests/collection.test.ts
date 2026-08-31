@@ -327,6 +327,9 @@ describe("GET /api/collection — exact graded valuation", () => {
       currency: "AUD",
       gradeKey: "psa_10",
       updatedAt: (item.valuation as { updatedAt: string }).updatedAt,
+      costBasis: 80,
+      gain: 145,
+      gainPercent: 181.25,
     });
     assert.notEqual((item.valuation as { price: number }).price, 100);
 

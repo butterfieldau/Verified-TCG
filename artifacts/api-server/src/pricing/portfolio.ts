@@ -84,10 +84,10 @@ function rowDate(value: string | null | undefined): string | null {
 }
 
 /**
- * Build a portfolio series from the collector's persisted holdings and
- * provider history. A point is emitted only when every holding owned on that
- * date has a known price; this prevents changing price coverage from looking
- * like portfolio performance.
+ * Build a historical market-value series for the cards and quantities in the
+ * collector's current collection. A point is emitted only when every current
+ * holding has a known price on that date; this prevents changing price coverage
+ * from looking like market performance.
  *
  * The daily provider history is preferred because it is the canonical,
  * deduplicated history. Timestamped snapshots fill gaps for older captures.
@@ -102,31 +102,14 @@ export async function calculatePortfolioValueHistory(
   const currency = displayCurrency.trim().toUpperCase();
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
-  const [activeRows, archivedRows] = await Promise.all([
-    db
-      .select()
-      .from(collectionItemsTable)
-      .where(eq(collectionItemsTable.userId, userId)),
-    db
-      .select()
-      .from(soldArchiveItemsTable)
-      .where(eq(soldArchiveItemsTable.userId, userId)),
-  ]);
-  const rows = [
-    ...activeRows.map(row => ({
-      ...row,
-      acquiredAt: row.ownershipStartedAt ?? row.acquiredAt,
-      soldAt: null as string | null,
-    })),
-    ...archivedRows.map(row => ({
-      cardId: row.cardId,
-      quantity: row.quantity,
-      isGraded: row.isGraded,
-      gradingData: row.gradingData,
-      acquiredAt: row.ownershipStartedAt ?? row.acquiredAt,
-      soldAt: row.soldAt,
-    })),
-  ];
+  // This series answers “what would the cards currently in my collection have
+  // been worth?”. It intentionally uses today's active holdings and quantities
+  // across the full requested market-history range, including observations
+  // before acquisition. Ownership-period P&L remains a separate calculation.
+  const rows = await db
+    .select()
+    .from(collectionItemsTable)
+    .where(eq(collectionItemsTable.userId, userId));
 
   if (rows.length === 0) {
     return {
@@ -227,21 +210,14 @@ export async function calculatePortfolioValueHistory(
     historyByKey.set(key, [...dates.values()].sort((a, b) => a.date.localeCompare(b.date)));
   }
 
-  const acquisitionDates = rows
-    .map(row => rowDate(row.acquiredAt))
-    .filter((date): date is string => date !== null);
   const requestedStart = isoDateDaysAgo(Math.max(1, periodDays), now);
+  const earliestRetainedDate = [...historyByKey.values()]
+    .flatMap(history => history.map(point => point.date))
+    .sort()[0];
   const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
-    ? acquisitionDates.sort()[0] ?? requestedStart
+    ? earliestRetainedDate ?? requestedStart
     : requestedStart;
   const dates = new Set<string>([today]);
-  for (const date of acquisitionDates) {
-    if (date >= startDate && date <= today) dates.add(date);
-  }
-  for (const row of rows) {
-    const sold = rowDate(row.soldAt);
-    if (sold && sold >= startDate && sold <= today) dates.add(sold);
-  }
   for (const history of historyByKey.values()) {
     for (const point of history) {
       if (point.date >= startDate && point.date <= today) dates.add(point.date);
@@ -251,32 +227,9 @@ export async function calculatePortfolioValueHistory(
   const points: PortfolioValueHistoryPoint[] = [];
   const conversionCache = new Map<string, number | null>();
   for (const date of [...dates].sort()) {
-    const activeRows = rows.filter(row => {
-      const acquired = rowDate(row.acquiredAt);
-      const sold = rowDate(row.soldAt);
-      return acquired !== null && acquired <= date && (sold === null || date < sold);
-    });
-    if (activeRows.length === 0) {
-      const collectionHadStarted = rows.some(row => {
-        const acquired = rowDate(row.acquiredAt);
-        return acquired !== null && acquired <= date;
-      });
-      if (collectionHadStarted) {
-        points.push({
-          date,
-          valueCents: 0,
-          value: 0,
-          currency,
-          pricedHoldings: 0,
-          totalHoldings: 0,
-        });
-      }
-      continue;
-    }
-
     let valueCents = 0;
     let complete = true;
-    for (const row of activeRows) {
+    for (const row of rows) {
       const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
       if (!gradeKey) {
         complete = false;
@@ -326,8 +279,8 @@ export async function calculatePortfolioValueHistory(
         valueCents,
         value: valueCents / 100,
         currency,
-        pricedHoldings: activeRows.length,
-        totalHoldings: activeRows.length,
+        pricedHoldings: rows.length,
+        totalHoldings: rows.length,
       });
     }
   }
@@ -338,7 +291,7 @@ export async function calculatePortfolioValueHistory(
     historyAvailable: points.length >= 2,
     historyUnavailableReason: points.length >= 2
       ? null
-      : "At least two complete portfolio price observations are required",
+      : "At least two complete retained price observations are required for the current collection",
   };
 }
 
@@ -417,27 +370,38 @@ export function gradeKeyForHolding(
 export async function calculatePortfolioValuation(
   userId: string,
   displayCurrency: string,
+  rowIds?: string[],
 ): Promise<PortfolioValuation> {
   const currency = displayCurrency.trim().toUpperCase();
-  const rows = await db
-    .select()
-    .from(collectionItemsTable)
-    .where(eq(collectionItemsTable.userId, userId));
+  const rows = rowIds && rowIds.length === 0
+    ? []
+    : await db
+        .select()
+        .from(collectionItemsTable)
+        .where(
+          rowIds
+            ? and(
+                eq(collectionItemsTable.userId, userId),
+                inArray(collectionItemsTable.id, rowIds),
+              )
+            : eq(collectionItemsTable.userId, userId),
+        );
 
-  const cardIds = new Set(rows.map(row => row.cardId));
-  const quotes = cardIds.size > 0
+  const cardIds = [...new Set(rows.map(row => row.cardId))];
+  const quotes = cardIds.length > 0
     ? await db
         .select()
         .from(currentQuotesTable)
-        .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+        .where(and(
+          eq(currentQuotesTable.providerKey, PROVIDER_KEY),
+          inArray(currentQuotesTable.cardId, cardIds),
+        ))
     : [];
 
   const quoteMap = new Map<string, QuoteRow>();
   for (const quote of quotes) {
-    if (cardIds.has(quote.cardId)) {
-      const canonicalGrade = normalizeGradeKey(quote.gradeKey);
-      if (canonicalGrade) quoteMap.set(`${quote.cardId}:${canonicalGrade}`, quote);
-    }
+    const canonicalGrade = normalizeGradeKey(quote.gradeKey);
+    if (canonicalGrade) quoteMap.set(`${quote.cardId}:${canonicalGrade}`, quote);
   }
 
   let totalValueCents = 0;

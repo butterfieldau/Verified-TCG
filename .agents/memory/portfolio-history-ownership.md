@@ -1,10 +1,10 @@
 ---
-name: Portfolio history follows ownership
-description: Rules for reconstructing honest portfolio value history across acquisitions and disposals.
+name: Portfolio history semantics
+description: Keep current-holdings market backcasts distinct from ownership-period profit and loss.
 ---
 
-Historical portfolio valuation must follow the full ownership lifecycle, not just currently active collection rows. Include archived sold quantities from acquisition until disposal, exclude them on and after the sale date, and emit a zero endpoint after final liquidation.
+Verified TCG has two valid but different historical views. The Home market-value chart backcasts the cards and quantities currently held across real retained provider history, including dates before acquisition. Ownership-period profit and loss follows acquisitions and disposals and must include archived sold quantities until disposal.
 
-**Why:** Recomputing old points from only active holdings rewrites the past after a sale, while omitting a zero endpoint leaves charts ending at a value the collector no longer owns.
+**Why:** Collectors want to see how today’s collection moved in the market before they bought it, but that backcast is not the same as what they actually owned or earned. Mixing the two makes either market movement or P&L misleading.
 
-**How to apply:** Any portfolio-history source or chart must account for acquisitions, partial sales, full sales, and restores. Never let a disposal retroactively erase pre-sale value or leave a stale nonzero final point.
+**How to apply:** Label current-holdings backcasts explicitly and use only real retained provider observations. Keep acquisition cost, realised gain, and ownership-period reporting lifecycle-aware; never use the backcast as ownership P&L.

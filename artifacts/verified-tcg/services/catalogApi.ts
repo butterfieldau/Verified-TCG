@@ -175,12 +175,20 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
 export function catalogCardToAppCard(card: CatalogCard): Card {
   // Prefer Near Mint, fall back to first variant
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
+  const sourceIsVerified = card.pricing_source?.trim().toLowerCase() === 'pricecharting';
+  const variantPrice =
+    typeof variant?.price === 'number' && Number.isFinite(variant.price) && variant.price > 0
+      ? variant.price
+      : null;
+  const marketPrice =
+    typeof card.market_price === 'number' && Number.isFinite(card.market_price) && card.market_price > 0
+      ? card.market_price
+      : null;
   const hasVerifiedRawPrice =
-    card.pricing_source === 'PriceCharting' &&
-    typeof variant?.price === 'number' &&
-    Number.isFinite(variant.price) &&
-    variant.price > 0;
-  const price = hasVerifiedRawPrice ? variant!.price! : 0;
+    sourceIsVerified && (variantPrice !== null || marketPrice !== null);
+  // market_price is populated from the same persisted raw PriceCharting quote
+  // as the enriched variant. Accept it when a feed omits the variant price.
+  const price = hasVerifiedRawPrice ? (variantPrice ?? marketPrice)! : 0;
   // A missing source timestamp is meaningful: do not present the mapping time
   // as if it were a verified quote timestamp.
   const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : null;

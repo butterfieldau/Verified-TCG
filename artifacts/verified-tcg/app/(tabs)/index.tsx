@@ -320,23 +320,30 @@ export default function HomeScreen() {
   const [serverPerformance, setServerPerformance] = useState<CollectionPerformance | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(false);
+  const portfolioRequestGeneration = useRef(0);
 
   const performanceRange: PerformanceRange = portfolioRange;
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    const generation = ++portfolioRequestGeneration.current;
     setSummaryLoading(true);
     setSummaryError(false);
     fetchCollectionSummary(currency)
-      .then(setServerSummary)
-      .catch(() => {
-        setServerSummary(null);
-        setSummaryError(true);
+      .then(summary => {
+        if (generation === portfolioRequestGeneration.current) setServerSummary(summary);
       })
-      .finally(() => setSummaryLoading(false));
+      .catch(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryError(true);
+      })
+      .finally(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryLoading(false);
+      });
     fetchCollectionPerformance(performanceRange, currency)
-      .then(setServerPerformance)
-      .catch(() => setServerPerformance(null));
+      .then(performance => {
+        if (generation === portfolioRequestGeneration.current) setServerPerformance(performance);
+      })
+      .catch(() => {});
   }, [isAuthenticated, currency, performanceRange]);
 
   // Chart tooltip state
@@ -395,6 +402,7 @@ export default function HomeScreen() {
   }, [marketCacheScope]);
 
   const onRefresh = useCallback(async () => {
+    const generation = ++portfolioRequestGeneration.current;
     await refreshPrices();
     const [moversResult, gainersResult, losersResult, trendingResult, lookupTrendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
@@ -415,29 +423,35 @@ export default function HomeScreen() {
     if (lookupTrendingResult.status === 'fulfilled') setLookupTrending(lookupTrendingResult.value);
     if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
     if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
+    if (generation !== portfolioRequestGeneration.current) return;
     if (summaryResult.status === 'fulfilled') {
       setServerSummary(summaryResult.value);
       setSummaryError(false);
     } else {
-      setServerSummary(null);
       setSummaryError(true);
     }
-    setServerPerformance(performanceResult.status === 'fulfilled' ? performanceResult.value : null);
+    if (performanceResult.status === 'fulfilled') setServerPerformance(performanceResult.value);
   }, [refreshPrices, currency, performanceRange, marketCacheScope]);
 
   const retryPortfolio = useCallback(() => {
+    const generation = ++portfolioRequestGeneration.current;
     setSummaryLoading(true);
     setSummaryError(false);
     fetchCollectionSummary(currency)
-      .then(setServerSummary)
-      .catch(() => {
-        setServerSummary(null);
-        setSummaryError(true);
+      .then(summary => {
+        if (generation === portfolioRequestGeneration.current) setServerSummary(summary);
       })
-      .finally(() => setSummaryLoading(false));
+      .catch(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryError(true);
+      })
+      .finally(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryLoading(false);
+      });
     fetchCollectionPerformance(performanceRange, currency)
-      .then(setServerPerformance)
-      .catch(() => setServerPerformance(null));
+      .then(performance => {
+        if (generation === portfolioRequestGeneration.current) setServerPerformance(performance);
+      })
+      .catch(() => {});
   }, [currency, performanceRange]);
 
   // ── Live event banner (real API-backed) ─────────────────────────────────────
@@ -668,11 +682,16 @@ export default function HomeScreen() {
       {/* ── Interactive chart ───────────────────────────────────────────── */}
       <View style={styles.chartContainer}>
         {performanceView.kind === 'chart' ? (
-          <InteractiveChart
-            data={chartData}
-            isPositive={isPositive}
-            onPointSelect={setActiveChartPoint}
-          />
+          <View>
+            <InteractiveChart
+              data={chartData}
+              isPositive={isPositive}
+              onPointSelect={setActiveChartPoint}
+            />
+            <Text style={styles.initialSnapshotText}>
+              Historical market value of the cards currently in your collection
+            </Text>
+          </View>
         ) : performanceView.kind === 'initial' ? (
           <View>
             <InteractiveChart
@@ -681,7 +700,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Initial verified baseline — historical movement will appear as prices are retained
+              Current-collection history needs another retained market observation
             </Text>
           </View>
         ) : (

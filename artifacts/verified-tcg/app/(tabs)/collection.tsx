@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -32,6 +32,7 @@ import { fetchCollectionSummary, type CollectionSummary } from '@/services/colle
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
+const SUMMARY_STALE_MS = 60_000;
 
 type CollectionFilter = 'all' | 'pokemon' | 'graded' | 'raw' | 'forSale';
 type CollectionSort = 'value' | 'name' | 'recent';
@@ -88,25 +89,40 @@ export default function CollectionScreen() {
   // filters work on the complete collection — not just the current page.
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const summaryLoadedAt = useRef(0);
+  const summaryRequest = useRef<Promise<void> | null>(null);
+  const summaryCurrency = useRef(currency);
 
-  const loadSummary = useCallback(async () => {
-    try {
-      const summary = await fetchCollectionSummary(currency);
-      setServerSummary(summary);
-      setSummaryError(null);
-    } catch (error) {
+  const loadSummary = useCallback(async (force = false) => {
+    if (summaryCurrency.current !== currency) {
+      summaryCurrency.current = currency;
+      summaryLoadedAt.current = 0;
+      summaryRequest.current = null;
       setServerSummary(null);
-      setSummaryError(
-        error instanceof Error
-          ? error.message
-          : 'Portfolio totals are temporarily unavailable.',
-      );
     }
+    if (!force && Date.now() - summaryLoadedAt.current < SUMMARY_STALE_MS) return;
+    if (summaryRequest.current) return summaryRequest.current;
+    summaryRequest.current = (async () => {
+      try {
+        const summary = await fetchCollectionSummary(currency);
+        if (summaryCurrency.current !== currency) return;
+        setServerSummary(summary);
+        summaryLoadedAt.current = Date.now();
+        setSummaryError(null);
+      } catch (error) {
+        // Keep the last successful value visible while surfacing the refresh error.
+        if (summaryCurrency.current !== currency) return;
+        setSummaryError(
+          error instanceof Error
+            ? error.message
+            : 'Portfolio totals are temporarily unavailable.',
+        );
+      } finally {
+        summaryRequest.current = null;
+      }
+    })();
+    return summaryRequest.current;
   }, [currency]);
-
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -157,17 +173,18 @@ export default function CollectionScreen() {
     setDisplayCount(PAGE_SIZE);
   }, []);
 
-  // Trigger a server refresh on focus (keeps portfolio in sync, populates cache)
+  // Refresh once on entry only when the retained summary is stale. AppContext
+  // owns collection refreshes after sign-in, mutation, foregrounding and pull.
   useFocusEffect(
     useCallback(() => {
-      void Promise.all([refreshCollection(), loadSummary()]);
-    }, [refreshCollection, loadSummary]),
+      void loadSummary();
+    }, [loadSummary]),
   );
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
-    await Promise.all([refreshCollection(), loadSummary()]);
+    await Promise.all([refreshCollection(), loadSummary(true)]);
     setIsRefreshing(false);
   }, [refreshCollection, loadSummary]);
 

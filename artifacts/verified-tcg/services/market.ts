@@ -25,7 +25,7 @@ interface MarketMoverServerCard extends CatalogCard {
 
 // v2 prevents pre-release, provider-search market results from surviving as
 // a release fallback after the snapshot-backed feed ships.
-const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v4';
+const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v5';
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MarketCacheOptions {

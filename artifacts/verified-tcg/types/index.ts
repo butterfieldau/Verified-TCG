@@ -147,6 +147,11 @@ export interface CollectionItem {
     currency: string;
     gradeKey: string;
     updatedAt: string;
+    /** Unit acquisition cost converted to the valuation currency by the server. */
+    costBasis?: number | null;
+    /** Unit unrealised gain in the valuation currency. */
+    gain?: number | null;
+    gainPercent?: number | null;
   } | null;
   notes?: string;
   isForSale?: boolean;
