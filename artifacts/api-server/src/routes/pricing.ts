@@ -14,6 +14,7 @@ import {
   getPricingMappingState,
   refreshPricing,
   getPriceHistory,
+  importPriceChartingBulkGuide,
 } from "../pricing/service.js";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import { pricingReadLimiter, pricingRefreshLimiter } from "../lib/rateLimiters.js";
@@ -21,6 +22,8 @@ import {
   isPCConfigured,
   PROVIDER_KEY,
   PROVIDER_LABEL,
+  PRICECHARTING_GUIDE_CATEGORIES,
+  PriceChartingError,
 } from "../pricing/pricecharting.js";
 import { resolveCatalogCardById } from "./catalog.js";
 import {
@@ -284,6 +287,39 @@ router.post("/pricing/scheduler/run", async (req, res): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "POST /pricing/scheduler/run error");
     res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// ── POST /pricing/guides/import ───────────────────────────────────────────────
+// One explicitly selected official category per protected invocation.
+router.post("/pricing/guides/import", async (req, res): Promise<void> => {
+  const expectedSecret = process.env.ADMIN_SECRET;
+  if (!expectedSecret || req.headers["x-admin-secret"] !== expectedSecret) {
+    res.status(403).json({ message: "Forbidden" });
+    return;
+  }
+  const category = (req.body as Record<string, unknown> | undefined)?.["category"];
+  if (typeof category !== "string" || !(category in PRICECHARTING_GUIDE_CATEGORIES)) {
+    res.status(400).json({ message: "category must be one of pokemon, magic, yugioh, or one_piece" });
+    return;
+  }
+  try {
+    const result = await importPriceChartingBulkGuide(category as keyof typeof PRICECHARTING_GUIDE_CATEGORIES);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof PriceChartingError) {
+      const status = error.kind === "authentication" ? 502 : error.kind === "throttled" ? 429 : 503;
+      res.status(status).json({
+        errorCode: `pricecharting_${error.kind}`,
+        message: error.message,
+        ...(error.kind === "throttled" && error instanceof Error && "retryAfterMs" in error
+          ? { retryAfterMs: (error as { retryAfterMs: number }).retryAfterMs }
+          : {}),
+      });
+      return;
+    }
+    logger.error({ err: error }, "PriceCharting guide import failed");
+    res.status(500).json({ message: "Guide import failed" });
   }
 });
 

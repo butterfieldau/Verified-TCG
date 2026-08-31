@@ -34,6 +34,9 @@ const REQUIRED_TABLES = [
   "card_provider_mappings",
   "pricing_providers",
   "current_quotes",
+  "pricecharting_guide_imports",
+  "pricecharting_guide_rows",
+  "pricecharting_guide_download_lease",
   "portfolio_snapshots",
   "pricing_scheduler_runs",
   "telemetry_events",
@@ -160,7 +163,7 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 73);
+      assert.equal(beforeSecondBootstrap.tables.length, 76);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }

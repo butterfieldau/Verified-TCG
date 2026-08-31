@@ -15,6 +15,9 @@ import {
   pricingOverridesTable,
   pricingProvidersTable,
   providerPriceHistoryTable,
+  priceChartingGuideImportsTable,
+  priceChartingGuideRowsTable,
+  priceChartingGuideDownloadLeaseTable,
 } from "@workspace/db";
 import { and, eq, desc, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
@@ -24,6 +27,11 @@ import {
   PROVIDER_LABEL,
   PC_CURRENCY,
   normalizeProduct,
+  downloadBulkGuide,
+  extractPrices,
+  PriceChartingError,
+  PriceChartingThrottleError,
+  type PriceChartingGuideCategory,
 } from "./pricecharting.js";
 import type { PCProductDetail } from "./pricecharting.js";
 import {
@@ -45,7 +53,7 @@ import { recordTelemetry } from "../lib/telemetry.js";
  * Fixed operation enum for PriceCharting integration telemetry. Never
  * includes URLs, query strings, card identifiers, or provider payloads.
  */
-type PCOperation = "product_refresh" | "search" | "explicit_refresh";
+type PCOperation = "product_refresh" | "search" | "explicit_refresh" | "bulk_import";
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
@@ -149,7 +157,7 @@ async function recordProviderHealth(
     .values({
       providerKey: PROVIDER_KEY,
       label: PROVIDER_LABEL,
-      isActive: priceChartingProvider.isConfigured(),
+      isActive: healthy,
       baseUrl: "https://www.pricecharting.com/api",
       ...(healthy
         ? { lastHealthyAt: now, lastErrorMessage: null }
@@ -158,7 +166,7 @@ async function recordProviderHealth(
     .onConflictDoUpdate({
       target: pricingProvidersTable.providerKey,
       set: {
-        isActive: priceChartingProvider.isConfigured(),
+        isActive: healthy,
         updatedAt: now,
         ...(healthy
           ? { lastHealthyAt: now, lastErrorMessage: null }
@@ -239,7 +247,7 @@ async function getStoredQuotes(cardId: string) {
 /**
  * Persist current quotes to DB (upsert).
  */
-async function persistQuotes(
+export async function persistQuotes(
   cardId: string,
   providerProductId: string,
   prices: Map<GradeKey, number>,
@@ -307,6 +315,139 @@ async function persistQuotes(
         });
     }
   });
+}
+
+/** Bound bulk insert batches to avoid PostgreSQL's 65,535 parameter limit. */
+export function chunkGuideRows<T>(rows: readonly T[], size = 1_000): T[][] {
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < rows.length; offset += size) chunks.push(rows.slice(offset, offset + size));
+  return chunks;
+}
+
+/**
+ * Apply a PriceCharting bulk guide only to already strong, canonical mappings.
+ * CSV rows never create mappings or promote review_required records: the
+ * provider product id was established by the normal exact-identity workflow.
+ */
+export async function importPriceChartingBulkGuide(category: PriceChartingGuideCategory): Promise<{
+  category: PriceChartingGuideCategory;
+  rowsRead: number;
+  quotesPersisted: number;
+  reused: boolean;
+}> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [existing] = await db.select().from(priceChartingGuideImportsTable)
+    .where(eq(priceChartingGuideImportsTable.category, category)).limit(1);
+  const reusable = existing?.status === "ready"
+    && existing.fetchedAt.toISOString().slice(0, 10) === today;
+  let rowsRead: number;
+  let reused = reusable;
+  let pricesByProduct: Map<string, Map<GradeKey, number>>;
+  if (reusable) {
+    const persisted = await db.select().from(priceChartingGuideRowsTable)
+      .where(eq(priceChartingGuideRowsTable.category, category));
+    rowsRead = persisted.length;
+    pricesByProduct = new Map(persisted.map(row => [
+      row.providerProductId,
+      new Map(Object.entries(row.prices as Record<string, number>)
+        .filter(([grade, cents]) => isValidGradeKey(grade) && Number.isSafeInteger(cents) && cents > 0)
+        .map(([grade, cents]) => [grade as GradeKey, cents])),
+    ]));
+  } else {
+    // PriceCharting applies this limit to all CSV categories, not each
+    // category independently. This singleton row serializes every process.
+    const globalClaim = await db.execute(sql`
+      INSERT INTO pricecharting_guide_download_lease
+        (lease_key, last_attempt_at, lease_until, updated_at)
+      VALUES ('pricecharting-csv', NOW(), NOW() + INTERVAL '10 minutes', NOW())
+      ON CONFLICT (lease_key) DO UPDATE SET
+        last_attempt_at = NOW(), lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
+      WHERE pricecharting_guide_download_lease.last_attempt_at < NOW() - INTERVAL '10 minutes'
+      RETURNING last_attempt_at
+    `);
+    if (!globalClaim.rows[0]) {
+      const [globalLease] = await db.select().from(priceChartingGuideDownloadLeaseTable)
+        .where(eq(priceChartingGuideDownloadLeaseTable.leaseKey, "pricecharting-csv")).limit(1);
+      throw new PriceChartingThrottleError(globalLease
+        ? Math.max(0, globalLease.leaseUntil.getTime() - Date.now())
+        : 600_000, 429);
+    }
+    const claim = await db.execute<{ last_attempt_at: Date }>(sql`
+      INSERT INTO pricecharting_guide_imports
+        (category, status, fetched_at, row_count, last_attempt_at, lease_until, updated_at)
+      VALUES (${category}, 'downloading', NOW(), 0, NOW(), NOW() + INTERVAL '10 minutes', NOW())
+      ON CONFLICT (category) DO UPDATE SET
+        status = 'downloading', last_attempt_at = NOW(),
+        lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
+      WHERE pricecharting_guide_imports.last_attempt_at IS NULL
+        OR pricecharting_guide_imports.last_attempt_at < NOW() - INTERVAL '10 minutes'
+      RETURNING last_attempt_at
+    `);
+    if (!claim.rows[0]) {
+      const retryAfterMs = existing?.lastAttemptAt
+        ? Math.max(0, 600_000 - (Date.now() - existing.lastAttemptAt.getTime()))
+        : 600_000;
+      throw new PriceChartingThrottleError(retryAfterMs, 429);
+    }
+    let downloaded;
+    try {
+      downloaded = await downloadBulkGuide(category);
+    } catch (error) {
+      const message = error instanceof PriceChartingError
+        ? `PriceCharting bulk import ${error.kind}`
+        : "PriceCharting bulk import failed";
+      await recordProviderHealth(false, message, "bulk_import").catch(() => {});
+      await db.update(priceChartingGuideImportsTable).set({
+        status: "failed",
+        lastErrorKind: error instanceof PriceChartingError ? error.kind : "transient",
+        updatedAt: new Date(),
+      }).where(eq(priceChartingGuideImportsTable.category, category));
+      throw error;
+    }
+    rowsRead = downloaded.length;
+    const fetchedAt = new Date();
+    pricesByProduct = new Map(downloaded.map(row => [String(row.id), extractPrices(row)]));
+    await db.transaction(async tx => {
+      await tx.delete(priceChartingGuideRowsTable)
+        .where(eq(priceChartingGuideRowsTable.category, category));
+      for (const batch of chunkGuideRows(downloaded)) {
+        await tx.insert(priceChartingGuideRowsTable).values(batch.map(row => ({
+          category,
+          providerProductId: String(row.id),
+          productName: row["product-name"],
+          consoleName: row["console-name"],
+          prices: Object.fromEntries(extractPrices(row)),
+          fetchedAt,
+        })));
+      }
+      await tx.insert(priceChartingGuideImportsTable).values({
+        category, status: "ready", fetchedAt, rowCount: downloaded.length, lastErrorKind: null, updatedAt: fetchedAt,
+      }).onConflictDoUpdate({ target: priceChartingGuideImportsTable.category, set: {
+        status: "ready", fetchedAt, rowCount: downloaded.length, lastErrorKind: null, updatedAt: fetchedAt,
+      } });
+    });
+    await recordProviderHealth(true, undefined, "bulk_import");
+  }
+  if (pricesByProduct.size === 0) return { category, rowsRead, quotesPersisted: 0, reused };
+  const mappings = await db
+    .select({
+      cardId: cardProviderMappingsTable.cardId,
+      providerProductId: cardProviderMappingsTable.providerProductId,
+    })
+    .from(cardProviderMappingsTable)
+    .where(and(
+      eq(cardProviderMappingsTable.providerKey, PROVIDER_KEY),
+      eq(cardProviderMappingsTable.status, "matched"),
+    ));
+  let quotesPersisted = 0;
+  for (const mapping of mappings) {
+    if (!mapping.providerProductId) continue;
+    const prices = pricesByProduct.get(mapping.providerProductId);
+    if (!prices || prices.size === 0) continue;
+    await persistQuotes(mapping.cardId, mapping.providerProductId, prices);
+    quotesPersisted += prices.size;
+  }
+  return { category, rowsRead, quotesPersisted, reused };
 }
 
 function cleanProviderText(value: unknown): string | null {
@@ -476,8 +617,9 @@ async function runBackgroundMatch(
       }
     }
   })()
-    .catch((err: unknown) => {
+    .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Background pricing match failed");
+      await recordProviderHealth(false, "PriceCharting matching request failed", "search").catch(() => {});
       if (propagateFailures) throw err;
     })
     .finally(() => {

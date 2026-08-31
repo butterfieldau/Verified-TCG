@@ -403,6 +403,12 @@ import {
   PROVIDER_KEY,
   searchProducts,
   getProductDetail,
+  getBulkGuide,
+  parsePriceChartingGuideCsv,
+  usdDecimalToCents,
+  PriceChartingAuthenticationError,
+  PriceChartingThrottleError,
+  PriceChartingTransientError,
 } from "../pricing/pricecharting.js";
 
 import type { PCProductDetail } from "../pricing/pricecharting.js";
@@ -558,6 +564,76 @@ describe("extractPrices", () => {
   });
 });
 
+describe("PriceCharting bulk CSV guides", () => {
+  test("parses quoted rows and decimal USD precisely into normal quote fields", () => {
+    const rows = parsePriceChartingGuideCsv([
+      "id,product-name,console-name,loose-price,graded-price,bgs-10-price",
+      '42,"Pikachu, V #043","Vivid Voltage",12.34,100,250.05',
+    ].join("\n"));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.id, "42");
+    assert.equal(rows[0]?.["product-name"], "Pikachu, V #043");
+    assert.equal(extractPrices(rows[0]!).get("raw"), 1234);
+    assert.equal(extractPrices(rows[0]!).get("graded_9"), 10000);
+    assert.equal(extractPrices(rows[0]!).get("bgs_10"), 25005);
+  });
+
+  test("rejects unsafe decimal formats rather than rounding them", () => {
+    assert.equal(usdDecimalToCents("0.01"), 1);
+    assert.equal(usdDecimalToCents("12.3"), 1230);
+    for (const malformed of ["12.345", "-1.00", "1e2", "$12.00", ""]) {
+      assert.equal(usdDecimalToCents(malformed), null);
+    }
+  });
+
+  test("uses the canonical token and official guide category in one attempt", async () => {
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "csv-token";
+    clearPCCache();
+    resetRateLimiter();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async input => {
+      calls += 1;
+      assert.ok(String(input).includes("t=csv-token"));
+      assert.ok(String(input).includes("download-custom"));
+      assert.ok(String(input).includes("category=pokemon-cards"));
+      return new Response("id,product-name,console-name,loose-price\n7,Pikachu,Vivid Voltage,1.25\n");
+    }) as typeof fetch;
+    try {
+      const first = await getBulkGuide("pokemon");
+      assert.equal(calls, 1);
+      assert.equal(first[0]?.id, "7");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+
+  test("exposes typed authentication and throttle failures", async () => {
+    const originalFetch = globalThis.fetch;
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "typed-error-token";
+    clearPCCache();
+    resetRateLimiter();
+    try {
+      globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-auth"), PriceChartingAuthenticationError);
+      globalThis.fetch = (async () => new Response("", { status: 429 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-throttle"), PriceChartingThrottleError);
+      globalThis.fetch = (async () => new Response(JSON.stringify({ error: "Unknown access token" }), { status: 404 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-envelope-auth"), PriceChartingAuthenticationError);
+      globalThis.fetch = (async () => new Response("{not json", { status: 200 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("malformed-json"), PriceChartingTransientError);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+});
+
 describe("PROVIDER_KEY", () => {
   test("is the expected stable value", () => {
     assert.equal(PROVIDER_KEY, "pricecharting");
@@ -671,6 +747,7 @@ describe("Rate limiter queue state", () => {
 import { clearFxCache, getExchangeRate, convertCents } from "../pricing/fx.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { snapshotBucketFor } from "../pricing/service.js";
+import { chunkGuideRows } from "../pricing/service.js";
 
 describe("Exact holding-grade resolution", () => {
   test("does not assign generic provider conditions to numeric grades", () => {
@@ -708,6 +785,14 @@ describe("Timestamped snapshot buckets", () => {
     assert.equal(snapshotBucketFor(new Date("2026-08-21T11:59:59.999Z")), "2026-08-21:AM");
     assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
     assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
+  });
+});
+
+describe("Bulk guide persistence batching", () => {
+  test("splits more than 11k rows below the PostgreSQL parameter ceiling", () => {
+    const chunks = chunkGuideRows(Array.from({ length: 11_001 }, (_, id) => id));
+    assert.deepEqual(chunks.map(chunk => chunk.length), [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1]);
+    assert.ok(chunks.every(chunk => chunk.length * 6 < 65_535));
   });
 });
 

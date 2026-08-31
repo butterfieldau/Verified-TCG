@@ -18,7 +18,29 @@ import { extractCardNumber, stripCardNumber, type MatchCandidate } from "./match
 import type { PricingProviderAdapter } from "./engine.js";
 
 const PC_BASE_URL = "https://www.pricecharting.com/api";
+const PC_GUIDE_URL = "https://www.pricecharting.com/price-guide/download-custom";
 const PC_CURRENCY = "USD";
+
+/** A provider failure which callers may safely classify without inspecting text. */
+export class PriceChartingError extends Error {
+  constructor(
+    message: string,
+    public readonly kind: "authentication" | "throttled" | "transient",
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "PriceChartingError";
+  }
+}
+export class PriceChartingAuthenticationError extends PriceChartingError {
+  constructor(status?: number) { super("PriceCharting authentication failed", "authentication", status); }
+}
+export class PriceChartingThrottleError extends PriceChartingError {
+  constructor(public readonly retryAfterMs = 0, status?: number) { super("PriceCharting request was throttled", "throttled", status); }
+}
+export class PriceChartingTransientError extends PriceChartingError {
+  constructor(status?: number) { super("PriceCharting is temporarily unavailable", "transient", status); }
+}
 
 // ── Rate-limiting queue (1 req/sec) ──────────────────────────────────────────
 
@@ -161,7 +183,7 @@ async function fetchWithRetry(
       await new Promise(r => setTimeout(r, delay));
       return fetchWithRetry(url, attempt + 1);
     }
-    throw err;
+    throw new PriceChartingTransientError();
   }
   // 5xx = server error → retry
   if (res.status >= 500 && attempt < MAX_RETRIES) {
@@ -171,7 +193,16 @@ async function fetchWithRetry(
     await new Promise(r => setTimeout(r, delay));
     return fetchWithRetry(url, attempt + 1);
   }
-  // 4xx = client error → do not retry
+  if (res.status === 401 || res.status === 403) throw new PriceChartingAuthenticationError(res.status);
+  if (res.status === 429) throw new PriceChartingThrottleError(Number(res.headers.get("retry-after") ?? "0") * 1_000, res.status);
+  if (res.status >= 400) {
+    const body = await res.clone().text().catch(() => "");
+    if (/unknown\s+access\s+token|invalid\s+(?:api\s+)?token/i.test(body)) {
+      throw new PriceChartingAuthenticationError(res.status);
+    }
+  }
+  // Other 4xx responses are a non-retriable provider failure.
+  if (res.status >= 400) throw new PriceChartingTransientError(res.status);
   return res;
 }
 
@@ -200,7 +231,9 @@ export function isPCConfigured(): boolean {
 
 /**
  * Search PriceCharting for products matching a query.
- * Returns null if unconfigured or on error.
+ * Returns null when unconfigured. Provider failures are typed
+ * PriceChartingError instances so orchestration can distinguish auth,
+ * throttling, and transient outages.
  */
 export async function searchProducts(query: string): Promise<PCProduct[] | null> {
   const token = getToken();
@@ -214,22 +247,14 @@ export async function searchProducts(query: string): Promise<PCProduct[] | null>
       const url = `${PC_BASE_URL}/products?t=${token}&q=${encodeURIComponent(query)}`;
       // Never log the URL with token
       logger.debug({ q: query }, "PC search request");
-      let res: Response;
-      try {
-        res = await fetchWithRetry(url);
-      } catch (err) {
-        logger.error({ err }, "PC search network error");
-        return null;
+      const res = await fetchWithRetry(url);
+      let json: PCSearchResult;
+      try { json = (await res.json()) as PCSearchResult; }
+      catch { throw new PriceChartingTransientError(res.status); }
+      if (!json || typeof json !== "object" || (json.products != null && !Array.isArray(json.products))) {
+        throw new PriceChartingTransientError(res.status);
       }
-      if (!res.ok) {
-        logger.warn({ status: res.status }, "PC search non-200 response");
-        return null;
-      }
-      const json = (await res.json()) as PCSearchResult;
-      if (json.status && json.status.toLowerCase() !== "success") {
-        logger.warn({ status: json.status }, "PC search returned provider error status");
-        return null;
-      }
+      if (json.status && json.status.toLowerCase() !== "success") throw new PriceChartingTransientError();
       const products = json.products ?? [];
       cacheSet(cacheKey, products);
       return products;
@@ -238,7 +263,7 @@ export async function searchProducts(query: string): Promise<PCProduct[] | null>
 
 /**
  * Fetch a single product detail by PriceCharting product ID.
- * Returns null if unconfigured or on error.
+ * Returns null when unconfigured; provider failures are typed.
  */
 export async function getProductDetail(
   productId: string,
@@ -256,23 +281,16 @@ export async function getProductDetail(
   return deduped(cacheKey, async () => {
       const url = `${PC_BASE_URL}/product?t=${token}&id=${encodeURIComponent(productId)}`;
       logger.debug({ productId }, "PC product detail request");
-      let res: Response;
-      try {
-        res = await fetchWithRetry(url);
-      } catch (err) {
-        logger.error({ err, productId }, "PC product detail network error");
-        return null;
+      const res = await fetchWithRetry(url);
+      let json: PCProductDetail;
+      try { json = (await res.json()) as PCProductDetail; }
+      catch { throw new PriceChartingTransientError(res.status); }
+      if (!json || typeof json !== "object" || json.id == null
+        || typeof json["product-name"] !== "string" || typeof json["console-name"] !== "string") {
+        throw new PriceChartingTransientError(res.status);
       }
-      if (!res.ok) {
-        logger.warn({ status: res.status, productId }, "PC product detail non-200 response");
-        return null;
-      }
-      const json = (await res.json()) as PCProductDetail;
       const providerStatus = (json as unknown as { status?: string }).status;
-      if (providerStatus && providerStatus.toLowerCase() !== "success") {
-        logger.warn({ status: providerStatus, productId }, "PC product returned provider error status");
-        return null;
-      }
+      if (providerStatus && providerStatus.toLowerCase() !== "success") throw new PriceChartingTransientError();
       cacheSet(cacheKey, json);
       return json;
   }) as Promise<PCProductDetail | null>;
@@ -305,20 +323,16 @@ export async function getProductByLookup(
     const value = lookup.upc ?? lookup.q!;
     const url = `${PC_BASE_URL}/product?t=${token}&${lookupType}=${encodeURIComponent(value)}`;
     logger.debug({ lookupType }, "PC product lookup request");
-    let res: Response;
-    try {
-      res = await fetchWithRetry(url);
-    } catch (err) {
-      logger.error({ err, lookupType }, "PC product lookup network error");
-      return null;
+    const res = await fetchWithRetry(url);
+    let json: PCProductDetail;
+    try { json = (await res.json()) as PCProductDetail; }
+    catch { throw new PriceChartingTransientError(res.status); }
+    if (!json || typeof json !== "object" || json.id == null
+      || typeof json["product-name"] !== "string" || typeof json["console-name"] !== "string") {
+      throw new PriceChartingTransientError(res.status);
     }
-    if (!res.ok) {
-      logger.warn({ status: res.status, lookupType }, "PC product lookup non-200 response");
-      return null;
-    }
-    const json = (await res.json()) as PCProductDetail;
     const providerStatus = (json as unknown as { status?: string }).status;
-    if (providerStatus && providerStatus.toLowerCase() !== "success") return null;
+    if (providerStatus && providerStatus.toLowerCase() !== "success") throw new PriceChartingTransientError();
     cacheSet(cacheKey, json);
     return json;
   }) as Promise<PCProductDetail | null>;
@@ -340,6 +354,85 @@ export function extractPrices(detail: PCProductDetail): Map<GradeKey, number> {
   }
   return result;
 }
+
+/** Parse a decimal USD value without a floating-point conversion. */
+export function usdDecimalToCents(value: unknown): number | null {
+  const source = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+  const match = /^([0-9]+)(?:\.([0-9]{1,2}))?$/.exec(source);
+  if (!match) return null;
+  const dollars = Number(match[1]);
+  const cents = Number((match[2] ?? "").padEnd(2, "0"));
+  const result = dollars * 100 + cents;
+  return Number.isSafeInteger(result) && result > 0 ? result : null;
+}
+
+export const PRICECHARTING_GUIDE_CATEGORIES = {
+  pokemon: "pokemon-cards",
+  magic: "magic-cards",
+  yugioh: "yugioh-cards",
+  one_piece: "one-piece-cards",
+} as const;
+export type PriceChartingGuideCategory = keyof typeof PRICECHARTING_GUIDE_CATEGORIES;
+export interface PCGuideRow extends PCProductDetail {}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [[]];
+  let field = "", quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!;
+    if (quoted && c === '"' && text[i + 1] === '"') { field += '"'; i += 1; }
+    else if (c === '"') quoted = !quoted;
+    else if (!quoted && c === ",") { rows[rows.length - 1]!.push(field); field = ""; }
+    else if (!quoted && (c === "\n" || c === "\r")) {
+      if (c === "\r" && text[i + 1] === "\n") i += 1;
+      rows[rows.length - 1]!.push(field); field = ""; rows.push([]);
+    } else field += c;
+  }
+  if (field || rows[rows.length - 1]!.length) rows[rows.length - 1]!.push(field);
+  return rows.filter(row => row.some(value => value.trim()));
+}
+
+/** Decode the documented bulk guide CSV into the same provider detail shape as API data. */
+export function parsePriceChartingGuideCsv(csv: string): PCGuideRow[] {
+  const [header, ...records] = parseCsv(csv);
+  if (!header) return [];
+  const headers = header.map(value => value.trim().toLowerCase());
+  return records.flatMap(record => {
+    const row = Object.fromEntries(headers.map((key, index) => [key, record[index]?.trim() ?? ""]));
+    const id = row["id"] ?? row["product-id"];
+    const productName = row["product-name"] ?? row["product_name"];
+    const consoleName = row["console-name"] ?? row["console_name"];
+    if (!id || !productName || !consoleName) return [];
+    const detail: PCGuideRow = { id, "product-name": productName, "console-name": consoleName };
+    for (const [field] of GRADE_BY_PC_FIELD) {
+      const cents = usdDecimalToCents(row[field] ?? row[field.replaceAll("-", "_")]);
+      if (cents != null) (detail as unknown as Record<string, unknown>)[field] = cents;
+    }
+    return [detail];
+  });
+}
+
+/** Performs exactly one CSV request; durable callers must acquire an import lease first. */
+export async function downloadBulkGuide(category: PriceChartingGuideCategory): Promise<PCGuideRow[]> {
+  const token = getToken();
+  if (!token) throw new PriceChartingAuthenticationError();
+  const providerCategory = PRICECHARTING_GUIDE_CATEGORIES[category];
+  let response: Response;
+  try {
+    response = await fetch(`${PC_GUIDE_URL}?t=${encodeURIComponent(token)}&category=${encodeURIComponent(providerCategory)}`, { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
+  } catch { throw new PriceChartingTransientError(); }
+  if (response.status === 401 || response.status === 403) throw new PriceChartingAuthenticationError(response.status);
+  if (response.status === 429) throw new PriceChartingThrottleError(Number(response.headers.get("retry-after") ?? "0") * 1_000, response.status);
+  const body = await response.text().catch(() => { throw new PriceChartingTransientError(); });
+  if (/unknown\s+access\s+token|invalid\s+(?:api\s+)?token/i.test(body)) throw new PriceChartingAuthenticationError(response.status);
+  if (!response.ok) throw new PriceChartingTransientError(response.status);
+  try {
+    const rows = parsePriceChartingGuideCsv(body);
+    if (rows.length === 0) throw new Error("empty");
+    return rows;
+  } catch { throw new PriceChartingTransientError(response.status); }
+}
+export const getBulkGuide = downloadBulkGuide;
 
 export interface NormalizedPriceChartingProduct {
   provider: "pricecharting";

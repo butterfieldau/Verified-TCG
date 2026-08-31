@@ -68,6 +68,8 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_epid TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
@@ -404,6 +406,34 @@ const TABLE_MIGRATIONS: string[] = [
     snapshot_date TEXT NOT NULL,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT provider_price_history_dedup_uniq UNIQUE (card_id, provider_key, grade_key, snapshot_date)
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_imports (
+    category TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'ready',
+    fetched_at TIMESTAMPTZ NOT NULL,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    last_error_kind TEXT,
+    last_attempt_at TIMESTAMPTZ,
+    lease_until TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_rows (
+    category TEXT NOT NULL,
+    provider_product_id TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    console_name TEXT NOT NULL,
+    prices JSONB NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT pricecharting_guide_rows_category_product_uniq
+      UNIQUE (category, provider_product_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS pricecharting_guide_rows_category_product_idx
+    ON pricecharting_guide_rows (category, provider_product_id)`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_download_lease (
+    lease_key TEXT PRIMARY KEY,
+    last_attempt_at TIMESTAMPTZ NOT NULL,
+    lease_until TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   // Portfolio snapshots (one row per user+date)
   `CREATE TABLE IF NOT EXISTS portfolio_snapshots (

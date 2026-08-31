@@ -25,6 +25,9 @@ import {
   currentQuotesTable,
   cardPriceSnapshotsTable,
   providerPriceHistoryTable,
+  priceChartingGuideImportsTable,
+  priceChartingGuideRowsTable,
+  priceChartingGuideDownloadLeaseTable,
 } from "@workspace/db";
 import { and, eq, inArray, like } from "drizzle-orm";
 import app from "../app.js";
@@ -299,6 +302,61 @@ describe("POST /pricing/scheduler/run", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(typeof res.body.queued, "number");
     delete process.env.ADMIN_SECRET;
+  });
+});
+
+describe("POST /pricing/guides/import", () => {
+  test("rejects requests without the admin secret", async () => {
+    const res = await request.post("/api/pricing/guides/import").send({ category: "pokemon" });
+    assert.equal(res.status, 403);
+  });
+
+  test("validates the strict official category enum before provider work", async () => {
+    process.env.ADMIN_SECRET = "guide-import-secret";
+    try {
+      const res = await request
+        .post("/api/pricing/guides/import")
+        .set("x-admin-secret", "guide-import-secret")
+        .send({ category: "pokemon-cards" });
+      assert.equal(res.status, 400);
+    } finally {
+      delete process.env.ADMIN_SECRET;
+    }
+  });
+
+  test("uses one global CSV lease across concurrent categories", async () => {
+    const priorToken = process.env.PRICECHARTING_API_TOKEN;
+    const priorAdmin = process.env.ADMIN_SECRET;
+    const priorFetch = globalThis.fetch;
+    process.env.PRICECHARTING_API_TOKEN = "guide-test-token";
+    process.env.ADMIN_SECRET = "guide-import-secret";
+    await db.delete(priceChartingGuideRowsTable);
+    await db.delete(priceChartingGuideImportsTable);
+    await db.delete(priceChartingGuideDownloadLeaseTable);
+    let downloads = 0;
+    globalThis.fetch = (async () => {
+      downloads += 1;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return new Response("id,product-name,console-name,loose-price\n1,Card,Set,1.00\n");
+    }) as typeof fetch;
+    try {
+      const responses = await Promise.all([
+        request.post("/api/pricing/guides/import").set("x-admin-secret", "guide-import-secret").send({ category: "pokemon" }),
+        request.post("/api/pricing/guides/import").set("x-admin-secret", "guide-import-secret").send({ category: "magic" }),
+      ]);
+      assert.deepEqual(responses.map(response => response.status).sort(), [200, 429]);
+      assert.equal(downloads, 1);
+      assert.ok(responses.some(response => response.body.errorCode === "pricecharting_throttled"));
+    } finally {
+      globalThis.fetch = priorFetch;
+      if (priorToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = priorToken;
+      if (priorAdmin == null) delete process.env.ADMIN_SECRET;
+      else process.env.ADMIN_SECRET = priorAdmin;
+      await db.delete(priceChartingGuideRowsTable);
+      await db.delete(priceChartingGuideImportsTable);
+      await db.delete(priceChartingGuideDownloadLeaseTable);
+    }
   });
 });
 
