@@ -45,10 +45,6 @@ recordStartupPhase('font-load', 'started');
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  useEffect(() => {
-    recordStartupPhase('initial-navigation', 'success');
-  }, []);
-
   return (
     <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
       <Stack.Screen name="index" />

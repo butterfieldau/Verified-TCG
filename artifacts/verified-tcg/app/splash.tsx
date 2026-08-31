@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -11,6 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
 import { restoreSession } from '@/services/auth';
+import { resolveInitialRoute } from '@/services/initialNavigation';
+import { recordStartupPhase } from '@/services/startupDiagnostics';
 
 const C = colors.dark;
 
@@ -19,6 +21,25 @@ export default function SplashScreen() {
   const logoScale  = useSharedValue(0.82);
   const tagOpacity = useSharedValue(0);
   const dotOpacity = useSharedValue(0);
+  const [startupError, setStartupError] = React.useState<string | null>(null);
+
+  const finishInitialNavigation = React.useCallback(async () => {
+    setStartupError(null);
+    recordStartupPhase('initial-navigation', 'started');
+    try {
+      const destination = await resolveInitialRoute(
+        restoreSession,
+        () => AsyncStorage.getItem('hasOnboarded'),
+      );
+      router.replace(destination);
+      recordStartupPhase('initial-navigation', 'success');
+    } catch (error) {
+      recordStartupPhase('initial-navigation', 'failure', error, false);
+      setStartupError(
+        'Verified TCG could not finish checking your saved session. Try again, or continue to sign in.',
+      );
+    }
+  }, []);
 
   useEffect(() => {
     logoOpacity.value = withTiming(1, { duration: 700 });
@@ -26,23 +47,13 @@ export default function SplashScreen() {
     tagOpacity.value  = withDelay(550, withTiming(1, { duration: 500 }));
     dotOpacity.value  = withDelay(900, withTiming(1, { duration: 400 }));
 
-    const timer = setTimeout(async () => {
-      try {
-        const session = await restoreSession();
-        const onboarded = await AsyncStorage.getItem('hasOnboarded');
-        if (session || onboarded === 'true') {
-          router.replace('/(tabs)');
-        } else {
-          router.replace('/welcome');
-        }
-      } catch {
-        router.replace('/welcome');
-      }
+    const timer = setTimeout(() => {
+      void finishInitialNavigation();
     }, 2400);
 
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [finishInitialNavigation]);
 
   const logoStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,
@@ -71,6 +82,31 @@ export default function SplashScreen() {
           <View key={i} style={[styles.dot, { backgroundColor: C.primary }]} />
         ))}
       </Animated.View>
+
+      {startupError ? (
+        <View accessibilityRole="alert" style={styles.errorPanel}>
+          <Text style={styles.errorText}>{startupError}</Text>
+          <View style={styles.errorActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void finishInitialNavigation()}
+              style={styles.primaryAction}
+            >
+              <Text style={styles.primaryActionText}>Try again</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                router.replace('/welcome');
+                recordStartupPhase('initial-navigation', 'success');
+              }}
+              style={styles.secondaryAction}
+            >
+              <Text style={styles.secondaryActionText}>Continue to sign in</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -115,5 +151,50 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 3,
+  },
+  errorPanel: {
+    position: 'absolute',
+    bottom: Platform.OS === 'web' ? 116 : 136,
+    width: '100%',
+    maxWidth: 420,
+    paddingHorizontal: 24,
+    gap: 14,
+  },
+  errorText: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  errorActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  primaryAction: {
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: colors.radius,
+    backgroundColor: C.primary,
+    paddingHorizontal: 18,
+  },
+  primaryActionText: {
+    color: C.primaryForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 13,
+  },
+  secondaryAction: {
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: colors.radius,
+    borderColor: C.border,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+  },
+  secondaryActionText: {
+    color: C.foreground,
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
   },
 });
