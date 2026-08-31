@@ -411,6 +411,7 @@ describe("pickBestMatch", () => {
       [
         { id: "base", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "60" },
         { id: "exact", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "161" },
+        { id: "korean", name: "Umbreon EX", consoleName: "Pokemon Korean Terastal Festival ex", cardNumber: "161" },
       ],
     );
     assert.equal(result.status, "matched");

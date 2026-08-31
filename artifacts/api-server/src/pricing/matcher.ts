@@ -205,10 +205,12 @@ export function pickBestMatch(
     score.number === 1 &&
     normalizeString(stripCardNumber(input.name)) === normalizeString(stripCardNumber(candidate.name)),
   );
-  const hasUniqueExactIdentity =
+  const bestExactIdentity = exactIdentityCandidates[0];
+  const nextExactIdentity = exactIdentityCandidates[1];
+  const hasDecisiveExactIdentity =
     Boolean(normalizedInputNumber) &&
-    exactIdentityCandidates.length === 1 &&
-    exactIdentityCandidates[0]!.candidate.id === bestCandidate.id;
+    bestExactIdentity?.candidate.id === bestCandidate.id &&
+    (!nextExactIdentity || bestExactIdentity.score.total - nextExactIdentity.score.total >= 0.08);
 
   if (identifierIsMissingOrWrong) {
     // Card number evidence is required for an automatic persisted mapping.
@@ -216,10 +218,11 @@ export function pickBestMatch(
     // name/set similarity.
     status = "review_required";
     level = "ambiguous";
-  } else if (hasUniqueExactIdentity) {
+  } else if (hasDecisiveExactIdentity) {
     // A unique provider candidate with the same explicit collector number and
-    // exact card name is stronger evidence than fuzzy set aliases such as
-    // "SM Promos" versus PriceCharting's generic "Pokemon Promo".
+    // exact card name, or one that decisively beats another same-number
+    // language/set printing, is stronger evidence than fuzzy provider labels
+    // such as "SM Promos" versus PriceCharting's "Pokemon Promo".
     status = "matched";
     level = "strong";
   } else if (
