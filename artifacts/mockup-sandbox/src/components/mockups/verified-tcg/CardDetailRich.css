@@ -120,6 +120,12 @@
 .grade-option__grade { font-weight: 700; }
 .grade-option__pop { color: #7fced0; font-size: 9px; letter-spacing: .01em; }
 .option-list button.active .grade-option__pop { color: #8ee3d6; }
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 9px;
+  color: #9ca3af; font-size: 10px;
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-legend i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .inline-pop-link {
   border: 0; background: transparent; color: #8ee3d6; padding: 10px 0 0;
   font-size: 10px; font-weight: 700;

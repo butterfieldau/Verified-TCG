@@ -35,12 +35,16 @@ const population: Record<string, number> = {
   "CGC 10": 309,
 };
 
-function DetailChart({ graded }: { graded: boolean }) {
+const chartColors = ["#e22536", "#f0b84a", "#58d7bb", "#9d8cff"];
+const chartPath = "M0 98 L20 85 L42 92 L63 69 L85 72 L108 41 L131 50 L154 28 L176 34 L198 20 L220 39 L242 33 L264 54 L286 46 L308 60 L330 47 L360 52";
+
+function DetailChart({ graded, selectedGrades }: { graded: boolean; selectedGrades: string[] }) {
+  const scale = selectedGrades.length > 1 ? 0.82 : 1;
   return (
-    <svg className="chart" viewBox="0 0 360 112" preserveAspectRatio="none" aria-label="Three month verified price history">
-      <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#58d7bb" stopOpacity=".35" /><stop offset="1" stopColor="#58d7bb" stopOpacity="0" /></linearGradient></defs>
-      <path d="M0 98 L20 85 L42 92 L63 69 L85 72 L108 41 L131 50 L154 28 L176 34 L198 20 L220 39 L242 33 L264 54 L286 46 L308 60 L330 47 L360 52 L360 112 L0 112Z" fill="url(#area)" />
-      <path d="M0 98 L20 85 L42 92 L63 69 L85 72 L108 41 L131 50 L154 28 L176 34 L198 20 L220 39 L242 33 L264 54 L286 46 L308 60 L330 47 L360 52" fill="none" stroke={graded ? "#e6ba55" : "#58d7bb"} strokeWidth="2.5" />
+    <svg className="chart" viewBox="0 0 360 112" preserveAspectRatio="none" aria-label={`${selectedGrades.length} series three month verified price history`}>
+      <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#58d7bb" stopOpacity=".24" /><stop offset="1" stopColor="#58d7bb" stopOpacity="0" /></linearGradient></defs>
+      <path d={`${chartPath} L360 112 L0 112Z`} fill="url(#area)" />
+      {selectedGrades.map((label, index) => <path key={label} d={chartPath} fill="none" stroke={graded ? chartColors[index % chartColors.length] : "#58d7bb"} strokeWidth={index === 0 ? "2.5" : "2"} strokeLinecap="round" opacity={index === 0 ? 1 : .88} transform={`translate(0 ${index * 5}) scale(1 ${scale})`} />)}
     </svg>
   );
 }
@@ -52,8 +56,14 @@ export function CardDetailRich() {
   const [rawQty, setRawQty] = useState(0);
   const [gradedQty, setGradedQty] = useState(1);
   const [range, setRange] = useState("3M");
+  const [selectedGrades, setSelectedGrades] = useState<string[]>(["PSA 10"]);
   const selectedGrade = mode === "Raw" ? "Raw" : `${grader} ${grade}`;
   const currentPrice = prices[selectedGrade] ?? "Price unavailable";
+  const toggleGrade = (option: string) => {
+    const label = `${grader} ${option}`;
+    setGrade(option);
+    setSelectedGrades((current) => current.includes(label) ? (current.length === 1 ? current : current.filter((item) => item !== label)) : [...current, label]);
+  };
 
   return (
     <main className="card-detail-rich">
@@ -118,22 +128,23 @@ export function CardDetailRich() {
             <div className="panel-heading"><h2>{mode === "Raw" ? "Raw market" : "Graded market"}</h2><small>Verified history</small></div>
             {mode === "Graded" && (
               <div className="select-row">
-                <div><label className="field-label">Grading company</label><button className="select-control selected" onClick={() => setGrader(grader === "PSA" ? "BGS" : "PSA")}>{grader}<ChevronDown size={14} /></button></div>
-                <div><label className="field-label">Grade</label><button className="select-control selected" onClick={() => setGrade(grade === "10" ? gradeOptions[grader][0] : "10")}>{grader} {grade}<ChevronDown size={14} /></button></div>
+                <div><label className="field-label">Grading company</label><button className="select-control selected" onClick={() => { const next = grader === "PSA" ? "BGS" : "PSA"; setGrader(next); setGrade("10"); setSelectedGrades([`${next} 10`]); }}>{grader}<ChevronDown size={14} /></button></div>
+                <div><label className="field-label">Primary grade</label><button className="select-control selected" onClick={() => { const next = grade === "10" ? gradeOptions[grader][0] : "10"; setGrade(next); setSelectedGrades((current) => current.includes(`${grader} ${next}`) ? current : [...current, `${grader} ${next}`]); }}>{grader} {grade}<ChevronDown size={14} /></button></div>
               </div>
             )}
             {mode === "Graded" && (
               <div className="option-list">
-                {gradeOptions[grader].map((option) => (
-                  <button key={option} className={grade === option ? "active" : ""} onClick={() => setGrade(option)}>
+                  {gradeOptions[grader].map((option) => (
+                    <button key={option} className={selectedGrades.includes(`${grader} ${option}`) ? "active" : ""} onClick={() => toggleGrade(option)}>
                     <span className="grade-option__grade">{grader} {option}</span>
                     <span className="grade-option__pop">POP {population[`${grader} ${option}`]?.toLocaleString() ?? "—"}</span>
                   </button>
                 ))}
               </div>
             )}
-            <div className="availability"><span>●</span> {mode === "Raw" ? <><strong>Raw / ungraded</strong> · broad market estimate</> : <><strong>{selectedGrade}</strong> · exact grade match available</>}</div>
-            <DetailChart graded={mode === "Graded"} />
+            <div className="availability"><span>●</span> {mode === "Raw" ? <><strong>Raw / ungraded</strong> · broad market estimate</> : <><strong>{selectedGrades.length} grades compared</strong> · tap a grade to add or remove a line</>}</div>
+            <DetailChart graded={mode === "Graded"} selectedGrades={mode === "Raw" ? ["Raw"] : selectedGrades} />
+            {mode === "Graded" && <div className="chart-legend">{selectedGrades.map((label, index) => <span key={label}><i style={{ background: chartColors[index % chartColors.length] }} />{label}</span>)}</div>}
             <div className="chart-labels"><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span></div>
             <div className="range-row">{["1M", "3M", "6M", "12M", "MAX"].map((item) => <button key={item} className={range === item ? "active" : ""} onClick={() => setRange(item)}>{item}</button>)}</div>
           </section>
