@@ -162,7 +162,22 @@ const CARD_SELECT = sql`
   SELECT e.external_id, c.id AS card_id, c.name, g.name AS game, s.name AS set_name,
     s.code AS set_code, c.collector_number, c.rarity, c.language, s.region,
     c.release_date,
-    (SELECT i.url FROM catalogue_card_images i WHERE i.card_id = c.id AND i.is_primary = true ORDER BY i.created_at LIMIT 1) AS image_url,
+    COALESCE(
+      (SELECT i.url
+       FROM catalogue_card_images i
+       WHERE i.card_id = c.id AND i.is_primary = true
+       ORDER BY i.created_at
+       LIMIT 1),
+      (SELECT 'https://product-images.tcgplayer.com/fit-in/1000x1000/'
+          || NULLIF(source.raw_payload->>'tcgplayerId', '') || '.jpg'
+       FROM catalogue_source_records source
+       WHERE source.entity_type = 'card'
+         AND source.entity_id = c.id
+         AND source.provider_key = 'justtcg'
+         AND (source.raw_payload->>'tcgplayerId') ~ '^[0-9]+$'
+       ORDER BY source.last_seen_at DESC
+       LIMIT 1)
+    ) AS image_url,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key', v.variant_key, 'name', v.name, 'finish', v.finish, 'edition', v.edition, 'stamp', v.stamp)) FROM catalogue_card_variants v WHERE v.card_id = c.id), '[]'::jsonb) AS variants
   FROM catalogue_external_ids e
   JOIN catalogue_cards c ON c.id = e.entity_id

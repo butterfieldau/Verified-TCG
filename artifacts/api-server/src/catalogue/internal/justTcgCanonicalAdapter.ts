@@ -19,6 +19,7 @@ export interface JustTcgProviderCard {
   number?: string;
   image_url?: string;
   imageUrl?: string;
+  tcgplayerId?: string | number;
   rarity?: string;
   language?: string;
   region?: string;
@@ -32,6 +33,18 @@ export interface JustTcgProviderCard {
   updated_at?: string;
   updatedAt?: string;
   [key: string]: unknown;
+}
+
+function tcgPlayerImageUrl(value: unknown): string | null {
+  const id =
+    typeof value === "number" && Number.isSafeInteger(value)
+      ? String(value)
+      : typeof value === "string"
+        ? value.trim()
+        : "";
+  return /^\d+$/.test(id)
+    ? `https://product-images.tcgplayer.com/fit-in/1000x1000/${id}.jpg`
+    : null;
 }
 
 export interface CatalogueVariantEvidence {
@@ -123,7 +136,9 @@ export function normalizeJustTcgCard(
       typeof card.number === "string" ? card.number : null,
     ),
     rarity: optionalText(card.rarity),
-    imageUrl: optionalText(card.image_url ?? card.imageUrl),
+    imageUrl:
+      optionalText(card.image_url ?? card.imageUrl) ??
+      tcgPlayerImageUrl(card.tcgplayerId),
     language: optionalText(card.language),
     region: optionalText(card.region),
     variant: explicitVariant(card),
