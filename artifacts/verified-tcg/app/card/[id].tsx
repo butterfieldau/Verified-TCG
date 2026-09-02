@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -26,7 +26,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
+import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
 import { fetchCatalogCard, catalogCardToAppCard, recordCatalogCardLookup } from '@/services/catalogApi';
@@ -459,10 +459,9 @@ interface CardArtFallbackProps {
   cardNumber: string;
   gradientStart: string;
   gradientEnd: string;
-  verificationStatus?: string;
 }
 
-function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus }: CardArtFallbackProps) {
+function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd }: CardArtFallbackProps) {
   return (
     <View style={imgStyles.container}>
       <LinearGradient
@@ -584,6 +583,7 @@ export default function CardDetailScreen() {
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
+  const [showCardActions, setShowCardActions] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
@@ -780,6 +780,12 @@ export default function CardDetailScreen() {
       ? { label: 'Raw / Ungraded', price: card.price.raw, currency: card.price.currency }
       : null
   );
+  const ebaySearchUrl = `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent([
+    card.name,
+    card.setName,
+    card.number,
+    detailMode === 'Graded' ? topMarketSummary?.label : null,
+  ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
   function selectDetailMode(mode: DetailMode) {
     setDetailMode(mode);
@@ -858,20 +864,52 @@ export default function CardDetailScreen() {
             </Pressable>
             <Pressable
               style={styles.navBtn}
-              onPress={() => {
-                Alert.alert(card.name, 'Card actions', [
-                  { text: isWatched ? 'Open Wishlist' : 'Add to Wishlist', onPress: handleWishlistToggle },
-                  { text: 'Cancel', style: 'cancel' },
-                ]);
-              }}
+              onPress={() => setShowCardActions(previous => !previous)}
               accessibilityRole="button"
               accessibilityLabel="More card actions"
+              accessibilityState={{ expanded: showCardActions }}
               hitSlop={2}
             >
               <Feather name="more-horizontal" size={18} color={C.foreground} />
             </Pressable>
           </View>
         </View>
+
+        {showCardActions && (
+          <View style={styles.cardActionsMenu}>
+            <Pressable
+              onPress={() => {
+                setShowCardActions(false);
+                void handleWishlistToggle();
+              }}
+              style={styles.cardActionsMenuItem}
+              accessibilityRole="button"
+            >
+              <Feather name={isWatched ? 'list' : 'bookmark'} size={16} color={C.foreground} />
+              <Text style={styles.cardActionsMenuText}>
+                {isWatched ? 'Open Wishlist' : 'Add to Wishlist'}
+              </Text>
+            </Pressable>
+            <View style={styles.cardActionsMenuDivider} />
+            <Pressable
+              onPress={() => {
+                setShowCardActions(false);
+                router.push({
+                  pathname: '/contact-support',
+                  params: {
+                    subject: `Card data issue: ${card.name}`,
+                    cardId: card.id,
+                  },
+                } as any);
+              }}
+              style={styles.cardActionsMenuItem}
+              accessibilityRole="button"
+            >
+              <Feather name="flag" size={16} color={C.foreground} />
+              <Text style={styles.cardActionsMenuText}>Report a data issue</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Card artwork + swipe navigation overlays */}
         <View style={styles.cardStage}>
@@ -894,7 +932,6 @@ export default function CardDetailScreen() {
                 cardNumber={card.number}
                 gradientStart={card.gradientStart}
                 gradientEnd={card.gradientEnd}
-                verificationStatus={card.verificationStatus}
               />
             )}
           </View>
@@ -989,7 +1026,7 @@ export default function CardDetailScreen() {
               accessibilityState={{ selected: isWatched }}
               hitSlop={8}
             >
-              <Feather name="bookmark" size={20} color={isWatched ? C.primary : C.foreground} />
+              <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
             </Pressable>
           </View>
 
@@ -1014,11 +1051,31 @@ export default function CardDetailScreen() {
                     {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
                   </Text>
                 </View>
-                <Text style={styles.valueSource}>24 hour move</Text>
+                <Text style={styles.valueSource}>
+                  PriceCharting · {topMarketSummary?.currency ?? card.price.currency}
+                </Text>
               </View>
             )}
           </View>
 
+          <View style={styles.confidenceRow}>
+            <View style={styles.confidenceStatus}>
+              <View style={styles.confidenceDot} />
+              <Text style={styles.confidenceText}>High confidence</Text>
+            </View>
+            <Text style={styles.confidenceText}>Refreshed {formatCardAge(card.price.updatedAt)}</Text>
+          </View>
+
+          <Pressable
+            onPress={() => void Linking.openURL(ebaySearchUrl)}
+            style={styles.soldListingsButton}
+            accessibilityRole="link"
+            accessibilityLabel={`View completed eBay listings for ${card.name}`}
+          >
+            <Feather name="tag" size={15} color="#FFFFFF" />
+            <Text style={styles.soldListingsButtonText}>View sold listings</Text>
+            <Feather name="arrow-up-right" size={14} color="#FFFFFF" />
+          </Pressable>
         </View>
 
         <View style={styles.modeTabs} accessibilityRole="tablist">
@@ -1216,6 +1273,16 @@ export default function CardDetailScreen() {
         })}
       </View>
 
+      <Pressable
+        onPress={handleWishlistToggle}
+        style={[styles.floatingBookmark, isWatched && styles.floatingBookmarkActive]}
+        accessibilityRole="button"
+        accessibilityLabel={isWatched ? 'Open wishlist' : 'Save to wishlist'}
+        accessibilityState={{ selected: isWatched }}
+      >
+        <Feather name="bookmark" size={16} color={isWatched ? '#FFFFFF' : C.foreground} />
+      </Pressable>
+
       {/* Added to collection banner */}
       {showAddedBanner && (
         <View style={styles.banner}>
@@ -1243,6 +1310,18 @@ export default function CardDetailScreen() {
     </View>
     </GestureDetector>
   );
+}
+
+function formatCardAge(updatedAt?: string | null): string {
+  if (!updatedAt) return 'recently';
+  const timestamp = new Date(updatedAt).getTime();
+  if (!Number.isFinite(timestamp)) return 'recently';
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (minutes < 2) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 const styles = StyleSheet.create({
@@ -1277,6 +1356,40 @@ const styles = StyleSheet.create({
     letterSpacing: 1.7,
   },
   navRight: { flexDirection: 'row', gap: 8 },
+  cardActionsMenu: {
+    position: 'absolute',
+    top: 64,
+    right: 20,
+    zIndex: 60,
+    width: 214,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#3B373F',
+    borderRadius: 14,
+    backgroundColor: '#211F25',
+    paddingVertical: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    elevation: 24,
+  },
+  cardActionsMenuItem: {
+    minHeight: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 14,
+  },
+  cardActionsMenuText: {
+    color: C.foreground,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+  },
+  cardActionsMenuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#3B373F',
+    marginHorizontal: 12,
+  },
   navBtn: {
     width: 38,
     height: 38,
@@ -1420,7 +1533,7 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     backgroundColor: C.card,
     marginBottom: 12,
-    padding: 18,
+    padding: 19,
   },
   identityTop: {
     flexDirection: 'row',
@@ -1446,6 +1559,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 28,
+    marginRight: -5,
   },
   cardName: {
     fontSize: 30,
@@ -1470,7 +1584,7 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     zIndex: 40,
-    minHeight: 62,
+    minHeight: 72,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#37343B',
     borderRadius: 19,
@@ -1500,12 +1614,35 @@ const styles = StyleSheet.create({
   passportBottomNavTextActive: {
     color: C.primary,
   },
+  floatingBookmark: {
+    position: 'absolute',
+    right: 26,
+    bottom: 84,
+    zIndex: 41,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#4A454E',
+    backgroundColor: '#211F25',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  floatingBookmarkActive: {
+    borderColor: C.primary,
+    backgroundColor: C.primary,
+  },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 10,
-    marginTop: 18,
+    marginTop: 26,
   },
   valueLabel: {
     color: C.mutedForeground,
@@ -1541,7 +1678,7 @@ const styles = StyleSheet.create({
   confidenceDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.positive },
   confidenceText: { color: C.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 10 },
   soldListingsButton: {
-    minHeight: 44,
+    minHeight: 49,
     borderRadius: 10,
     backgroundColor: C.primary,
     flexDirection: 'row',
