@@ -217,7 +217,9 @@ export async function refreshVerifiedPricing(
       `/api/pricing/cards/${encodeURIComponent(cardId)}/refresh${qs ? `?${qs}` : ''}`,
       { method: 'POST', accessToken: token },
     );
-    pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
+    if (!isTransientPricingResult(data)) {
+      pricingCache.set(cacheKey, { data, fetchedAt: Date.now() });
+    }
     return data;
   } catch {
     // On error, re-fetch the current stored result. The read path deliberately

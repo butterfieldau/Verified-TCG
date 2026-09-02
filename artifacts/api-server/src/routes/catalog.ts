@@ -102,8 +102,9 @@ async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
     price_cents: number;
     currency: string;
     fetched_at: Date;
+    provider_product_id: string | null;
   }>(sql`
-    SELECT card_id, price_cents, currency, fetched_at
+    SELECT card_id, price_cents, currency, fetched_at, provider_product_id
     FROM current_quotes
     WHERE provider_key = 'pricecharting'
       AND grade_key = 'raw'
@@ -120,6 +121,7 @@ export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
     price_cents: number;
     currency: string;
     fetched_at: Date;
+    provider_product_id?: string | null;
   }>,
 ): T[] {
   const byCardId = new Map(rows.map(row => [row.card_id, row]));
@@ -141,6 +143,15 @@ export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
       market_price: quote.price_cents / 100,
       pricing_source: "PriceCharting",
       updated_at: new Date(quote.fetched_at).toISOString(),
+      raw_quote: {
+        provider: "pricecharting",
+        productId: quote.provider_product_id ?? null,
+        priceCents: quote.price_cents,
+        price: quote.price_cents / 100,
+        currency: quote.currency,
+        updatedAt: new Date(quote.fetched_at).toISOString(),
+        isStale: Date.now() - new Date(quote.fetched_at).getTime() > 12 * 60 * 60 * 1000,
+      },
       variants: [
         pricedVariant,
         ...existing.filter(variant => variant.condition !== "Near Mint"),
@@ -167,6 +178,48 @@ function cacheMetadata(
     outbound_call: result.outboundCall,
     ...(result.revalidationScheduled ? { revalidation_scheduled: true } : {}),
   };
+}
+
+type CataloguePagination = {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+export function normalizeCataloguePagination(
+  body: unknown,
+  limit: number,
+  offset: number,
+  delivered: number,
+): CataloguePagination {
+  const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  const nested = record.meta && typeof record.meta === "object"
+    ? record.meta as Record<string, unknown>
+    : {};
+  const numeric = (...values: unknown[]) => {
+    const value = values.find(candidate => Number.isFinite(Number(candidate)));
+    return value == null ? undefined : Math.max(0, Math.floor(Number(value)));
+  };
+  const total = numeric(nested.total, record.total, nested.count, record.count);
+  const explicitHasMore = nested.hasMore ?? nested.has_more ?? record.hasMore ?? record.has_more;
+  const hasMore = typeof explicitHasMore === "boolean"
+    ? explicitHasMore
+    : total != null
+      ? offset + delivered < total
+      : delivered === limit;
+  return {
+    total: total ?? offset + delivered + (hasMore ? 1 : 0),
+    limit,
+    offset,
+    hasMore,
+  };
+}
+
+function pricingSourceFor(cards: Array<Record<string, unknown>>): string | null {
+  return cards.some(card => card.pricing_source === "PriceCharting")
+    ? "PriceCharting"
+    : null;
 }
 
 router.get("/catalog/games", async (_req, res) => {
@@ -202,7 +255,28 @@ router.get("/catalog/cards", async (req, res) => {
         offset,
       });
       const canonical = canonicalRead.value;
-      if (canonical.length) {
+      if (
+        canonicalRead.outcome === "canonical_hit"
+        && (canonicalRead.pagination?.total ?? 0) > 0
+      ) {
+        recordCatalogueReadMetric(
+          "search",
+          canonicalRead.outcome,
+          canonicalRead.durationMs,
+          "canonical",
+        );
+        const data = await enrichCardsWithCurrentRawQuotes(canonical);
+        return res.json({
+          data,
+          meta: canonicalRead.pagination,
+          source: "VerifiedTCG",
+          catalogue_source: "VerifiedTCG",
+          pricing_source: pricingSourceFor(data),
+          canonical: true,
+          cached: false,
+        });
+      }
+      if (canonical.length && canonicalRead.outcome === "canonical_hit") {
         const fallbackResult = await justTcg(
           `/cards?${new URLSearchParams({
             ...(query ? { q: query } : {}),
@@ -232,11 +306,13 @@ router.get("/catalog/cards", async (req, res) => {
             canonicalRead.durationMs,
             "canonical",
           );
+          const data = await enrichCardsWithCurrentRawQuotes(canonical);
           return res.json({
-            data: await enrichCardsWithCurrentRawQuotes(canonical),
+            data,
+            meta: canonicalRead.pagination,
             source: "VerifiedTCG",
             catalogue_source: "VerifiedTCG",
-            pricing_source: "PriceCharting",
+            pricing_source: pricingSourceFor(data),
             canonical: true,
             cached: fallbackResult.cached ?? false,
           });
@@ -248,11 +324,13 @@ router.get("/catalog/cards", async (req, res) => {
             canonicalRead.durationMs,
             "canonical",
           );
+          const data = await enrichCardsWithCurrentRawQuotes(canonical);
           return res.json({
-            data: await enrichCardsWithCurrentRawQuotes(canonical),
+            data,
+            meta: canonicalRead.pagination,
             source: "VerifiedTCG",
             catalogue_source: "VerifiedTCG",
-            pricing_source: "PriceCharting",
+            pricing_source: pricingSourceFor(data),
             canonical: true,
             cached: fallbackResult.cached ?? false,
           });
@@ -260,6 +338,18 @@ router.get("/catalog/cards", async (req, res) => {
         const data = await enrichCardsWithCurrentRawQuotes(
           deduplicatePublicCards(canonical, fallbackCards).slice(0, limit),
         );
+        const fallbackPagination = normalizeCataloguePagination(
+          fallbackResult.body,
+          limit,
+          offset,
+          fallbackCards.length,
+        );
+        const canonicalPagination = canonicalRead.pagination ?? {
+          total: canonical.length,
+          limit,
+          offset,
+          hasMore: canonical.length === limit,
+        };
         const canonicalCardsDelivered = canonical.length;
         const delivery =
           canonicalCardsDelivered === 0
@@ -275,6 +365,12 @@ router.get("/catalog/cards", async (req, res) => {
         );
         return res.json({
           data,
+          meta: {
+            total: Math.max(canonicalPagination.total, fallbackPagination.total),
+            limit,
+            offset,
+            hasMore: canonicalPagination.hasMore || fallbackPagination.hasMore,
+          },
           source:
             delivery === "canonical"
               ? "VerifiedTCG"
@@ -287,7 +383,7 @@ router.get("/catalog/cards", async (req, res) => {
               : delivery === "mixed"
                 ? "VerifiedTCG + JustTCG"
                 : "JustTCG",
-          pricing_source: "PriceCharting",
+          pricing_source: pricingSourceFor(data),
           canonical: delivery !== "justtcg",
           cached: fallbackResult.cached ?? false,
         });
@@ -315,11 +411,13 @@ router.get("/catalog/cards", async (req, res) => {
         };
         if (Array.isArray(body.data))
           body.data = await enrichCardsWithCurrentRawQuotes(body.data.map(enrichCard));
+        const data = Array.isArray(body.data) ? body.data : [];
         return res.json({
           ...body,
+          meta: normalizeCataloguePagination(fallbackResult.body, limit, offset, data.length),
           source: "JustTCG",
           catalogue_source: "JustTCG",
-          pricing_source: "PriceCharting",
+          pricing_source: pricingSourceFor(data),
           ...cacheMetadata(fallbackResult),
         });
       }
@@ -361,12 +459,14 @@ router.get("/catalog/cards", async (req, res) => {
         return enriched;
       }));
     }
+    const data = Array.isArray(body.data) ? body.data : [];
 
     return res.json({
       ...body,
+      meta: normalizeCataloguePagination(result.body, limit, offset, data.length),
       source: "JustTCG",
       catalogue_source: "JustTCG",
-      pricing_source: "PriceCharting",
+      pricing_source: pricingSourceFor(data),
       ...cacheMetadata(result),
     });
   } catch {

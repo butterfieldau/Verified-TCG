@@ -1385,16 +1385,26 @@ async function runBackgroundMatch(
     // Search by exact card name + collector number first. This avoids making a
     // low-confidence same-name mapping when the provider has multiple prints.
     // Fall back to name/set/game only when the provider has no numbered result.
-    let products: Awaited<ReturnType<typeof priceChartingProvider.searchProducts>> = [];
+    let products: NonNullable<Awaited<ReturnType<typeof priceChartingProvider.searchProducts>>> = [];
+    let bestResult: ReturnType<typeof pickBestMatch> | null = null;
     for (const query of buildMatchSearchQueries(input)) {
-      products = await priceChartingProvider.searchProducts(query);
-      if (!products) break;
-      if (products.length > 0) break;
-    }
-    if (!products) {
-      await recordProviderHealth(false, "PriceCharting search failed", "search");
-      if (propagateFailures) throw new Error("PriceCharting search returned no data");
-      return;
+      const queryProducts = await priceChartingProvider.searchProducts(query);
+      if (!queryProducts) {
+        await recordProviderHealth(false, "PriceCharting search failed", "search");
+        if (propagateFailures) throw new Error("PriceCharting search returned no data");
+        return;
+      }
+      const knownIds = new Set(products.map(product => String(product.id)));
+      products.push(...queryProducts.filter(product => !knownIds.has(String(product.id))));
+      const queryResult = pickBestMatch(
+        input,
+        queryProducts.map(product => priceChartingProvider.toMatchCandidate(product)),
+      );
+      if (!bestResult || queryResult.score.total > bestResult.score.total) bestResult = queryResult;
+      if (queryResult.status === "matched") {
+        bestResult = queryResult;
+        break;
+      }
     }
     await recordProviderHealth(true, undefined, "search");
 
@@ -1419,6 +1429,13 @@ async function runBackgroundMatch(
             status: "unmatched",
             confidenceScore: 0,
             confidenceLevel: "none",
+            providerProductId: null,
+            providerProductName: null,
+            matchMetadata: { source: "api_search", reason: "no_candidates" },
+            matchedName: input.name,
+            matchedSet: input.set ?? null,
+            matchedNumber: input.number ?? null,
+            matchedGame: input.game ?? null,
             updatedAt: new Date(),
           },
         });
@@ -1426,7 +1443,7 @@ async function runBackgroundMatch(
     }
 
     const candidates = products.map(product => priceChartingProvider.toMatchCandidate(product));
-    const result = pickBestMatch(input, candidates);
+    const result = bestResult ?? pickBestMatch(input, candidates);
 
     // Persist the mapping
     await db
@@ -1454,6 +1471,10 @@ async function runBackgroundMatch(
           confidenceScore: result.score.total,
           confidenceLevel: result.level,
           matchMetadata: result.score as unknown as Record<string, unknown>,
+          matchedName: input.name,
+          matchedSet: input.set ?? null,
+          matchedNumber: input.number ?? null,
+          matchedGame: input.game ?? null,
           updatedAt: new Date(),
         },
       });
@@ -1521,6 +1542,13 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
 
   // Check existing mapping
   const mapping = await getExistingMapping(cardId);
+  const normalizedIdentityChanged = mapping
+    ? normalizeString(mapping.matchedName ?? "") !== normalizeString(name)
+      || normalizeString(mapping.matchedSet ?? "") !== normalizeString(set ?? "")
+      || (normalizeCollectorNumberForMatch(mapping.matchedNumber ?? undefined)?.full ?? "")
+        !== (normalizeCollectorNumberForMatch(number)?.full ?? "")
+      || normalizeString(mapping.matchedGame ?? "") !== normalizeString(game ?? "")
+    : false;
 
   // If no mapping, queue background match and return pending
   if (!mapping) {
@@ -1558,8 +1586,10 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
 
   // Mapping exists but is review_required or unmatched
   if (mapping.status === "review_required") {
-    const retryQueued = configured &&
-      Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS;
+    const retryQueued = configured && (
+      normalizedIdentityChanged
+      || Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS
+    );
     if (retryQueued) void runBackgroundMatch(cardId, { name, set, number, game });
     return {
       cardId,
@@ -1582,8 +1612,10 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   }
 
   if (mapping.status === "unmatched") {
-    const retryQueued = configured &&
-      Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS;
+    const retryQueued = configured && (
+      normalizedIdentityChanged
+      || Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS
+    );
     if (retryQueued) void runBackgroundMatch(cardId, { name, set, number, game });
     return {
       cardId,

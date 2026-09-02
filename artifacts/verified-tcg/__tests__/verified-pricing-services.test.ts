@@ -8,6 +8,7 @@ global.fetch = mockFetch;
 import {
   fetchVerifiedPricing,
   fetchVerifiedPriceHistory,
+  refreshVerifiedPricing,
 } from '../services/verifiedPricing';
 import { fetchEbaySoldHistory } from '../services/priceHistory';
 import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
@@ -100,6 +101,29 @@ describe('Verified pricing mobile service', () => {
     expect(pending.status).toBe('pending_match');
     expect(available.status).toBe('available');
     expect(available.quotes[0]?.gradeKey).toBe('raw');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a pending refresh ahead of bounded polling', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-refresh-card', status: 'pending_match', configured: true,
+        queued: true, quotes: [], verifiedMarket: [], source: null,
+        confidence: null, providerMetadata: null, updatedAt: null, isStale: false,
+      }))
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-refresh-card', status: 'available', configured: true,
+        queued: false,
+        quotes: [{ gradeKey: 'raw', label: 'Raw', priceCents: 1500, price: 15, currency: 'AUD', originalPriceCents: 950, originalCurrency: 'USD' }],
+        verifiedMarket: [], source: null, confidence: null, providerMetadata: null,
+        updatedAt: '2026-09-02T00:00:00.000Z', isStale: false,
+      }));
+
+    const pending = await refreshVerifiedPricing('pending-refresh-card', { displayCurrency: 'AUD' });
+    const available = await fetchVerifiedPricing('pending-refresh-card', { displayCurrency: 'AUD' });
+
+    expect(pending.status).toBe('pending_match');
+    expect(available.status).toBe('available');
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 

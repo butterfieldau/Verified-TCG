@@ -619,19 +619,8 @@ export default function CardDetailScreen() {
   //   catalogJson  — raw CatalogCard JSON (from search results)
   //   appCardJson  — already-converted Card JSON (from home/market screen taps)
   // Either bypasses the loading state and avoids a round-trip to the API.
-  const [catalogCard, setCatalogCard] = useState<Card | null>(() => {
-    if (appCardJson) {
-      try { return JSON.parse(appCardJson as string) as Card; } catch { /* fall through */ }
-    }
-    if (!catalogJson) return null;
-    try {
-      const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
-      return catalogCardToAppCard(parsed);
-    } catch {
-      return null;
-    }
-  });
-  const [catalogLoading, setCatalogLoading] = useState(!catalogJson && !appCardJson);
+  const [catalogCard, setCatalogCard] = useState<Card | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState(false);
   const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
   const [gradedLoading, setGradedLoading] = useState(false);
@@ -667,21 +656,41 @@ export default function CardDetailScreen() {
   // Fetch cards from the Verified TCG catalogue when navigation did not include
   // an API result (for example, a persisted collection or wishlist card ID).
   useEffect(() => {
-    if (catalogJson) return;           // already initialised from navigation param (CatalogCard)
-    if (appCardJson) return;           // already initialised from navigation param (Card)
     if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
+    setCatalogError(false);
+    let inlineCard: Card | null = null;
+    if (appCardJson) {
+      try {
+        const parsed = JSON.parse(appCardJson as string) as Card;
+        if (parsed.id === id && parsed.name) inlineCard = parsed;
+      } catch { /* fetch authoritative catalogue data below */ }
+    }
+    if (!inlineCard && catalogJson) {
+      try {
+        const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
+        if (parsed.id === id && parsed.name) inlineCard = catalogCardToAppCard(parsed);
+      } catch { /* fetch authoritative catalogue data below */ }
+    }
+    if (inlineCard) {
+      setCatalogCard(inlineCard);
+      setCatalogLoading(false);
+      return;
+    }
     const controller = new AbortController();
+    let cancelled = false;
+    setCatalogCard(null);
     setCatalogLoading(true);
     fetchCatalogCard(id, controller.signal)
       .then((data) => {
+        if (cancelled) return;
         if (data) setCatalogCard(catalogCardToAppCard(data));
         else setCatalogError(true);
       })
       .catch((err: unknown) => {
-        if ((err as Error)?.name !== 'AbortError') setCatalogError(true);
+        if (!cancelled && (err as Error)?.name !== 'AbortError') setCatalogError(true);
       })
-      .finally(() => setCatalogLoading(false));
-    return () => controller.abort();
+      .finally(() => { if (!cancelled) setCatalogLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
   }, [id, catalogJson, appCardJson]);
 
   useEffect(() => {
@@ -710,6 +719,7 @@ export default function CardDetailScreen() {
     const resolvedCard = catalogCard;
     if (!resolvedCard) return;
     const controller = new AbortController();
+    let cancelled = false;
     setGradedLoading(true);
     setLiveGradedPrices({});
     setGradedRequiresUpgrade(false);
@@ -724,14 +734,15 @@ export default function CardDetailScreen() {
       gradedRetryNonce > 0,
     )
       .then(result => {
+        if (cancelled) return;
         setLiveGradedPrices(result.prices);
         setGradedRequiresUpgrade(result.requiresUpgrade);
         setGradedAvailability(result.availability);
         setGradedMessage(result.message);
       })
       .catch(() => {})
-      .finally(() => setGradedLoading(false));
-    return () => controller.abort();
+      .finally(() => { if (!cancelled) setGradedLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
   // re-fetch when the card identity changes (navigation between cards)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, catalogCard?.id, gradedRetryNonce]);
@@ -838,12 +849,12 @@ export default function CardDetailScreen() {
       }
     }
     switch (tab) {
-      case 'Raw':     return card.price.raw;
+      case 'Raw':     return card.price.available ? card.price.raw : undefined;
       case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
       case 'PSA 10':  return liveGradedPrices['psa10'] ?? card.price.psa10;
       case 'CGC 10':  return liveGradedPrices['cgc10'] ?? card.price.cgc10;
       case 'BGS 9.5': return liveGradedPrices['bgs95'] ?? card.price.bgs95;
-      default:        return card.price.raw;
+      default:        return card.price.available ? card.price.raw : undefined;
     }
   }
   const activePrice = effectiveTabPrice(priceTab);
@@ -916,7 +927,7 @@ export default function CardDetailScreen() {
                 const url = `https://verifiedtcg.co/cards/${card.id}`;
                 Share.share({
                   title: `${card.name} — Verified TCG`,
-                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: $${card.price.raw.toLocaleString('en-AU')} AUD\n${url}`,
+                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: ${card.price.available ? `${card.price.currency} ${card.price.raw.toLocaleString('en-AU')}` : 'Unavailable'}\n${url}`,
                   url,
                 }).catch(() => {});
               }}

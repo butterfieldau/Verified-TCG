@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import {
+  classifyCanonicalPage,
   deduplicatePublicCards,
   getCatalogueReadMetrics,
   isUnsupportedCanonicalRecord,
@@ -28,6 +29,16 @@ const completeRow = {
 afterEach(() => resetCatalogueReadMetrics());
 
 describe("Stage 3C canonical public DTO boundaries", () => {
+  test("falls back for a whole page when normalization filters any selected row", () => {
+    const rows = [
+      completeRow,
+      { ...completeRow, external_id: "pokemon-jp-spaced", language: " JP " },
+    ];
+    const delivered = rows.filter(row => !isUnsupportedCanonicalRecord(row)).length;
+    assert.equal(delivered, 1);
+    assert.equal(classifyCanonicalPage(rows, delivered), "unsupported_fallback");
+  });
+
   test("keeps the JustTCG identifier while never exposing the canonical UUID", () => {
     const card = shapeCanonicalCard({
       ...completeRow,

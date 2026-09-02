@@ -52,7 +52,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
       style={[styles.resultRow, { backgroundColor: C.card }]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, ${hasPrice ? `$${card.price.raw.toLocaleString()} raw` : 'price unavailable'}`}
+      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, ${hasPrice ? `${card.price.currency} ${card.price.raw.toLocaleString()} raw` : 'price unavailable'}`}
     >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
@@ -76,7 +76,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
       </View>
       <View style={styles.resultPricing}>
         <Text style={[styles.resultPrice, !hasPrice && styles.resultPriceUnavailable]}>
-          {hasPrice ? `$${card.price.raw.toLocaleString()}` : 'Unavailable'}
+          {hasPrice ? `${card.price.currency} ${card.price.raw.toLocaleString()}` : 'Unavailable'}
         </Text>
         <Text style={styles.resultPriceLabel}>{hasPrice ? 'Raw' : 'Price'}</Text>
         {hasPrice && card.price.change7d !== undefined && (
@@ -132,6 +132,7 @@ export default function SearchScreen() {
   const [remoteHasMore, setRemoteHasMore] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteLoadingMore, setRemoteLoadingMore] = useState(false);
+  const [remoteLoadMoreError, setRemoteLoadMoreError] = useState('');
   const [remoteError, setRemoteError] = useState('');
   const [remoteSources, setRemoteSources] = useState<{ catalogue?: string; pricing?: string }>({});
   const [trendingMovers, setTrendingMovers] = useState<MarketMover[]>([]);
@@ -164,6 +165,7 @@ export default function SearchScreen() {
       setRemoteHasMore(false);
       setRemotePage(1);
       setRemoteLoading(false);
+      setRemoteLoadMoreError('');
       return;
     }
     // Cancel any in-flight request
@@ -176,6 +178,7 @@ export default function SearchScreen() {
     setRemoteError('');
     setRemotePage(1);
     setRemoteHasMore(false);
+    setRemoteLoadMoreError('');
 
     const timer = setTimeout(() => {
       searchCatalog(trimmed, controller.signal, 1)
@@ -214,15 +217,19 @@ export default function SearchScreen() {
       trimmed.length < MIN_CATALOG_SEARCH_LENGTH
     ) return;
     setRemoteLoadingMore(true);
+    setRemoteLoadMoreError('');
     const nextPage = remotePage + 1;
     try {
       const result = await searchCatalog(trimmed, undefined, nextPage);
       if (activeQueryRef.current !== trimmed) return; // stale
-      setRemoteResults(prev => [...prev, ...(result.data ?? [])]);
+      setRemoteResults(prev => {
+        const seen = new Set(prev.map(card => card.id));
+        return [...prev, ...(result.data ?? []).filter(card => !seen.has(card.id))];
+      });
       setRemoteHasMore(result.meta?.hasMore ?? false);
       setRemotePage(nextPage);
-    } catch {
-      // silently ignore load-more errors
+    } catch (error) {
+      setRemoteLoadMoreError(handleApiError(error));
     } finally {
       setRemoteLoadingMore(false);
     }
@@ -364,7 +371,7 @@ export default function SearchScreen() {
                 ) : null}
                 {!remoteError && remoteResults.length > 0 ? (
                   <Text style={styles.liveSource}>
-                    Catalogue · {remoteSources.catalogue ?? 'Verified TCG'}  •  Market prices · {remoteSources.pricing ?? 'PriceCharting'}
+                    Catalogue · {remoteSources.catalogue ?? 'Verified TCG'}  •  Market prices · {remoteSources.pricing ?? 'No verified quotes yet'}
                   </Text>
                 ) : null}
               </View>
@@ -395,6 +402,19 @@ export default function SearchScreen() {
             <View style={{ padding: 16, alignItems: 'center' }}>
               <ActivityIndicator color={C.primary} size="small" />
             </View>
+          ) : remoteLoadMoreError ? (
+            <View style={styles.loadMoreError}>
+              <Text style={styles.liveError}>{remoteLoadMoreError}</Text>
+              <Pressable
+                onPress={handleLoadMore}
+                style={styles.retryButton}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading more cards"
+              >
+                <Feather name="refresh-cw" size={13} color={C.primary} />
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null
         )}
         ListEmptyComponent={() =>
@@ -413,6 +433,9 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.background },
+  loadMoreError: { padding: 16, alignItems: 'center', gap: 8 },
+  retryButton: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
+  retryButtonText: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -128,8 +128,9 @@ router.get("/pricing/cards/:id", requireActiveUser, pricingReadLimiter, async (r
       res.status(400).json({ message: "name query param is required for first-time matching" });
       return;
     }
-    const identity = mapping?.identity
-      ?? await authoritativeIdentity(cardId, { name, set, number, game });
+    const identity = mapping?.status === "matched" && mapping.providerProductId
+      ? mapping.identity
+      : await authoritativeIdentity(cardId, { name, set, number, game });
     if (!identity) {
       res.json(catalogIdentityUnavailable(cardId));
       return;

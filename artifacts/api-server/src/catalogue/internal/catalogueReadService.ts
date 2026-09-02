@@ -190,6 +190,21 @@ export interface CanonicalReadResult<T> {
   value: T;
   outcome: CatalogueReadOutcome;
   durationMs: number;
+  pagination?: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+export function classifyCanonicalPage(
+  rows: Record<string, unknown>[],
+  deliveredCount: number,
+): CatalogueReadOutcome {
+  if (deliveredCount > 0 && deliveredCount === rows.length) return "canonical_hit";
+  if (rows.some(isUnsupportedCanonicalRecord)) return "unsupported_fallback";
+  return rows.length ? "incomplete" : "fallback";
 }
 
 export async function readCanonicalPublicCard(
@@ -239,8 +254,7 @@ export async function readCanonicalPublicCards(input: {
   if (!query) return { value: [], outcome: "fallback", durationMs: 0 };
   const matching = normalizeForMatching(query);
   try {
-    const result = await db.execute<Record<string, unknown>>(sql`
-      ${CARD_SELECT}
+    const searchFilter = sql`
       AND c.is_active = true AND s.is_active = true AND g.is_active = true
       AND (
         c.name ILIKE ${`%${query}%`} OR c.collector_number ILIKE ${`%${query}%`} OR
@@ -248,28 +262,58 @@ export async function readCanonicalPublicCards(input: {
         EXISTS (SELECT 1 FROM catalogue_aliases a WHERE a.entity_type = 'card' AND a.entity_id = c.id AND a.alias_normalized ILIKE ${`%${matching}%`})
       )
       ${input.game ? sql`AND (g.name ILIKE ${`%${input.game}%`} OR g.slug = ${normalizeForMatching(input.game).replace(/\s+/g, "-")})` : sql``}
+      AND NOT (
+        (g.name ILIKE '%pokemon%' OR g.slug = 'pokemon')
+        AND LOWER(COALESCE(c.language, '')) IN ('ja', 'japanese', 'jpn', 'jp')
+      )
+    `;
+    const [result, countResult] = await Promise.all([
+      db.execute<Record<string, unknown>>(sql`
+       ${CARD_SELECT}
+       ${searchFilter}
       ORDER BY c.name, s.name, c.collector_number
       LIMIT ${input.limit} OFFSET ${input.offset}
-    `);
+      `),
+      db.execute<{ total: number }>(sql`
+        SELECT COUNT(*)::int AS total
+        FROM catalogue_external_ids e
+        JOIN catalogue_cards c ON c.id = e.entity_id
+        JOIN catalogue_sets s ON s.id = c.set_id
+        JOIN catalogue_games g ON g.id = c.game_id
+        WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+        ${searchFilter}
+      `),
+    ]);
     const supportedRows = result.rows.filter(
       (row) => !isUnsupportedCanonicalRecord(row),
     );
     const cards = supportedRows
       .map(shapeCanonicalCard)
       .filter((card): card is PublicCatalogueCard => Boolean(card));
-    const outcome: CatalogueReadOutcome = cards.length
-      ? "canonical_hit"
-      : result.rows.some(isUnsupportedCanonicalRecord)
-        ? "unsupported_fallback"
-        : result.rows.length
-          ? "incomplete"
-          : "fallback";
-    return { value: cards, outcome, durationMs: Date.now() - startedAt };
+    const outcome = classifyCanonicalPage(result.rows, cards.length);
+    const total = Number(countResult.rows[0]?.total ?? cards.length);
+    return {
+      value: cards,
+      outcome,
+      durationMs: Date.now() - startedAt,
+      pagination: {
+        total,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: input.offset + cards.length < total,
+      },
+    };
   } catch {
     return {
       value: [],
       outcome: "canonical_error",
       durationMs: Date.now() - startedAt,
+      pagination: {
+        total: 0,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: false,
+      },
     };
   }
 }

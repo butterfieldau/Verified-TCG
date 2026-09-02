@@ -16,6 +16,7 @@ import {
   extractData,
   enrichCardsWithQuoteRows,
   mergePool,
+  normalizeCataloguePagination,
   normalizeTcgName,
 } from "./catalog.js";
 
@@ -32,11 +33,48 @@ test("search quote enrichment joins PriceCharting quotes to exact external IDs",
 
   assert.equal(enriched[0]!.market_price, 123.45);
   assert.equal(enriched[0]!.pricing_source, "PriceCharting");
+  assert.deepEqual(
+    enriched[0]!.raw_quote,
+    {
+      provider: "pricecharting",
+      productId: null,
+      priceCents: 12_345,
+      price: 123.45,
+      currency: "AUD",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      isStale: (enriched[0]!.raw_quote as { isStale: boolean }).isStale,
+    },
+  );
   assert.equal((enriched[0]!.variants as Array<{ price: number }>)[0]!.price, 123.45);
   assert.equal(enriched[1]!.market_price, 67.89);
   assert.equal(enriched[1]!.pricing_source, "PriceCharting");
   assert.equal(enriched[2]!.pricing_source, undefined);
   assert.equal((enriched[2]!.variants as Array<{ price: number }>)[0]!.price, 99);
+});
+
+test("catalog pagination normalizes camel, snake, and inferred provider metadata", () => {
+  assert.deepEqual(
+    normalizeCataloguePagination(
+      { meta: { total: 45, hasMore: true } },
+      20,
+      20,
+      20,
+    ),
+    { total: 45, limit: 20, offset: 20, hasMore: true },
+  );
+  assert.deepEqual(
+    normalizeCataloguePagination(
+      { total: 21, has_more: false },
+      20,
+      20,
+      1,
+    ),
+    { total: 21, limit: 20, offset: 20, hasMore: false },
+  );
+  assert.deepEqual(
+    normalizeCataloguePagination({}, 20, 20, 20),
+    { total: 41, limit: 20, offset: 20, hasMore: true },
+  );
 });
 
 // ---------------------------------------------------------------------------
