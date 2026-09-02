@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -30,16 +30,11 @@ import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
 import { fetchCatalogCard, catalogCardToAppCard, recordCatalogCardLookup } from '@/services/catalogApi';
-import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, WatchlistItem } from '@/types';
-import {
-  GRADERS,
-} from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
-import VerifiedPricingCard from '@/components/ui/VerifiedPricingCard';
-import EbaySoldHistoryCard from '@/components/ui/EbaySoldHistoryCard';
+import VerifiedPricingCard, { type VerifiedPricingSummary } from '@/components/ui/VerifiedPricingCard';
 import { useSettings } from '@/context/SettingsContext';
 import { triggerPriceSnapshot } from '@/services/priceHistory';
 
@@ -286,21 +281,7 @@ const CARD_H = CARD_W * (3.5 / 2.5);
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
-type PriceTab = 'Raw' | 'PSA 9' | 'PSA 10' | 'CGC 10' | 'BGS 9.5';
 type DetailMode = 'Raw' | 'Graded' | 'POP';
-
-const PRICE_TABS: PriceTab[] = ['Raw', 'PSA 9', 'PSA 10', 'CGC 10', 'BGS 9.5'];
-
-function getTabPrice(card: any, tab: PriceTab): number | undefined {
-  switch (tab) {
-    case 'Raw': return card.price.raw;
-    case 'PSA 9': return card.price.psa9;
-    case 'PSA 10': return card.price.psa10;
-    case 'CGC 10': return card.price.cgc10;
-    case 'BGS 9.5': return card.price.bgs95;
-    default: return card.price.raw;
-  }
-}
 
 // ─── Zoomable card image ──────────────────────────────────────────────────────
 
@@ -607,9 +588,11 @@ export default function CardDetailScreen() {
   const insets = useSafeAreaInsets();
   const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const { currency: displayCurrency } = useSettings();
-  const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
   const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
-  const [showSoldHistory, setShowSoldHistory] = useState(false);
+  const [marketSummary, setMarketSummary] = useState<VerifiedPricingSummary | null>(null);
+  const handleMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
+    if (summary) setMarketSummary(summary);
+  }, []);
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
@@ -625,12 +608,6 @@ export default function CardDetailScreen() {
   const [catalogCard, setCatalogCard] = useState<Card | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState(false);
-  const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
-  const [gradedLoading, setGradedLoading] = useState(false);
-  const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
-  const [gradedAvailability, setGradedAvailability] = useState<GradedPricingAvailability>('available');
-  const [gradedMessage, setGradedMessage] = useState<string | null>(null);
-  const [gradedRetryNonce, setGradedRetryNonce] = useState(0);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -716,39 +693,6 @@ export default function CardDetailScreen() {
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Fetch real graded prices from eBay sold listings (via API server)
-  useEffect(() => {
-    const resolvedCard = catalogCard;
-    if (!resolvedCard) return;
-    const controller = new AbortController();
-    let cancelled = false;
-    setGradedLoading(true);
-    setLiveGradedPrices({});
-    setGradedRequiresUpgrade(false);
-    setGradedMessage(null);
-    fetchGradedPrices(
-      resolvedCard.id,
-      resolvedCard.name,
-      resolvedCard.setName,
-      resolvedCard.tcg,
-      resolvedCard.number,
-      controller.signal,
-      gradedRetryNonce > 0,
-    )
-      .then(result => {
-        if (cancelled) return;
-        setLiveGradedPrices(result.prices);
-        setGradedRequiresUpgrade(result.requiresUpgrade);
-        setGradedAvailability(result.availability);
-        setGradedMessage(result.message);
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setGradedLoading(false); });
-    return () => { cancelled = true; controller.abort(); };
-  // re-fetch when the card identity changes (navigation between cards)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, catalogCard?.id, gradedRetryNonce]);
 
   // A detail view is a natural, low-frequency opportunity to retain truthful
   // completed-sale medians for its chart. The API records nothing when eBay
@@ -837,45 +781,20 @@ export default function CardDetailScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
-  // Pro completed-sale price rows intentionally never fall back to fixture or
-  // provider-market values. Missing grades are omitted until eBay returns a
-  // verified completed sale for that exact condition.
-  function effectiveTabPrice(tab: PriceTab): number | undefined {
-    if (hasAdvancedPricing) {
-      switch (tab) {
-        case 'Raw': return liveGradedPrices.raw;
-        case 'PSA 9': return liveGradedPrices.psa9;
-        case 'PSA 10': return liveGradedPrices.psa10;
-        case 'CGC 10': return liveGradedPrices.cgc10;
-        case 'BGS 9.5': return liveGradedPrices.bgs95;
-        default: return undefined;
-      }
-    }
-    switch (tab) {
-      case 'Raw':     return card.price.available ? card.price.raw : undefined;
-      case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
-      case 'PSA 10':  return liveGradedPrices['psa10'] ?? card.price.psa10;
-      case 'CGC 10':  return liveGradedPrices['cgc10'] ?? card.price.cgc10;
-      case 'BGS 9.5': return liveGradedPrices['bgs95'] ?? card.price.bgs95;
-      default:        return card.price.available ? card.price.raw : undefined;
-    }
-  }
-  const activePrice = effectiveTabPrice(priceTab);
-
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
   const ownedItems = collection.filter(item => item.cardId === card.id);
   const ownedQuantity = ownedItems.reduce((sum, item) => sum + item.quantity, 0);
   const populationRecords = ownedItems.filter(item => item.grading?.population != null);
   const change24h = card.price.change24h;
+  const topMarketSummary = marketSummary ?? (
+    card.price.available
+      ? { label: 'Raw / Ungraded', price: card.price.raw, currency: card.price.currency }
+      : null
+  );
 
   function selectDetailMode(mode: DetailMode) {
     setDetailMode(mode);
-    if (mode === 'Raw') setPriceTab('Raw');
-    if (mode === 'Graded' && priceTab === 'Raw') {
-      const firstAvailable = PRICE_TABS.slice(1).find(tab => effectiveTabPrice(tab) !== undefined);
-      if (firstAvailable) setPriceTab(firstAvailable);
-    }
   }
 
   function handleAddToCollection() {
@@ -983,10 +902,6 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
-          <View style={styles.identityStamp}>
-            <Feather name="check" size={10} color={C.positive} />
-            <Text style={styles.identityStampText}>IDENTITY MATCHED</Text>
-          </View>
 
           {/* Prev/next arrow buttons */}
           {hasPrev && (
@@ -1086,10 +1001,10 @@ export default function CardDetailScreen() {
 
           <View style={styles.valueRow}>
             <View>
-              <Text style={styles.valueLabel}>{priceTab} verified market value</Text>
+              <Text style={styles.valueLabel}>{topMarketSummary?.label ?? 'Market'} value</Text>
               <Text style={styles.valueAmount}>
-                {activePrice !== undefined
-                  ? `${displayCurrency} ${activePrice.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                {topMarketSummary
+                  ? `${topMarketSummary.currency} ${topMarketSummary.price.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   : 'Price unavailable'}
               </Text>
             </View>
@@ -1110,27 +1025,6 @@ export default function CardDetailScreen() {
             )}
           </View>
 
-          <View style={styles.confidenceRow}>
-            <View style={styles.confidenceStatus}>
-              <View style={styles.confidenceDot} />
-              <Text style={styles.confidenceText}>{card.price.available ? 'Verified provider quote' : 'Awaiting verified quote'}</Text>
-            </View>
-            <Text style={styles.confidenceText}>{card.price.currency}</Text>
-          </View>
-
-          <Pressable
-            onPress={() => {
-              setDetailMode('Raw');
-              setShowSoldHistory(current => !current);
-            }}
-            style={styles.soldListingsButton}
-            accessibilityRole="button"
-            accessibilityLabel={showSoldHistory ? 'Hide sold listings' : 'View sold listings'}
-          >
-            <Feather name="tag" size={15} color={C.primaryForeground} />
-            <Text style={styles.soldListingsButtonText}>{showSoldHistory ? 'Hide sold listings' : 'View sold listings'}</Text>
-            <Feather name={showSoldHistory ? 'chevron-up' : 'external-link'} size={14} color={C.primaryForeground} />
-          </Pressable>
         </View>
 
         <View style={styles.modeTabs} accessibilityRole="tablist">
@@ -1151,35 +1045,6 @@ export default function CardDetailScreen() {
           ))}
         </View>
 
-        {detailMode === 'Graded' && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.priceTabs}
-            contentContainerStyle={styles.priceTabsContent}
-          >
-            {PRICE_TABS.slice(1).map(t => {
-              const price = effectiveTabPrice(t);
-              if (!price) return null;
-              return (
-                <Pressable
-                  key={t}
-                  onPress={() => setPriceTab(t)}
-                  style={[styles.priceTab, priceTab === t && styles.priceTabActive]}
-                  accessibilityRole="tab"
-                  accessibilityLabel={`${t} price: ${displayCurrency} ${price.toLocaleString('en-AU')}`}
-                  accessibilityState={{ selected: priceTab === t }}
-                >
-                  <Text style={[styles.priceTabLabel, priceTab === t && styles.priceTabLabelActive]}>{t}</Text>
-                  <Text style={[styles.priceTabValue, priceTab === t && styles.priceTabValueActive]}>
-                    {displayCurrency} {price.toLocaleString('en-AU')}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        )}
-
         {/* ── Verified Market Pricing ──────────────────────────────────── */}
         {detailMode !== 'POP' && (
           <VerifiedPricingCard
@@ -1188,120 +1053,10 @@ export default function CardDetailScreen() {
             isPro={hasAdvancedPricing}
             onUpgradePress={() => router.push('/pro-subscription')}
             chartWidth={W - 40 - 36}
+            mode={detailMode === 'Graded' ? 'graded' : 'raw'}
+            onMarketSummaryChange={handleMarketSummaryChange}
           />
         )}
-
-        {detailMode === 'Raw' && showSoldHistory && (
-          <EbaySoldHistoryCard card={card} displayCurrency={displayCurrency} />
-        )}
-
-        {/* GRADED pricing section */}
-        {detailMode === 'Graded' && <View style={[styles.card, styles.marketPanel]}>
-          <View style={styles.rawHeader}>
-            <View style={[styles.rawBadge, { backgroundColor: `${C.primary}22` }]}>
-              <Text style={[styles.rawBadgeText, { color: C.primary }]}>GRADED</Text>
-            </View>
-            <Text style={styles.sectionTitle}>Graded Prices</Text>
-          </View>
-
-          {hasAdvancedPricing ? (
-            <View>
-              {gradedLoading ? (
-                <ActivityIndicator
-                  color={C.primary}
-                  style={{ marginVertical: 14, alignSelf: 'center' }}
-                />
-              ) : gradedRequiresUpgrade ? (
-                <>
-                  {GRADERS.map(grader => (
-                    <View key={grader.key} style={styles.gradedRow}>
-                      <Text style={styles.gradedLabel}>{grader.label}</Text>
-                      <View style={styles.gradedBlurred}>
-                        <Text style={styles.gradedBlurText}>••••</Text>
-                        <Feather name="lock" size={12} color={C.mutedForeground} />
-                      </View>
-                    </View>
-                  ))}
-                  <Pressable
-                    onPress={() => router.push('/pro-subscription')}
-                    style={styles.gradedCta}
-                    accessibilityRole="button"
-                    accessibilityLabel="Upgrade to Pro to unlock graded pricing"
-                  >
-                    <Feather name="zap" size={13} color="#FFF" />
-                    <Text style={styles.gradedCtaText}>Upgrade to Pro</Text>
-                  </Pressable>
-                </>
-              ) : Object.keys(liveGradedPrices).length === 0 ? (
-                <View style={styles.gradedUnavailable}>
-                  <Text style={[styles.gradedLabel, { textAlign: 'center', color: C.mutedForeground }]}>
-                    {gradedMessage ?? (
-                      gradedAvailability === 'no_results'
-                        ? 'No matching eBay completed sales found for these grades.'
-                        : 'Graded price data unavailable'
-                    )}
-                  </Text>
-                  {gradedAvailability !== 'configuration_error' && (
-                    <Pressable
-                      onPress={() => setGradedRetryNonce((current) => current + 1)}
-                      style={styles.gradedRetry}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry eBay graded pricing"
-                    >
-                      <Feather name="refresh-cw" size={13} color={C.primary} />
-                      <Text style={styles.gradedRetryText}>Retry eBay sales</Text>
-                    </Pressable>
-                  )}
-                </View>
-              ) : (
-                GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => {
-                  // Map grader key to price tab so tapping a grader row switches the chart
-                  const tabMap: Record<string, PriceTab> = {
-                    psa9: 'PSA 9', psa10: 'PSA 10', cgc10: 'CGC 10', bgs95: 'BGS 9.5',
-                  };
-                  const tab = tabMap[grader.key];
-                  const isActive = tab && priceTab === tab;
-                  return (
-                    <Pressable
-                      key={grader.key}
-                      onPress={() => tab && setPriceTab(tab)}
-                      style={[styles.gradedRow, isActive && { backgroundColor: `${C.primary}12`, borderRadius: 8, marginHorizontal: -4, paddingHorizontal: 4 }]}
-                    >
-                      <Text style={[styles.gradedLabel, isActive && { color: C.primary }]}>{grader.label}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[styles.gradedValue, isActive && { color: C.primary }]}>
-                          ${(liveGradedPrices[grader.key]!).toLocaleString('en-AU')} AUD
-                        </Text>
-                        {tab && <Feather name="bar-chart-2" size={12} color={isActive ? C.primary : C.mutedForeground} />}
-                      </View>
-                    </Pressable>
-                  );
-                })
-              )}
-            </View>
-          ) : (
-            <>
-              {GRADERS.map(grader => (
-                <View key={grader.key} style={styles.gradedRow}>
-                  <Text style={styles.gradedLabel}>{grader.label}</Text>
-                  <View style={styles.gradedBlurred}>
-                    <Text style={styles.gradedBlurText}>••••</Text>
-                    <Feather name="lock" size={12} color={C.mutedForeground} />
-                  </View>
-                </View>
-              ))}
-              <Pressable
-                onPress={() => router.push('/pro-subscription')}
-                style={styles.gradedCta}
-                accessibilityRole="button"
-                accessibilityLabel="Unlock graded pricing with Pro"
-              >
-                <Feather name="zap" size={13} color="#FFF" />
-                <Text style={styles.gradedCtaText}>Unlock graded pricing</Text>
-              </Pressable>
-            </>
-          )}
-        </View>}
 
         {detailMode === 'POP' && (
           <View style={[styles.card, styles.marketPanel]}>

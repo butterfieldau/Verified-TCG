@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -176,6 +177,14 @@ interface VerifiedPricingCardProps {
   isPro: boolean;
   onUpgradePress: () => void;
   chartWidth: number;
+  mode?: 'raw' | 'graded';
+  onMarketSummaryChange?: (summary: VerifiedPricingSummary | null) => void;
+}
+
+export interface VerifiedPricingSummary {
+  label: string;
+  price: number;
+  currency: string;
 }
 
 export default function VerifiedPricingCard({
@@ -184,6 +193,8 @@ export default function VerifiedPricingCard({
   isPro,
   onUpgradePress,
   chartWidth,
+  mode = 'raw',
+  onMarketSummaryChange,
 }: VerifiedPricingCardProps) {
   const [pricing, setPricing] = useState<CardPricingResult | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
@@ -205,18 +216,19 @@ export default function VerifiedPricingCard({
     displayCurrency,
   };
 
+  const quoteMatchesMode = useCallback((quote: PricingQuote) =>
+    mode === 'raw' ? quote.gradeKey === 'raw' : quote.gradeKey !== 'raw', [mode]);
+
   const updatePricing = useCallback((result: CardPricingResult) => {
     setPricing(result);
-    // Keep a user's selected grade when it is still available. A newly matched
-    // card selects the provider's first real quote, rather than leaving a raw
-    // placeholder selected when only a graded quote exists.
+    const matchingQuotes = result.quotes.filter(quoteMatchesMode);
     setSelectedGradeKey(previous =>
-      result.quotes.some(quote => quote.gradeKey === previous)
+      matchingQuotes.some(quote => quote.gradeKey === previous)
         ? previous
-        : result.quotes[0]?.gradeKey ?? 'raw',
+        : matchingQuotes[0]?.gradeKey ?? (mode === 'raw' ? 'raw' : ''),
     );
     setPollAttempt(result.status === 'pending_match' || result.queued ? 1 : 0);
-  }, []);
+  }, [mode, quoteMatchesMode]);
 
   // Load pricing on mount / card change
   useEffect(() => {
@@ -303,6 +315,19 @@ export default function VerifiedPricingCard({
     }
   }, [card.id, pricingOptions, updatePricing]);
 
+  useEffect(() => {
+    const visible = pricing?.quotes.filter(quoteMatchesMode) ?? [];
+    const quote = visible.find(value => value.gradeKey === selectedGradeKey) ?? visible[0];
+    const market = quote
+      ? (pricing?.verifiedMarket ?? []).find(value => value.gradeKey === quote.gradeKey)
+      : undefined;
+    onMarketSummaryChange?.(quote ? {
+      label: quote.label,
+      price: market?.verifiedMarketValue ?? quote.price,
+      currency: market?.currency ?? quote.currency,
+    } : null);
+  }, [onMarketSummaryChange, pricing, quoteMatchesMode, selectedGradeKey]);
+
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (pricingLoading) {
     return (
@@ -332,17 +357,25 @@ export default function VerifiedPricingCard({
     );
   }
 
+  const visibleQuotes = pricing.quotes.filter(quoteMatchesMode);
   const selectedQuote: PricingQuote | undefined =
-    pricing.quotes.find(q => q.gradeKey === selectedGradeKey) ?? pricing.quotes[0];
+    visibleQuotes.find(q => q.gradeKey === selectedGradeKey) ?? visibleQuotes[0];
   const selectedMarket =
     (pricing.verifiedMarket ?? []).find(value => value.gradeKey === selectedGradeKey)
     ?? pricing.verifiedMarket?.[0];
 
-  const hasQuotes = pricing.quotes.length > 0;
+  const hasQuotes = visibleQuotes.length > 0;
   const isAvailable = pricing.status === 'available' || pricing.status === 'stale';
 
   // Movement from history
   const movement = history?.movement ?? null;
+
+  const ebaySearchUrl = `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent([
+    card.name,
+    card.setName,
+    card.number,
+    mode === 'graded' ? selectedQuote?.label : null,
+  ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
   return (
     <View style={[vpStyles.card, { backgroundColor: C.card }]}>
@@ -384,7 +417,7 @@ export default function VerifiedPricingCard({
           style={vpStyles.gradeScroll}
           contentContainerStyle={vpStyles.gradeScrollContent}
         >
-          {pricing.quotes.map(q => (
+          {visibleQuotes.map(q => (
             <Pressable
               key={q.gradeKey}
               onPress={() => setSelectedGradeKey(q.gradeKey)}
@@ -569,17 +602,31 @@ export default function VerifiedPricingCard({
         </Pressable>
       )}
 
-      {selectedMarket && (
-        <View style={vpStyles.sourceDisclosure}>
-          <Text style={vpStyles.sourceDisclosureLabel}>PRICING SOURCES</Text>
-          <Text style={vpStyles.sourceDisclosureText}>
+      <View style={vpStyles.sourceDisclosure}>
+        <Text style={vpStyles.sourceDisclosureLabel}>PRICING SOURCES</Text>
+        <Text style={vpStyles.sourceDisclosureText}>
+          {selectedMarket ? (
+            <>
             Verified Market uses normalized {selectedMarket.providers.map(provider => provider.label).join(', ')}
             {' '}quotes. Current values are based on {selectedMarket.confidence.providerCount}
             {' '}provider{selectedMarket.confidence.providerCount === 1 ? '' : 's'}; ranges appear only from
             retained snapshots. Original quote currency is preserved above.
-          </Text>
-        </View>
-      )}
+            </>
+          ) : (
+            'Pricing is not currently available for this condition.'
+          )}
+        </Text>
+        <Pressable
+          onPress={() => void Linking.openURL(ebaySearchUrl)}
+          style={vpStyles.ebayButton}
+          accessibilityRole="link"
+          accessibilityLabel={`View completed eBay listings for ${card.name}`}
+        >
+          <Feather name="tag" size={15} color={C.primaryForeground} />
+          <Text style={vpStyles.ebayButtonText}>View sold listings on eBay</Text>
+          <Feather name="external-link" size={14} color={C.primaryForeground} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -692,5 +739,21 @@ const vpStyles = StyleSheet.create({
   },
   sourceDisclosureText: {
     fontSize: 10, lineHeight: 15, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}CC`,
+  },
+  ebayButton: {
+    minHeight: 46,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 14,
+  },
+  ebayButtonText: {
+    color: C.primaryForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 12,
   },
 });
