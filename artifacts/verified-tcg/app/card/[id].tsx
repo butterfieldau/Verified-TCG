@@ -590,6 +590,13 @@ export default function CardDetailScreen() {
   const [showCardActions, setShowCardActions] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
+  const [priceChartGestureActive, setPriceChartGestureActive] = useState(false);
+  const handlePriceChartInteractionStart = useCallback(() => {
+    setPriceChartGestureActive(true);
+  }, []);
+  const handlePriceChartInteractionEnd = useCallback(() => {
+    setPriceChartGestureActive(false);
+  }, []);
 
   // Catalog API fetch state. Navigation may include an API-shaped card for a
   // fast first paint, but the app never resolves a release card from fixtures.
@@ -720,6 +727,7 @@ export default function CardDetailScreen() {
   // Horizontal pan gesture for swipe-to-navigate (doesn't interfere with the
   // vertical ScrollView since we fail on primarily-vertical movement)
   const swipeGesture = Gesture.Pan()
+    .enabled(!priceChartGestureActive)
     .activeOffsetX([-25, 25])
     .failOffsetY([-15, 15])
     .onEnd((e) => {
@@ -842,6 +850,7 @@ export default function CardDetailScreen() {
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: topPad, paddingBottom: tabH + 24 }]}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={!priceChartGestureActive}
       >
         {/* Nav */}
         <View style={styles.nav}>
@@ -1092,6 +1101,8 @@ export default function CardDetailScreen() {
             chartWidth={W - 40 - 36}
             mode={detailMode === 'Graded' ? 'graded' : 'raw'}
             onRawMarketSummaryChange={handleRawMarketSummaryChange}
+            onPriceChartInteractionStart={handlePriceChartInteractionStart}
+            onPriceChartInteractionEnd={handlePriceChartInteractionEnd}
             populationRecords={populationRecords.flatMap(item =>
               item.grading?.company != null
               && item.grading.grade != null

@@ -17,6 +17,11 @@ import {
   tradingCardHeight,
   tradingCardRadius,
 } from '../services/collectionLayout';
+import {
+  CHART_GESTURE_THRESHOLD,
+  CHART_HORIZONTAL_INTENT_RATIO,
+  shouldCaptureHorizontalChartGesture,
+} from '../components/ui/VerifiedPricingCard';
 
 const summary = (overrides: Partial<CollectionSummary> = {}): CollectionSummary => ({
   totalValue: 100,
@@ -216,5 +221,41 @@ describe('collection card framing', () => {
     expect(TRADING_CARD_ASPECT_RATIO).toBeCloseTo(1.4);
     expect(tradingCardHeight(150)).toBe(210);
     expect(tradingCardRadius(150)).toBeCloseTo(6.75);
+  });
+});
+
+describe('portfolio and price-history chart contracts', () => {
+  const homeSource = readFileSync(join(__dirname, '../app/(tabs)/index.tsx'), 'utf8');
+  const detailSource = readFileSync(join(__dirname, '../app/card/[id].tsx'), 'utf8');
+  const pricingSource = readFileSync(join(__dirname, '../components/ui/VerifiedPricingCard.tsx'), 'utf8');
+
+  it('keeps every Home portfolio chart decoration on the positive portfolio color', () => {
+    expect(homeSource).toContain('const chartColor = C.positive;');
+    expect(homeSource).toContain("const gradId = 'chartGreen';");
+    expect(homeSource).not.toContain('isPositive={isPositive}');
+    expect(homeSource).toContain('isOneDayPositive');
+  });
+
+  it('captures only clear horizontal chart intent', () => {
+    expect(CHART_GESTURE_THRESHOLD).toBe(8);
+    expect(CHART_HORIZONTAL_INTENT_RATIO).toBe(1.15);
+    expect(shouldCaptureHorizontalChartGesture(12, 4)).toBe(true);
+    expect(shouldCaptureHorizontalChartGesture(12, 12)).toBe(false);
+    expect(shouldCaptureHorizontalChartGesture(7, 0)).toBe(false);
+    expect(pricingSource).toContain('onStartShouldSetPanResponder: () => false');
+    expect(pricingSource).toContain('onMoveShouldSetPanResponder');
+    expect(pricingSource).toContain('onPanResponderTerminationRequest: () => false');
+  });
+
+  it('suspends only the card-detail page scroll during accepted chart inspection', () => {
+    expect(pricingSource).toContain('onPriceChartInteractionStart');
+    expect(pricingSource).toContain('onPriceChartInteractionEnd');
+    expect(pricingSource).toContain('onInteractionStart={onPriceChartInteractionStart}');
+    expect(pricingSource).toContain('onInteractionEnd={onPriceChartInteractionEnd}');
+    expect(detailSource).toContain('scrollEnabled={!priceChartGestureActive}');
+    expect(detailSource).toContain('.enabled(!priceChartGestureActive)');
+    expect(detailSource).toContain('onPriceChartInteractionStart={handlePriceChartInteractionStart}');
+    expect(detailSource).toContain('onPriceChartInteractionEnd={handlePriceChartInteractionEnd}');
+    expect((pricingSource.match(/<MiniLineChart/g) ?? []).length).toBe(2);
   });
 });

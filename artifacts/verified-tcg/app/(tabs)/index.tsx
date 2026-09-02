@@ -120,7 +120,6 @@ interface ChartPoint {
 
 interface InteractiveChartProps {
   data: ChartPoint[];
-  isPositive: boolean;
   onPointSelect: (pt: ChartPoint | null) => void;
   onInteractionStart?: () => void;
   onInteractionEnd?: () => void;
@@ -128,7 +127,6 @@ interface InteractiveChartProps {
 
 function InteractiveChart({
   data,
-  isPositive,
   onPointSelect,
   onInteractionStart,
   onInteractionEnd,
@@ -148,8 +146,10 @@ function InteractiveChart({
   const maxV = vals.length > 0 ? Math.max(...vals) : 1;
   const rangeV = maxV - minV;
 
-  const chartColor = isPositive ? C.positive : C.negative;
-  const gradId = isPositive ? 'chartGreen' : 'chartRed';
+  // This is a portfolio-value chart, not a daily movement indicator. The
+  // separate movement badge below owns positive/negative semantics.
+  const chartColor = C.positive;
+  const gradId = 'chartGreen';
 
   // Map data index → pixel x
   const xOf = (i: number) => chartXForIndex(i, data.length, width, padL, padR);
@@ -580,9 +580,6 @@ export default function HomeScreen() {
     : valueState.kind === 'empty' || valueState.kind === 'priced'
       ? valueState.value
       : null;
-  // First-to-last portfolio value can include acquisitions and sales, so it is
-  // not a market gain signal. Colour follows only the authoritative daily move.
-  const isPositive = (serverSummary?.todayMovement?.absolute ?? 0) >= 0;
   const unavailableChartPoints = allChartData.filter(
     point => point.available === false || point.value == null,
   ).length;
@@ -766,7 +763,6 @@ export default function HomeScreen() {
           <View>
             <InteractiveChart
               data={chartData}
-              isPositive={isPositive}
               onPointSelect={setActiveChartPoint}
               onInteractionStart={() => setChartGestureActive(true)}
               onInteractionEnd={() => setChartGestureActive(false)}
@@ -779,7 +775,6 @@ export default function HomeScreen() {
           <View>
             <InteractiveChart
               data={[performanceView.point]}
-              isPositive
               onPointSelect={setActiveChartPoint}
               onInteractionStart={() => setChartGestureActive(true)}
               onInteractionEnd={() => setChartGestureActive(false)}

@@ -7,10 +7,11 @@
  * Never fabricates prices.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Linking,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,6 +33,14 @@ import {
 import type { Card } from '@/types';
 
 const C = colors.dark;
+
+export const CHART_GESTURE_THRESHOLD = 8;
+export const CHART_HORIZONTAL_INTENT_RATIO = 1.15;
+
+export function shouldCaptureHorizontalChartGesture(dx: number, dy: number): boolean {
+  return Math.abs(dx) > CHART_GESTURE_THRESHOLD
+    && Math.abs(dx) > Math.abs(dy) * CHART_HORIZONTAL_INTENT_RATIO;
+}
 
 const HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
   { value: '7d', label: '7D' },
@@ -170,10 +179,60 @@ interface MiniChartProps {
   height: number;
   loading?: boolean;
   graded?: boolean;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 }
 
-function MiniLineChart({ points, width, height, loading, graded = false }: MiniChartProps) {
+function MiniLineChart({
+  points,
+  width,
+  height,
+  loading,
+  graded = false,
+  onInteractionStart,
+  onInteractionEnd,
+}: MiniChartProps) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const gestureActive = useRef(false);
+
+  const PAD = { top: 4, right: 2, bottom: 4, left: 2 };
+  const chartW = width - PAD.left - PAD.right;
+  const selectAtX = useCallback((x: number) => {
+    const ratio = Math.max(0, Math.min(1, (x - PAD.left) / Math.max(chartW, 1)));
+    setActiveIndex(Math.min(points.length - 1, Math.max(0, Math.round(ratio * (points.length - 1)))));
+  }, [chartW, points.length]);
+
+  const finishGesture = useCallback(() => {
+    if (!gestureActive.current) return;
+    gestureActive.current = false;
+    setActiveIndex(null);
+    onInteractionEnd?.();
+  }, [onInteractionEnd]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    // Let the surrounding ScrollView handle a touch until horizontal intent is
+    // clear. This keeps vertical gestures outside the chart fully scrollable.
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gesture) =>
+      shouldCaptureHorizontalChartGesture(gesture.dx, gesture.dy),
+    onPanResponderGrant: event => {
+      gestureActive.current = true;
+      onInteractionStart?.();
+      selectAtX(event.nativeEvent.locationX);
+    },
+    onPanResponderMove: event => {
+      selectAtX(event.nativeEvent.locationX);
+    },
+    onPanResponderRelease: finishGesture,
+    onPanResponderTerminate: finishGesture,
+    // Once inspection begins, keep ownership until the touch ends. This avoids
+    // handing a horizontal inspection back to the vertical parent midway.
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  }), [finishGesture, onInteractionStart, selectAtX]);
+
+  useEffect(() => finishGesture, [finishGesture]);
+
   if (loading) {
     return (
       <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
@@ -206,8 +265,6 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
     );
   }
 
-  const PAD = { top: 4, right: 2, bottom: 4, left: 2 };
-  const chartW = width - PAD.left - PAD.right;
   const chartH = height - PAD.top - PAD.bottom;
   const prices = points.map(p => p.price);
   const minP = Math.min(...prices);
@@ -220,11 +277,6 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
   const coords = points.map((pt, i) => ({ x: toX(i), y: toY(pt.price) }));
   const activePoint = activeIndex == null ? null : points[activeIndex] ?? null;
   const activeCoord = activeIndex == null ? null : coords[activeIndex] ?? null;
-  const selectAtX = (x: number) => {
-    const ratio = Math.max(0, Math.min(1, (x - PAD.left) / Math.max(chartW, 1)));
-    setActiveIndex(Math.min(points.length - 1, Math.max(0, Math.round(ratio * (points.length - 1)))));
-  };
-
   function makePath(pts: { x: number; y: number }[]): string {
     if (pts.length < 2) return '';
     let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
@@ -248,12 +300,7 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
   return (
     <View
       style={{ width, height, position: 'relative' }}
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-      onResponderGrant={event => selectAtX(event.nativeEvent.locationX)}
-      onResponderMove={event => selectAtX(event.nativeEvent.locationX)}
-      onResponderRelease={() => setActiveIndex(null)}
-      onResponderTerminate={() => setActiveIndex(null)}
+      {...panResponder.panHandlers}
       accessibilityRole="adjustable"
       accessibilityLabel="Interactive price history chart. Hold and drag to inspect a retained market observation."
     >
@@ -346,6 +393,8 @@ interface VerifiedPricingCardProps {
   mode?: 'raw' | 'graded';
   onRawMarketSummaryChange?: (summary: VerifiedPricingSummary | null) => void;
   populationRecords?: VerifiedGradePopulation[];
+  onPriceChartInteractionStart?: () => void;
+  onPriceChartInteractionEnd?: () => void;
 }
 
 export interface VerifiedPricingSummary {
@@ -383,6 +432,8 @@ export default function VerifiedPricingCard({
   mode = 'raw',
   onRawMarketSummaryChange,
   populationRecords = [],
+  onPriceChartInteractionStart,
+  onPriceChartInteractionEnd,
 }: VerifiedPricingCardProps) {
   const [pricing, setPricing] = useState<CardPricingResult | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
@@ -904,6 +955,8 @@ export default function VerifiedPricingCard({
               height={168}
               loading={historyLoading}
               graded
+              onInteractionStart={onPriceChartInteractionStart}
+              onInteractionEnd={onPriceChartInteractionEnd}
             />
 
             {selectedComparisonKeys.length > 0 && (
@@ -988,6 +1041,8 @@ export default function VerifiedPricingCard({
               width={chartWidth}
               height={100}
               loading={historyLoading}
+              onInteractionStart={onPriceChartInteractionStart}
+              onInteractionEnd={onPriceChartInteractionEnd}
             />
 
             {historyError && !historyLoading ? (
