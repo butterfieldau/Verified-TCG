@@ -191,6 +191,20 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
     );
   }
 
+  // One observation establishes a current quote, not market history. Drawing
+  // it as a full-width filled chart made a newly captured value look broken
+  // and implied movement that the provider has not supplied.
+  if (points.length === 1) {
+    return (
+      <View style={{ width, height, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: graded ? C.primary : '#22c55e' }} />
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: 'rgba(255,255,255,0.42)', textAlign: 'center' }}>
+          One retained market observation
+        </Text>
+      </View>
+    );
+  }
+
   const PAD = { top: 4, right: 2, bottom: 4, left: 2 };
   const chartW = width - PAD.left - PAD.right;
   const chartH = height - PAD.top - PAD.bottom;
@@ -216,9 +230,7 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
     return d;
   }
 
-  const linePath = points.length === 1
-    ? `M ${PAD.left} ${coords[0]!.y} L ${PAD.left + chartW} ${coords[0]!.y}`
-    : makePath(coords);
+  const linePath = makePath(coords);
   const bottom = PAD.top + chartH;
   const firstX = coords[0]!.x;
   const lastX = coords[coords.length - 1]!.x;
@@ -234,7 +246,7 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
           <Stop offset="1" stopColor={lineColor} stopOpacity={0} />
         </SvgLinearGradient>
       </Defs>
-      <Path d={areaPath} fill="url(#vpChartFill)" />
+      {maxP !== minP && <Path d={areaPath} fill="url(#vpChartFill)" />}
       <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );

@@ -24,6 +24,7 @@ import {
   normalizeGradeKey,
 } from "../pricing/grades.js";
 import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
+import { extractJustTcgRawQuote } from "../pricing/justtcg.js";
 
 describe("Grade definitions", () => {
   test("all documented card condition keys are defined", () => {
@@ -157,6 +158,36 @@ describe("Verified Market aggregation", () => {
       isStale: false,
       retainedSnapshotCents: [],
     }), null);
+  });
+});
+
+describe("JustTCG raw history parsing", () => {
+  test("keeps positive provider observations and never converts missing prices to zero", () => {
+    const quote = extractJustTcgRawQuote({
+      id: "justtcg-card-1",
+      variants: [{
+        condition: "Near Mint",
+        printing: "Normal",
+        price: 12.34,
+        currency: "USD",
+        lastUpdated: 1_788_307_200,
+        priceHistory: [
+          { t: 1_788_220_800, p: 10.5 },
+          { t: 1_788_307_200, p: 12.34 },
+          { t: 1_788_393_600, p: 0 },
+        ],
+      }],
+    }, new Date("2026-09-02T12:00:00.000Z"));
+
+    assert.ok(quote);
+    assert.equal(quote.priceCents, 1234);
+    assert.equal(quote.currency, "USD");
+    assert.deepEqual(quote.history.map(point => point.priceCents), [1050, 1234]);
+  });
+
+  test("rejects absent or malformed raw provider values", () => {
+    assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: 0 }] }), null);
+    assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: "unknown" }] }), null);
   });
 });
 

@@ -59,6 +59,11 @@ import {
   type VerifiedMarketValue,
 } from "./engine.js";
 import { recordTelemetry } from "../lib/telemetry.js";
+import { justTcg } from "../lib/catalogueProvider.js";
+import {
+  JUSTTCG_PRICING_PROVIDER_KEY,
+  persistJustTcgRawQuote,
+} from "./justtcg.js";
 
 /**
  * Fixed operation enum for PriceCharting integration telemetry. Never
@@ -150,6 +155,35 @@ export interface PricingResponse {
 // ── In-flight background match jobs ──────────────────────────────────────────
 
 const matchInFlight = new Map<string, Promise<void>>();
+const justTcgRawPricingInFlight = new Map<string, Promise<boolean>>();
+
+function isJustTcgPricingConfigured(): boolean {
+  return Boolean(process.env.JUSTTCG_API_KEY?.trim());
+}
+
+/**
+ * The public card id is a JustTCG id. Resolve it directly and persist only
+ * genuine positive raw observations plus the provider's returned history.
+ */
+async function refreshJustTcgRawHistory(cardId: string): Promise<boolean> {
+  if (!isJustTcgPricingConfigured()) return false;
+  const existing = justTcgRawPricingInFlight.get(cardId);
+  if (existing) return existing;
+  const request = (async () => {
+    try {
+      const params = new URLSearchParams({ cardId, priceHistoryDuration: "30d" });
+      const result = await justTcg(`/cards?${params.toString()}`);
+      if (result.status >= 400) return false;
+      const data = result.body as { data?: Array<Record<string, unknown>> } | null;
+      const card = data?.data?.find(candidate => candidate.id === cardId);
+      return Boolean(card && await persistJustTcgRawQuote(card));
+    } catch {
+      return false;
+    }
+  })().finally(() => justTcgRawPricingInFlight.delete(cardId));
+  justTcgRawPricingInFlight.set(cardId, request);
+  return request;
+}
 
 async function recordProviderHealth(
   healthy: boolean,
@@ -2034,15 +2068,26 @@ export async function getPriceHistory(opts: {
   const { cardId, periodDays = 30, displayCurrency = "AUD" } = opts;
   const canonicalGradeKey = normalizeGradeKey(opts.gradeKey ?? "raw") ?? "raw";
 
+  // Raw historical data is sourced from JustTCG. Fetching the exact public id
+  // here also lets a card-detail page repair an empty local cache without
+  // inventing any backfilled observations.
+  if (canonicalGradeKey === "raw") {
+    await refreshJustTcgRawHistory(cardId);
+  }
+
   const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
 
-  const snapshotRows = await db
+  let historyProviderKey = canonicalGradeKey === "raw"
+    ? JUSTTCG_PRICING_PROVIDER_KEY
+    : PROVIDER_KEY;
+
+  let snapshotRows = await db
     .select()
     .from(cardPriceSnapshotsTable)
     .where(
       and(
         eq(cardPriceSnapshotsTable.cardId, cardId),
-        eq(cardPriceSnapshotsTable.providerKey, PROVIDER_KEY),
+        eq(cardPriceSnapshotsTable.providerKey, historyProviderKey),
         eq(cardPriceSnapshotsTable.gradeKey, canonicalGradeKey),
         gte(cardPriceSnapshotsTable.capturedAt, since),
         eq(cardPriceSnapshotsTable.captureStatus, "success"),
@@ -2054,16 +2099,35 @@ export async function getPriceHistory(opts: {
   // so an initial new capture does not hide an existing multi-day price graph.
   // A timestamped capture wins for its calendar day because it has the more
   // precise observation; daily rows fill only days without such a capture.
-  const legacyRows = await db
+  let legacyRows = await db
     .select()
     .from(providerPriceHistoryTable)
     .where(and(
       eq(providerPriceHistoryTable.cardId, cardId),
-      eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+      eq(providerPriceHistoryTable.providerKey, historyProviderKey),
       eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
       gte(providerPriceHistoryTable.snapshotDate, since.toISOString().slice(0, 10)),
     ))
     .orderBy(providerPriceHistoryTable.snapshotDate);
+
+  // Keep existing PriceCharting history available while a JustTCG cache is
+  // cold. It is a fallback only: a real JustTCG observation always wins.
+  if (canonicalGradeKey === "raw" && snapshotRows.length === 0 && legacyRows.length === 0) {
+    historyProviderKey = PROVIDER_KEY;
+    snapshotRows = await db.select().from(cardPriceSnapshotsTable).where(and(
+      eq(cardPriceSnapshotsTable.cardId, cardId),
+      eq(cardPriceSnapshotsTable.providerKey, historyProviderKey),
+      eq(cardPriceSnapshotsTable.gradeKey, canonicalGradeKey),
+      gte(cardPriceSnapshotsTable.capturedAt, since),
+      eq(cardPriceSnapshotsTable.captureStatus, "success"),
+    )).orderBy(cardPriceSnapshotsTable.capturedAt);
+    legacyRows = await db.select().from(providerPriceHistoryTable).where(and(
+      eq(providerPriceHistoryTable.cardId, cardId),
+      eq(providerPriceHistoryTable.providerKey, historyProviderKey),
+      eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
+      gte(providerPriceHistoryTable.snapshotDate, since.toISOString().slice(0, 10)),
+    )).orderBy(providerPriceHistoryTable.snapshotDate);
+  }
 
   const snapshotDays = new Set(
     snapshotRows.map((row) => row.capturedAt.toISOString().slice(0, 10)),
@@ -2128,10 +2192,10 @@ export async function getPriceHistory(opts: {
     gradeKey: canonicalGradeKey,
     points,
     source: snapshotRows.length > 0 && legacyRows.length > 0
-      ? "pricecharting_retained_history_and_snapshots"
+      ? `${historyProviderKey}_retained_history_and_snapshots`
       : snapshotRows.length > 0
-        ? "pricecharting_snapshots"
-        : PROVIDER_KEY,
+        ? `${historyProviderKey}_snapshots`
+        : historyProviderKey,
     historyAvailable: points.length >= 2,
     movement,
     updatedAt: latestRow?.recordedAt?.toISOString() ?? null,
