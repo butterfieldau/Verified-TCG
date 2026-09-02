@@ -563,6 +563,13 @@ router.get("/collection/summary", requireActiveUser, async (req: AuthRequest, re
     unrealizedGain: dollars(valuation.unrealizedGainCents),
     unrealizedGainCents: valuation.unrealizedGainCents,
     unrealizedGainPercent: valuation.unrealizedGainPercent,
+    partialUnrealizedGain: dollars(valuation.partialUnrealizedGainCents),
+    partialUnrealizedGainCents: valuation.partialUnrealizedGainCents,
+    partialUnrealizedGainPercent: valuation.partialUnrealizedGainPercent,
+    gainCoverage: {
+      pricedHoldings: valuation.gainPricedHoldings,
+      totalHoldings: valuation.totalHoldings,
+    },
     realisedGain: dollars(realised.cents),
     realisedGainCents: realised.cents,
     currency: displayCurrency,

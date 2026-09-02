@@ -39,7 +39,8 @@ export function getHomePerformanceView(
   range: PortfolioRange,
 ): HomePerformanceView {
   if (!performance) return { kind: 'unavailable', message: 'Price history is not available yet' };
-  const available = performance.points.filter(point => point.available !== false && point.value != null);
+  const drawablePoints = getRenderableHomeChartPoints(performance.points);
+  const available = drawablePoints.filter(point => point.available !== false && point.value != null);
   if (!performance.historyAvailable || available.length === 0) {
     return {
       kind: 'unavailable',
@@ -47,8 +48,8 @@ export function getHomePerformanceView(
         ?? `No retained market value is available for ${range}`,
     };
   }
-  if (performance.points.length === 1) return { kind: 'initial', point: performance.points[0]! };
-  if (performance.points.length >= 2) return { kind: 'chart', points: performance.points };
+  if (available.length === 1) return { kind: 'initial', point: available[0]! };
+  if (drawablePoints.length >= 2) return { kind: 'chart', points: drawablePoints };
   return {
     kind: 'unavailable',
     message: performance.historyUnavailableReason
@@ -73,15 +74,56 @@ export function chartXForIndex(
 }
 
 /**
- * Do not let unavailable samples create an empty leading span before the first
- * real observation. The missing samples are still retained by the caller for
- * completeness messaging; this helper only controls the drawable series.
+ * Do not let an account-creation zero or unavailable samples create an empty
+ * leading span before the first real market observation. The baseline is an
+ * ownership event, not a price, so including it would manufacture a portfolio
+ * gain. Missing samples remain available to the caller for completeness copy.
  */
 export function getRenderableHomeChartPoints(points: PerformancePoint[]): PerformancePoint[] {
-  const firstAvailableIndex = points.findIndex(
-    point => point.available !== false && point.value != null,
+  const firstMarketObservationIndex = points.findIndex(
+    point =>
+      point.baseline !== true &&
+      point.available !== false &&
+      point.value != null &&
+      (point.pricedHoldings === undefined || point.pricedHoldings > 0),
   );
-  return firstAvailableIndex > 0 ? points.slice(firstAvailableIndex) : points;
+  return firstMarketObservationIndex > 0 ? points.slice(firstMarketObservationIndex) : points;
+}
+
+export type HomePortfolioGain = {
+  amount: number;
+  percent: number | null;
+  partial: boolean;
+  pricedHoldings: number;
+  totalHoldings: number;
+};
+
+/**
+ * A fully priced collection can show its complete unrealised gain. When a
+ * holding has no exact quote, show only the gain for holdings with both a
+ * verified value and a recorded cost basis, explicitly labelled as partial.
+ */
+export function getHomePortfolioGain(summary: CollectionSummary | null): HomePortfolioGain | null {
+  if (!summary) return null;
+  if (summary.unrealizedGain !== null && summary.unrealizedGain !== undefined) {
+    return {
+      amount: summary.unrealizedGain,
+      percent: summary.unrealizedGainPercent ?? null,
+      partial: false,
+      pricedHoldings: summary.coverage.pricedHoldings,
+      totalHoldings: summary.coverage.totalHoldings,
+    };
+  }
+  if (summary.partialUnrealizedGain === null || summary.partialUnrealizedGain === undefined) {
+    return null;
+  }
+  return {
+    amount: summary.partialUnrealizedGain,
+    percent: summary.partialUnrealizedGainPercent ?? null,
+    partial: true,
+    pricedHoldings: summary.gainCoverage?.pricedHoldings ?? summary.coverage.pricedHoldings,
+    totalHoldings: summary.gainCoverage?.totalHoldings ?? summary.coverage.totalHoldings,
+  };
 }
 
 export interface HomeCollectionCard {

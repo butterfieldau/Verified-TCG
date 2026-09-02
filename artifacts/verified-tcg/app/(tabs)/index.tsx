@@ -56,7 +56,7 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
-  getRenderableHomeChartPoints,
+  getHomePortfolioGain,
   chartXForIndex,
 } from '@/services/homePortfolio';
 import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
@@ -146,7 +146,7 @@ function InteractiveChart({
   const vals = data.flatMap(d => d.value == null ? [] : [d.value]);
   const minV = vals.length > 0 ? Math.min(...vals) : 0;
   const maxV = vals.length > 0 ? Math.max(...vals) : 1;
-  const rangeV = maxV - minV || 1;
+  const rangeV = maxV - minV;
 
   const chartColor = isPositive ? C.positive : C.negative;
   const gradId = isPositive ? 'chartGreen' : 'chartRed';
@@ -154,7 +154,7 @@ function InteractiveChart({
   // Map data index → pixel x
   const xOf = (i: number) => chartXForIndex(i, data.length, width, padL, padR);
   // Map value → pixel y
-  const yOf = (v: number) => data.length === 1
+  const yOf = (v: number) => data.length === 1 || rangeV === 0
     ? (padT + (height - padB)) / 2
     : padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
 
@@ -273,10 +273,19 @@ function InteractiveChart({
           strokeLinejoin="round"
         />
 
-        {/* One persisted observation is the latest known point. It is anchored
-            to the right edge and is not extended into a synthetic trend. */}
+        {/* One provider observation is a baseline, not a historical trend. */}
         {data.length === 1 && data[0]!.value != null && (
           <>
+            <SvgLine
+              x1={padL + 18}
+              y1={yOf(data[0]!.value!)}
+              x2={width - padR - 18}
+              y2={yOf(data[0]!.value!)}
+              stroke={chartColor}
+              strokeWidth={2}
+              strokeDasharray="5,7"
+              opacity={0.45}
+            />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
@@ -563,8 +572,9 @@ export default function HomeScreen() {
 
   const valueState = getHomePortfolioValueState(serverSummary, summaryLoading, summaryError, currency);
   const performanceView = getHomePerformanceView(serverPerformance, portfolioRange);
-  const allChartData = performanceView.kind === 'chart' ? performanceView.points : [];
-  const chartData = getRenderableHomeChartPoints(allChartData);
+  const allChartData = serverPerformance?.points ?? [];
+  const chartData = performanceView.kind === 'chart' ? performanceView.points : [];
+  const portfolioGain = getHomePortfolioGain(serverSummary);
   const displayValue = activeChartPoint
     ? activeChartPoint.value
     : valueState.kind === 'empty' || valueState.kind === 'priced'
@@ -691,27 +701,30 @@ export default function HomeScreen() {
               </Text>
               <Text style={styles.portfolioCurrency}>{serverSummary?.currency ?? currency}</Text>
             </View>
-            {serverSummary?.unrealizedGainPercent !== null && serverSummary?.unrealizedGainPercent !== undefined && (
+            {portfolioGain && (
               <View style={styles.changeBadgeRow}>
                 <View style={[
                   styles.changeBadge,
-                  { backgroundColor: (serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative) + '18' },
+                  { backgroundColor: (portfolioGain.amount >= 0 ? C.positive : C.negative) + '18' },
                 ]}>
                   <Feather
-                    name={serverSummary.unrealizedGainPercent >= 0 ? 'trending-up' : 'trending-down'}
+                    name={portfolioGain.amount >= 0 ? 'trending-up' : 'trending-down'}
                     size={11}
-                    color={serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative}
+                    color={portfolioGain.amount >= 0 ? C.positive : C.negative}
                   />
-                  <Text style={[styles.changeBadgeText, { color: serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative }]}>
-                    {serverSummary.unrealizedGainPercent >= 0 ? '+' : ''}{serverSummary.unrealizedGainPercent.toFixed(2)}%
+                  <Text style={[styles.changeBadgeText, { color: portfolioGain.amount >= 0 ? C.positive : C.negative }]}>
+                    {portfolioGain.percent == null
+                      ? 'Gain'
+                      : `${portfolioGain.percent >= 0 ? '+' : ''}${portfolioGain.percent.toFixed(2)}%`}
                   </Text>
                 </View>
-                {serverSummary.unrealizedGain !== null && serverSummary.unrealizedGain !== undefined && (
-                  <Text style={styles.changePeriod}>
-                    {serverSummary.unrealizedGain >= 0 ? '+' : ''}
-                    {serverSummary.unrealizedGain.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
-                  </Text>
-                )}
+                <Text style={styles.changePeriod}>
+                  {portfolioGain.amount >= 0 ? '+' : ''}
+                  {portfolioGain.amount.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary?.currency ?? currency}
+                  {portfolioGain.partial
+                    ? ` · ${portfolioGain.pricedHoldings} priced holding${portfolioGain.pricedHoldings === 1 ? '' : 's'}`
+                    : ''}
+                </Text>
               </View>
             )}
             {valueState.kind === 'priced' && valueState.unpricedHoldings > 0 && (
@@ -772,7 +785,7 @@ export default function HomeScreen() {
               onInteractionEnd={() => setChartGestureActive(false)}
             />
             <Text style={styles.initialSnapshotText}>
-              Latest retained profile value · earlier history is unavailable
+              Latest verified baseline · historical movement appears after another retained price
             </Text>
           </View>
         ) : (

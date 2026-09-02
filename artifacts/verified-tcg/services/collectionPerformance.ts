@@ -41,6 +41,13 @@ export interface CollectionSummary {
   totalCost: number | null;
   unrealizedGain: number | null;
   unrealizedGainPercent: number | null;
+  /** Gain for price-and-cost-covered holdings when the collection is partial. */
+  partialUnrealizedGain?: number | null;
+  partialUnrealizedGainPercent?: number | null;
+  gainCoverage?: {
+    pricedHoldings: number;
+    totalHoldings: number;
+  };
   realisedGain: number | null;
   // Counts
   cardCount: number;

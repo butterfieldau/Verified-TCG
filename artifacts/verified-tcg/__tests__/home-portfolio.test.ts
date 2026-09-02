@@ -7,6 +7,7 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  getHomePortfolioGain,
   chartXForIndex,
   getRenderableHomeChartPoints,
 } from '../services/homePortfolio';
@@ -101,7 +102,7 @@ describe('home portfolio view models', () => {
     ]), '7D')).toMatchObject({ kind: 'chart' });
   });
 
-  it('keeps a same-day account baseline and current value as two chart points', () => {
+  it('does not treat an account baseline as a market-value point', () => {
     expect(getHomePerformanceView(performance([
       {
         date: '2025-01-01',
@@ -118,13 +119,7 @@ describe('home portfolio view models', () => {
         pricedHoldings: 1,
         totalHoldings: 1,
       },
-    ]), '1D')).toMatchObject({
-      kind: 'chart',
-      points: [
-        { value: 0, baseline: true },
-        { value: 125 },
-      ],
-    });
+    ]), '1D')).toMatchObject({ kind: 'initial', point: { value: 125 } });
   });
 
   it('does not treat the zero account baseline as provider price history', () => {
@@ -152,6 +147,26 @@ describe('home portfolio view models', () => {
       { date: '2025-01-04', value: 110, currency: 'AUD' },
     ];
     expect(getRenderableHomeChartPoints(points)).toEqual(points.slice(1));
+  });
+
+  it('removes an account baseline and unavailable dates before the first real market observation', () => {
+    const points = [
+      { date: '2025-01-01', value: 0, currency: 'AUD', available: true, baseline: true, pricedHoldings: 0 },
+      { date: '2025-01-02', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-03', value: 100, currency: 'AUD', pricedHoldings: 1 },
+      { date: '2025-01-04', value: 105, currency: 'AUD', pricedHoldings: 1 },
+    ];
+    expect(getRenderableHomeChartPoints(points)).toEqual(points.slice(2));
+  });
+
+  it('labels a price-and-cost-covered subtotal as a partial portfolio gain', () => {
+    expect(getHomePortfolioGain(summary({
+      unrealizedGain: null,
+      unrealizedGainPercent: null,
+      partialUnrealizedGain: 40,
+      partialUnrealizedGainPercent: 25,
+      gainCoverage: { pricedHoldings: 1, totalHoldings: 2 },
+    }))).toEqual({ amount: 40, percent: 25, partial: true, pricedHoldings: 1, totalHoldings: 2 });
   });
 });
 

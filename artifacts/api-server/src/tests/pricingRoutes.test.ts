@@ -728,6 +728,8 @@ describe("Archive endpoints", () => {
 
 describe("GET /collection/summary — enhanced fields", () => {
   let token: string;
+  const pricedCardId = `${TAG}card-summ-priced`;
+  const unpricedCardId = `${TAG}card-summ-unpriced`;
 
   before(async () => {
     const u = await createTestUser({ email: `${TAG}summ2@example.com` });
@@ -736,10 +738,24 @@ describe("GET /collection/summary — enhanced fields", () => {
     await request
       .post("/api/collection")
       .set("Authorization", `Bearer ${token}`)
-      .send(cardPayload("card-summ-001"));
+      .send(cardPayload(pricedCardId));
+    await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send(cardPayload(unpricedCardId));
+    await db.insert(currentQuotesTable).values({
+      cardId: pricedCardId,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 5_000,
+      currency: "AUD",
+    });
   });
 
-  after(cleanupTaggedUsers);
+  after(async () => {
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, pricedCardId));
+    await cleanupTaggedUsers();
+  });
 
   test("returns all required legacy compatibility fields", async () => {
     const res = await request
@@ -779,6 +795,19 @@ describe("GET /collection/summary — enhanced fields", () => {
       res.body.totalValueCents === null || typeof res.body.totalValueCents === "number",
       "totalValueCents must be null or a number — never fabricated",
     );
+  });
+
+  test("reports a clearly labelled gain subtotal without treating an unpriced holding as zero", async () => {
+    const res = await request
+      .get("/api/collection/summary?displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.coverage.pricedHoldings, 1);
+    assert.equal(res.body.coverage.totalHoldings, 2);
+    assert.equal(res.body.unrealizedGain, null, "the complete gain remains unavailable");
+    assert.equal(res.body.partialUnrealizedGain, 25);
+    assert.equal(res.body.partialUnrealizedGainPercent, 100);
+    assert.deepEqual(res.body.gainCoverage, { pricedHoldings: 1, totalHoldings: 2 });
   });
 
   test("returns completeness string", async () => {

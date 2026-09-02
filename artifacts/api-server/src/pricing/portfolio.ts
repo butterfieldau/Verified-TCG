@@ -42,6 +42,10 @@ export interface PortfolioValuation {
   totalCostCents: number | null;
   unrealizedGainCents: number | null;
   unrealizedGainPercent: number | null;
+  /** Gain subtotal for holdings with both an exact current quote and cost basis. */
+  partialUnrealizedGainCents: number | null;
+  partialUnrealizedGainPercent: number | null;
+  gainPricedHoldings: number;
   valuationComplete: boolean;
   costBasisComplete: boolean;
 }
@@ -1022,6 +1026,9 @@ export async function calculatePortfolioValuation(
   let freshHoldings = 0;
   let staleHoldings = 0;
   let costBasisComplete = true;
+  let partialUnrealizedGainCents = 0;
+  let partialCostCents = 0;
+  let gainPricedHoldings = 0;
   const now = Date.now();
   const holdings: HoldingValuation[] = [];
 
@@ -1054,6 +1061,12 @@ export async function calculatePortfolioValuation(
         if (isStale) staleHoldings += 1;
         else freshHoldings += 1;
       }
+    }
+
+    if (currentValueCents != null && convertedCost != null) {
+      partialUnrealizedGainCents += currentValueCents - convertedCost;
+      partialCostCents += convertedCost;
+      gainPricedHoldings += 1;
     }
 
     holdings.push({
@@ -1093,6 +1106,13 @@ export async function calculatePortfolioValuation(
       completeUnrealized != null && totalCostCents > 0
         ? (completeUnrealized / totalCostCents) * 100
         : null,
+    partialUnrealizedGainCents:
+      gainPricedHoldings > 0 ? partialUnrealizedGainCents : null,
+    partialUnrealizedGainPercent:
+      gainPricedHoldings > 0 && partialCostCents > 0
+        ? (partialUnrealizedGainCents / partialCostCents) * 100
+        : null,
+    gainPricedHoldings,
     valuationComplete,
     costBasisComplete,
   };
