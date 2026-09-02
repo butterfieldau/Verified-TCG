@@ -25,6 +25,7 @@ import {
 } from "../pricing/grades.js";
 import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
 import { extractJustTcgRawQuote } from "../pricing/justtcg.js";
+import { portfolioChartData, portfolioProviderPriority } from "../pricing/portfolio.js";
 
 describe("Grade definitions", () => {
   test("all documented card condition keys are defined", () => {
@@ -188,6 +189,33 @@ describe("JustTCG raw history parsing", () => {
   test("rejects absent or malformed raw provider values", () => {
     assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: 0 }] }), null);
     assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: "unknown" }] }), null);
+  });
+});
+
+describe("Portfolio history source and sampling", () => {
+  test("uses JustTCG raw observations and keeps exact graded PriceCharting values separate", () => {
+    assert.ok(portfolioProviderPriority("justtcg", "raw") > portfolioProviderPriority("pricecharting", "raw"));
+    assert.ok(portfolioProviderPriority("pricecharting", "psa_10") > portfolioProviderPriority("justtcg", "psa_10"));
+  });
+
+  test("returns daily points for 1D/7D/1M, weekly points for 3M/6M, and monthly points for 1Y", () => {
+    const start = new Date("2025-09-03T00:00:00.000Z");
+    const points = Array.from({ length: 366 }, (_, index) => {
+      const date = new Date(start.getTime() + index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      return {
+        date, valueCents: 10_000 + index, value: 100 + index / 100, currency: "AUD",
+        pricedHoldings: 1, totalHoldings: 1, available: true, complete: true,
+        dailyChangeCents: index ? 1 : null, dailyChange: index ? .01 : null,
+        dailyChangePercent: index ? .01 : null,
+      };
+    });
+    const data = portfolioChartData(points, new Date("2026-09-03T12:00:00.000Z"));
+    assert.equal(data["1D"].length, 1);
+    assert.equal(data["7D"].length, 7);
+    assert.equal(data["1M"].length, 30);
+    assert.equal(data["3M"].length, 13);
+    assert.equal(data["6M"].length, 26);
+    assert.equal(data["1Y"].length, 12);
   });
 });
 

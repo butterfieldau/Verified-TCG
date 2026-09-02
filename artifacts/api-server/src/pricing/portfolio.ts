@@ -13,6 +13,7 @@ import { convertCents } from "./fx.js";
 import { normalizeGradeKey } from "./grades.js";
 import type { GradeKey } from "./grades.js";
 import { PROVIDER_KEY } from "./pricecharting.js";
+import { JUSTTCG_PRICING_PROVIDER_KEY } from "./justtcg.js";
 
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
@@ -148,6 +149,18 @@ type HistoryPricing = {
   historyByKey: Map<string, HistoricalPrice[]>;
 };
 
+/**
+ * Raw catalogue pricing is authoritative from JustTCG. Company-specific slab
+ * pricing stays on PriceCharting until an exact equivalent is available; raw
+ * and graded values are never mixed for a holding.
+ */
+export function portfolioProviderPriority(providerKey: string, gradeKey: GradeKey): number {
+  if (gradeKey === "raw") {
+    return providerKey === JUSTTCG_PRICING_PROVIDER_KEY ? 2 : providerKey === PROVIDER_KEY ? 1 : 0;
+  }
+  return providerKey === PROVIDER_KEY ? 2 : providerKey === JUSTTCG_PRICING_PROVIDER_KEY ? 1 : 0;
+}
+
 const PORTFOLIO_HISTORY_RANGES: Record<string, number> = {
   "1D": 1,
   "7D": 7,
@@ -236,21 +249,21 @@ async function loadHistoryPricing(cardIds: string[]): Promise<HistoryPricing> {
       .select()
       .from(currentQuotesTable)
       .where(and(
-        eq(currentQuotesTable.providerKey, PROVIDER_KEY),
+        inArray(currentQuotesTable.providerKey, [JUSTTCG_PRICING_PROVIDER_KEY, PROVIDER_KEY]),
         inArray(currentQuotesTable.cardId, cardIds),
       )),
     db
       .select()
       .from(providerPriceHistoryTable)
       .where(and(
-        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        inArray(providerPriceHistoryTable.providerKey, [JUSTTCG_PRICING_PROVIDER_KEY, PROVIDER_KEY]),
         inArray(providerPriceHistoryTable.cardId, cardIds),
       )),
     db
       .select()
       .from(cardPriceSnapshotsTable)
       .where(and(
-        eq(cardPriceSnapshotsTable.providerKey, PROVIDER_KEY),
+        inArray(cardPriceSnapshotsTable.providerKey, [JUSTTCG_PRICING_PROVIDER_KEY, PROVIDER_KEY]),
         inArray(cardPriceSnapshotsTable.cardId, cardIds),
         eq(cardPriceSnapshotsTable.captureStatus, "success"),
       )),
@@ -259,7 +272,17 @@ async function loadHistoryPricing(cardIds: string[]): Promise<HistoryPricing> {
   const quoteMap = new Map<string, QuoteRow>();
   for (const quote of quoteRows) {
     const gradeKey = normalizeGradeKey(quote.gradeKey);
-    if (gradeKey) quoteMap.set(`${quote.cardId}:${gradeKey}`, quote);
+    if (!gradeKey || portfolioProviderPriority(quote.providerKey, gradeKey) === 0) continue;
+    const key = `${quote.cardId}:${gradeKey}`;
+    const existing = quoteMap.get(key);
+    if (
+      !existing
+      || portfolioProviderPriority(quote.providerKey, gradeKey) > portfolioProviderPriority(existing.providerKey, gradeKey)
+      || (portfolioProviderPriority(quote.providerKey, gradeKey) === portfolioProviderPriority(existing.providerKey, gradeKey)
+        && quote.fetchedAt >= existing.fetchedAt)
+    ) {
+      quoteMap.set(key, quote);
+    }
   }
 
   const historyMap = new Map<string, Map<string, HistoricalPrice>>();
@@ -296,14 +319,20 @@ async function loadHistoryPricing(cardIds: string[]): Promise<HistoryPricing> {
     const gradeKey = normalizeGradeKey(row.gradeKey);
     const date = rowDate(row.snapshotDate);
     if (gradeKey && date) {
-      addHistory(row.cardId, gradeKey, row.priceCents, row.currency, date, row.recordedAt.getTime(), 2);
+      addHistory(
+        row.cardId, gradeKey, row.priceCents, row.currency, date, row.recordedAt.getTime(),
+        portfolioProviderPriority(row.providerKey, gradeKey) * 10 + 2,
+      );
     }
   }
   for (const row of timestampedRows) {
     const gradeKey = normalizeGradeKey(row.gradeKey);
     const date = rowDate(row.capturedAt.toISOString());
     if (gradeKey && date) {
-      addHistory(row.cardId, gradeKey, row.priceCents, row.currency, date, row.capturedAt.getTime(), 1);
+      addHistory(
+        row.cardId, gradeKey, row.priceCents, row.currency, date, row.capturedAt.getTime(),
+        portfolioProviderPriority(row.providerKey, gradeKey) * 10 + 1,
+      );
     }
   }
 
