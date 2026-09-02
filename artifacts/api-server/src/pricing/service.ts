@@ -171,7 +171,7 @@ async function refreshJustTcgRawHistory(cardId: string): Promise<boolean> {
   if (existing) return existing;
   const request = (async () => {
     try {
-      const params = new URLSearchParams({ cardId, priceHistoryDuration: "30d" });
+      const params = new URLSearchParams({ cardId, include_price_history: "true" });
       const result = await justTcg(`/cards?${params.toString()}`);
       if (result.status >= 400) return false;
       const data = result.body as { data?: Array<Record<string, unknown>> } | null;
