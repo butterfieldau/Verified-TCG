@@ -63,7 +63,16 @@ import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
 const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
 const C = colors.dark;
-const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
+const RANGES: { id: PortfolioRange; label: string }[] = [
+  { id: '1D', label: 'Daily' },
+  { id: '7D', label: 'Weekly' },
+  { id: '1M', label: 'Monthly' },
+  { id: '3M', label: '3 Months' },
+  { id: '6M', label: '6 Months' },
+  { id: '1Y', label: '12 Months' },
+];
+export const CHART_GESTURE_THRESHOLD = 8;
+export const CHART_HORIZONTAL_INTENT_RATIO = 1.15;
 
 const MARKET_TABS: { id: MarketTab; label: string }[] = [
   { id: 'trending', label: 'Trending' },
@@ -98,19 +107,29 @@ function formatLastUpdated(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 interface ChartPoint {
-  value: number;
+  value: number | null;
   date: string;
-  changeFromPrevious?: number;
-  changePercentFromPrevious?: number | null;
+  available?: boolean;
+  dailyChange?: number | null;
+  dailyChangePercent?: number | null;
+  complete?: boolean;
 }
 
 interface InteractiveChartProps {
   data: ChartPoint[];
   isPositive: boolean;
   onPointSelect: (pt: ChartPoint | null) => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 }
 
-function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartProps) {
+function InteractiveChart({
+  data,
+  isPositive,
+  onPointSelect,
+  onInteractionStart,
+  onInteractionEnd,
+}: InteractiveChartProps) {
   const [width, setWidth] = useState(350);
   const height = 140;
   const padL = 0;
@@ -119,10 +138,11 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
   const padB = 4;
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const gestureActive = useRef(false);
 
-  const vals = data.map(d => d.value);
-  const minV = Math.min(...vals);
-  const maxV = Math.max(...vals);
+  const vals = data.flatMap(d => d.value == null ? [] : [d.value]);
+  const minV = vals.length > 0 ? Math.min(...vals) : 0;
+  const maxV = vals.length > 0 ? Math.max(...vals) : 1;
   const rangeV = maxV - minV || 1;
 
   const chartColor = isPositive ? C.positive : C.negative;
@@ -139,42 +159,43 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 
   // Build smooth SVG path (monotone cubic)
   function buildPath() {
-    if (data.length < 2) return '';
-    const pts = data.map((d, i) => ({ x: xOf(i), y: yOf(d.value) }));
-    let d = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const cx = (pts[i].x + pts[i + 1].x) / 2;
-      d += ` C ${cx} ${pts[i].y}, ${cx} ${pts[i + 1].y}, ${pts[i + 1].x} ${pts[i + 1].y}`;
-    }
-    return d;
+    let path = '';
+    let previousAvailable = false;
+    data.forEach((point, index) => {
+      if (point.value == null || point.available === false) {
+        previousAvailable = false;
+        return;
+      }
+      const command = previousAvailable ? 'L' : 'M';
+      path += ` ${command} ${xOf(index)} ${yOf(point.value)}`;
+      previousAvailable = true;
+    });
+    return path.trim();
   }
 
   function buildArea() {
-    if (data.length < 2) return '';
-    const line = buildPath();
-    const last = { x: xOf(data.length - 1), y: height };
-    const first = { x: xOf(0), y: height };
-    return `${line} L ${last.x} ${last.y} L ${first.x} ${first.y} Z`;
+    const paths: string[] = [];
+    let segment: { x: number; y: number }[] = [];
+    const flush = () => {
+      if (segment.length >= 2) {
+        const first = segment[0]!;
+        const last = segment[segment.length - 1]!;
+        paths.push(
+          `M ${first.x} ${height} L ${segment.map(point => `${point.x} ${point.y}`).join(' L ')} L ${last.x} ${height} Z`,
+        );
+      }
+      segment = [];
+    };
+    data.forEach((point, index) => {
+      if (point.value == null || point.available === false) {
+        flush();
+      } else {
+        segment.push({ x: xOf(index), y: yOf(point.value) });
+      }
+    });
+    flush();
+    return paths.join(' ');
   }
-
-  const panResponder = useMemo(() => PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (e) => {
-        handleTouch(e.nativeEvent.locationX);
-      },
-      onPanResponderMove: (e) => {
-        handleTouch(e.nativeEvent.locationX);
-      },
-      onPanResponderRelease: () => {
-        setActiveIndex(null);
-        onPointSelect(null);
-      },
-      onPanResponderTerminate: () => {
-        setActiveIndex(null);
-        onPointSelect(null);
-      },
-    }), [data, width, onPointSelect]);
 
   function handleTouch(touchX: number) {
     const n = data.length;
@@ -183,23 +204,48 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
     const ratio = Math.max(0, Math.min(1, (touchX - padL) / usableWidth));
     const idx = Math.min(Math.round(ratio * (n - 1)), n - 1);
     setActiveIndex(idx);
-    const point = data[idx]!;
-    const previous = idx > 0 ? data[idx - 1] : null;
-    const change = previous ? point.value - previous.value : undefined;
-    onPointSelect({
-      ...point,
-      changeFromPrevious: change,
-      changePercentFromPrevious:
-        previous && previous.value !== 0 && change !== undefined
-          ? (change / previous.value) * 100
-          : null,
-    });
+    onPointSelect(data[idx]!);
   }
+
+  const finishGesture = useCallback(() => {
+    if (!gestureActive.current) return;
+    gestureActive.current = false;
+    setActiveIndex(null);
+    onPointSelect(null);
+    onInteractionEnd?.();
+  }, [onInteractionEnd, onPointSelect]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    // Let the parent ScrollView decide whether a touch is a vertical scroll.
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gesture) => {
+      const horizontal = Math.abs(gesture.dx) > CHART_GESTURE_THRESHOLD
+        && Math.abs(gesture.dx) > Math.abs(gesture.dy) * CHART_HORIZONTAL_INTENT_RATIO;
+      return horizontal;
+    },
+    onPanResponderGrant: (e) => {
+      gestureActive.current = true;
+      onInteractionStart?.();
+      handleTouch(e.nativeEvent.locationX);
+    },
+    onPanResponderMove: (e) => {
+      handleTouch(e.nativeEvent.locationX);
+    },
+    onPanResponderRelease: finishGesture,
+    onPanResponderTerminate: finishGesture,
+    // Once horizontal inspection starts, do not hand the gesture back to the
+    // page midway through a drag.
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  }), [data, width, finishGesture, onInteractionStart]);
+
+  useEffect(() => finishGesture, [finishGesture]);
 
   const linePath = buildPath();
   const areaPath = buildArea();
+  const activePoint = activeIndex !== null ? data[activeIndex] : null;
   const activeX = activeIndex !== null ? xOf(activeIndex) : null;
-  const activeY = activeIndex !== null ? yOf(data[activeIndex].value) : null;
+  const activeY = activePoint?.value != null ? yOf(activePoint.value) : null;
 
   return (
     <View
@@ -230,21 +276,21 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 
         {/* One persisted observation is a real starting point, not a missing
             chart or a synthetic historical curve. */}
-        {data.length === 1 && (
+        {data.length === 1 && data[0]!.value != null && (
           <>
             <SvgLine
               x1={padL + 18}
-              y1={yOf(data[0]!.value)}
+              y1={yOf(data[0]!.value!)}
               x2={width - padR - 18}
-              y2={yOf(data[0]!.value)}
+              y2={yOf(data[0]!.value!)}
               stroke={chartColor}
               strokeWidth={2}
               strokeDasharray="5,7"
               opacity={0.45}
             />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={11} fill={chartColor} opacity={0.16} />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={5} fill={chartColor} />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value)} r={2.5} fill="#FFFFFF" />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
           </>
         )}
 
@@ -277,7 +323,16 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 // ── Tooltip pill shown above chart when touching ───────────────────────────────
 function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency: string }) {
   if (!point) return null;
-  const change = point.changeFromPrevious;
+  if (point.value == null || point.available === false) {
+    return (
+      <View style={styles.tooltipBox}>
+        <Text style={styles.tooltipValue}>Value unavailable</Text>
+        <Text style={styles.tooltipLabel}>{point.date}</Text>
+        <Text style={styles.tooltipLabel}>No complete retained valuation</Text>
+      </View>
+    );
+  }
+  const change = point.dailyChange;
   const isUp = (change ?? 0) >= 0;
   return (
     <View style={styles.tooltipBox}>
@@ -286,8 +341,8 @@ function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency:
       </Text>
       {change !== undefined && (
         <Text style={[styles.tooltipChange, { color: isUp ? C.positive : C.negative }]}>
-          {isUp ? '+' : ''}{change.toLocaleString('en-AU', { minimumFractionDigits: 2 })}{' '}
-          ({isUp ? '+' : ''}{point.changePercentFromPrevious?.toFixed(1) ?? '—'}%)
+          Daily movement {isUp ? '+' : ''}{change?.toLocaleString('en-AU', { minimumFractionDigits: 2 }) ?? '—'}{' '}
+          ({isUp ? '+' : ''}{point.dailyChangePercent?.toFixed(1) ?? '—'}%)
         </Text>
       )}
       {!!point.date && (
@@ -341,6 +396,7 @@ export default function HomeScreen() {
   const [serverPerformance, setServerPerformance] = useState<CollectionPerformance | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(false);
+  const [chartGestureActive, setChartGestureActive] = useState(false);
   const portfolioRequestGeneration = useRef(0);
 
   const performanceRange: PerformanceRange = portfolioRange;
@@ -521,18 +577,17 @@ export default function HomeScreen() {
   const valueState = getHomePortfolioValueState(serverSummary, summaryLoading, summaryError, currency);
   const performanceView = getHomePerformanceView(serverPerformance, portfolioRange);
   const chartData = performanceView.kind === 'chart' ? performanceView.points : [];
-  const displayValue = activeChartPoint?.value ?? (
-    valueState.kind === 'empty' || valueState.kind === 'priced' ? valueState.value : null
-  );
-  const gain =
-    chartData.length >= 2
-      ? chartData[chartData.length - 1]!.value - chartData[0]!.value
+  const displayValue = activeChartPoint
+    ? activeChartPoint.value
+    : valueState.kind === 'empty' || valueState.kind === 'priced'
+      ? valueState.value
       : null;
-  const gainPct =
-    gain != null && chartData[0]!.value > 0
-      ? (gain / chartData[0]!.value) * 100
-      : null;
-  const isPositive = (gain ?? 0) >= 0;
+  // First-to-last portfolio value can include acquisitions and sales, so it is
+  // not a market gain signal. Colour follows only the authoritative daily move.
+  const isPositive = (serverSummary?.todayMovement?.absolute ?? 0) >= 0;
+  const unavailableChartPoints = chartData.filter(
+    point => point.available === false || point.value == null,
+  ).length;
 
   const oneDayGain = serverSummary?.todayMovement?.absolute ?? 0;
   const oneDayGainPct = serverSummary?.todayMovement?.percent ?? 0;
@@ -579,6 +634,7 @@ export default function HomeScreen() {
       showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior="never"
       automaticallyAdjustContentInsets={false}
+      scrollEnabled={!chartGestureActive}
       scrollEventThrottle={16}
       refreshControl={
         <RefreshControl
@@ -708,6 +764,8 @@ export default function HomeScreen() {
               data={chartData}
               isPositive={isPositive}
               onPointSelect={setActiveChartPoint}
+              onInteractionStart={() => setChartGestureActive(true)}
+              onInteractionEnd={() => setChartGestureActive(false)}
             />
             <Text style={styles.initialSnapshotText}>
               Slide across to inspect each real ownership value and movement
@@ -719,6 +777,8 @@ export default function HomeScreen() {
               data={[performanceView.point]}
               isPositive
               onPointSelect={setActiveChartPoint}
+              onInteractionStart={() => setChartGestureActive(true)}
+              onInteractionEnd={() => setChartGestureActive(false)}
             />
             <Text style={styles.initialSnapshotText}>
               Slide across to inspect this retained ownership value
@@ -732,28 +792,36 @@ export default function HomeScreen() {
             </Text>
           </View>
         )}
+        {serverPerformance && (
+          <Text style={styles.chartHistoryNote}>
+            {unavailableChartPoints > 0
+              ? `${serverPerformance.completeness} · ${unavailableChartPoints} sampled date${unavailableChartPoints === 1 ? '' : 's'} unavailable`
+              : serverPerformance.completeness}
+          </Text>
+        )}
       </View>
 
       {/* ── Range pills ─────────────────────────────────────────────────── */}
       <View style={styles.rangeRow}>
-        {RANGES.map(r => (
+        {RANGES.map(range => (
           <Pressable
-            key={r}
-            onPress={() => { setPortfolioRange(r); setActiveChartPoint(null); }}
+            key={range.id}
+            testID={`portfolio-range-${range.id}`}
+            onPress={() => { setPortfolioRange(range.id); setActiveChartPoint(null); }}
             accessibilityRole="button"
-            accessibilityLabel={`${r} range`}
-            accessibilityState={{ selected: portfolioRange === r }}
+            accessibilityLabel={`${range.label} portfolio range`}
+            accessibilityState={{ selected: portfolioRange === range.id }}
             hitSlop={{ top: 10, bottom: 10 }}
             style={[
               styles.rangeBtn,
-              portfolioRange === r && styles.rangeBtnActive,
+              portfolioRange === range.id && styles.rangeBtnActive,
             ]}
           >
             <Text style={[
               styles.rangeText,
-              { color: portfolioRange === r ? '#FFFFFF' : C.mutedForeground },
+              { color: portfolioRange === range.id ? '#FFFFFF' : C.mutedForeground },
             ]}>
-              {r}
+              {range.label}
             </Text>
           </Pressable>
         ))}
@@ -1296,15 +1364,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
+  chartHistoryNote: {
+    color: C.mutedForeground,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: 'center',
+    marginTop: 5,
+    paddingHorizontal: 20,
+  },
 
   // Range pills
   rangeRow: {
     flexDirection: 'row', justifyContent: 'space-between',
     paddingHorizontal: 4, marginBottom: 20,
   },
-  rangeBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  rangeBtn: { paddingHorizontal: 7, paddingVertical: 6, borderRadius: 8 },
   rangeBtnActive: { backgroundColor: C.primary },
-  rangeText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  rangeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 
   // Divider
   divider: { height: 1, backgroundColor: C.border, marginBottom: 20 },

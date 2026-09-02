@@ -30,19 +30,26 @@ router.get("/collection/value-history", requireActiveUser, async (req: AuthReque
     isValidCurrency(req.query["displayCurrency"])
       ? req.query["displayCurrency"].toUpperCase()
       : "AUD";
+  // Build the complete daily series once, then select the requested display
+  // cadence. This keeps chartData ranges independent of whichever range the
+  // caller happened to request.
   const history = await calculatePortfolioValueHistory(
     req.userId!,
-    RANGE_DAYS[range]!,
+    RANGE_DAYS.ALL!,
     displayCurrency,
   );
+  const chartData = portfolioChartData(history.points);
+  const points = chartData[range as keyof typeof chartData] ?? [];
   res.json({
     range,
     currency: history.currency,
-    points: history.points,
-    history: history.points,
-    chartData: portfolioChartData(history.points),
-    historyAvailable: history.historyAvailable,
-    historyUnavailableReason: history.historyUnavailableReason,
+    points,
+    history: points,
+    chartData,
+    historyAvailable: points.some(point => point.available),
+    historyUnavailableReason: points.some(point => point.available)
+      ? null
+      : "No complete retained price observations are available during ownership",
   });
 });
 

@@ -207,7 +207,9 @@ export default function CollectionScreen() {
   );
 
   const chartBars = useMemo(() => {
-    const points = serverSummary?.chartData?.['1M'] ?? [];
+    const points = (serverSummary?.chartData?.['1M'] ?? []).filter(
+      (point): point is typeof point & { value: number } => point.value != null,
+    );
     if (points.length === 0) return [];
     const sampled = points.length <= 12
       ? points

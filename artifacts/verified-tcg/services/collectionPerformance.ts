@@ -101,8 +101,18 @@ export type PerformanceRange = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 
 export interface PerformancePoint {
   date: string;
-  value: number;
+  value: number | null;
   currency: string;
+  available?: boolean;
+  complete?: boolean;
+  pricedHoldings?: number;
+  totalHoldings?: number;
+  dailyChange?: number | null;
+  dailyChangePercent?: number | null;
+  dailyChangeCents?: number | null;
+  bucketStart?: string;
+  bucketEnd?: string;
+  sampledFrom?: string;
 }
 
 export interface PerformanceAllocation {

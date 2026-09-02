@@ -39,6 +39,14 @@ export function getHomePerformanceView(
   range: PortfolioRange,
 ): HomePerformanceView {
   if (!performance) return { kind: 'unavailable', message: 'Price history is not available yet' };
+  const available = performance.points.filter(point => point.available !== false && point.value != null);
+  if (available.length === 0) {
+    return {
+      kind: 'unavailable',
+      message: performance.historyUnavailableReason
+        ?? `No complete retained history is available for ${range}`,
+    };
+  }
   if (performance.points.length === 1) return { kind: 'initial', point: performance.points[0]! };
   if (performance.points.length >= 2) return { kind: 'chart', points: performance.points };
   return {

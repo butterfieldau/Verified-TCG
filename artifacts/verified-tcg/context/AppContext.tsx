@@ -230,7 +230,7 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
 const COLLECTION_CACHE_PREFIX = '@verified_tcg/collection_cache_v2';
 const EMPTY_PORTFOLIO_CHART_DATA: PortfolioSummary['chartData'] = {
-  '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
+  '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [],
 };
 
 export interface CollectionRefreshIssue {
@@ -407,7 +407,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     useState<PortfolioSummary['chartData']>(EMPTY_PORTFOLIO_CHART_DATA);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
-  const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
+  const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('1D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
@@ -453,7 +453,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const history = await fetchCollectionValueHistory('ALL', currency);
       if (generation === historyRequestGeneration.current) {
-        setPortfolioChartData(history.chartData);
+        setPortfolioChartData({
+          '1D': history.chartData['1D'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '7D': history.chartData['7D'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '1M': history.chartData['1M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '3M': history.chartData['3M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '6M': history.chartData['6M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '1Y': history.chartData['1Y'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+        });
       }
     } catch {
       // Retain the last successful chart while a refresh is unavailable.

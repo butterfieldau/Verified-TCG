@@ -48,11 +48,21 @@ export interface PortfolioValuation {
 
 export interface PortfolioValueHistoryPoint {
   date: string;
-  valueCents: number;
-  value: number;
+  valueCents: number | null;
+  value: number | null;
   currency: string;
   pricedHoldings: number;
   totalHoldings: number;
+  /** False when one or more owned holdings has no exact retained price/FX for this date. */
+  available: boolean;
+  complete: boolean;
+  /** Movement from the immediately preceding complete calendar day, never a bucket delta. */
+  dailyChangeCents: number | null;
+  dailyChange: number | null;
+  dailyChangePercent: number | null;
+  bucketStart?: string;
+  bucketEnd?: string;
+  sampledFrom?: string;
 }
 
 export interface PortfolioValueHistory {
@@ -90,9 +100,10 @@ function rowDate(value: string | null | undefined): string | null {
  * acquisition/restore date and disappear on their sale date. The account
  * creation date supplies the truthful zero baseline.
  *
- * A non-zero point is emitted only when every owned holding has an exact,
- * retained price at or before that date. Daily provider history is preferred;
- * timestamped snapshots fill gaps. The current quote is used only for today.
+ * A non-zero point is available only when every owned holding has an exact,
+ * retained price for that date. Daily provider history is preferred;
+ * timestamped snapshots fill the same calendar date. The current quote is used
+ * only for today. We never carry a price across an unobserved date.
  */
 export async function calculatePortfolioValueHistory(
   userId: string,
@@ -159,15 +170,32 @@ export async function calculatePortfolioValueHistory(
   ];
   const cardIds = [...new Set(intervals.map(row => row.cardId))];
   if (cardIds.length === 0) {
-    return {
-      points: [{
-        date: accountDate,
+    const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
+    const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
+      ? accountDate
+      : accountDate > requestedStart ? accountDate : requestedStart;
+    const points: PortfolioValueHistoryPoint[] = [];
+    for (
+      let cursor = new Date(`${startDate}T00:00:00Z`);
+      cursor <= new Date(`${today}T00:00:00Z`);
+      cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1_000)
+    ) {
+      points.push({
+        date: cursor.toISOString().slice(0, 10),
         valueCents: 0,
         value: 0,
         currency,
         pricedHoldings: 0,
         totalHoldings: 0,
-      }],
+        available: true,
+        complete: true,
+        dailyChangeCents: points.length > 0 ? 0 : null,
+        dailyChange: points.length > 0 ? 0 : null,
+        dailyChangePercent: null,
+      });
+    }
+    return {
+      points,
       currency,
       historyAvailable: true,
       historyUnavailableReason: null,
@@ -262,26 +290,25 @@ export async function calculatePortfolioValueHistory(
     historyByKey.set(key, [...dates.values()].sort((a, b) => a.date.localeCompare(b.date)));
   }
 
-  const requestedStart = isoDateDaysAgo(Math.max(1, periodDays), now);
+  // A period is a count of calendar days, inclusive of today. The old
+  // implementation treated 7D as "seven days ago through today", producing
+  // eight calendar points and making range boundaries ambiguous.
+  const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
   const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
     ? accountDate
     : accountDate > requestedStart ? accountDate : requestedStart;
-  const dates = new Set<string>([startDate, today]);
-  for (const interval of intervals) {
-    if (interval.startDate >= startDate && interval.startDate <= today) dates.add(interval.startDate);
-    if (interval.endDate && interval.endDate >= startDate && interval.endDate <= today) {
-      dates.add(interval.endDate);
-    }
-  }
-  for (const history of historyByKey.values()) {
-    for (const point of history) {
-      if (point.date >= startDate && point.date <= today) dates.add(point.date);
-    }
+  const dates: string[] = [];
+  for (
+    let cursor = new Date(`${startDate}T00:00:00Z`);
+    cursor <= new Date(`${today}T00:00:00Z`);
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1_000)
+  ) {
+    dates.push(cursor.toISOString().slice(0, 10));
   }
 
   const points: PortfolioValueHistoryPoint[] = [];
   const conversionCache = new Map<string, number | null>();
-  for (const date of [...dates].sort()) {
+  for (const date of dates) {
     // Account creation is the product timeline's zero baseline even when a
     // collector imports a card with an earlier real-world acquisition date.
     // Daily data cannot represent a second, later event on the same date, so
@@ -294,6 +321,11 @@ export async function calculatePortfolioValueHistory(
         currency,
         pricedHoldings: 0,
         totalHoldings: 0,
+        available: true,
+        complete: true,
+        dailyChangeCents: null,
+        dailyChange: null,
+        dailyChangePercent: null,
       });
       continue;
     }
@@ -309,17 +341,23 @@ export async function calculatePortfolioValueHistory(
         currency,
         pricedHoldings: 0,
         totalHoldings: 0,
+        available: true,
+        complete: true,
+        dailyChangeCents: null,
+        dailyChange: null,
+        dailyChangePercent: null,
       });
       continue;
     }
 
     let valueCents = 0;
     let complete = true;
+    let pricedHoldings = 0;
     for (const row of owned) {
       const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
       if (!gradeKey) {
         complete = false;
-        break;
+        continue;
       }
 
       const quote = date === today ? quoteMap.get(`${row.cardId}:${gradeKey}`) : undefined;
@@ -334,16 +372,13 @@ export async function calculatePortfolioValueHistory(
         : null;
       if (!price) {
         const history = historyByKey.get(`${row.cardId}:${gradeKey}`) ?? [];
-        for (let index = history.length - 1; index >= 0; index -= 1) {
-          if (history[index]!.date <= date) {
-            price = history[index]!;
-            break;
-          }
-        }
+        // Exact-date lookup is intentional. A retained quote from a different
+        // day cannot prove what the collection was worth on this day.
+        price = history.find(candidate => candidate.date === date) ?? null;
       }
       if (!price) {
         complete = false;
-        break;
+        continue;
       }
 
       const conversionKey = `${price.priceCents}:${price.currency}:${currency}`;
@@ -354,9 +389,10 @@ export async function calculatePortfolioValueHistory(
       }
       if (converted == null) {
         complete = false;
-        break;
+        continue;
       }
       valueCents += converted * row.quantity;
+      pricedHoldings += row.quantity;
     }
 
     if (complete) {
@@ -365,34 +401,182 @@ export async function calculatePortfolioValueHistory(
         valueCents,
         value: valueCents / 100,
         currency,
-        pricedHoldings: totalHoldings,
+        pricedHoldings,
         totalHoldings,
+        available: true,
+        complete: true,
+        dailyChangeCents: null,
+        dailyChange: null,
+        dailyChangePercent: null,
+      });
+    } else {
+      points.push({
+        date,
+        valueCents: null,
+        value: null,
+        currency,
+        pricedHoldings,
+        totalHoldings,
+        available: false,
+        complete: false,
+        dailyChangeCents: null,
+        dailyChange: null,
+        dailyChangePercent: null,
       });
     }
+  }
+
+  const pointByDate = new Map(points.map(point => [point.date, point]));
+  for (const point of points) {
+    if (!point.available || point.valueCents == null) continue;
+    const previousDate = isoDateDaysAgo(
+      1,
+      new Date(`${point.date}T00:00:00Z`),
+    );
+    const previous = pointByDate.get(previousDate);
+    if (!previous?.available || previous.valueCents == null) continue;
+    const changeCents = point.valueCents - previous.valueCents;
+    point.dailyChangeCents = changeCents;
+    point.dailyChange = changeCents / 100;
+    point.dailyChangePercent =
+      previous.valueCents > 0 ? (changeCents / previous.valueCents) * 100 : null;
   }
 
   return {
     points,
     currency,
-    historyAvailable: points.length > 0,
+    historyAvailable: points.some(point => point.available),
     historyUnavailableReason: points.length > 0
+      && points.some(point => point.available)
       ? null
       : "No complete retained price observations are available during ownership",
   };
+}
+
+type PortfolioChartRange = keyof typeof PORTFOLIO_HISTORY_RANGES;
+
+function dateFromIso(date: string): Date {
+  return new Date(`${date}T00:00:00Z`);
+}
+
+function isoDateMonthsAgo(months: number, now: Date): string {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - months, 1));
+  return date.toISOString().slice(0, 10);
+}
+
+function copyUnavailablePoint(
+  date: string,
+  currency: string,
+  bucketStart?: string,
+  bucketEnd?: string,
+): PortfolioValueHistoryPoint {
+  return {
+    date,
+    valueCents: null,
+    value: null,
+    currency,
+    pricedHoldings: 0,
+    totalHoldings: 0,
+    available: false,
+    complete: false,
+    dailyChangeCents: null,
+    dailyChange: null,
+    dailyChangePercent: null,
+    bucketStart,
+    bucketEnd,
+  };
+}
+
+function sampledWeeklyPoints(
+  points: PortfolioValueHistoryPoint[],
+  days: number,
+): PortfolioValueHistoryPoint[] {
+  const today = points.at(-1)?.date ?? new Date().toISOString().slice(0, 10);
+  const start = isoDateDaysAgo(days - 1, dateFromIso(today));
+  const inRange = points.filter(point => point.date >= start && point.date <= today);
+  const startDate = dateFromIso(start);
+  const result: PortfolioValueHistoryPoint[] = [];
+  for (let offset = 0; offset < days; offset += 7) {
+    const bucketStartDate = new Date(startDate.getTime() + offset * 24 * 60 * 60 * 1_000);
+    const bucketEndDate = new Date(
+      Math.min(
+        dateFromIso(today).getTime(),
+        bucketStartDate.getTime() + 6 * 24 * 60 * 60 * 1_000,
+      ),
+    );
+    const bucketStart = bucketStartDate.toISOString().slice(0, 10);
+    const bucketEnd = bucketEndDate.toISOString().slice(0, 10);
+    const bucket = inRange.filter(point => point.date >= bucketStart && point.date <= bucketEnd);
+    const selected = [...bucket].reverse().find(point => point.available);
+    if (selected) {
+      result.push({ ...selected, bucketStart, bucketEnd, sampledFrom: selected.date });
+    } else {
+      result.push(copyUnavailablePoint(bucketEnd, points[0]?.currency ?? "AUD", bucketStart, bucketEnd));
+    }
+  }
+  return result;
+}
+
+function sampledMonthlyPoints(points: PortfolioValueHistoryPoint[]): PortfolioValueHistoryPoint[] {
+  const today = dateFromIso(points.at(-1)?.date ?? new Date().toISOString().slice(0, 10));
+  const firstMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 11, 1));
+  const result: PortfolioValueHistoryPoint[] = [];
+  for (let offset = 0; offset < 12; offset += 1) {
+    const monthStartDate = new Date(Date.UTC(
+      firstMonth.getUTCFullYear(),
+      firstMonth.getUTCMonth() + offset,
+      1,
+    ));
+    const nextMonthDate = new Date(Date.UTC(
+      firstMonth.getUTCFullYear(),
+      firstMonth.getUTCMonth() + offset + 1,
+      1,
+    ));
+    const monthStart = monthStartDate.toISOString().slice(0, 10);
+    const monthEnd = new Date(nextMonthDate.getTime() - 24 * 60 * 60 * 1_000)
+      .toISOString()
+      .slice(0, 10);
+    const bucket = points.filter(point => point.date >= monthStart && point.date <= monthEnd);
+    const selected = [...bucket].reverse().find(point => point.available);
+    if (selected) {
+      result.push({
+        ...selected,
+        bucketStart: monthStart,
+        bucketEnd: selected.date < monthEnd ? selected.date : monthEnd,
+        sampledFrom: selected.date,
+      });
+    } else {
+      result.push(copyUnavailablePoint(
+        monthEnd > today.toISOString().slice(0, 10) ? today.toISOString().slice(0, 10) : monthEnd,
+        points[0]?.currency ?? "AUD",
+        monthStart,
+        monthEnd,
+      ));
+    }
+  }
+  return result;
 }
 
 export function portfolioChartData(
   points: PortfolioValueHistoryPoint[],
   now = new Date(),
 ) {
-  return Object.fromEntries(
-    Object.entries(PORTFOLIO_HISTORY_RANGES).map(([range, days]) => [
-      range,
-      days >= PORTFOLIO_HISTORY_RANGES.ALL!
-        ? points
-        : points.filter(point => point.date >= isoDateDaysAgo(days, now)),
-    ]),
-  ) as Record<keyof typeof PORTFOLIO_HISTORY_RANGES, PortfolioValueHistoryPoint[]>;
+  const today = points.at(-1)?.date ?? now.toISOString().slice(0, 10);
+  const currentDate = dateFromIso(today);
+  const daily = (days: number) => points.filter(point =>
+    point.date >= isoDateDaysAgo(days - 1, currentDate) && point.date <= today,
+  );
+  const all = points.filter(point => point.date <= today);
+  return {
+    "1D": daily(1),
+    "7D": daily(7),
+    "1M": daily(30),
+    "3M": sampledWeeklyPoints(points, 90),
+    "6M": sampledWeeklyPoints(points, 180),
+    // Twelve user-facing calendar months, including the current month.
+    "1Y": sampledMonthlyPoints(points),
+    "ALL": all,
+  } as Record<PortfolioChartRange, PortfolioValueHistoryPoint[]>;
 }
 
 function normalizedGrade(value: unknown): number | null {

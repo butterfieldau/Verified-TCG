@@ -259,7 +259,9 @@ export interface PortfolioDataPoint {
   value: number;
 }
 
-export type PortfolioRange = '1D' | '7D' | '1M' | '3M' | '1Y' | 'ALL';
+/** The six collector-facing Home chart ranges. Collection Insights retains
+ * its separate PerformanceRange contract, including ALL. */
+export type PortfolioRange = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y';
 
 export interface PortfolioSummary {
   totalValue: number;

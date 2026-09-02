@@ -948,17 +948,16 @@ describe("GET /collection/value-history", () => {
       .set("Authorization", `Bearer ${token}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.historyAvailable, true);
-    assert.deepEqual(
-      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
-      [
-        [dateDaysAgo(50), 0],
-        [dateDaysAgo(10), 20],
-        [dateDaysAgo(5), 24],
-        [dateDaysAgo(2), 29],
-        [dateDaysAgo(1), 17],
-        [dateDaysAgo(0), 20],
-      ],
+    const points = new Map(
+      res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
     );
+    assert.equal(res.body.points.length, 51);
+    assert.equal(points.get(dateDaysAgo(50)), 0);
+    assert.equal(points.get(dateDaysAgo(10)), 20);
+    assert.equal(points.get(dateDaysAgo(5)), null);
+    assert.equal(points.get(dateDaysAgo(2)), 29);
+    assert.equal(points.get(dateDaysAgo(1)), null);
+    assert.equal(points.get(dateDaysAgo(0)), 20);
   });
 
   test("populates summary chartData from the same real series", async () => {
@@ -966,16 +965,11 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/summary?displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.deepEqual(
-      res.body.chartData.ALL.map((point: { date: string; value: number }) => [point.date, point.value]),
-      [
-        [dateDaysAgo(50), 0],
-        [dateDaysAgo(10), 20],
-        [dateDaysAgo(5), 24],
-        [dateDaysAgo(2), 29],
-        [dateDaysAgo(1), 17],
-        [dateDaysAgo(0), 20],
-      ],
+    assert.equal(res.body.chartData.ALL.length, 51);
+    assert.equal(res.body.chartData.ALL.at(-1)?.value, 20);
+    assert.equal(
+      res.body.chartData.ALL.find((point: { date: string }) => point.date === dateDaysAgo(5))?.value,
+      null,
     );
   });
 
@@ -988,9 +982,9 @@ describe("GET /collection/value-history", () => {
     );
     assert.equal(points.get(dateDaysAgo(50)), 0);
     assert.equal(points.get(dateDaysAgo(10)), 20);
-    assert.equal(points.get(dateDaysAgo(5)), 24);
+    assert.equal(points.get(dateDaysAgo(5)), null);
     assert.equal(points.get(dateDaysAgo(2)), 29);
-    assert.equal(points.get(dateDaysAgo(1)), 17);
+    assert.equal(points.get(dateDaysAgo(1)), null);
     assert.equal(points.get(dateDaysAgo(0)), 20);
   });
 
@@ -1030,13 +1024,10 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${importedUser.accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.deepEqual(
-      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
-      [
-        [dateDaysAgo(5), 0],
-        [dateDaysAgo(0), 27],
-      ],
-    );
+    assert.equal(res.body.points.length, 6);
+    assert.equal(res.body.points[0]?.value, 0);
+    assert.equal(res.body.points[1]?.value, null);
+    assert.equal(res.body.points.at(-1)?.value, 27);
 
     await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, importedCard));
     await db
@@ -1092,16 +1083,16 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${user.accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.deepEqual(
-      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
-      [
-        [dateDaysAgo(30), 0],
-        [dateDaysAgo(10), 25],
-        [dateDaysAgo(3), 0],
-        [dateDaysAgo(2), 0],
-        [dateDaysAgo(0), 0],
-      ],
+    const liquidatedPoints = new Map(
+      res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
     );
+    assert.equal(res.body.points.length, 31);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(30)), 0);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(10)), 25);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(9)), null);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(3)), 0);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(2)), 0);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(0)), 0);
 
     await db.insert(currentQuotesTable).values({
       cardId: liquidatedCard,

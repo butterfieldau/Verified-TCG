@@ -288,8 +288,10 @@ export default function CollectionInsightsScreen() {
           <View style={{ height: 90, alignItems: 'center', justifyContent: 'center' }}>
             <ActivityIndicator color={C.primary} />
           </View>
-        ) : performance && performance.historyAvailable && performance.points.length > 0 ? (
-          <PerformanceChart points={performance.points.map(pt => ({ date: pt.date, value: pt.value }))} />
+        ) : performance && performance.historyAvailable && performance.points.some(point => point.value != null) ? (
+          <PerformanceChart points={performance.points.flatMap(
+            point => point.value == null ? [] : [{ date: point.date, value: point.value }],
+          )} />
         ) : (
           <View style={{ height: 80, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <Feather name="bar-chart-2" size={24} color={C.mutedForeground} />

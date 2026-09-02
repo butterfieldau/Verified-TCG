@@ -604,7 +604,7 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
       : "AUD";
   await capturePortfolioSnapshot(req.userId!);
   const [valueHistory, soldRows, valuation] = await Promise.all([
-    calculatePortfolioValueHistory(req.userId!, PERFORMANCE_RANGES[range]!, displayCurrency),
+    calculatePortfolioValueHistory(req.userId!, 36_500, displayCurrency),
     db
       .select()
       .from(soldArchiveItemsTable)
@@ -615,7 +615,8 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
     calculatePortfolioValuation(req.userId!, displayCurrency),
   ]);
 
-  const points = valueHistory.points;
+  const chartData = portfolioChartData(valueHistory.points);
+  const points = chartData[range as keyof typeof chartData] ?? [];
 
   const realised = await aggregateRealisedGain(soldRows, displayCurrency);
   const performers = valuation.holdings
@@ -656,7 +657,7 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
     }))
     .sort((a, b) => b.value - a.value);
 
-  const historyAvailable = valueHistory.historyAvailable;
+  const historyAvailable = points.some(point => point.available);
   res.json({
     range,
     currency: displayCurrency,
@@ -666,6 +667,7 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
       : valueHistory.historyUnavailableReason,
     points,
     history: points,
+    chartData,
     totalValue: dollars(valuation.totalValueCents),
     costBasis: dollars(valuation.totalCostCents),
     realisedGain: dollars(realised.cents),
