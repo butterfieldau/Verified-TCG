@@ -17,6 +17,7 @@ import {
   Zap,
   Star,
 } from "lucide-react";
+import { publicConfig } from "@/lib/public-config";
 
 // Hook for scroll reveals
 const useReveal = () => {
@@ -24,6 +25,10 @@ const useReveal = () => {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setIsVisible(true);
+      return;
+    }
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -122,22 +127,33 @@ export default function LandingPage() {
         .glow-text {
           text-shadow: 0 0 20px rgba(255, 30, 45, 0.5);
         }
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
       `,
         }}
       />
 
       {/* Navigation */}
       <nav
+        aria-label="Primary navigation"
         className={`fixed top-0 w-full z-50 transition-all duration-300 ${
           isScrolled ? "glass-panel py-3" : "bg-transparent py-5"
         }`}
       >
         <div className="container mx-auto px-6 md:px-12 flex justify-between items-center">
-          <img
-            src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
-            alt="Verified TCG"
-            className="h-auto w-36 sm:w-40"
-          />
+          <Link href="/" aria-label="Verified TCG home">
+            <img
+              src={`${import.meta.env.BASE_URL}verified-tcg-logo-white.png`}
+              alt="Verified TCG"
+              className="h-auto w-36 sm:w-40"
+            />
+          </Link>
 
           <div className="hidden md:flex items-center gap-8 text-sm font-medium">
             <a
@@ -158,12 +174,16 @@ export default function LandingPage() {
             >
               Pro
             </a>
-            <button className="bg-white text-black px-6 py-2.5 rounded-full font-bold hover:bg-gray-200 transition-colors">
-              Get the App
-            </button>
+            <AppAction destination={publicConfig.appUrl} className="bg-white text-black hover:bg-gray-200">
+              Get the App unavailable
+            </AppAction>
           </div>
 
           <button
+            type="button"
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-navigation"
+            aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
             className="md:hidden text-white"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
@@ -174,7 +194,7 @@ export default function LandingPage() {
 
       {/* Mobile Menu */}
       {mobileMenuOpen && (
-        <div className="fixed inset-0 z-40 bg-background/95 backdrop-blur-md pt-24 px-6 md:hidden flex flex-col gap-6">
+        <div id="mobile-navigation" className="fixed inset-0 z-40 bg-background/95 backdrop-blur-md pt-24 px-6 md:hidden flex flex-col gap-6" aria-label="Mobile navigation">
           <a
             href="#features"
             onClick={() => setMobileMenuOpen(false)}
@@ -196,9 +216,9 @@ export default function LandingPage() {
           >
             Pro Plan
           </a>
-          <button className="bg-primary text-white py-4 rounded-lg font-bold text-lg mt-4">
-            Download Now
-          </button>
+          <AppAction destination={publicConfig.appUrl} className="bg-primary text-white mt-4">
+            Download unavailable
+          </AppAction>
         </div>
       )}
 
@@ -216,7 +236,7 @@ export default function LandingPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
               </span>
-              Live Market Data Active
+              Illustrative product preview
             </div>
 
             <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-bold leading-[0.9] uppercase">
@@ -229,39 +249,39 @@ export default function LandingPage() {
             </h1>
 
             <p className="text-lg md:text-xl text-muted-foreground max-w-lg mt-2 leading-relaxed">
-              Scan cards instantly. Track your real-time portfolio value in AUD.
+              Scan cards, track estimated portfolio value in AUD,
               Match trades with verified collectors. Stop guessing, start
               knowing.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 mt-6 w-full sm:w-auto">
-              <button className="bg-primary hover:bg-primary/90 text-white px-8 py-4 rounded-full font-bold text-lg flex items-center justify-center gap-2 transition-transform hover:scale-105 active:scale-95">
-                Download Free <ArrowRight className="w-5 h-5" />
-              </button>
-              <button className="glass-panel hover:bg-white/5 text-white px-8 py-4 rounded-full font-bold text-lg flex items-center justify-center transition-colors">
+              <AppAction destination={publicConfig.appUrl} className="bg-primary hover:bg-primary/90 text-white px-8 py-4 text-lg">
+                Download unavailable <ArrowRight className="w-5 h-5" aria-hidden="true" />
+              </AppAction>
+              <a href="#portfolio" className="glass-panel hover:bg-white/5 text-white px-8 py-4 rounded-full font-bold text-lg flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                 View Live Demo
-              </button>
+              </a>
             </div>
 
             <div className="flex items-center gap-6 mt-8 opacity-60">
               <div className="flex flex-col">
-                <span className="font-display font-bold text-2xl">6</span>
+                <span className="font-display font-bold text-2xl">Multiple</span>
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">
                   TCGs
                 </span>
               </div>
               <div className="w-px h-8 bg-border"></div>
               <div className="flex flex-col">
-                <span className="font-display font-bold text-2xl">2M+</span>
+                <span className="font-display font-bold text-2xl">Provider</span>
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                  Cards Tracked
+                  Catalogues
                 </span>
               </div>
               <div className="w-px h-8 bg-border"></div>
               <div className="flex flex-col">
-                <span className="font-display font-bold text-2xl">Live</span>
+                <span className="font-display font-bold text-2xl">When ready</span>
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                  eBay Sales
+                  Example data
                 </span>
               </div>
             </div>
@@ -365,7 +385,8 @@ export default function LandingPage() {
       </section>
 
       {/* Market Ticker */}
-      <div className="w-full bg-primary text-primary-foreground py-3 overflow-hidden flex whitespace-nowrap border-y border-red-900/50">
+      <div className="w-full bg-primary text-primary-foreground py-3 overflow-hidden flex whitespace-nowrap border-y border-red-900/50" aria-label="Illustrative market data examples">
+        <span className="relative z-10 bg-primary px-4 font-display font-bold uppercase tracking-wider">Example prices</span>
         <div className="ticker font-display font-bold text-lg tracking-wider uppercase items-center gap-8">
           {Array(10)
             .fill(0)
@@ -406,9 +427,9 @@ export default function LandingPage() {
                 <span className="text-primary">Milliseconds.</span>
               </h2>
               <p className="text-xl text-muted-foreground">
-                Our machine learning vision engine recognizes set, variant, and
-                condition instantly. Point your camera. Get live market value.
-                It's that simple.
+                Card scanning helps identify catalogue matches and available
+                pricing evidence. Results depend on image quality and provider
+                coverage.
               </p>
             </div>
           </Reveal>
@@ -458,9 +479,8 @@ export default function LandingPage() {
                       Lightning Fast
                     </h3>
                     <p className="text-muted-foreground leading-relaxed">
-                      No typing names, no scrolling through sets. Just point
-                      your camera and the neural network does the rest, checking
-                      against our 2M+ card database.
+                      Use the camera to search the supported card catalogue
+                      without typing every card detail.
                     </p>
                   </div>
                 </div>
@@ -522,15 +542,15 @@ export default function LandingPage() {
                   Real-Time <span className="text-primary">Wealth.</span>
                 </h2>
                 <p className="text-xl text-muted-foreground mb-8">
-                  Treat your collection like the alternative asset class it is.
-                  Track portfolio value in AUD, monitor daily movers, and view
-                  historical charts based on actual eBay sold listings.
+                  Track estimated portfolio value in AUD, review market movement,
+                  and explore historical pricing when verified source data is
+                  available.
                 </p>
                 <ul className="space-y-4">
                   {[
-                    "Live AUD pricing with daily/weekly/monthly charts",
-                    "PSA 10, BGS 9.5, and CGC 10 graded price distinctions",
-                    "Trending cards and top market movers in real-time",
+                    "AUD pricing and historical charts when data is available",
+                    "Grade-aware pricing where provider evidence supports it",
+                    "Trending cards and market movers with source context",
                   ].map((item, i) => (
                     <li key={i} className="flex items-center gap-3">
                       <CheckCircle2 className="w-5 h-5 text-primary" />
@@ -542,13 +562,16 @@ export default function LandingPage() {
             </div>
 
             <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <p className="sm:col-span-2 text-sm text-muted-foreground">
+                Illustrative dashboard preview. Values and movements below are examples, not live account or provider data.
+              </p>
               <Reveal delay={100} className="sm:col-span-2">
                 <div className="glass-panel p-6 rounded-2xl border-t border-t-white/10 relative overflow-hidden">
                   <div className="absolute right-0 top-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl"></div>
                   <div className="flex justify-between items-start mb-8">
                     <div>
                       <h4 className="text-muted-foreground font-medium uppercase tracking-wider text-xs mb-1">
-                        Total Portfolio Value (AUD)
+                        Example portfolio value (AUD)
                       </h4>
                       <div className="font-display text-5xl font-bold">
                         $124,580
@@ -557,8 +580,8 @@ export default function LandingPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="bg-green-500/10 text-green-500 px-3 py-1.5 rounded-lg flex items-center gap-2 font-bold">
-                      <TrendingUp className="w-4 h-4" /> +$2,450 (30d)
+                    <div className="bg-white/5 text-muted-foreground px-3 py-1.5 rounded-lg flex items-center gap-2 font-bold text-xs">
+                      Illustrative only
                     </div>
                   </div>
                   <div className="h-24 w-full flex items-end gap-1">
@@ -570,7 +593,7 @@ export default function LandingPage() {
                           style={{ height: `${h}%` }}
                         >
                           <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black text-xs p-1.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-10 pointer-events-none transition-opacity">
-                            ${100000 + h * 245}
+                            Example: ${100000 + h * 245}
                           </div>
                         </div>
                       )
@@ -625,7 +648,7 @@ export default function LandingPage() {
                         Top Movers
                       </h4>
                     </div>
-                    <span className="text-xs text-muted-foreground">24h</span>
+                    <span className="text-xs text-muted-foreground">Example</span>
                   </div>
                   <div className="space-y-4">
                     {[
@@ -699,10 +722,10 @@ export default function LandingPage() {
                       AL
                     </div>
                     <div>
-                      <div className="font-bold">AlexCardz</div>
+                      <div className="font-bold">Example collector</div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                         <ShieldCheck className="w-3 h-3 text-green-500" />{" "}
-                        Verified Collector
+                        Illustrative profile
                       </div>
                     </div>
                   </div>
@@ -735,10 +758,10 @@ export default function LandingPage() {
                       TC
                     </div>
                     <div>
-                      <div className="font-bold">TokyoCollect</div>
+                      <div className="font-bold">Example collector</div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                         <ShieldCheck className="w-3 h-3 text-green-500" />{" "}
-                        Verified Collector
+                        Illustrative profile
                       </div>
                     </div>
                   </div>
@@ -761,9 +784,10 @@ export default function LandingPage() {
             </div>
 
             <Reveal delay={200} className="mt-12">
-              <button className="bg-white text-black px-8 py-3 rounded-full font-bold inline-flex items-center gap-2 hover:bg-gray-200 transition-colors">
-                Find Your Match <Search className="w-4 h-4" />
-              </button>
+              <AppAction destination={publicConfig.appUrl} className="bg-white text-black hover:bg-gray-200">
+                Matching is available in the app
+                <Search className="w-4 h-4" aria-hidden="true" />
+              </AppAction>
             </Reveal>
           </div>
         </div>
@@ -781,7 +805,7 @@ export default function LandingPage() {
                 Unlimited Power.
               </h2>
               <p className="text-xl text-muted-foreground">
-                For the serious collector who needs institutional-grade data.
+                A preview of deeper collection and trade tools. Paid access is not available yet.
               </p>
             </div>
           </Reveal>
@@ -800,8 +824,7 @@ export default function LandingPage() {
                 <div className="text-4xl font-display font-bold mb-8">Free</div>
                 <ul className="space-y-4 mb-8 flex-1">
                   <li className="flex items-center gap-3 text-muted-foreground">
-                    <CheckCircle2 className="w-5 h-5 text-white/20" /> 100 Scans
-                    per month
+                    <CheckCircle2 className="w-5 h-5 text-white/20" /> Limited card scanning
                   </li>
                   <li className="flex items-center gap-3 text-muted-foreground">
                     <CheckCircle2 className="w-5 h-5 text-white/20" /> Basic
@@ -812,13 +835,12 @@ export default function LandingPage() {
                     pricing
                   </li>
                   <li className="flex items-center gap-3 text-muted-foreground">
-                    <CheckCircle2 className="w-5 h-5 text-white/20" /> 5 Trade
-                    matches/month
+                    <CheckCircle2 className="w-5 h-5 text-white/20" /> Limited trade matching
                   </li>
                 </ul>
-                <button className="w-full py-4 rounded-xl font-bold glass-panel hover:bg-white/5 transition-colors border border-border">
-                  Get Started
-                </button>
+                <AppAction destination={publicConfig.appUrl} className="w-full glass-panel hover:bg-white/5 border border-border">
+                  App download unavailable
+                </AppAction>
               </div>
             </Reveal>
 
@@ -833,17 +855,19 @@ export default function LandingPage() {
                       Verified Pro <Star className="w-5 h-5 text-primary fill-primary" />
                     </h3>
                     <div className="text-muted-foreground">
-                      Everything you need to dominate the market.
+                      Planned expanded tools for active collectors.
                     </div>
                   </div>
-                  <div className="flex items-end gap-2 mb-8">
-                    <div className="text-5xl font-display font-bold">$12.99</div>
-                    <div className="text-muted-foreground mb-1">/mo</div>
+                  <div className="mb-8">
+                    <div className="text-3xl font-display font-bold">Billing not active</div>
+                    <div className="text-muted-foreground text-sm mt-1">
+                      No price or free trial is currently available.
+                    </div>
                   </div>
                   <ul className="space-y-4 mb-8 flex-1">
                     <li className="flex items-center gap-3">
                       <CheckCircle2 className="w-5 h-5 text-primary" />{" "}
-                      <span className="font-bold">Unlimited</span> instant scans
+                      Expanded scanning access
                     </li>
                     <li className="flex items-center gap-3">
                       <CheckCircle2 className="w-5 h-5 text-primary" /> Graded
@@ -851,20 +875,20 @@ export default function LandingPage() {
                     </li>
                     <li className="flex items-center gap-3">
                       <CheckCircle2 className="w-5 h-5 text-primary" />{" "}
-                      Real-time eBay sold data feeds
+                      Provider-backed sold-data evidence when available
                     </li>
                     <li className="flex items-center gap-3">
                       <CheckCircle2 className="w-5 h-5 text-primary" /> Advanced
                       portfolio analytics
                     </li>
                     <li className="flex items-center gap-3">
-                      <CheckCircle2 className="w-5 h-5 text-primary" /> Unlimited
-                      priority trade matching
+                      <CheckCircle2 className="w-5 h-5 text-primary" /> Expanded
+                      trade matching
                     </li>
                   </ul>
-                  <button className="w-full py-4 rounded-xl font-bold bg-primary hover:bg-primary/90 text-white transition-colors shadow-[0_0_20px_rgba(255,30,45,0.3)]">
-                    Start 7-Day Free Trial
-                  </button>
+                  <AppAction destination={null} className="w-full bg-primary hover:bg-primary/90 text-white shadow-[0_0_20px_rgba(255,30,45,0.3)]">
+                    Pro subscriptions unavailable
+                  </AppAction>
                 </div>
               </div>
             </Reveal>
@@ -883,12 +907,12 @@ export default function LandingPage() {
             Start <span className="text-primary">Tracking.</span>
           </h2>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
-            <button className="bg-white text-black px-8 py-4 rounded-full font-bold text-lg hover:bg-gray-200 transition-colors">
-              Download on iOS
-            </button>
-            <button className="bg-secondary text-white px-8 py-4 rounded-full font-bold text-lg border border-border hover:bg-secondary/80 transition-colors">
-              Download on Android
-            </button>
+            <AppAction destination={publicConfig.iosStoreUrl} className="bg-white text-black hover:bg-gray-200">
+              iOS download unavailable
+            </AppAction>
+            <AppAction destination={publicConfig.androidStoreUrl} className="bg-secondary text-white border border-border hover:bg-secondary/80">
+              Android download unavailable
+            </AppAction>
           </div>
         </div>
 
@@ -904,10 +928,10 @@ export default function LandingPage() {
               <Link href="/privacy" className="hover:text-white transition-colors">
                 Privacy Policy
               </Link>
-              <a href="#" className="hover:text-white transition-colors">
-                Terms of Service
-              </a>
-              <a href="#" className="hover:text-white transition-colors">
+              <Link href="/subscription-terms" className="hover:text-white transition-colors">
+                Subscription Terms
+              </Link>
+              <a href={`mailto:${publicConfig.supportEmail}`} className="hover:text-white transition-colors">
                 Support
               </a>
             </div>
@@ -920,5 +944,35 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function AppAction({
+  children,
+  destination,
+  className = "",
+}: {
+  children: React.ReactNode;
+  destination: string | null;
+  className?: string;
+}) {
+  const sharedClassName = `inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-bold ${className}`;
+  if (destination) {
+    return (
+      <a href={destination} className={`${sharedClassName} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled
+      aria-disabled="true"
+      title="App downloads and sign-in are not published yet"
+      className={`${sharedClassName} opacity-70 cursor-not-allowed`}
+    >
+      {children}
+    </button>
   );
 }

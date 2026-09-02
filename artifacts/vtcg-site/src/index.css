@@ -184,7 +184,17 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
   .font-display {
     font-family: var(--app-font-display);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }
