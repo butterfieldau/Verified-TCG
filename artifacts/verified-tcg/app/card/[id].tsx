@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Dimensions,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -774,18 +773,11 @@ export default function CardDetailScreen() {
   const ownedItems = collection.filter(item => item.cardId === card.id);
   const ownedQuantity = ownedItems.reduce((sum, item) => sum + item.quantity, 0);
   const populationRecords = ownedItems.filter(item => item.grading?.population != null);
-  const change24h = card.price.change24h;
   const topMarketSummary = marketSummary ?? (
     card.price.available
       ? { label: 'Raw / Ungraded', price: card.price.raw, currency: card.price.currency }
       : null
   );
-  const ebaySearchUrl = `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent([
-    card.name,
-    card.setName,
-    card.number,
-    detailMode === 'Graded' ? topMarketSummary?.label : null,
-  ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
   function selectDetailMode(mode: DetailMode) {
     setDetailMode(mode);
@@ -1015,7 +1007,7 @@ export default function CardDetailScreen() {
               </Text>
               <Text style={styles.cardName}>{card.name}</Text>
               <Text style={styles.cardMeta}>
-                {RARITY_LABELS[card.rarity]} · {card.number} · {card.isHolo ? 'Holofoil' : card.isFoil ? 'Foil' : card.year}
+                {RARITY_LABELS[card.rarity]} · {card.number} · {card.year}
               </Text>
             </View>
             <Pressable
@@ -1026,7 +1018,7 @@ export default function CardDetailScreen() {
               accessibilityState={{ selected: isWatched }}
               hitSlop={8}
             >
-              <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
+              <Feather name="bookmark" size={20} color={C.primary} />
             </Pressable>
           </View>
 
@@ -1039,43 +1031,7 @@ export default function CardDetailScreen() {
                   : 'Price unavailable'}
               </Text>
             </View>
-            {change24h !== undefined && (
-              <View style={styles.changeColumn}>
-                <View style={styles.changeRow}>
-                  <Feather
-                    name={change24h >= 0 ? 'trending-up' : 'trending-down'}
-                    size={13}
-                    color={change24h >= 0 ? C.positive : C.negative}
-                  />
-                  <Text style={[styles.changeText, { color: change24h >= 0 ? C.positive : C.negative }]}>
-                    {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
-                  </Text>
-                </View>
-                <Text style={styles.valueSource}>
-                  PriceCharting · {topMarketSummary?.currency ?? card.price.currency}
-                </Text>
-              </View>
-            )}
           </View>
-
-          <View style={styles.confidenceRow}>
-            <View style={styles.confidenceStatus}>
-              <View style={styles.confidenceDot} />
-              <Text style={styles.confidenceText}>High confidence</Text>
-            </View>
-            <Text style={styles.confidenceText}>Refreshed {formatCardAge(card.price.updatedAt)}</Text>
-          </View>
-
-          <Pressable
-            onPress={() => void Linking.openURL(ebaySearchUrl)}
-            style={styles.soldListingsButton}
-            accessibilityRole="link"
-            accessibilityLabel={`View completed eBay listings for ${card.name}`}
-          >
-            <Feather name="tag" size={15} color="#FFFFFF" />
-            <Text style={styles.soldListingsButtonText}>View sold listings</Text>
-            <Feather name="arrow-up-right" size={14} color="#FFFFFF" />
-          </Pressable>
         </View>
 
         <View style={styles.modeTabs} accessibilityRole="tablist">
@@ -1240,49 +1196,6 @@ export default function CardDetailScreen() {
         </View>
       </ScrollView>
 
-      <View
-        style={[
-          styles.passportBottomNav,
-          { bottom: Platform.OS === 'web' ? 10 : Math.max(10, insets.bottom) },
-        ]}
-        accessibilityRole="tablist"
-      >
-        {[
-          { label: 'Home', icon: 'home', route: '/(tabs)' },
-          { label: 'Search', icon: 'search', route: '/search' },
-          { label: 'Market', icon: 'square', route: '/(tabs)/market' },
-          { label: 'Community', icon: 'users', route: '/(tabs)/community' },
-          { label: 'Collection', icon: 'circle', route: '/(tabs)/collection' },
-        ].map(item => {
-          const active = item.label === 'Market';
-          return (
-            <Pressable
-              key={item.label}
-              onPress={() => router.push(item.route as any)}
-              style={styles.passportBottomNavItem}
-              accessibilityRole="tab"
-              accessibilityLabel={item.label}
-              accessibilityState={{ selected: active }}
-            >
-              <Feather name={item.icon as any} size={15} color={active ? C.primary : '#817C84'} />
-              <Text style={[styles.passportBottomNavText, active && styles.passportBottomNavTextActive]}>
-                {item.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Pressable
-        onPress={handleWishlistToggle}
-        style={[styles.floatingBookmark, isWatched && styles.floatingBookmarkActive]}
-        accessibilityRole="button"
-        accessibilityLabel={isWatched ? 'Open wishlist' : 'Save to wishlist'}
-        accessibilityState={{ selected: isWatched }}
-      >
-        <Feather name="bookmark" size={16} color={isWatched ? '#FFFFFF' : C.foreground} />
-      </Pressable>
-
       {/* Added to collection banner */}
       {showAddedBanner && (
         <View style={styles.banner}>
@@ -1310,18 +1223,6 @@ export default function CardDetailScreen() {
     </View>
     </GestureDetector>
   );
-}
-
-function formatCardAge(updatedAt?: string | null): string {
-  if (!updatedAt) return 'recently';
-  const timestamp = new Date(updatedAt).getTime();
-  if (!Number.isFinite(timestamp)) return 'recently';
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
-  if (minutes < 2) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
 }
 
 const styles = StyleSheet.create({
@@ -1579,64 +1480,6 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', gap: 7, flexWrap: 'wrap', marginTop: 12 },
   tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7 },
   tagText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  passportBottomNav: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    zIndex: 40,
-    minHeight: 72,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#37343B',
-    borderRadius: 19,
-    backgroundColor: 'rgba(27,25,30,0.97)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 6,
-    paddingVertical: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    elevation: 18,
-  },
-  passportBottomNavItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  passportBottomNavText: {
-    color: '#817C84',
-    fontFamily: 'Inter_400Regular',
-    fontSize: 9,
-  },
-  passportBottomNavTextActive: {
-    color: C.primary,
-  },
-  floatingBookmark: {
-    position: 'absolute',
-    right: 26,
-    bottom: 84,
-    zIndex: 41,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#4A454E',
-    backgroundColor: '#211F25',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 20,
-  },
-  floatingBookmarkActive: {
-    borderColor: C.primary,
-    backgroundColor: C.primary,
-  },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1655,43 +1498,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Rajdhani_700Bold',
     fontSize: 32,
     lineHeight: 34,
-  },
-  changeColumn: { alignItems: 'flex-end', paddingBottom: 2 },
-  changeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  changeText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
-  valueSource: {
-    color: C.mutedForeground,
-    fontFamily: 'Inter_400Regular',
-    fontSize: 9,
-    marginTop: 4,
-  },
-  confidenceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: C.border,
-    marginTop: 14,
-    paddingTop: 12,
-  },
-  confidenceStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  confidenceDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.positive },
-  confidenceText: { color: C.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 10 },
-  soldListingsButton: {
-    minHeight: 49,
-    borderRadius: 10,
-    backgroundColor: C.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 15,
-    paddingHorizontal: 14,
-  },
-  soldListingsButtonText: {
-    color: C.primaryForeground,
-    fontFamily: 'Inter_700Bold',
-    fontSize: 12,
   },
   modeTabs: {
     flexDirection: 'row',
