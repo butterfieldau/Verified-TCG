@@ -199,6 +199,13 @@ export const priceChartingGuideImportsTable = pgTable(
     lastErrorKind: text("last_error_kind"),
     lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
     leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    downloadClaimToken: text("download_claim_token"),
+    reconciliationStatus: text("reconciliation_status").notNull().default("pending"),
+    reconciliationCursor: text("reconciliation_cursor"),
+    reconciliationLeaseUntil: timestamp("reconciliation_lease_until", { withTimezone: true }),
+    reconciliationClaimToken: text("reconciliation_claim_token"),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    reconciliationStats: jsonb("reconciliation_stats").notNull().default({}),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );
@@ -210,12 +217,16 @@ export const priceChartingGuideRowsTable = pgTable(
     providerProductId: text("provider_product_id").notNull(),
     productName: text("product_name").notNull(),
     consoleName: text("console_name").notNull(),
+    normalizedName: text("normalized_name").notNull().default(""),
+    normalizedNumber: text("normalized_number"),
+    normalizedSet: text("normalized_set").notNull().default(""),
     prices: jsonb("prices").notNull(),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
   },
   (t) => [
     unique("pricecharting_guide_rows_category_product_uniq").on(t.category, t.providerProductId),
     index("pricecharting_guide_rows_category_product_idx").on(t.category, t.providerProductId),
+    index("pricecharting_guide_rows_identity_idx").on(t.category, t.normalizedName, t.normalizedNumber),
   ],
 );
 
@@ -224,6 +235,7 @@ export const priceChartingGuideDownloadLeaseTable = pgTable("pricecharting_guide
   leaseKey: text("lease_key").primaryKey(),
   lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).notNull(),
   leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  claimToken: text("claim_token"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -7,6 +7,7 @@ import {
   getPricingMappingState,
   recordSchedulerIdentityFailure,
   refreshPricingForScheduler,
+  runScheduledGuideReconciliation,
   snapshotBucketFor,
 } from "./service.js";
 import { captureAllPortfolioSnapshotsDetailed } from "./portfolio.js";
@@ -273,6 +274,9 @@ let timer: NodeJS.Timeout | null = null;
 export function startPricingScheduler(): void {
   if (timer || process.env.NODE_ENV === "test") return;
   const invoke = (trigger: "startup" | "interval") => {
+    void runScheduledGuideReconciliation().catch(error => {
+      logger.error({ err: error, trigger }, "Recurring PriceCharting guide reconciliation failed");
+    });
     void runScheduledPricingBatch({ trigger }).catch(error => {
       logger.error({ err: error, trigger }, "Recurring pricing scheduler failed");
     });

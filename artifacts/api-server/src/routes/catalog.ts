@@ -926,8 +926,9 @@ router.get("/catalog/cards/:id", async (req, res) => {
         code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED",
       });
     }
+    const [pricedCard] = await enrichCardsWithCurrentRawQuotes([resolved.card]);
     return res.json({
-      data: resolved.card,
+      data: pricedCard ?? resolved.card,
       source: resolved.source,
       cached: resolved.cached,
       ...(resolved.source === "VerifiedTCG" ? { canonical: true } : {}),

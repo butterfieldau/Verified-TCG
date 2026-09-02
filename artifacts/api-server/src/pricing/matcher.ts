@@ -25,6 +25,9 @@ export interface MatchCandidate {
   cardNumber?: string;
   /** Game/category */
   genre?: string;
+  /** Explicit language/region evidence parsed from provider labels. */
+  language?: string;
+  region?: string;
 }
 
 export interface MatchInput {
@@ -32,6 +35,8 @@ export interface MatchInput {
   set?: string;
   number?: string;
   game?: string;
+  language?: string;
+  region?: string;
 }
 
 /**
@@ -77,29 +82,67 @@ const W_GAME   = 0.10;
 /** Normalize a string for comparison: lowercase, remove punctuation, collapse spaces. */
 export function normalizeString(s: string): string {
   return s
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .replace(/[''`\-–—]/g, " ")
-    .replace(/[^\w\s]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 /** Extract a provider card number only from explicit, low-risk product-name forms. */
 export function extractCardNumber(name: string): string | undefined {
-  const hashMatch = name.match(/(?:^|\s)#\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)(?=\s|$)/i);
+  const hashMatch = name.match(/(?:^|\s)#\s*([a-z0-9]+(?:[-/][a-z0-9]+)*)(?=\s|$|\))/i);
   if (hashMatch?.[1]) return hashMatch[1];
 
-  const fractionMatch = name.match(/(?:^|\s)([a-z0-9-]+\/[a-z0-9-]+)(?=\s|$)/i);
-  return fractionMatch?.[1];
+  const fractionMatch = name.match(/(?:^|\s)([a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$|\))/i);
+  if (fractionMatch?.[1]) return fractionMatch[1];
+
+  // Some guide categories use a trailing explicit promo/set identifier without
+  // a hash (for example "Monkey.D.Luffy OP01-003"). Requiring both letters and
+  // digits avoids mistaking ordinary title words or years for card numbers.
+  const promoMatch = name.match(/(?:^|\s|\()([a-z]{1,8}[- ]?\d{1,5}(?:[-/][a-z0-9]{1,8})*)(?=\s|$|\))/i);
+  return promoMatch?.[1]?.replace(/\s+/g, "");
 }
 
 /** Remove only the explicit card-number fragment used by extractCardNumber. */
 export function stripCardNumber(name: string): string {
+  const extracted = extractCardNumber(name);
+  if (!extracted) return name.replace(/\s+/g, " ").trim();
+  const escaped = extracted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return name
-    .replace(/(?:^|\s)#\s*[a-z0-9-]+(?:\/[a-z0-9-]+)?(?=\s|$)/gi, " ")
-    .replace(/(?:^|\s)[a-z0-9-]+\/[a-z0-9-]+(?=\s|$)/gi, " ")
+    .replace(new RegExp(`(?:^|\\s|\\()#?\\s*${escaped}(?=\\s|$|\\))`, "i"), " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeNumberPart(part: string): string {
+  const compact = part.normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const match = /^([A-Z]*)(\d+)([A-Z]*)$/.exec(compact);
+  if (!match) return compact;
+  return `${match[1]}${match[2]!.replace(/^0+(?=\d)/, "")}${match[3]}`;
+}
+
+/** Comparison form that preserves promo prefixes while ignoring display separators. */
+export function normalizeCollectorNumberForMatch(value: string | undefined): {
+  full: string;
+  numerator: string;
+} | null {
+  if (!value?.trim()) return null;
+  const parts = value.trim().split("/").map(normalizeNumberPart).filter(Boolean);
+  if (!parts[0]) return null;
+  return { full: parts.join("/"), numerator: parts[0] };
+}
+
+export function collectorNumbersMatch(input: string | undefined, candidate: string | undefined): boolean {
+  const left = normalizeCollectorNumberForMatch(input);
+  const right = normalizeCollectorNumberForMatch(candidate);
+  if (!left || !right) return false;
+  // PriceCharting regularly omits a printed denominator, but a conflicting
+  // denominator must not be ignored when both sides provide one.
+  return left.full === right.full ||
+    (left.numerator === right.numerator && (!left.full.includes("/") || !right.full.includes("/")));
 }
 
 /** Simple Jaccard similarity over word sets. */
@@ -158,15 +201,7 @@ function scoreSet(input: string | undefined, candidate: string): number {
 /** Score a card number match (0 or 1). */
 function scoreNumber(input: string | undefined, candidate: string | undefined): number {
   if (!input || !candidate) return 0.5; // unknown — partial credit
-  const normalizePart = (part: string) => part.replace(/^0+/, "").toLowerCase().trim();
-  const inputParts = input.split("/").map(normalizePart);
-  const candidateParts = candidate.split("/").map(normalizePart);
-  if (inputParts.join("/") === candidateParts.join("/")) return 1;
-  // PriceCharting commonly omits the printed denominator (for example
-  // catalogue 161/131 is provider #161). A shared numerator is accepted only
-  // as identifier evidence; pickBestMatch still requires a unique exact-name
-  // candidate before this can bypass fuzzy set scoring.
-  return inputParts[0] && inputParts[0] === candidateParts[0] ? 1 : 0;
+  return collectorNumbersMatch(input, candidate) ? 1 : 0;
 }
 
 /** Score a game match (0 or 1). */

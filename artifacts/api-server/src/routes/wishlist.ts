@@ -19,8 +19,8 @@
 import { Router } from "express";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { db } from "@workspace/db";
-import { wishlistItemsTable } from "@workspace/db";
-import { and, eq, isNull, isNotNull } from "drizzle-orm";
+import { currentQuotesTable, wishlistItemsTable } from "@workspace/db";
+import { and, eq, inArray, isNull, isNotNull } from "drizzle-orm";
 import type { InferInsertModel } from "drizzle-orm";
 import { logActivity, logActivitySafely } from "./activity.js";
 
@@ -32,6 +32,8 @@ interface CardPrice {
   raw: number;
   formatted: string;
   currency: string;
+  available?: boolean;
+  updatedAt?: string | null;
 }
 
 interface Card {
@@ -114,6 +116,41 @@ async function hydrateIfNeeded(userId: string): Promise<void> {
   cache.set(userId, rows.map(rowToItem));
 }
 
+async function enrichWishlistPrices(items: WishlistItem[]): Promise<WishlistItem[]> {
+  const cardIds = [...new Set(items.map(item => item.cardId).filter(Boolean))];
+  if (cardIds.length === 0) return items;
+  const quotes = await db.select({
+    cardId: currentQuotesTable.cardId,
+    priceCents: currentQuotesTable.priceCents,
+    currency: currentQuotesTable.currency,
+    fetchedAt: currentQuotesTable.fetchedAt,
+  }).from(currentQuotesTable).where(and(
+    eq(currentQuotesTable.providerKey, "pricecharting"),
+    eq(currentQuotesTable.gradeKey, "raw"),
+    inArray(currentQuotesTable.cardId, cardIds),
+  ));
+  const byCard = new Map(quotes.map(quote => [quote.cardId, quote]));
+  return items.map(item => {
+    const quote = byCard.get(item.cardId);
+    if (!quote || quote.priceCents <= 0) return item;
+    const raw = quote.priceCents / 100;
+    return {
+      ...item,
+      card: {
+        ...item.card,
+        pricing_source: "PriceCharting",
+        price: {
+          raw,
+          formatted: `${quote.currency} ${raw.toFixed(2)}`,
+          currency: quote.currency,
+          available: true,
+          updatedAt: quote.fetchedAt.toISOString(),
+        },
+      },
+    };
+  });
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /** GET /api/wishlist — current wishlist for the authenticated collector */
@@ -121,7 +158,7 @@ wishlistRouter.get("/wishlist", requireActiveUser, async (req: AuthRequest, res)
   const userId = req.userId!;
   await hydrateIfNeeded(userId);
   const items = cache.get(userId) ?? [];
-  res.json({ items });
+  res.json({ items: await enrichWishlistPrices(items) });
 });
 
 /**
@@ -222,7 +259,7 @@ wishlistRouter.post("/wishlist/sync", requireActiveUser, async (req: AuthRequest
     }
   }
 
-  res.json({ ok: true, items: merged, count: merged.length });
+  res.json({ ok: true, items: await enrichWishlistPrices(merged), count: merged.length });
 });
 
 /**

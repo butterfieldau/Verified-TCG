@@ -475,6 +475,63 @@ import {
 } from "../pricing/pricecharting.js";
 
 import type { PCProductDetail } from "../pricing/pricecharting.js";
+import { matchCanonicalCardToGuide } from "../pricing/service.js";
+
+describe("bulk guide deterministic reconciliation", () => {
+  const raw = { raw: 1250 };
+
+  const representativeCases = [
+    {
+      category: "pokemon" as const,
+      input: { cardId: "pk", name: "Flabébé", set: "Scarlet & Violet", number: "091/198", game: "Pokemon" },
+      row: { providerProductId: "1001", productName: "Flabebe #091", consoleName: "Pokemon Scarlet & Violet", prices: raw },
+    },
+    {
+      category: "magic" as const,
+      input: { cardId: "mtg", name: "Black Lotus", set: "Limited Edition Alpha", number: "232", game: "Magic: The Gathering" },
+      row: { providerProductId: "1002", productName: "Black Lotus #232", consoleName: "Magic Alpha", prices: raw },
+    },
+    {
+      category: "yugioh" as const,
+      input: { cardId: "ygo", name: "Blue-Eyes White Dragon", set: "Legend of Blue Eyes White Dragon", number: "LOB-001", game: "Yu-Gi-Oh!" },
+      row: { providerProductId: "1003", productName: "Blue-Eyes White Dragon #LOB-001", consoleName: "YuGiOh Legend of Blue Eyes", prices: raw },
+    },
+    {
+      category: "one_piece" as const,
+      input: { cardId: "op", name: "Monkey.D.Luffy", set: "Romance Dawn", number: "OP01-003", game: "One Piece" },
+      row: { providerProductId: "1004", productName: "Monkey.D.Luffy #OP01-003", consoleName: "One Piece Romance Dawn", prices: raw },
+    },
+  ] as const;
+  for (const { category, input, row } of representativeCases) {
+    test(`maps a representative ${category} identity without fuzzy proof`, () => {
+      const result = matchCanonicalCardToGuide(input, [row], category);
+      assert.equal(result.status, "matched");
+      assert.equal(result.candidate?.providerProductId, row.providerProductId);
+    });
+  }
+
+  test("keeps duplicate printings ambiguous instead of choosing a plausible price", () => {
+    const result = matchCanonicalCardToGuide(
+      { cardId: "dup", name: "Charizard", set: "Unknown Printing", number: "4/102", game: "Pokemon" },
+      [
+        { providerProductId: "base", productName: "Charizard #4", consoleName: "Pokemon Base Set", prices: raw },
+        { providerProductId: "celebrations", productName: "Charizard #4", consoleName: "Pokemon Celebrations", prices: raw },
+      ],
+      "pokemon",
+    );
+    assert.equal(result.status, "review_required");
+    assert.equal(result.candidate, null);
+  });
+
+  test("rejects contradictory language evidence", () => {
+    const result = matchCanonicalCardToGuide(
+      { cardId: "language", name: "Umbreon ex", set: "Prismatic Evolutions", number: "161/131", game: "Pokemon", language: "en" },
+      [{ providerProductId: "kr", productName: "Umbreon ex #161", consoleName: "Pokemon Korean Terastal Festival", prices: raw }],
+      "pokemon",
+    );
+    assert.equal(result.status, "unmatched");
+  });
+});
 
 describe("isPCConfigured", () => {
   const originalToken = process.env.PRICECHARTING_TOKEN;

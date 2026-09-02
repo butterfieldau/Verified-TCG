@@ -72,6 +72,17 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_epid TEXT`,
   `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`,
   `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS download_claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_status TEXT NOT NULL DEFAULT 'pending'`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_cursor TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_lease_until TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_stats JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE pricecharting_guide_download_lease ADD COLUMN IF NOT EXISTS claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_number TEXT`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_set TEXT NOT NULL DEFAULT ''`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
@@ -436,6 +447,13 @@ const TABLE_MIGRATIONS: string[] = [
     last_error_kind TEXT,
     last_attempt_at TIMESTAMPTZ,
     lease_until TIMESTAMPTZ,
+    download_claim_token TEXT,
+    reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+    reconciliation_cursor TEXT,
+    reconciliation_lease_until TIMESTAMPTZ,
+    reconciliation_claim_token TEXT,
+    reconciled_at TIMESTAMPTZ,
+    reconciliation_stats JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS pricecharting_guide_rows (
@@ -443,6 +461,9 @@ const TABLE_MIGRATIONS: string[] = [
     provider_product_id TEXT NOT NULL,
     product_name TEXT NOT NULL,
     console_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL DEFAULT '',
+    normalized_number TEXT,
+    normalized_set TEXT NOT NULL DEFAULT '',
     prices JSONB NOT NULL,
     fetched_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT pricecharting_guide_rows_category_product_uniq
@@ -454,6 +475,7 @@ const TABLE_MIGRATIONS: string[] = [
     lease_key TEXT PRIMARY KEY,
     last_attempt_at TIMESTAMPTZ NOT NULL,
     lease_until TIMESTAMPTZ NOT NULL,
+    claim_token TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   // Portfolio snapshots (one row per user+date)
@@ -726,6 +748,8 @@ const TABLE_MIGRATIONS: string[] = [
  * created before this migration was added.
  */
 const CONSTRAINT_MIGRATIONS: string[] = [
+  `CREATE INDEX IF NOT EXISTS pricecharting_guide_rows_identity_idx
+    ON pricecharting_guide_rows (category, normalized_name, normalized_number)`,
   `CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows (follower_user_id)`,
   `CREATE INDEX IF NOT EXISTS follows_followee_idx ON follows (followee_user_id)`,
   // Columns added by older ALTER ... ADD COLUMN IF NOT EXISTS statements can

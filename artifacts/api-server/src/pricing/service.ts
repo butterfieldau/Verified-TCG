@@ -8,6 +8,7 @@
  *  - FX conversion for display
  */
 import { db } from "@workspace/db";
+import { randomUUID } from "node:crypto";
 import {
   cardProviderMappingsTable,
   cardPriceSnapshotsTable,
@@ -19,7 +20,7 @@ import {
   priceChartingGuideRowsTable,
   priceChartingGuideDownloadLeaseTable,
 } from "@workspace/db";
-import { and, eq, desc, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, desc, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import {
   priceChartingProvider,
@@ -41,7 +42,17 @@ import {
   normalizeGradeKey,
 } from "./grades.js";
 import type { GradeKey } from "./grades.js";
-import { buildMatchSearchQueries, pickBestMatch } from "./matcher.js";
+import {
+  buildMatchSearchQueries,
+  collectorNumbersMatch,
+  extractCardNumber,
+  normalizeCollectorNumberForMatch,
+  normalizeString,
+  pickBestMatch,
+  stripCardNumber,
+  type MatchCandidate,
+  type MatchInput,
+} from "./matcher.js";
 import { convertCents, buildConversionProvenance } from "./fx.js";
 import {
   aggregateVerifiedMarketValue,
@@ -325,45 +336,720 @@ export function chunkGuideRows<T>(rows: readonly T[], size = 1_000): T[][] {
   return chunks;
 }
 
+const GUIDE_GAME_NAMES: Record<PriceChartingGuideCategory, string> = {
+  pokemon: "Pokemon",
+  magic: "Magic: The Gathering",
+  yugioh: "Yu-Gi-Oh!",
+  one_piece: "One Piece",
+};
+
+const GUIDE_GAME_SLUGS: Record<PriceChartingGuideCategory, string[]> = {
+  pokemon: ["pokemon"],
+  magic: ["magic-the-gathering", "magic", "mtg"],
+  yugioh: ["yu-gi-oh", "yugioh"],
+  one_piece: ["one-piece", "onepiece"],
+};
+
+function normalizedGuideName(productName: string): string {
+  return normalizeString(stripCardNumber(productName));
+}
+
+function normalizedGuideSet(consoleName: string): string {
+  const ignored = new Set(["cards", "card", "tcg", "pokemon", "pokémon", "magic", "the", "gathering", "yugioh", "yu", "gi", "oh", "one", "piece"]);
+  return normalizeString(consoleName).split(" ").filter(word => word && !ignored.has(word)).join(" ");
+}
+
+function explicitLanguage(value: string): string | null {
+  const normalized = normalizeString(value);
+  const labels: Array<[RegExp, string]> = [
+    [/\bjapanese\b|\bjapan\b/, "ja"],
+    [/\bkorean\b|\bkorea\b/, "ko"],
+    [/\bchinese\b|\bchina\b|\bsimplified\b|\btraditional\b/, "zh"],
+    [/\bfrench\b|\bfrance\b/, "fr"],
+    [/\bgerman\b|\bgermany\b/, "de"],
+    [/\bitalian\b|\bitaly\b/, "it"],
+    [/\bspanish\b|\bspain\b/, "es"],
+    [/\bportuguese\b|\bportugal\b|\bbrazil\b/, "pt"],
+    [/\benglish\b/, "en"],
+  ];
+  return labels.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
+}
+
+function normalizedLanguage(value: string | null | undefined): string | null {
+  const normalized = normalizeString(value ?? "");
+  if (!normalized) return null;
+  const aliases: Record<string, string> = {
+    japanese: "ja", jpn: "ja", jp: "ja", ja: "ja",
+    korean: "ko", kor: "ko", kr: "ko", ko: "ko",
+    chinese: "zh", zho: "zh", cn: "zh", zh: "zh",
+    english: "en", eng: "en", en: "en",
+    french: "fr", fra: "fr", fr: "fr",
+    german: "de", deu: "de", de: "de",
+    italian: "it", ita: "it", it: "it",
+    spanish: "es", spa: "es", es: "es",
+    portuguese: "pt", por: "pt", pt: "pt",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+export interface CanonicalGuideIdentity extends MatchInput {
+  cardId: string;
+  setCode?: string;
+}
+
+export interface GuideIdentityRow {
+  providerProductId: string;
+  productName: string;
+  consoleName: string;
+  prices: Record<string, number>;
+}
+
+export interface GuideIdentityMatch {
+  status: "matched" | "review_required" | "unmatched";
+  candidate: GuideIdentityRow | null;
+  score: number;
+  reason: string;
+  candidateCount: number;
+}
+
 /**
- * Apply a PriceCharting bulk guide only to already strong, canonical mappings.
- * CSV rows never create mappings or promote review_required records: the
- * provider product id was established by the normal exact-identity workflow.
+ * Deterministic guide matcher. Fuzzy similarity alone never creates a mapping:
+ * an exact normalized card name and compatible explicit collector number are
+ * mandatory. Set and language evidence only disambiguate duplicate printings.
+ */
+export function matchCanonicalCardToGuide(
+  input: CanonicalGuideIdentity,
+  guideRows: readonly GuideIdentityRow[],
+  category: PriceChartingGuideCategory,
+): GuideIdentityMatch {
+  const wantedName = normalizeString(stripCardNumber(input.name));
+  const wantedNumber = normalizeCollectorNumberForMatch(input.number);
+  if (!wantedName || !wantedNumber) {
+    return { status: "unmatched", candidate: null, score: 0, reason: "missing_deterministic_identity", candidateCount: 0 };
+  }
+  const wantedLanguage = normalizedLanguage(input.language);
+  const candidates = guideRows.filter(row => {
+    if (normalizedGuideName(row.productName) !== wantedName) return false;
+    const candidateNumber = extractCardNumber(row.productName);
+    if (!collectorNumbersMatch(input.number, candidateNumber)) return false;
+    const providerLanguage = explicitLanguage(`${row.consoleName} ${row.productName}`);
+    return !wantedLanguage || !providerLanguage || wantedLanguage === providerLanguage;
+  });
+  if (candidates.length === 0) {
+    return { status: "unmatched", candidate: null, score: 0, reason: "no_exact_name_number", candidateCount: 0 };
+  }
+  const matchCandidates: MatchCandidate[] = candidates.map(row => ({
+    id: row.providerProductId,
+    name: stripCardNumber(row.productName),
+    consoleName: row.consoleName,
+    cardNumber: extractCardNumber(row.productName),
+    genre: GUIDE_GAME_NAMES[category],
+    language: explicitLanguage(`${row.consoleName} ${row.productName}`) ?? undefined,
+  }));
+  const result = pickBestMatch(input, matchCandidates);
+  if (result.status !== "matched" || !result.candidate) {
+    return {
+      status: candidates.length > 0 ? "review_required" : "unmatched",
+      candidate: null,
+      score: result.score.total,
+      reason: candidates.length > 1 ? "duplicate_printing_ambiguous" : "insufficient_set_evidence",
+      candidateCount: candidates.length,
+    };
+  }
+  const selected = candidates.find(row => row.providerProductId === result.candidate!.id) ?? null;
+  return {
+    status: selected ? "matched" : "review_required",
+    candidate: selected,
+    score: result.score.total,
+    reason: selected ? "unique_exact_name_number" : "candidate_disappeared",
+    candidateCount: candidates.length,
+  };
+}
+
+export interface PriceChartingReconciliationResult {
+  category: PriceChartingGuideCategory;
+  claimed: boolean;
+  status: "pending" | "running" | "completed" | "failed";
+  processed: number;
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+  quotesPersisted: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+interface CanonicalReconciliationRow extends Record<string, unknown> {
+  card_id: string;
+  name: string;
+  set_name: string;
+  set_code: string | null;
+  collector_number: string | null;
+  language: string | null;
+  region: string | null;
+}
+
+function priceMapFromJson(value: unknown): Map<GradeKey, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return new Map();
+  return new Map(Object.entries(value as Record<string, unknown>)
+    .filter(([grade, cents]) => isValidGradeKey(grade) && Number.isSafeInteger(cents) && Number(cents) > 0)
+    .map(([grade, cents]) => [grade as GradeKey, Number(cents)]));
+}
+
+async function persistReconciliationQuote(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  cardId: string,
+  providerProductId: string,
+  prices: Map<GradeKey, number>,
+  fetchedAt: Date,
+): Promise<number> {
+  const snapshotDate = fetchedAt.toISOString().slice(0, 10);
+  const snapshotBucket = snapshotBucketFor(fetchedAt);
+  for (const [gradeKey, priceCents] of prices) {
+    await tx.insert(currentQuotesTable).values({
+      cardId, providerKey: PROVIDER_KEY, gradeKey, priceCents, currency: PC_CURRENCY,
+      fetchedAt, providerProductId,
+    }).onConflictDoUpdate({
+      target: [currentQuotesTable.cardId, currentQuotesTable.providerKey, currentQuotesTable.gradeKey],
+      set: { priceCents, currency: PC_CURRENCY, fetchedAt, providerProductId, updatedAt: fetchedAt },
+    });
+    await tx.insert(providerPriceHistoryTable).values({
+      cardId, providerKey: PROVIDER_KEY, gradeKey, priceCents, currency: PC_CURRENCY,
+      snapshotDate, recordedAt: fetchedAt,
+    }).onConflictDoUpdate({
+      target: [
+        providerPriceHistoryTable.cardId,
+        providerPriceHistoryTable.providerKey,
+        providerPriceHistoryTable.gradeKey,
+        providerPriceHistoryTable.snapshotDate,
+      ],
+      set: { priceCents, currency: PC_CURRENCY, recordedAt: fetchedAt },
+    });
+    await tx.insert(cardPriceSnapshotsTable).values({
+      cardId, providerKey: PROVIDER_KEY, providerProductId, gradeKey, priceCents,
+      currency: PC_CURRENCY, capturedAt: fetchedAt, snapshotBucket, captureStatus: "success",
+    }).onConflictDoUpdate({
+      target: [
+        cardPriceSnapshotsTable.cardId,
+        cardPriceSnapshotsTable.providerKey,
+        cardPriceSnapshotsTable.gradeKey,
+        cardPriceSnapshotsTable.snapshotBucket,
+      ],
+      set: { priceCents, currency: PC_CURRENCY, providerProductId, capturedAt: fetchedAt, captureStatus: "success", failureCode: null },
+    });
+  }
+  return prices.size;
+}
+
+/** Claim and reconcile one bounded canonical-card page for a cached guide. */
+export async function reconcilePriceChartingGuide(
+  category: PriceChartingGuideCategory,
+  options: { batchSize?: number } = {},
+): Promise<PriceChartingReconciliationResult> {
+  const batchSize = Math.min(Math.max(options.batchSize ?? 500, 1), 1_000);
+  const claimToken = randomUUID();
+  const claim = await db.execute<{ reconciliation_cursor: string | null }>(sql`
+    UPDATE pricecharting_guide_imports
+    SET reconciliation_status = 'running',
+        reconciliation_lease_until = NOW() + INTERVAL '10 minutes',
+        reconciliation_claim_token = ${claimToken},
+        updated_at = NOW()
+    WHERE category = ${category}
+      AND status = 'ready'
+      AND (
+        reconciliation_status IN ('pending', 'failed')
+        OR (reconciliation_status = 'running' AND reconciliation_lease_until < NOW())
+      )
+    RETURNING reconciliation_cursor
+  `);
+  if (!claim.rows[0]) {
+    const [state] = await db.select().from(priceChartingGuideImportsTable)
+      .where(eq(priceChartingGuideImportsTable.category, category)).limit(1);
+    const stats = (state?.reconciliationStats ?? {}) as Record<string, unknown>;
+    return {
+      category,
+      claimed: false,
+      status: state?.reconciliationStatus === "completed" ? "completed" : state?.reconciliationStatus === "failed" ? "failed" : "running",
+      processed: Number(stats["processed"] ?? 0),
+      matched: Number(stats["matched"] ?? 0),
+      ambiguous: Number(stats["ambiguous"] ?? 0),
+      unmatched: Number(stats["unmatched"] ?? 0),
+      quotesPersisted: Number(stats["quotesPersisted"] ?? 0),
+      nextCursor: state?.reconciliationCursor ?? null,
+      hasMore: state?.reconciliationStatus !== "completed",
+    };
+  }
+  const cursor = claim.rows[0].reconciliation_cursor;
+  try {
+    const slugs = GUIDE_GAME_SLUGS[category];
+    const canonical = await db.execute<CanonicalReconciliationRow>(sql`
+      SELECT e.external_id AS card_id, c.name, s.name AS set_name, s.code AS set_code,
+        c.collector_number, COALESCE(c.language, s.language) AS language, s.region
+      FROM catalogue_external_ids e
+      JOIN catalogue_cards c ON c.id = e.entity_id
+      JOIN catalogue_sets s ON s.id = c.set_id
+      JOIN catalogue_games g ON g.id = c.game_id
+      WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+        AND c.is_active = true AND s.is_active = true AND g.is_active = true
+        AND g.slug IN (${sql.join(slugs.map(slug => sql`${slug}`), sql`, `)})
+        AND (${cursor}::text IS NULL OR e.external_id > ${cursor})
+      ORDER BY e.external_id
+      LIMIT ${batchSize + 1}
+    `);
+    const hasMore = canonical.rows.length > batchSize;
+    const cards = canonical.rows.slice(0, batchSize);
+    const names = [...new Set(cards.map(card => normalizedGuideName(card.name)).filter(Boolean))];
+    const numbers = [...new Set(cards.map(card =>
+      normalizeCollectorNumberForMatch(card.collector_number ?? undefined)?.numerator ?? "",
+    ).filter(Boolean))];
+    const mappingRows = cards.length === 0 ? [] : await db.select({
+      cardId: cardProviderMappingsTable.cardId,
+      providerProductId: cardProviderMappingsTable.providerProductId,
+      status: cardProviderMappingsTable.status,
+      matchMetadata: cardProviderMappingsTable.matchMetadata,
+    }).from(cardProviderMappingsTable).where(and(
+      eq(cardProviderMappingsTable.providerKey, PROVIDER_KEY),
+      inArray(cardProviderMappingsTable.cardId, cards.map(card => card.card_id)),
+    ));
+    const mappedProductIds = [...new Set(mappingRows
+      .map(mapping => mapping.providerProductId)
+      .filter((id): id is string => Boolean(id)))];
+    const identityCondition = names.length > 0 && numbers.length > 0
+      ? and(
+          inArray(priceChartingGuideRowsTable.normalizedName, names),
+          inArray(priceChartingGuideRowsTable.normalizedNumber, numbers),
+        )
+      : undefined;
+    const productCondition = mappedProductIds.length > 0
+      ? inArray(priceChartingGuideRowsTable.providerProductId, mappedProductIds)
+      : undefined;
+    const candidateCondition = identityCondition && productCondition
+      ? or(identityCondition, productCondition)
+      : identityCondition ?? productCondition;
+    const persistedGuide = candidateCondition
+      ? await db.select().from(priceChartingGuideRowsTable).where(and(
+          eq(priceChartingGuideRowsTable.category, category),
+          candidateCondition,
+        ))
+      : [];
+    const guideRows: GuideIdentityRow[] = persistedGuide.map(row => ({
+      providerProductId: row.providerProductId,
+      productName: row.productName,
+      consoleName: row.consoleName,
+      prices: row.prices as Record<string, number>,
+    }));
+    const existingByCard = new Map(mappingRows.map(mapping => [mapping.cardId, mapping]));
+    const guideByProduct = new Map(guideRows.map(row => [row.providerProductId, row]));
+    let matched = 0, ambiguous = 0, unmatched = 0, quotesPersisted = 0;
+    const fetchedAt = (await db.select({ fetchedAt: priceChartingGuideImportsTable.fetchedAt })
+      .from(priceChartingGuideImportsTable)
+      .where(eq(priceChartingGuideImportsTable.category, category)).limit(1))[0]?.fetchedAt ?? new Date();
+    await db.transaction(async tx => {
+      // Renew and lock the claim row for the whole write transaction. A stale
+      // worker that lost ownership cannot write mappings, quotes, cursor, stats,
+      // or failure state after another instance takes over.
+      const ownership = await tx.execute(sql`
+        UPDATE pricecharting_guide_imports
+        SET reconciliation_lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
+        WHERE category = ${category}
+          AND reconciliation_status = 'running'
+          AND reconciliation_claim_token = ${claimToken}
+        RETURNING category
+      `);
+      if (!ownership.rows[0]) throw new Error("PriceCharting reconciliation claim was lost");
+      for (const card of cards) {
+        const identity: CanonicalGuideIdentity = {
+          cardId: card.card_id,
+          name: card.name,
+          set: card.set_name,
+          setCode: card.set_code ?? undefined,
+          number: card.collector_number ?? undefined,
+          game: GUIDE_GAME_NAMES[category],
+          language: card.language ?? undefined,
+          region: card.region ?? undefined,
+        };
+        const existing = existingByCard.get(card.card_id);
+        const adminReview = (existing?.matchMetadata as Record<string, unknown> | null)?.["adminReview"];
+        if (existing?.status === "matched" && existing.providerProductId) {
+          // A valid existing mapping is durable identity evidence. Import any
+          // fresh fields that are present, but never clear its older quotes
+          // when the guide omits the product or a condition.
+          matched += 1;
+          const mappedGuideRow = guideByProduct.get(existing.providerProductId);
+          if (mappedGuideRow) {
+            quotesPersisted += await persistReconciliationQuote(
+              tx,
+              card.card_id,
+              existing.providerProductId,
+              priceMapFromJson(mappedGuideRow.prices),
+              fetchedAt,
+            );
+          }
+          continue;
+        }
+        if (adminReview) {
+          if (existing?.status === "review_required") ambiguous += 1;
+          else unmatched += 1;
+          continue;
+        }
+        const result = matchCanonicalCardToGuide(identity, guideRows, category);
+        if (result.status === "matched" && result.candidate) {
+          matched += 1;
+          await tx.insert(cardProviderMappingsTable).values({
+            cardId: card.card_id,
+            providerKey: PROVIDER_KEY,
+            providerProductId: result.candidate.providerProductId,
+            providerProductName: result.candidate.productName,
+            status: "matched",
+            confidenceScore: result.score,
+            confidenceLevel: "strong",
+            matchMetadata: {
+              source: "bulk_guide",
+              category,
+              reason: result.reason,
+              candidateCount: result.candidateCount,
+              guideFetchedAt: fetchedAt.toISOString(),
+            },
+            matchedName: identity.name,
+            matchedSet: identity.set ?? null,
+            matchedNumber: identity.number ?? null,
+            matchedGame: identity.game ?? null,
+          }).onConflictDoUpdate({
+            target: [cardProviderMappingsTable.cardId, cardProviderMappingsTable.providerKey],
+            set: {
+              providerProductId: result.candidate.providerProductId,
+              providerProductName: result.candidate.productName,
+              status: "matched",
+              confidenceScore: result.score,
+              confidenceLevel: "strong",
+              matchMetadata: {
+                source: "bulk_guide",
+                category,
+                reason: result.reason,
+                candidateCount: result.candidateCount,
+                guideFetchedAt: fetchedAt.toISOString(),
+              },
+              matchedName: identity.name,
+              matchedSet: identity.set ?? null,
+              matchedNumber: identity.number ?? null,
+              matchedGame: identity.game ?? null,
+              updatedAt: fetchedAt,
+            },
+          });
+          quotesPersisted += await persistReconciliationQuote(
+            tx,
+            card.card_id,
+            result.candidate.providerProductId,
+            priceMapFromJson(result.candidate.prices),
+            fetchedAt,
+          );
+        } else {
+          if (result.status === "review_required") ambiguous += 1;
+          else unmatched += 1;
+          // Existing strong mappings remain valid when a guide row is absent or
+          // ambiguous. Failed mappings are reconsidered and receive fresh,
+          // sanitized evidence so they do not become permanent cooldown rows.
+          await tx.execute(sql`
+            INSERT INTO card_provider_mappings (
+              card_id, provider_key, status, confidence_score, confidence_level,
+              match_metadata, matched_name, matched_set, matched_number, matched_game, updated_at
+            ) VALUES (
+              ${card.card_id}, ${PROVIDER_KEY}, ${result.status}, ${result.score},
+              ${result.status === "review_required" ? "ambiguous" : "none"},
+              ${JSON.stringify({
+                source: "bulk_guide",
+                category,
+                reason: result.reason,
+                candidateCount: result.candidateCount,
+                guideFetchedAt: fetchedAt.toISOString(),
+              })}::jsonb,
+              ${identity.name}, ${identity.set ?? null}, ${identity.number ?? null}, ${identity.game ?? null}, ${fetchedAt}
+            )
+            ON CONFLICT (card_id, provider_key) DO UPDATE SET
+              status = EXCLUDED.status,
+              provider_product_id = NULL,
+              provider_product_name = NULL,
+              confidence_score = EXCLUDED.confidence_score,
+              confidence_level = EXCLUDED.confidence_level,
+              match_metadata = EXCLUDED.match_metadata,
+              matched_name = EXCLUDED.matched_name,
+              matched_set = EXCLUDED.matched_set,
+              matched_number = EXCLUDED.matched_number,
+              matched_game = EXCLUDED.matched_game,
+              updated_at = EXCLUDED.updated_at
+            WHERE card_provider_mappings.status <> 'matched'
+              AND NOT (card_provider_mappings.match_metadata ? 'adminReview')
+          `);
+        }
+      }
+      const nextCursor = cards.at(-1)?.card_id ?? cursor;
+      await tx.execute(sql`
+        UPDATE pricecharting_guide_imports
+        SET reconciliation_status = ${hasMore ? "pending" : "completed"},
+            reconciliation_cursor = ${hasMore ? nextCursor : null},
+            reconciliation_lease_until = NULL,
+            reconciliation_claim_token = NULL,
+            reconciled_at = ${hasMore ? null : new Date()},
+            reconciliation_stats = jsonb_build_object(
+              'processed', COALESCE((reconciliation_stats->>'processed')::int, 0) + ${cards.length},
+              'matched', COALESCE((reconciliation_stats->>'matched')::int, 0) + ${matched},
+              'ambiguous', COALESCE((reconciliation_stats->>'ambiguous')::int, 0) + ${ambiguous},
+              'unmatched', COALESCE((reconciliation_stats->>'unmatched')::int, 0) + ${unmatched},
+              'quotesPersisted', COALESCE((reconciliation_stats->>'quotesPersisted')::int, 0) + ${quotesPersisted}
+            ),
+            updated_at = NOW()
+        WHERE category = ${category}
+          AND reconciliation_status = 'running'
+          AND reconciliation_claim_token = ${claimToken}
+      `);
+    });
+    return {
+      category, claimed: true, status: hasMore ? "pending" : "completed",
+      processed: cards.length, matched, ambiguous, unmatched, quotesPersisted,
+      nextCursor: hasMore ? cards.at(-1)?.card_id ?? cursor : null,
+      hasMore,
+    };
+  } catch (error) {
+    await db.execute(sql`
+      UPDATE pricecharting_guide_imports
+      SET reconciliation_status = 'failed',
+          reconciliation_lease_until = NULL,
+          reconciliation_claim_token = NULL,
+          updated_at = NOW()
+      WHERE category = ${category}
+        AND reconciliation_status = 'running'
+        AND reconciliation_claim_token = ${claimToken}
+    `).catch(() => {});
+    throw error;
+  }
+}
+
+/** Continue the oldest incomplete cached guide without downloading it again. */
+export async function continuePriceChartingReconciliation(): Promise<PriceChartingReconciliationResult | null> {
+  const pending = await db.execute<{ category: PriceChartingGuideCategory }>(sql`
+    SELECT category
+    FROM pricecharting_guide_imports
+    WHERE status = 'ready'
+      AND (
+        reconciliation_status IN ('pending', 'failed')
+        OR (reconciliation_status = 'running' AND reconciliation_lease_until < NOW())
+      )
+    ORDER BY COALESCE(reconciled_at, '-infinity'::timestamptz), fetched_at, category
+    LIMIT 1
+  `);
+  const category = pending.rows[0]?.category;
+  return category ? reconcilePriceChartingGuide(category) : null;
+}
+
+/**
+ * Scheduler entry point: continue cached work first, otherwise refresh the
+ * oldest/missing supported guide. The global CSV lease still permits only one
+ * provider download across all API instances.
+ */
+export async function runScheduledGuideReconciliation(): Promise<PriceChartingReconciliationResult | null> {
+  const continued = await continuePriceChartingReconciliation();
+  if (continued) return continued;
+  const imports = await db.select().from(priceChartingGuideImportsTable);
+  const byCategory = new Map(imports.map(row => [row.category, row]));
+  const categories = Object.keys(GUIDE_GAME_NAMES) as PriceChartingGuideCategory[];
+  const next = categories.sort((left, right) => {
+    const leftAt = byCategory.get(left)?.fetchedAt.getTime() ?? 0;
+    const rightAt = byCategory.get(right)?.fetchedAt.getTime() ?? 0;
+    return leftAt - rightAt || left.localeCompare(right);
+  })[0];
+  if (!next) return null;
+  const row = byCategory.get(next);
+  if (row && Date.now() - row.fetchedAt.getTime() < 24 * 60 * 60 * 1_000) return null;
+  const imported = await importPriceChartingBulkGuide(next);
+  return imported.reconciliation;
+}
+
+export interface PriceChartingCoverageGame {
+  game: string;
+  supportedCards: number;
+  matchedCards: number;
+  rawQuoteCards: number;
+  gradedOnlyCards: number;
+  ambiguousCards: number;
+  unmatchedCards: number;
+  unprocessedCards: number;
+  staleQuoteCards: number;
+}
+
+/** Repeatable, collector-independent coverage proof over the canonical catalogue. */
+export async function getPriceChartingCoverageAudit(): Promise<{
+  generatedAt: string;
+  staleAfterHours: number;
+  totals: PriceChartingCoverageGame;
+  byGame: PriceChartingCoverageGame[];
+  imports: Array<{
+    category: string;
+    status: string;
+    reconciliationStatus: string;
+    rowCount: number;
+    fetchedAt: string;
+    reconciledAt: string | null;
+    ageHours: number;
+    stats: Record<string, unknown>;
+  }>;
+  failureReasons: Array<{ reason: string; count: number }>;
+}> {
+  const rows = await db.execute<{
+    game: string;
+    supported_cards: number;
+    matched_cards: number;
+    raw_quote_cards: number;
+    graded_only_cards: number;
+    ambiguous_cards: number;
+    unmatched_cards: number;
+    unprocessed_cards: number;
+    stale_quote_cards: number;
+  }>(sql`
+    WITH supported AS (
+      SELECT e.external_id AS card_id,
+        CASE
+          WHEN g.slug IN ('magic', 'mtg', 'magic-the-gathering') THEN 'magic'
+          WHEN g.slug IN ('yu-gi-oh', 'yugioh') THEN 'yugioh'
+          WHEN g.slug IN ('one-piece', 'onepiece') THEN 'one_piece'
+          ELSE 'pokemon'
+        END AS game
+      FROM catalogue_external_ids e
+      JOIN catalogue_cards c ON c.id = e.entity_id
+      JOIN catalogue_sets s ON s.id = c.set_id
+      JOIN catalogue_games g ON g.id = c.game_id
+      WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+        AND c.is_active = true AND s.is_active = true AND g.is_active = true
+        AND g.slug IN ('pokemon', 'magic', 'mtg', 'magic-the-gathering', 'yu-gi-oh', 'yugioh', 'one-piece', 'onepiece')
+    ), quote_state AS (
+      SELECT card_id,
+        BOOL_OR(grade_key = 'raw' AND price_cents > 0) AS has_raw,
+        BOOL_OR(grade_key <> 'raw' AND price_cents > 0) AS has_graded,
+        MAX(fetched_at) AS latest_quote
+      FROM current_quotes
+      WHERE provider_key = ${PROVIDER_KEY}
+      GROUP BY card_id
+    )
+    SELECT supported.game,
+      COUNT(*)::int AS supported_cards,
+      COUNT(*) FILTER (WHERE mapping.status = 'matched')::int AS matched_cards,
+      COUNT(*) FILTER (WHERE quote_state.has_raw)::int AS raw_quote_cards,
+      COUNT(*) FILTER (WHERE NOT COALESCE(quote_state.has_raw, false) AND quote_state.has_graded)::int AS graded_only_cards,
+      COUNT(*) FILTER (WHERE mapping.status = 'review_required')::int AS ambiguous_cards,
+      COUNT(*) FILTER (WHERE mapping.status = 'unmatched')::int AS unmatched_cards,
+      COUNT(*) FILTER (WHERE mapping.status IS NULL)::int AS unprocessed_cards,
+      COUNT(*) FILTER (
+        WHERE quote_state.latest_quote < NOW() - INTERVAL '12 hours'
+      )::int AS stale_quote_cards
+    FROM supported
+    LEFT JOIN card_provider_mappings mapping
+      ON mapping.card_id = supported.card_id AND mapping.provider_key = ${PROVIDER_KEY}
+    LEFT JOIN quote_state ON quote_state.card_id = supported.card_id
+    GROUP BY supported.game
+    ORDER BY supported.game
+  `);
+  const toGame = (row: typeof rows.rows[number]): PriceChartingCoverageGame => ({
+    game: row.game,
+    supportedCards: Number(row.supported_cards),
+    matchedCards: Number(row.matched_cards),
+    rawQuoteCards: Number(row.raw_quote_cards),
+    gradedOnlyCards: Number(row.graded_only_cards),
+    ambiguousCards: Number(row.ambiguous_cards),
+    unmatchedCards: Number(row.unmatched_cards),
+    unprocessedCards: Number(row.unprocessed_cards),
+    staleQuoteCards: Number(row.stale_quote_cards),
+  });
+  const byGame = rows.rows.map(toGame);
+  const totals = byGame.reduce<PriceChartingCoverageGame>((total, game) => ({
+    game: "all",
+    supportedCards: total.supportedCards + game.supportedCards,
+    matchedCards: total.matchedCards + game.matchedCards,
+    rawQuoteCards: total.rawQuoteCards + game.rawQuoteCards,
+    gradedOnlyCards: total.gradedOnlyCards + game.gradedOnlyCards,
+    ambiguousCards: total.ambiguousCards + game.ambiguousCards,
+    unmatchedCards: total.unmatchedCards + game.unmatchedCards,
+    unprocessedCards: total.unprocessedCards + game.unprocessedCards,
+    staleQuoteCards: total.staleQuoteCards + game.staleQuoteCards,
+  }), {
+    game: "all", supportedCards: 0, matchedCards: 0, rawQuoteCards: 0,
+    gradedOnlyCards: 0, ambiguousCards: 0, unmatchedCards: 0,
+    unprocessedCards: 0, staleQuoteCards: 0,
+  });
+  const [imports, failures] = await Promise.all([
+    db.select().from(priceChartingGuideImportsTable).orderBy(priceChartingGuideImportsTable.category),
+    db.execute<{ reason: string; count: number }>(sql`
+      SELECT COALESCE(match_metadata->>'reason', 'unspecified') AS reason, COUNT(*)::int AS count
+      FROM card_provider_mappings
+      WHERE provider_key = ${PROVIDER_KEY} AND status <> 'matched'
+      GROUP BY COALESCE(match_metadata->>'reason', 'unspecified')
+      ORDER BY count DESC, reason
+      LIMIT 10
+    `),
+  ]);
+  const now = Date.now();
+  return {
+    generatedAt: new Date(now).toISOString(),
+    staleAfterHours: STALE_THRESHOLD_MS / 3_600_000,
+    totals,
+    byGame,
+    imports: imports.map(row => ({
+      category: row.category,
+      status: row.status,
+      reconciliationStatus: row.reconciliationStatus,
+      rowCount: row.rowCount,
+      fetchedAt: row.fetchedAt.toISOString(),
+      reconciledAt: row.reconciledAt?.toISOString() ?? null,
+      ageHours: Number(((now - row.fetchedAt.getTime()) / 3_600_000).toFixed(1)),
+      stats: row.reconciliationStats as Record<string, unknown>,
+    })),
+    failureReasons: failures.rows.map(row => ({ reason: row.reason.slice(0, 80), count: Number(row.count) })),
+  };
+}
+
+/**
+ * Cache a PriceCharting bulk guide and reconcile it against canonical identity.
+ * Strong existing mappings are retained; failed states are reconsidered.
  */
 export async function importPriceChartingBulkGuide(category: PriceChartingGuideCategory): Promise<{
   category: PriceChartingGuideCategory;
   rowsRead: number;
   quotesPersisted: number;
   reused: boolean;
+  reconciliation: PriceChartingReconciliationResult;
 }> {
   const today = new Date().toISOString().slice(0, 10);
   const [existing] = await db.select().from(priceChartingGuideImportsTable)
     .where(eq(priceChartingGuideImportsTable.category, category)).limit(1);
-  const reusable = existing?.status === "ready"
+  let reusable = existing?.status === "ready"
     && existing.fetchedAt.toISOString().slice(0, 10) === today;
+  if (reusable) {
+    const legacyRow = await db.select({ id: priceChartingGuideRowsTable.providerProductId })
+      .from(priceChartingGuideRowsTable)
+      .where(and(
+        eq(priceChartingGuideRowsTable.category, category),
+        eq(priceChartingGuideRowsTable.normalizedName, ""),
+      ))
+      .limit(1);
+    reusable = legacyRow.length === 0;
+  }
   let rowsRead: number;
   let reused = reusable;
-  let pricesByProduct: Map<string, Map<GradeKey, number>>;
   if (reusable) {
     const persisted = await db.select().from(priceChartingGuideRowsTable)
       .where(eq(priceChartingGuideRowsTable.category, category));
     rowsRead = persisted.length;
-    pricesByProduct = new Map(persisted.map(row => [
-      row.providerProductId,
-      new Map(Object.entries(row.prices as Record<string, number>)
-        .filter(([grade, cents]) => isValidGradeKey(grade) && Number.isSafeInteger(cents) && cents > 0)
-        .map(([grade, cents]) => [grade as GradeKey, cents])),
-    ]));
   } else {
+    const downloadClaimToken = randomUUID();
     // PriceCharting applies this limit to all CSV categories, not each
     // category independently. This singleton row serializes every process.
     const globalClaim = await db.execute(sql`
       INSERT INTO pricecharting_guide_download_lease
-        (lease_key, last_attempt_at, lease_until, updated_at)
-      VALUES ('pricecharting-csv', NOW(), NOW() + INTERVAL '10 minutes', NOW())
+        (lease_key, last_attempt_at, lease_until, claim_token, updated_at)
+      VALUES ('pricecharting-csv', NOW(), NOW() + INTERVAL '30 minutes', ${downloadClaimToken}, NOW())
       ON CONFLICT (lease_key) DO UPDATE SET
-        last_attempt_at = NOW(), lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
-      WHERE pricecharting_guide_download_lease.last_attempt_at < NOW() - INTERVAL '10 minutes'
+        last_attempt_at = NOW(), lease_until = NOW() + INTERVAL '30 minutes',
+        claim_token = ${downloadClaimToken}, updated_at = NOW()
+      WHERE pricecharting_guide_download_lease.lease_until < NOW()
+        AND pricecharting_guide_download_lease.last_attempt_at < NOW() - INTERVAL '10 minutes'
       RETURNING last_attempt_at
     `);
     if (!globalClaim.rows[0]) {
@@ -375,13 +1061,20 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
     }
     const claim = await db.execute<{ last_attempt_at: Date }>(sql`
       INSERT INTO pricecharting_guide_imports
-        (category, status, fetched_at, row_count, last_attempt_at, lease_until, updated_at)
-      VALUES (${category}, 'downloading', NOW(), 0, NOW(), NOW() + INTERVAL '10 minutes', NOW())
+        (category, status, fetched_at, row_count, last_attempt_at, lease_until, download_claim_token, updated_at)
+      VALUES (${category}, 'downloading', NOW(), 0, NOW(), NOW() + INTERVAL '10 minutes', ${downloadClaimToken}, NOW())
       ON CONFLICT (category) DO UPDATE SET
         status = 'downloading', last_attempt_at = NOW(),
-        lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
-      WHERE pricecharting_guide_imports.last_attempt_at IS NULL
-        OR pricecharting_guide_imports.last_attempt_at < NOW() - INTERVAL '10 minutes'
+        lease_until = NOW() + INTERVAL '10 minutes',
+        download_claim_token = ${downloadClaimToken}, updated_at = NOW()
+      WHERE (
+          pricecharting_guide_imports.last_attempt_at IS NULL
+          OR pricecharting_guide_imports.last_attempt_at < NOW() - INTERVAL '10 minutes'
+        )
+        AND NOT (
+          pricecharting_guide_imports.reconciliation_status = 'running'
+          AND pricecharting_guide_imports.reconciliation_lease_until >= NOW()
+        )
       RETURNING last_attempt_at
     `);
     if (!claim.rows[0]) {
@@ -392,6 +1085,13 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
     }
     let downloaded;
     try {
+      const globalOwnership = await db.execute(sql`
+        UPDATE pricecharting_guide_download_lease
+        SET lease_until = NOW() + INTERVAL '30 minutes', updated_at = NOW()
+        WHERE lease_key = 'pricecharting-csv' AND claim_token = ${downloadClaimToken}
+        RETURNING lease_key
+      `);
+      if (!globalOwnership.rows[0]) throw new Error("PriceCharting global download claim was lost");
       downloaded = await downloadBulkGuide(category);
     } catch (error) {
       const message = error instanceof PriceChartingError
@@ -401,14 +1101,44 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
       await db.update(priceChartingGuideImportsTable).set({
         status: "failed",
         lastErrorKind: error instanceof PriceChartingError ? error.kind : "transient",
+        downloadClaimToken: null,
         updatedAt: new Date(),
-      }).where(eq(priceChartingGuideImportsTable.category, category));
+      }).where(and(
+        eq(priceChartingGuideImportsTable.category, category),
+        eq(priceChartingGuideImportsTable.downloadClaimToken, downloadClaimToken),
+      ));
+      await db.execute(sql`
+        UPDATE pricecharting_guide_download_lease
+        SET lease_until = GREATEST(last_attempt_at + INTERVAL '10 minutes', NOW()),
+            claim_token = NULL,
+            updated_at = NOW()
+        WHERE lease_key = 'pricecharting-csv' AND claim_token = ${downloadClaimToken}
+      `).catch(() => {});
       throw error;
     }
     rowsRead = downloaded.length;
     const fetchedAt = new Date();
-    pricesByProduct = new Map(downloaded.map(row => [String(row.id), extractPrices(row)]));
     await db.transaction(async tx => {
+      const globalOwnership = await tx.execute(sql`
+        UPDATE pricecharting_guide_download_lease
+        SET lease_until = GREATEST(last_attempt_at + INTERVAL '10 minutes', NOW()),
+            claim_token = NULL,
+            updated_at = NOW()
+        WHERE lease_key = 'pricecharting-csv' AND claim_token = ${downloadClaimToken}
+        RETURNING lease_key
+      `);
+      if (!globalOwnership.rows[0]) throw new Error("PriceCharting global download claim was lost");
+      // Fence publication and hold the category row lock until the replacement
+      // guide and reset reconciliation generation commit atomically.
+      const ownership = await tx.execute(sql`
+        UPDATE pricecharting_guide_imports
+        SET lease_until = NOW() + INTERVAL '10 minutes', updated_at = NOW()
+        WHERE category = ${category}
+          AND status = 'downloading'
+          AND download_claim_token = ${downloadClaimToken}
+        RETURNING category
+      `);
+      if (!ownership.rows[0]) throw new Error("PriceCharting guide download claim was lost");
       await tx.delete(priceChartingGuideRowsTable)
         .where(eq(priceChartingGuideRowsTable.category, category));
       for (const batch of chunkGuideRows(downloaded)) {
@@ -417,38 +1147,55 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
           providerProductId: String(row.id),
           productName: row["product-name"],
           consoleName: row["console-name"],
+          normalizedName: normalizedGuideName(row["product-name"]),
+          normalizedNumber: normalizeCollectorNumberForMatch(extractCardNumber(row["product-name"]))?.numerator ?? null,
+          normalizedSet: normalizedGuideSet(row["console-name"]),
           prices: Object.fromEntries(extractPrices(row)),
           fetchedAt,
         })));
       }
       await tx.insert(priceChartingGuideImportsTable).values({
-        category, status: "ready", fetchedAt, rowCount: downloaded.length, lastErrorKind: null, updatedAt: fetchedAt,
+        category,
+        status: "ready",
+        fetchedAt,
+        rowCount: downloaded.length,
+        lastErrorKind: null,
+        downloadClaimToken: null,
+        reconciliationStatus: "pending",
+        reconciliationCursor: null,
+        reconciliationLeaseUntil: null,
+        reconciliationClaimToken: null,
+        reconciledAt: null,
+        reconciliationStats: {},
+        updatedAt: fetchedAt,
       }).onConflictDoUpdate({ target: priceChartingGuideImportsTable.category, set: {
-        status: "ready", fetchedAt, rowCount: downloaded.length, lastErrorKind: null, updatedAt: fetchedAt,
+        status: "ready",
+        fetchedAt,
+        rowCount: downloaded.length,
+        lastErrorKind: null,
+        downloadClaimToken: null,
+        reconciliationStatus: "pending",
+        reconciliationCursor: null,
+        reconciliationLeaseUntil: null,
+        reconciliationClaimToken: null,
+        reconciledAt: null,
+        reconciliationStats: {},
+        updatedAt: fetchedAt,
       } });
     });
     await recordProviderHealth(true, undefined, "bulk_import");
   }
-  if (pricesByProduct.size === 0) return { category, rowsRead, quotesPersisted: 0, reused };
-  const mappings = await db
-    .select({
-      cardId: cardProviderMappingsTable.cardId,
-      providerProductId: cardProviderMappingsTable.providerProductId,
-    })
-    .from(cardProviderMappingsTable)
-    .where(and(
-      eq(cardProviderMappingsTable.providerKey, PROVIDER_KEY),
-      eq(cardProviderMappingsTable.status, "matched"),
-    ));
-  let quotesPersisted = 0;
-  for (const mapping of mappings) {
-    if (!mapping.providerProductId) continue;
-    const prices = pricesByProduct.get(mapping.providerProductId);
-    if (!prices || prices.size === 0) continue;
-    await persistQuotes(mapping.cardId, mapping.providerProductId, prices);
-    quotesPersisted += prices.size;
+  // Complete modest catalogues in one protected import call while retaining a
+  // strict per-transaction bound. Large catalogues persist their cursor and are
+  // continued by later imports or the recurring scheduler.
+  let reconciliation = await reconcilePriceChartingGuide(category);
+  let quotesPersisted = reconciliation.claimed ? reconciliation.quotesPersisted : 0;
+  for (let batch = 1; reconciliation.hasMore && batch < 20; batch += 1) {
+    reconciliation = await reconcilePriceChartingGuide(category);
+    if (!reconciliation.claimed) break;
+    quotesPersisted += reconciliation.quotesPersisted;
   }
-  return { category, rowsRead, quotesPersisted, reused };
+  return { category, rowsRead, quotesPersisted, reused, reconciliation };
 }
 
 function cleanProviderText(value: unknown): string | null {

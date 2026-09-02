@@ -36,7 +36,10 @@ import { recordAdminAudit } from "../lib/adminAudit";
 import { logger } from "../lib/logger";
 import { justTcg } from "../lib/catalogueProvider";
 import { isPCConfigured, PROVIDER_KEY } from "../pricing/pricecharting";
-import { refreshPricingExplicit } from "../pricing/service";
+import {
+  getPriceChartingCoverageAudit,
+  refreshPricingExplicit,
+} from "../pricing/service";
 import { isValidGradeKey } from "../pricing/grades";
 
 const router = Router();
@@ -397,6 +400,14 @@ router.get(
         snapshotDate: row.snapshot_date,
       })),
     });
+  },
+);
+
+router.get(
+  "/admin/pricing/coverage",
+  requireAdminPermission("pricing:read"),
+  async (_req: AdminRequest, res: Response) => {
+    res.json(await getPriceChartingCoverageAudit());
   },
 );
 

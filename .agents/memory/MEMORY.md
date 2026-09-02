@@ -20,3 +20,4 @@
 - [Expo preview ownership](expo-preview-ownership.md) — multiple running Expo artifacts can contend for one workspace Expo domain; keep Verified TCG as the active mobile preview.
 - [Collection CSV migrations](collection-csv-migrations.md) — imports use strict versioned contracts, hash-bound previews, and per-collector atomic commit serialization.
 - [Community artifact boundary](community-artifact-boundary.md) — Community exists only inside Verified TCG; never create or restore a standalone Community artifact, package, workflow, or URL.
+- [Guide reconciliation durability](guide-reconciliation-durability.md) — bulk provider matching uses bounded DB-leased pages; exact identity proof is mandatory and prior valid quotes survive omissions.
