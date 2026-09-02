@@ -72,6 +72,64 @@ export interface PortfolioValueHistory {
   historyUnavailableReason: string | null;
 }
 
+export type PortfolioMovementKind = "market_price" | "acquisition" | "sale";
+
+export interface PortfolioMovementContribution {
+  id: string;
+  cardId: string;
+  name: string;
+  setName: string | null;
+  imageUrl: string | null;
+  quantity: number;
+  gradeKey: GradeKey | null;
+  kind: PortfolioMovementKind;
+  amountCents: number | null;
+  amount: number | null;
+  previousValueCents: number | null;
+  previousValue: number | null;
+  valueCents: number | null;
+  value: number | null;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface PortfolioMovementBreakdown {
+  date: string;
+  previousDate: string | null;
+  currency: string;
+  available: boolean;
+  previousAvailable: boolean;
+  breakdownAvailable: boolean;
+  totalChangeCents: number | null;
+  totalChange: number | null;
+  contributions: PortfolioMovementContribution[];
+  unavailableReason: string | null;
+}
+
+type HistoricalPrice = {
+  date: string;
+  priceCents: number;
+  currency: string;
+  recordedAt: number;
+  priority: number;
+};
+
+type OwnershipInterval = {
+  id: string;
+  cardId: string;
+  quantity: number;
+  isGraded: boolean;
+  gradingData: unknown;
+  cardData: unknown;
+  startDate: string;
+  endDate: string | null;
+};
+
+type HistoryPricing = {
+  quoteMap: Map<string, QuoteRow>;
+  historyByKey: Map<string, HistoricalPrice[]>;
+};
+
 const PORTFOLIO_HISTORY_RANGES: Record<string, number> = {
   "1D": 1,
   "7D": 7,
@@ -94,23 +152,12 @@ function rowDate(value: string | null | undefined): string | null {
   return Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? null : date;
 }
 
-/**
- * Build the collector's ownership-value timeline. Active rows and immutable
- * sold-archive rows form ownership intervals, so quantities appear on their
- * acquisition/restore date and disappear on their sale date. The account
- * creation date supplies the truthful zero baseline.
- *
- * A non-zero point is available only when every owned holding has an exact,
- * retained price for that date. Daily provider history is preferred;
- * timestamped snapshots fill the same calendar date. The current quote is used
- * only for today. We never carry a price across an unobserved date.
- */
-export async function calculatePortfolioValueHistory(
-  userId: string,
-  periodDays = PORTFOLIO_HISTORY_RANGES.ALL!,
-  displayCurrency = "AUD",
-): Promise<PortfolioValueHistory> {
-  const currency = displayCurrency.trim().toUpperCase();
+async function loadOwnershipIntervals(userId: string): Promise<{
+  intervals: OwnershipInterval[];
+  accountDate: string;
+  today: string;
+  accountFound: boolean;
+}> {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const [rows, archivedRows, accountRows] = await Promise.all([
@@ -122,32 +169,17 @@ export async function calculatePortfolioValueHistory(
       .where(eq(usersTable.id, userId)),
   ]);
   const accountDate = rowDate(accountRows[0]?.createdAt.toISOString()) ?? today;
-  if (accountRows.length === 0) {
-    return {
-      points: [],
-      currency,
-      historyAvailable: false,
-      historyUnavailableReason: "Collector account is unavailable",
-    };
-  }
-
-  type OwnershipInterval = {
-    cardId: string;
-    quantity: number;
-    isGraded: boolean;
-    gradingData: unknown;
-    startDate: string;
-    endDate: string | null;
-  };
   const intervals: OwnershipInterval[] = [
     ...rows.flatMap(row => {
       const startDate = rowDate(row.ownershipStartedAt ?? row.acquiredAt);
       return startDate
         ? [{
+            id: row.id,
             cardId: row.cardId,
             quantity: row.quantity,
             isGraded: row.isGraded,
             gradingData: row.gradingData,
+            cardData: row.cardData,
             startDate,
             endDate: null,
           }]
@@ -158,48 +190,24 @@ export async function calculatePortfolioValueHistory(
       const endDate = rowDate(row.soldAt);
       return startDate && endDate && startDate <= endDate
         ? [{
+            id: row.id,
             cardId: row.cardId,
             quantity: row.quantity,
             isGraded: row.isGraded,
             gradingData: row.gradingData,
+            cardData: row.cardData,
             startDate,
             endDate,
           }]
         : [];
     }),
   ];
-  const cardIds = [...new Set(intervals.map(row => row.cardId))];
+  return { intervals, accountDate, today, accountFound: accountRows.length > 0 };
+}
+
+async function loadHistoryPricing(cardIds: string[]): Promise<HistoryPricing> {
   if (cardIds.length === 0) {
-    const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
-    const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
-      ? accountDate
-      : accountDate > requestedStart ? accountDate : requestedStart;
-    const points: PortfolioValueHistoryPoint[] = [];
-    for (
-      let cursor = new Date(`${startDate}T00:00:00Z`);
-      cursor <= new Date(`${today}T00:00:00Z`);
-      cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1_000)
-    ) {
-      points.push({
-        date: cursor.toISOString().slice(0, 10),
-        valueCents: 0,
-        value: 0,
-        currency,
-        pricedHoldings: 0,
-        totalHoldings: 0,
-        available: true,
-        complete: true,
-        dailyChangeCents: points.length > 0 ? 0 : null,
-        dailyChange: points.length > 0 ? 0 : null,
-        dailyChangePercent: null,
-      });
-    }
-    return {
-      points,
-      currency,
-      historyAvailable: true,
-      historyUnavailableReason: null,
-    };
+    return { quoteMap: new Map(), historyByKey: new Map() };
   }
   const [quoteRows, dailyRows, timestampedRows] = await Promise.all([
     db
@@ -232,13 +240,6 @@ export async function calculatePortfolioValueHistory(
     if (gradeKey) quoteMap.set(`${quote.cardId}:${gradeKey}`, quote);
   }
 
-  type HistoricalPrice = {
-    date: string;
-    priceCents: number;
-    currency: string;
-    recordedAt: number;
-    priority: number;
-  };
   const historyMap = new Map<string, Map<string, HistoricalPrice>>();
   const addHistory = (
     cardId: string,
@@ -273,7 +274,6 @@ export async function calculatePortfolioValueHistory(
     const gradeKey = normalizeGradeKey(row.gradeKey);
     const date = rowDate(row.snapshotDate);
     if (gradeKey && date) {
-      // Daily provider history is canonical when both tables contain a date.
       addHistory(row.cardId, gradeKey, row.priceCents, row.currency, date, row.recordedAt.getTime(), 2);
     }
   }
@@ -285,10 +285,102 @@ export async function calculatePortfolioValueHistory(
     }
   }
 
-  const historyByKey = new Map<string, HistoricalPrice[]>();
-  for (const [key, dates] of historyMap) {
-    historyByKey.set(key, [...dates.values()].sort((a, b) => a.date.localeCompare(b.date)));
+  return {
+    quoteMap,
+    historyByKey: new Map(
+      [...historyMap.entries()].map(([key, dates]) => [
+        key,
+        [...dates.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      ]),
+    ),
+  };
+}
+
+function retainedPriceForDate(
+  pricing: HistoryPricing,
+  cardId: string,
+  gradeKey: GradeKey,
+  date: string,
+  today: string,
+): HistoricalPrice | null {
+  const quote = date === today ? pricing.quoteMap.get(`${cardId}:${gradeKey}`) : undefined;
+  if (quote) {
+    return {
+      date,
+      priceCents: quote.priceCents,
+      currency: quote.currency,
+      recordedAt: quote.fetchedAt.getTime(),
+      priority: 3,
+    };
   }
+  // Exact-date lookup is intentional. A retained quote from another day
+  // cannot prove what the collection was worth on this day.
+  return pricing.historyByKey.get(`${cardId}:${gradeKey}`)?.find(candidate => candidate.date === date) ?? null;
+}
+
+/**
+ * Build the collector's ownership-value timeline. Active rows and immutable
+ * sold-archive rows form ownership intervals, so quantities appear on their
+ * acquisition/restore date and disappear on their sale date. The account
+ * creation date supplies the truthful zero baseline.
+ *
+ * A non-zero point is available only when every owned holding has an exact,
+ * retained price for that date. Daily provider history is preferred;
+ * timestamped snapshots fill the same calendar date. The current quote is used
+ * only for today. We never carry a price across an unobserved date.
+ */
+export async function calculatePortfolioValueHistory(
+  userId: string,
+  periodDays = PORTFOLIO_HISTORY_RANGES.ALL!,
+  displayCurrency = "AUD",
+): Promise<PortfolioValueHistory> {
+  const currency = displayCurrency.trim().toUpperCase();
+  const now = new Date();
+  const ownership = await loadOwnershipIntervals(userId);
+  const { intervals, accountDate, today } = ownership;
+  if (!ownership.accountFound) {
+    return {
+      points: [],
+      currency,
+      historyAvailable: false,
+      historyUnavailableReason: "Collector account is unavailable",
+    };
+  }
+
+  const cardIds = [...new Set(intervals.map(row => row.cardId))];
+  if (cardIds.length === 0) {
+    const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
+    const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
+      ? accountDate
+      : accountDate > requestedStart ? accountDate : requestedStart;
+    const points: PortfolioValueHistoryPoint[] = [];
+    for (
+      let cursor = new Date(`${startDate}T00:00:00Z`);
+      cursor <= new Date(`${today}T00:00:00Z`);
+      cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1_000)
+    ) {
+      points.push({
+        date: cursor.toISOString().slice(0, 10),
+        valueCents: 0,
+        value: 0,
+        currency,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+        available: true,
+        complete: true,
+        dailyChangeCents: points.length > 0 ? 0 : null,
+        dailyChange: points.length > 0 ? 0 : null,
+        dailyChangePercent: null,
+      });
+    }
+    return {
+      points,
+      currency,
+      historyAvailable: true,
+      historyUnavailableReason: null,
+    };
+  }
+  const { quoteMap, historyByKey } = await loadHistoryPricing(cardIds);
 
   // A period is a count of calendar days, inclusive of today. The old
   // implementation treated 7D as "seven days ago through today", producing
@@ -360,22 +452,13 @@ export async function calculatePortfolioValueHistory(
         continue;
       }
 
-      const quote = date === today ? quoteMap.get(`${row.cardId}:${gradeKey}`) : undefined;
-      let price: HistoricalPrice | null = quote
-        ? {
-            date,
-            priceCents: quote.priceCents,
-            currency: quote.currency,
-            recordedAt: quote.fetchedAt.getTime(),
-            priority: 3,
-          }
-        : null;
-      if (!price) {
-        const history = historyByKey.get(`${row.cardId}:${gradeKey}`) ?? [];
-        // Exact-date lookup is intentional. A retained quote from a different
-        // day cannot prove what the collection was worth on this day.
-        price = history.find(candidate => candidate.date === date) ?? null;
-      }
+      const price = retainedPriceForDate(
+        { quoteMap, historyByKey },
+        row.cardId,
+        gradeKey,
+        date,
+        today,
+      );
       if (!price) {
         complete = false;
         continue;
@@ -450,6 +533,227 @@ export async function calculatePortfolioValueHistory(
       && points.some(point => point.available)
       ? null
       : "No complete retained price observations are available during ownership",
+  };
+}
+
+/**
+ * Explain a daily ownership-value change using the same retained observations
+ * as calculatePortfolioValueHistory. Membership changes are deliberately
+ * separate from market movement so an acquisition or sale is never presented
+ * as a price gain or loss.
+ */
+export async function calculatePortfolioMovementBreakdown(
+  userId: string,
+  date: string,
+  displayCurrency = "AUD",
+): Promise<PortfolioMovementBreakdown> {
+  const currency = displayCurrency.trim().toUpperCase();
+  const ownership = await loadOwnershipIntervals(userId);
+  const { intervals, accountDate, today } = ownership;
+  const previousDate = rowDate(date)
+    ? new Date(`${date}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1_000
+    : null;
+  const previousDateString = previousDate == null
+    ? null
+    : new Date(previousDate).toISOString().slice(0, 10);
+
+  if (!ownership.accountFound) {
+    return {
+      date,
+      previousDate: previousDateString,
+      currency,
+      available: false,
+      previousAvailable: false,
+      breakdownAvailable: false,
+      totalChangeCents: null,
+      totalChange: null,
+      contributions: [],
+      unavailableReason: "Collector account is unavailable",
+    };
+  }
+
+  const selectedDateIsValid = rowDate(date) === date;
+  const selectedDateIsInTimeline = selectedDateIsValid && date >= accountDate && date <= today;
+  const isAccountBaseline = selectedDateIsInTimeline && date === accountDate;
+  const currentIntervals = selectedDateIsInTimeline && date !== accountDate
+    ? intervals.filter(interval =>
+        interval.startDate <= date && (interval.endDate === null || date < interval.endDate),
+      )
+    : [];
+  const previousIntervals = previousDateString && previousDateString > accountDate
+    ? intervals.filter(interval =>
+        interval.startDate <= previousDateString
+        && (interval.endDate === null || previousDateString < interval.endDate),
+      )
+    : [];
+  const cardIds = [...new Set(
+    [...currentIntervals, ...previousIntervals].map(interval => interval.cardId),
+  )];
+  const pricing = await loadHistoryPricing(cardIds);
+  const valueCache = new Map<string, { valueCents: number | null; reason: string | null }>();
+
+  const valueAt = async (
+    interval: OwnershipInterval,
+    intervalDate: string,
+  ): Promise<{ valueCents: number | null; reason: string | null }> => {
+    const cacheKey = `${interval.id}:${intervalDate}`;
+    const cached = valueCache.get(cacheKey);
+    if (cached) return cached;
+    const gradeKey = gradeKeyForHolding(interval.isGraded, interval.gradingData);
+    if (!gradeKey) {
+      const result = {
+        valueCents: null,
+        reason: "Exact provider grade is unavailable for this holding",
+      };
+      valueCache.set(cacheKey, result);
+      return result;
+    }
+    const price = retainedPriceForDate(pricing, interval.cardId, gradeKey, intervalDate, today);
+    if (!price) {
+      const result = {
+        valueCents: null,
+        reason: "No exact retained provider observation is available for this date",
+      };
+      valueCache.set(cacheKey, result);
+      return result;
+    }
+    const convertedUnit = await convertCents(price.priceCents, price.currency, currency);
+    if (convertedUnit == null) {
+      const result = {
+        valueCents: null,
+        reason: `Currency conversion to ${currency} is unavailable for this date`,
+      };
+      valueCache.set(cacheKey, result);
+      return result;
+    }
+    const result = { valueCents: convertedUnit * interval.quantity, reason: null };
+    valueCache.set(cacheKey, result);
+    return result;
+  };
+
+  const currentValues = new Map<string, { valueCents: number | null; reason: string | null }>();
+  for (const interval of currentIntervals) {
+    currentValues.set(interval.id, await valueAt(interval, date));
+  }
+  const previousValues = new Map<string, { valueCents: number | null; reason: string | null }>();
+  if (previousDateString && previousDateString > accountDate) {
+    for (const interval of previousIntervals) {
+      previousValues.set(interval.id, await valueAt(interval, previousDateString));
+    }
+  }
+
+  const currentAvailable =
+    selectedDateIsInTimeline
+    && currentIntervals.every(interval => currentValues.get(interval.id)?.valueCents != null);
+  const previousAvailable =
+    isAccountBaseline
+      ? false
+      : previousDateString != null
+        && previousDateString <= accountDate
+      ? true
+      : previousDateString != null
+        && previousIntervals.every(interval => previousValues.get(interval.id)?.valueCents != null);
+
+  const byId = new Map<string, OwnershipInterval>();
+  for (const interval of [...previousIntervals, ...currentIntervals]) byId.set(interval.id, interval);
+  const contributions: PortfolioMovementContribution[] = [];
+  for (const interval of byId.values()) {
+    const current = currentValues.get(interval.id);
+    const previous = previousValues.get(interval.id);
+    const card = interval.cardData && typeof interval.cardData === "object"
+      ? interval.cardData as Record<string, unknown>
+      : {};
+    const gradeKey = gradeKeyForHolding(interval.isGraded, interval.gradingData);
+    const name = String(card["name"] ?? card["title"] ?? interval.cardId);
+    const setName = typeof card["setName"] === "string"
+      ? card["setName"]
+      : typeof card["set_name"] === "string"
+        ? card["set_name"]
+        : null;
+    const imageUrl = typeof card["imageUrl"] === "string"
+      ? card["imageUrl"]
+      : typeof card["image"] === "string"
+        ? card["image"]
+        : null;
+    const isCurrent = current != null;
+    const isPrevious = previous != null;
+    let kind: PortfolioMovementKind;
+    let amountCents: number | null;
+    let unavailableReason: string | null = null;
+    if (isCurrent && !isPrevious) {
+      kind = "acquisition";
+      amountCents = current.valueCents;
+      unavailableReason = current.reason;
+    } else if (!isCurrent && isPrevious) {
+      kind = "sale";
+      amountCents = previous.valueCents == null ? null : -previous.valueCents;
+      unavailableReason = previous.reason;
+    } else if (current && previous) {
+      kind = "market_price";
+      amountCents =
+        current.valueCents != null && previous.valueCents != null
+          ? current.valueCents - previous.valueCents
+          : null;
+      unavailableReason = current.reason ?? previous.reason;
+    } else {
+      continue;
+    }
+    contributions.push({
+      id: interval.id,
+      cardId: interval.cardId,
+      name,
+      setName,
+      imageUrl,
+      quantity: interval.quantity,
+      gradeKey,
+      kind,
+      amountCents,
+      amount: amountCents == null ? null : amountCents / 100,
+      previousValueCents: previous?.valueCents ?? null,
+      previousValue: previous?.valueCents == null ? null : previous.valueCents / 100,
+      valueCents: current?.valueCents ?? null,
+      value: current?.valueCents == null ? null : current.valueCents / 100,
+      available: amountCents != null,
+      unavailableReason,
+    });
+  }
+
+  const allValuesAvailable = contributions.every(contribution => contribution.available);
+  const movementComplete =
+    selectedDateIsInTimeline
+    && !isAccountBaseline
+    && currentAvailable
+    && previousAvailable
+    && allValuesAvailable;
+  const totalChangeCents =
+    movementComplete
+      ? contributions.reduce((sum, contribution) => sum + (contribution.amountCents ?? 0), 0)
+      : null;
+  const unavailableReason = !selectedDateIsInTimeline
+    ? "This date is outside the collector's retained ownership timeline"
+    : isAccountBaseline
+      ? "Account creation is the portfolio baseline and has no preceding ownership day"
+    : !currentAvailable
+      ? "One or more holdings has no exact retained observation for this date"
+      : previousDateString == null
+        ? "A preceding calendar day is unavailable"
+        : !previousAvailable
+          ? "One or more holdings has no exact retained observation for the preceding calendar day"
+          : !allValuesAvailable
+            ? "Some card movement contributions are unavailable"
+            : null;
+
+  return {
+    date,
+    previousDate: previousDateString,
+    currency,
+    available: currentAvailable,
+    previousAvailable,
+    breakdownAvailable: movementComplete,
+    totalChangeCents,
+    totalChange: totalChangeCents == null ? null : totalChangeCents / 100,
+    contributions,
+    unavailableReason,
   };
 }
 

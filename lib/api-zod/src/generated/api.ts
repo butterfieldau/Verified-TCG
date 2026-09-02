@@ -518,6 +518,47 @@ export const GetCollectionValueHistoryResponse = zod.object({
 
 
 /**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+export const getCollectionValueHistoryMovementQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionValueHistoryMovementQueryParams = zod.object({
+  "date": zod.date(),
+  "displayCurrency": zod.coerce.string().default(getCollectionValueHistoryMovementQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionValueHistoryMovementResponse = zod.object({
+  "date": zod.coerce.date(),
+  "previousDate": zod.coerce.date().nullable(),
+  "currency": zod.string(),
+  "available": zod.boolean(),
+  "previousAvailable": zod.boolean(),
+  "breakdownAvailable": zod.boolean(),
+  "totalChangeCents": zod.number().int().nullable(),
+  "totalChange": zod.number().nullable(),
+  "contributions": zod.array(zod.object({
+  "id": zod.string(),
+  "cardId": zod.string(),
+  "name": zod.string(),
+  "setName": zod.string().nullable(),
+  "imageUrl": zod.string().nullable(),
+  "quantity": zod.number().int(),
+  "gradeKey": zod.string().nullable(),
+  "kind": zod.enum(['market_price', 'acquisition', 'sale']),
+  "amountCents": zod.number().int().nullable(),
+  "amount": zod.number().nullable(),
+  "previousValueCents": zod.number().int().nullable(),
+  "previousValue": zod.number().nullable(),
+  "valueCents": zod.number().int().nullable(),
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().nullable()
+})),
+  "unavailableReason": zod.string().nullable()
+})
+
+
+/**
  * @summary Get persisted comparable price movements
  */
 export const GetMarketMoversResponse = zod.object({

@@ -115,6 +115,51 @@ export interface PerformancePoint {
   sampledFrom?: string;
 }
 
+export type PortfolioMovementKind = 'market_price' | 'acquisition' | 'sale';
+
+export interface PortfolioMovementContribution {
+  id: string;
+  cardId: string;
+  name: string;
+  setName: string | null;
+  imageUrl: string | null;
+  quantity: number;
+  gradeKey: string | null;
+  kind: PortfolioMovementKind;
+  amountCents: number | null;
+  amount: number | null;
+  previousValueCents: number | null;
+  previousValue: number | null;
+  valueCents: number | null;
+  value: number | null;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface PortfolioMovementBreakdown {
+  date: string;
+  previousDate: string | null;
+  currency: string;
+  available: boolean;
+  previousAvailable: boolean;
+  breakdownAvailable: boolean;
+  totalChangeCents: number | null;
+  totalChange: number | null;
+  contributions: PortfolioMovementContribution[];
+  unavailableReason: string | null;
+}
+
+export async function fetchPortfolioMovementBreakdown(
+  date: string,
+  displayCurrency = 'AUD',
+): Promise<PortfolioMovementBreakdown> {
+  const params = new URLSearchParams({ date, displayCurrency });
+  return apiJson<PortfolioMovementBreakdown>(
+    `/api/collection/value-history/movement?${params}`,
+    { accessToken: await accessToken() },
+  );
+}
+
 export interface PerformanceAllocation {
   label: string;
   value: number;

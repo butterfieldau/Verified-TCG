@@ -300,6 +300,61 @@ export interface CollectionValueHistory {
   historyUnavailableReason?: string | null;
 }
 
+export type PortfolioMovementContributionKind = typeof PortfolioMovementContributionKind[keyof typeof PortfolioMovementContributionKind];
+
+
+export const PortfolioMovementContributionKind = {
+  market_price: 'market_price',
+  acquisition: 'acquisition',
+  sale: 'sale',
+} as const;
+
+export interface PortfolioMovementContribution {
+  id: string;
+  cardId: string;
+  name: string;
+  /** @nullable */
+  setName: string | null;
+  /** @nullable */
+  imageUrl: string | null;
+  quantity: number;
+  /** @nullable */
+  gradeKey: string | null;
+  kind: PortfolioMovementContributionKind;
+  /** @nullable */
+  amountCents: number | null;
+  /** @nullable */
+  amount: number | null;
+  /** @nullable */
+  previousValueCents: number | null;
+  /** @nullable */
+  previousValue: number | null;
+  /** @nullable */
+  valueCents: number | null;
+  /** @nullable */
+  value: number | null;
+  available: boolean;
+  /** @nullable */
+  unavailableReason: string | null;
+}
+
+export interface PortfolioMovementBreakdown {
+  date: string;
+  /** @nullable */
+  previousDate: string | null;
+  currency: string;
+  available: boolean;
+  previousAvailable: boolean;
+  breakdownAvailable: boolean;
+  /** @nullable */
+  totalChangeCents: number | null;
+  /** @nullable */
+  totalChange: number | null;
+  contributions: PortfolioMovementContribution[];
+  /** @nullable */
+  unavailableReason: string | null;
+}
+
 export type CollectionPerformancePointsItem = {
   date: string;
   value: number;
@@ -483,6 +538,11 @@ export const GetCollectionValueHistoryRange = {
   '1Y': '1Y',
   ALL: 'ALL',
 } as const;
+
+export type GetCollectionValueHistoryMovementParams = {
+date: string;
+displayCurrency?: string;
+};
 
 export type GetEbaySoldHistoryParams = {
 /**

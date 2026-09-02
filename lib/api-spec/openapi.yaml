@@ -259,6 +259,22 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CollectionValueHistory" }
         "401": { description: Authentication required. }
+  /collection/value-history/movement:
+    get:
+      operationId: getCollectionValueHistoryMovement
+      tags: [portfolio]
+      summary: Explain the per-card movement for one retained portfolio day
+      parameters:
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Exact-grade retained per-card contributions, including explicit unavailable rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioMovementBreakdown" }
+        "400": { description: Invalid or future calendar date. }
+        "401": { description: Authentication required. }
   /catalog/market-movers:
     get:
       operationId: getMarketMovers
@@ -569,6 +585,70 @@ components:
             items: { $ref: "#/components/schemas/PortfolioValuePoint" }
         historyAvailable: { type: boolean }
         historyUnavailableReason: { type: [string, "null"] }
+    PortfolioMovementContribution:
+      type: object
+      required:
+        - id
+        - cardId
+        - name
+        - setName
+        - imageUrl
+        - quantity
+        - gradeKey
+        - kind
+        - amountCents
+        - amount
+        - previousValueCents
+        - previousValue
+        - valueCents
+        - value
+        - available
+        - unavailableReason
+      properties:
+        id: { type: string }
+        cardId: { type: string }
+        name: { type: string }
+        setName: { type: [string, "null"] }
+        imageUrl: { type: [string, "null"] }
+        quantity: { type: integer }
+        gradeKey: { type: [string, "null"] }
+        kind:
+          type: string
+          enum: [market_price, acquisition, sale]
+        amountCents: { type: [integer, "null"] }
+        amount: { type: [number, "null"] }
+        previousValueCents: { type: [integer, "null"] }
+        previousValue: { type: [number, "null"] }
+        valueCents: { type: [integer, "null"] }
+        value: { type: [number, "null"] }
+        available: { type: boolean }
+        unavailableReason: { type: [string, "null"] }
+    PortfolioMovementBreakdown:
+      type: object
+      required:
+        - date
+        - previousDate
+        - currency
+        - available
+        - previousAvailable
+        - breakdownAvailable
+        - totalChangeCents
+        - totalChange
+        - contributions
+        - unavailableReason
+      properties:
+        date: { type: string, format: date }
+        previousDate: { type: [string, "null"], format: date }
+        currency: { type: string }
+        available: { type: boolean }
+        previousAvailable: { type: boolean }
+        breakdownAvailable: { type: boolean }
+        totalChangeCents: { type: [integer, "null"] }
+        totalChange: { type: [number, "null"] }
+        contributions:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioMovementContribution" }
+        unavailableReason: { type: [string, "null"] }
     CollectionPerformance:
       type: object
       required: [points, currency, historyAvailable, completeness]

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import {
+  calculatePortfolioMovementBreakdown,
   calculatePortfolioValueHistory,
   portfolioChartData,
 } from "../pricing/portfolio.js";
@@ -52,5 +53,30 @@ router.get("/collection/value-history", requireActiveUser, async (req: AuthReque
       : "No complete retained price observations are available during ownership",
   });
 });
+
+router.get(
+  "/collection/value-history/movement",
+  requireActiveUser,
+  async (req: AuthRequest, res): Promise<void> => {
+    const date = typeof req.query["date"] === "string" ? req.query["date"] : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+      res.status(400).json({ message: "date must be a valid ISO calendar date" });
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (date > today) {
+      res.status(400).json({ message: "date cannot be in the future" });
+      return;
+    }
+    const displayCurrency =
+      typeof req.query["displayCurrency"] === "string" &&
+      isValidCurrency(req.query["displayCurrency"])
+        ? req.query["displayCurrency"].toUpperCase()
+        : "AUD";
+    res.json(
+      await calculatePortfolioMovementBreakdown(req.userId!, date, displayCurrency),
+    );
+  },
+);
 
 export default router;

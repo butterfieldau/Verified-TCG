@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
+  ActivityIndicator,
+  Modal,
   Platform,
   PanResponder,
   Pressable,
@@ -46,9 +48,11 @@ import { fetchRecentActivity, type ActivityItem } from '@/services/activityApi';
 import {
   fetchCollectionSummary,
   fetchCollectionPerformance,
+  fetchPortfolioMovementBreakdown,
   type CollectionSummary,
   type CollectionPerformance,
   type PerformanceRange,
+  type PortfolioMovementBreakdown,
 } from '@/services/collectionPerformance';
 import {
   getHomeCollectionCards,
@@ -210,10 +214,8 @@ function InteractiveChart({
   const finishGesture = useCallback(() => {
     if (!gestureActive.current) return;
     gestureActive.current = false;
-    setActiveIndex(null);
-    onPointSelect(null);
     onInteractionEnd?.();
-  }, [onInteractionEnd, onPointSelect]);
+  }, [onInteractionEnd]);
 
   const panResponder = useMemo(() => PanResponder.create({
     // Let the parent ScrollView decide whether a touch is a vertical scroll.
@@ -321,7 +323,15 @@ function InteractiveChart({
 }
 
 // ── Tooltip pill shown above chart when touching ───────────────────────────────
-function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency: string }) {
+function ChartTooltip({
+  point,
+  currency,
+  onViewBreakdown,
+}: {
+  point: ChartPoint | null;
+  currency: string;
+  onViewBreakdown: (point: ChartPoint) => void;
+}) {
   if (!point) return null;
   if (point.value == null || point.available === false) {
     return (
@@ -348,6 +358,16 @@ function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency:
       {!!point.date && (
         <Text style={styles.tooltipLabel}>{point.date}</Text>
       )}
+      <Pressable
+        testID="portfolio-movement-button"
+        onPress={() => onViewBreakdown(point)}
+        accessibilityRole="button"
+        accessibilityLabel={`See which cards moved the portfolio on ${point.date}`}
+        style={styles.tooltipAction}
+      >
+        <Text style={styles.tooltipActionText}>See card movement</Text>
+        <Feather name="chevron-up" size={12} color={C.primary} />
+      </Pressable>
     </View>
   );
 }
@@ -425,6 +445,31 @@ export default function HomeScreen() {
 
   // Chart tooltip state
   const [activeChartPoint, setActiveChartPoint] = useState<ChartPoint | null>(null);
+  const [movementDate, setMovementDate] = useState<string | null>(null);
+  const [movementBreakdown, setMovementBreakdown] = useState<PortfolioMovementBreakdown | null>(null);
+  const [movementLoading, setMovementLoading] = useState(false);
+  const [movementError, setMovementError] = useState<string | null>(null);
+
+  const openMovementBreakdown = useCallback((point: ChartPoint) => {
+    if (!point.date || point.value == null || point.available === false) return;
+    setMovementDate(point.date);
+    setMovementBreakdown(null);
+    setMovementError(null);
+    setMovementLoading(true);
+    fetchPortfolioMovementBreakdown(point.date, currency)
+      .then(setMovementBreakdown)
+      .catch(error => {
+        setMovementError(error instanceof Error ? error.message : 'Card movement is unavailable.');
+      })
+      .finally(() => setMovementLoading(false));
+  }, [currency]);
+
+  const closeMovementBreakdown = useCallback(() => {
+    setMovementDate(null);
+    setMovementBreakdown(null);
+    setMovementError(null);
+    setMovementLoading(false);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -753,7 +798,11 @@ export default function HomeScreen() {
 
       {/* ── Chart tooltip (shows while touching) ───────────────────────── */}
       <View style={styles.tooltipContainer}>
-        <ChartTooltip point={activeChartPoint} currency={currency} />
+        <ChartTooltip
+          point={activeChartPoint}
+          currency={currency}
+          onViewBreakdown={openMovementBreakdown}
+        />
       </View>
 
       {/* ── Interactive chart ───────────────────────────────────────────── */}
@@ -1257,6 +1306,153 @@ export default function HomeScreen() {
         )}
       </View>
 
+      <Modal
+        visible={movementDate !== null}
+        transparent
+        animationType="slide"
+        presentationStyle="overFullScreen"
+        onRequestClose={closeMovementBreakdown}
+      >
+        <Pressable
+          style={styles.movementOverlay}
+          onPress={closeMovementBreakdown}
+          accessibilityRole="button"
+          accessibilityLabel="Close card movement breakdown"
+        >
+          <Pressable
+            style={[styles.movementSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}
+            onPress={event => event.stopPropagation()}
+          >
+            <View style={styles.movementHeader}>
+              <View style={styles.movementHeaderText}>
+                <Text style={styles.movementEyebrow}>PORTFOLIO MOVEMENT</Text>
+                <Text style={styles.movementTitle}>
+                  {movementDate
+                    ? new Date(`${movementDate}T00:00:00Z`).toLocaleDateString('en-AU', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                        timeZone: 'UTC',
+                      })
+                    : ''}
+                </Text>
+              </View>
+              <Pressable
+                onPress={closeMovementBreakdown}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+              >
+                <Feather name="x" size={22} color={C.mutedForeground} />
+              </Pressable>
+            </View>
+
+            {movementLoading ? (
+              <View style={styles.movementState}>
+                <ActivityIndicator color={C.primary} />
+                <Text style={styles.movementStateText}>Loading retained card observations…</Text>
+              </View>
+            ) : movementError ? (
+              <View style={styles.movementState}>
+                <Feather name="alert-circle" size={22} color={C.negative} />
+                <Text style={styles.movementStateText}>{movementError}</Text>
+                {movementDate && (
+                  <Pressable
+                    onPress={() => openMovementBreakdown({ date: movementDate, value: 0, available: true })}
+                    accessibilityRole="button"
+                    style={styles.movementRetry}
+                  >
+                    <Text style={styles.movementRetryText}>Try again</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : movementBreakdown ? (
+              <>
+                <View style={styles.movementSummary}>
+                  <Text style={styles.movementSummaryLabel}>Net daily movement</Text>
+                  <Text style={[
+                    styles.movementSummaryValue,
+                    {
+                      color: movementBreakdown.totalChange == null
+                        ? C.mutedForeground
+                        : movementBreakdown.totalChange >= 0
+                          ? C.positive
+                          : C.negative,
+                    },
+                  ]}>
+                    {movementBreakdown.totalChange == null
+                      ? 'Unavailable'
+                      : `${movementBreakdown.totalChange >= 0 ? '+' : '−'}${movementBreakdown.currency} ${Math.abs(movementBreakdown.totalChange).toLocaleString('en-AU', { minimumFractionDigits: 2 })}`}
+                  </Text>
+                  {movementBreakdown.unavailableReason && (
+                    <Text style={styles.movementSummaryNote}>{movementBreakdown.unavailableReason}</Text>
+                  )}
+                </View>
+                <ScrollView
+                  style={styles.movementList}
+                  contentContainerStyle={styles.movementListContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {movementBreakdown.contributions.length === 0 ? (
+                    <View style={styles.movementEmpty}>
+                      <Feather name="minus-circle" size={22} color={C.mutedForeground} />
+                      <Text style={styles.movementStateText}>
+                        No card membership or market movement occurred on this baseline day.
+                      </Text>
+                    </View>
+                  ) : movementBreakdown.contributions.map(contribution => {
+                    const isPositiveContribution = (contribution.amount ?? 0) >= 0;
+                    const contributionColor = contribution.amount == null
+                      ? C.mutedForeground
+                      : isPositiveContribution
+                        ? C.positive
+                        : C.negative;
+                    const kindLabel = contribution.kind === 'acquisition'
+                      ? 'Added to collection'
+                      : contribution.kind === 'sale'
+                        ? 'Sold from collection'
+                        : 'Market price movement';
+                    return (
+                      <View key={contribution.id} style={styles.movementRow}>
+                        <View style={styles.movementImage}>
+                          {contribution.imageUrl ? (
+                            <CardImage
+                              uri={contribution.imageUrl}
+                              style={StyleSheet.absoluteFill}
+                              contentFit="cover"
+                            />
+                          ) : (
+                            <Feather name="image" size={18} color={C.mutedForeground} />
+                          )}
+                        </View>
+                        <View style={styles.movementBody}>
+                          <Text style={styles.movementCardName} numberOfLines={1}>
+                            {contribution.name}
+                          </Text>
+                          <Text style={styles.movementMeta} numberOfLines={1}>
+                            {kindLabel} · ×{contribution.quantity}
+                            {contribution.gradeKey ? ` · ${contribution.gradeKey.replaceAll('_', ' ').toUpperCase()}` : ''}
+                          </Text>
+                          {!contribution.available && contribution.unavailableReason && (
+                            <Text style={styles.movementUnavailable} numberOfLines={2}>
+                              {contribution.unavailableReason}
+                            </Text>
+                          )}
+                        </View>
+                        <Text style={[styles.movementAmount, { color: contributionColor }]}>
+                          {contribution.amount == null
+                            ? 'Unavailable'
+                            : `${isPositiveContribution ? '+' : '−'}${movementBreakdown.currency} ${Math.abs(contribution.amount).toLocaleString('en-AU', { minimumFractionDigits: 2 })}`}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
     </ScrollView>
   );
@@ -1329,7 +1525,7 @@ const styles = StyleSheet.create({
   changePeriod: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
 
   // Tooltip
-  tooltipContainer: { height: 58, justifyContent: 'flex-end', paddingBottom: 4 },
+  tooltipContainer: { minHeight: 58, justifyContent: 'flex-end', paddingBottom: 4 },
   tooltipBox: {
     alignSelf: 'center',
     backgroundColor: C.card,
@@ -1341,6 +1537,103 @@ const styles = StyleSheet.create({
   tooltipValue: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground, letterSpacing: -0.3 },
   tooltipChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   tooltipLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
+  tooltipAction: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
+  tooltipActionText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.primary },
+
+  // Portfolio movement sheet
+  movementOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.66)',
+    justifyContent: 'flex-end',
+  },
+  movementSheet: {
+    maxHeight: '82%',
+    minHeight: 360,
+    backgroundColor: C.background,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 18,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  movementHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    marginBottom: 14,
+  },
+  movementHeaderText: { flex: 1 },
+  movementEyebrow: {
+    color: C.primary,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.3,
+    marginBottom: 4,
+  },
+  movementTitle: {
+    color: C.foreground,
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+  },
+  movementSummary: {
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+  },
+  movementSummaryLabel: {
+    color: C.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    marginBottom: 3,
+  },
+  movementSummaryValue: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  movementSummaryNote: {
+    color: C.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 16,
+    marginTop: 5,
+  },
+  movementList: { flexGrow: 0 },
+  movementListContent: { paddingBottom: 10 },
+  movementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  movementImage: {
+    width: 42,
+    height: 56,
+    borderRadius: 7,
+    overflow: 'hidden',
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  movementBody: { flex: 1, minWidth: 0 },
+  movementCardName: { color: C.foreground, fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  movementMeta: { color: C.mutedForeground, fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 3 },
+  movementUnavailable: { color: C.mutedForeground, fontSize: 10, lineHeight: 14, marginTop: 4 },
+  movementAmount: { maxWidth: 94, textAlign: 'right', fontSize: 12, fontFamily: 'Inter_700Bold' },
+  movementState: { minHeight: 220, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 },
+  movementEmpty: { alignItems: 'center', justifyContent: 'center', gap: 10, padding: 34 },
+  movementStateText: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  movementRetry: { borderWidth: 1, borderColor: C.border, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  movementRetryText: { color: C.primary, fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
   // Chart
   chartContainer: { marginHorizontal: -20, marginBottom: 4 },

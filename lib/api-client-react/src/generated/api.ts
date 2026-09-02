@@ -33,10 +33,12 @@ import type {
   GetCatalogCard200,
   GetCollectionPerformanceParams,
   GetCollectionSummaryParams,
+  GetCollectionValueHistoryMovementParams,
   GetCollectionValueHistoryParams,
   GetEbaySoldHistoryParams,
   GetTrendingCardLookups200,
   HealthStatus,
+  PortfolioMovementBreakdown,
   PreviewCollectionCsvImportBody,
   SearchCatalogCardsParams
 } from './api.schemas';
@@ -1130,6 +1132,90 @@ export function useGetCollectionValueHistory<TData = Awaited<ReturnType<typeof g
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetCollectionValueHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCollectionValueHistoryMovementUrl = (params: GetCollectionValueHistoryMovementParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/collection/value-history/movement?${stringifiedParams}` : `/api/collection/value-history/movement`
+}
+
+/**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+export const getCollectionValueHistoryMovement = async (params: GetCollectionValueHistoryMovementParams, options?: Parameters<typeof customFetch>[1]): Promise<PortfolioMovementBreakdown> => {
+
+  return customFetch<PortfolioMovementBreakdown>(getGetCollectionValueHistoryMovementUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCollectionValueHistoryMovementQueryKey = (params?: GetCollectionValueHistoryMovementParams,) => {
+    return [
+    `/api/collection/value-history/movement`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCollectionValueHistoryMovementQueryOptions = <TData = Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError = ErrorType<void>>(params: GetCollectionValueHistoryMovementParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCollectionValueHistoryMovementQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>> = ({ signal }) => getCollectionValueHistoryMovement(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCollectionValueHistoryMovementQueryResult = NonNullable<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>>
+export type GetCollectionValueHistoryMovementQueryError = ErrorType<void>
+
+
+/**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+
+export function useGetCollectionValueHistoryMovement<TData = Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError = ErrorType<void>>(
+ params: GetCollectionValueHistoryMovementParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCollectionValueHistoryMovementQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

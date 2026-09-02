@@ -7,4 +7,4 @@ Verified TCG Home uses an ownership-value timeline: zero at account creation, ac
 
 **Why:** The collector explicitly chose an account-to-present ownership timeline over a current-holdings market backcast. Showing pre-acquisition value or treating acquisition jumps as gains would misrepresent the account’s history.
 
-**How to apply:** Use account creation and acquisition/sale/restore boundaries as timeline events. Omit non-zero dates lacking complete real prices or FX; never interpolate. Keep acquisition cost, realised gain, and unrealised gain separate from value-chart movement.
+**How to apply:** Use account creation and acquisition/sale/restore boundaries as timeline events. Omit non-zero dates lacking complete real prices or FX; never interpolate. For daily per-card explanations, only intervals owned on both adjacent dates produce market deltas; label entering and leaving intervals as acquisition and sale contributions. Any missing exact-grade observation or FX keeps that contribution and the aggregate unavailable. Keep acquisition cost, realised gain, and unrealised gain separate from value-chart movement.
