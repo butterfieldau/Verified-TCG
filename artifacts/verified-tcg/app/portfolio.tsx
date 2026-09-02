@@ -2,7 +2,6 @@ import React, { useState, useMemo, useCallback } from 'react';
 import {
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -118,34 +117,25 @@ const ALLOC_TABS: { label: string; value: AllocTab }[] = [
   { label: 'Value Tier', value: 'value_tier' },
 ];
 
-function formatLastUpdated(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `${diffH}h ago`;
-  return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-}
-
 export default function PortfolioScreen() {
   const insets = useSafeAreaInsets();
-  const { portfolio, collection, refreshPrices, pricesLastUpdated } = useApp();
+  const { portfolio, collection, refreshPrices } = useApp();
   const { currency } = useSettings();
   const [allocTab, setAllocTab] = useState<AllocTab>('tcg');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshingRef = React.useRef(false);
 
   const onRefresh = useCallback(async () => {
-    if (isRefreshing) return;
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setIsRefreshing(true);
     try {
       await refreshPrices();
     } finally {
+      refreshingRef.current = false;
       setIsRefreshing(false);
     }
-  }, [isRefreshing, refreshPrices]);
+  }, [refreshPrices]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const isPositive = portfolio.totalGain >= 0;
@@ -249,14 +239,6 @@ export default function PortfolioScreen() {
       style={[styles.screen, { backgroundColor: C.background }]}
       contentContainerStyle={{ paddingTop: topPad + 8, paddingBottom: 40 }}
       showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={onRefresh}
-          tintColor={C.primary}
-          colors={[C.primary]}
-        />
-      }
     >
       {/* Header */}
       <View style={styles.header}>
@@ -264,7 +246,19 @@ export default function PortfolioScreen() {
           <Feather name="arrow-left" size={20} color={C.foreground} />
         </Pressable>
         <Text style={styles.title}>Portfolio</Text>
-        <View style={{ width: 40 }} />
+        <Pressable
+          onPress={onRefresh}
+          disabled={isRefreshing}
+          style={styles.refreshBtn}
+          accessibilityRole="button"
+          accessibilityLabel={isRefreshing ? 'Refreshing portfolio prices' : 'Refresh portfolio prices'}
+        >
+          <Feather
+            name="refresh-cw"
+            size={18}
+            color={isRefreshing ? C.mutedForeground : C.foreground}
+          />
+        </Pressable>
       </View>
 
       {/* Hero value */}
@@ -273,26 +267,6 @@ export default function PortfolioScreen() {
         <Text style={styles.heroValue}>
           {formatPrice(portfolio.totalValue, currency)}
         </Text>
-        <View style={styles.heroRow}>
-          <View style={[styles.gainPill, { backgroundColor: isPositive ? `${C.positive}22` : `${C.negative}22` }]}>
-            <Feather
-              name={isPositive ? 'trending-up' : 'trending-down'}
-              size={13}
-              color={isPositive ? C.positive : C.negative}
-            />
-            <Text style={[styles.gainPct, { color: isPositive ? C.positive : C.negative }]}>
-              {isPositive ? '+' : ''}{portfolio.totalGainPercent.toFixed(2)}%
-            </Text>
-          </View>
-          <Text style={[styles.gainAbs, { color: isPositive ? C.positive : C.negative }]}>
-            {isPositive ? '+' : ''}{formatPrice(Math.abs(portfolio.totalGain), currency)}
-          </Text>
-        </View>
-        {pricesLastUpdated && (
-          <Text style={styles.heroUpdated}>
-            Prices as of {formatLastUpdated(pricesLastUpdated)}
-          </Text>
-        )}
       </View>
 
       {/* Stats grid */}
@@ -414,6 +388,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  refreshBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: { fontSize: 20, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.2 },
   heroCard: {
     marginHorizontal: 20,
@@ -430,30 +412,12 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   heroValue: {
-    fontSize: 32,
+    fontSize: 36,
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
     letterSpacing: -1,
-    marginBottom: 10,
+    marginBottom: 0,
   },
-  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  heroUpdated: {
-    fontSize: 10,
-    fontFamily: 'Inter_400Regular',
-    color: C.mutedForeground,
-    opacity: 0.7,
-    marginTop: 10,
-  },
-  gainPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  gainPct: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-  gainAbs: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
