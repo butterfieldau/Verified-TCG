@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { createDatabasePool } from "@workspace/db";
 import { bootstrapDatabase } from "../lib/databaseBootstrap.js";
 
-const SOURCE_DATABASE_URL = process.env.NEON_DATABASE_URL;
-if (!SOURCE_DATABASE_URL) throw new Error("NEON_DATABASE_URL is required for fresh database bootstrap tests");
+const SOURCE_DATABASE_URL = process.env.DATABASE_URL;
+if (!SOURCE_DATABASE_URL) throw new Error("DATABASE_URL is required for fresh database bootstrap tests");
 
 const DATABASE_NAME = `vtcg_fresh_bootstrap_${process.pid}_${Date.now()}`;
 const MIGRATIONS_FOLDER = fileURLToPath(

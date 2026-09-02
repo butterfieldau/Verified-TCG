@@ -1,10 +1,10 @@
 import { defineConfig } from "drizzle-kit";
 import path from "path";
 
-const databaseUrl = process.env.NEON_DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error("NEON_DATABASE_URL must be set. Ensure the Neon database is configured.");
+  throw new Error("DATABASE_URL, ensure the database is provisioned");
 }
 
 export default defineConfig({
