@@ -138,6 +138,12 @@ beforeEach(async () => {
 });
 
 describe('AppContext — subscription tier defaults', () => {
+  it('starts with the seven-day portfolio range so Home can draw retained history', () => {
+    const { getValue, unmount } = mountProvider();
+    expect(getValue().portfolioRange).toBe('7D');
+    unmount();
+  });
+
   it('starts with subscriptionTier = "free"', () => {
     const { getValue, unmount } = mountProvider();
     expect(getValue().subscriptionTier).toBe('free');

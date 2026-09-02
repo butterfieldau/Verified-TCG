@@ -407,7 +407,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     useState<PortfolioSummary['chartData']>(EMPTY_PORTFOLIO_CHART_DATA);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
-  const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('1D');
+  // Seven days is the shortest useful default for a line chart. A one-day
+  // range contains only today's point, which can legitimately be unavailable
+  // while any current holding is still waiting for an exact retained price.
+  const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
