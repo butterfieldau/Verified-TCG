@@ -114,9 +114,9 @@ export interface DatabaseBootstrapOptions {
 export async function bootstrapDatabase(
   options: DatabaseBootstrapOptions = {},
 ): Promise<void> {
-  const connectionString = options.connectionString ?? process.env.DATABASE_URL;
+  const connectionString = options.connectionString ?? process.env.NEON_DATABASE_URL;
   if (!connectionString) {
-    throw new Error("DATABASE_URL is required to bootstrap the database");
+    throw new Error("NEON_DATABASE_URL is required to bootstrap the database");
   }
 
   const pool = createDatabasePool(connectionString);
