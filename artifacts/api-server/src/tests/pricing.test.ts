@@ -330,6 +330,65 @@ describe("pickBestMatch", () => {
     assert.ok(result.score.total >= 0.85);
   });
 
+  test("uses exact number and PRB01 variant evidence for One Piece reprints", () => {
+    const result = pickBestMatch(
+      {
+        name: "Monkey.D.Luffy (OP05-119) (Manga)",
+        set: "Premium Booster -The Best-",
+        number: "OP05-119",
+        game: "one piece card game",
+      },
+      [
+        {
+          id: "original-manga",
+          name: "Monkey.D.Luffy [Alternate Art Manga]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+        {
+          id: "prb01-manga",
+          name: "Monkey.D.Luffy [Manga PRB01]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+        {
+          id: "prb01-alt",
+          name: "Monkey.D.Luffy [Alternate Art PRB01]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+      ],
+    );
+
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "prb01-manga");
+  });
+
+  test("does not auto-match duplicate candidates with the same number and variant", () => {
+    const input: MatchInput = {
+      name: "Monkey.D.Luffy (Manga)",
+      set: "Premium Booster -The Best-",
+      number: "OP05-119",
+      game: "one piece card game",
+    };
+    const duplicate = {
+      name: "Monkey.D.Luffy [Manga PRB01]",
+      consoleName: "One Piece Awakening of the New Era",
+      cardNumber: "OP05-119",
+      genre: "One Piece Card",
+    };
+    const result = pickBestMatch(input, [
+      { id: "english-a", ...duplicate },
+      { id: "english-b", ...duplicate },
+    ]);
+
+    assert.notEqual(result.status, "matched");
+    assert.equal(result.candidate, null);
+  });
+
   test("returns unmatched for empty candidates", () => {
     const result = pickBestMatch(input, []);
     assert.equal(result.status, "unmatched");

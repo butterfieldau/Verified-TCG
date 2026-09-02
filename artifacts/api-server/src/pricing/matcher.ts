@@ -212,6 +212,31 @@ function scoreGame(input: string | undefined, candidateGenre: string | undefined
   return ni === nc || nc.includes(ni) || ni.includes(nc) ? 1 : 0;
 }
 
+/**
+ * Variant words are identity evidence for reprints whose provider "console"
+ * remains the original set. PriceCharting does this for One Piece PRB01 cards,
+ * so set similarity alone cannot distinguish the original manga from its
+ * Premium Booster reprint.
+ */
+function variantMarkers(name: string, set?: string): Set<string> {
+  const normalized = normalizeString(`${name} ${set ?? ""}`);
+  const markers = new Set<string>();
+  if (/\bmanga\b/.test(normalized)) markers.add("manga");
+  if (/\balternate art\b/.test(normalized)) markers.add("alternate_art");
+  if (/\b(?:prb\s*0?1|premium booster the best)\b/.test(normalized)) markers.add("prb01");
+  if (/\bwanted\b/.test(normalized)) markers.add("wanted");
+  if (/\bsp gold\b/.test(normalized)) markers.add("sp_gold");
+  if (/\bsp silver\b/.test(normalized)) markers.add("sp_silver");
+  return markers;
+}
+
+function sameVariantIdentity(input: MatchInput, candidate: MatchCandidate): boolean {
+  const wanted = variantMarkers(input.name, input.set);
+  if (wanted.size === 0) return false;
+  const offered = variantMarkers(candidate.name, candidate.consoleName);
+  return wanted.size === offered.size && [...wanted].every(marker => offered.has(marker));
+}
+
 /** Score a single candidate against the input. */
 export function scoreSingle(input: MatchInput, candidate: MatchCandidate): MatchScore {
   const name   = scoreName(input.name, candidate.name);
@@ -262,6 +287,16 @@ export function pickBestMatch(
     Boolean(normalizedInputNumber) &&
     bestExactIdentity?.candidate.id === bestCandidate.id &&
     (!nextExactIdentity || bestExactIdentity.score.total - nextExactIdentity.score.total >= 0.08);
+  const exactVariantCandidates = ranked.filter(({ candidate, score }) =>
+    score.number === 1 &&
+    score.name >= 0.65 &&
+    sameVariantIdentity(input, candidate),
+  );
+  const bestExactVariant = exactVariantCandidates[0];
+  const hasDecisiveVariantIdentity =
+    Boolean(normalizedInputNumber) &&
+    exactVariantCandidates.length === 1 &&
+    bestExactVariant?.candidate.id === bestCandidate.id;
 
   if (identifierIsMissingOrWrong) {
     // Card number evidence is required for an automatic persisted mapping.
@@ -269,7 +304,7 @@ export function pickBestMatch(
     // name/set similarity.
     status = "review_required";
     level = "ambiguous";
-  } else if (hasDecisiveExactIdentity) {
+  } else if (hasDecisiveExactIdentity || hasDecisiveVariantIdentity) {
     // A unique provider candidate with the same explicit collector number and
     // exact card name, or one that decisively beats another same-number
     // language/set printing, is stronger evidence than fuzzy provider labels
