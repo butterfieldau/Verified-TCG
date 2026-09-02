@@ -17,7 +17,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Circle, Line as SvgLine } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import colors from '@/constants/colors';
 import {
@@ -165,7 +165,7 @@ function formatPrice(value: number, currency: string): string {
 // ── Mini Line Chart ────────────────────────────────────────────────────────────
 
 interface MiniChartProps {
-  points: { date: string; price: number }[];
+  points: { date: string; price: number; currency?: string }[];
   width: number;
   height: number;
   loading?: boolean;
@@ -173,6 +173,7 @@ interface MiniChartProps {
 }
 
 function MiniLineChart({ points, width, height, loading, graded = false }: MiniChartProps) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   if (loading) {
     return (
       <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
@@ -217,6 +218,12 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
     points.length === 1 ? PAD.left + chartW / 2 : PAD.left + (i / (points.length - 1)) * chartW;
   const toY = (p: number) => PAD.top + ((maxP - p) / rangeP) * chartH;
   const coords = points.map((pt, i) => ({ x: toX(i), y: toY(pt.price) }));
+  const activePoint = activeIndex == null ? null : points[activeIndex] ?? null;
+  const activeCoord = activeIndex == null ? null : coords[activeIndex] ?? null;
+  const selectAtX = (x: number) => {
+    const ratio = Math.max(0, Math.min(1, (x - PAD.left) / Math.max(chartW, 1)));
+    setActiveIndex(Math.min(points.length - 1, Math.max(0, Math.round(ratio * (points.length - 1)))));
+  };
 
   function makePath(pts: { x: number; y: number }[]): string {
     if (pts.length < 2) return '';
@@ -239,6 +246,17 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
   const lineColor = graded ? C.primary : isUp ? '#22c55e' : '#ef4444';
 
   return (
+    <View
+      style={{ width, height, position: 'relative' }}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={event => selectAtX(event.nativeEvent.locationX)}
+      onResponderMove={event => selectAtX(event.nativeEvent.locationX)}
+      onResponderRelease={() => setActiveIndex(null)}
+      onResponderTerminate={() => setActiveIndex(null)}
+      accessibilityRole="adjustable"
+      accessibilityLabel="Interactive price history chart. Hold and drag to inspect a retained market observation."
+    >
     <Svg width={width} height={height}>
       <Defs>
         <SvgLinearGradient id="vpChartFill" x1="0" y1="0" x2="0" y2="1">
@@ -248,7 +266,22 @@ function MiniLineChart({ points, width, height, loading, graded = false }: MiniC
       </Defs>
       {maxP !== minP && <Path d={areaPath} fill="url(#vpChartFill)" />}
       <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      {activeCoord && activePoint && (
+        <>
+          <SvgLine x1={activeCoord.x} y1={PAD.top} x2={activeCoord.x} y2={PAD.top + chartH} stroke={lineColor} strokeWidth={1} strokeDasharray="3,3" opacity={0.75} />
+          <Circle cx={activeCoord.x} cy={activeCoord.y} r={8} fill={lineColor} opacity={0.22} />
+          <Circle cx={activeCoord.x} cy={activeCoord.y} r={4} fill={lineColor} />
+          <Circle cx={activeCoord.x} cy={activeCoord.y} r={2} fill="#FFFFFF" />
+        </>
+      )}
     </Svg>
+    {activePoint && (
+      <View pointerEvents="none" style={vpStyles.chartTooltip}>
+        <Text style={vpStyles.chartTooltipPrice}>{formatPrice(activePoint.price, activePoint.currency ?? 'AUD')}</Text>
+        <Text style={vpStyles.chartTooltipDate}>{new Date(activePoint.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+      </View>
+    )}
+    </View>
   );
 }
 
@@ -383,7 +416,9 @@ export default function VerifiedPricingCard({
     setPricing(result);
     const matchingQuotes = result.quotes.filter(quoteMatchesMode);
     const fallbackQuote = mode === 'graded'
-      ? matchingQuotes[matchingQuotes.length - 1]
+      ? matchingQuotes.find(quote => quote.gradeKey === 'psa_10')
+        ?? matchingQuotes.find(quote => getGradedQuoteOption(quote).grader === 'PSA' && getGradedQuoteOption(quote).grade === '10')
+        ?? matchingQuotes[0]
       : matchingQuotes[0];
     setSelectedGradeKey(previous => {
       const nextQuote = matchingQuotes.find(quote => quote.gradeKey === previous) ?? fallbackQuote;
@@ -395,7 +430,9 @@ export default function VerifiedPricingCard({
     });
     setSelectedGrader(previous => {
       if (previous && GRADING_COMPANIES.includes(previous)) return previous;
-      return fallbackQuote ? getGradedQuoteOption(fallbackQuote).grader : GRADING_COMPANIES[0]!;
+      return matchingQuotes.some(quote => getGradedQuoteOption(quote).grader === 'PSA')
+        ? 'PSA'
+        : fallbackQuote ? getGradedQuoteOption(fallbackQuote).grader : GRADING_COMPANIES[0]!;
     });
     setPollAttempt(result.status === 'pending_match' || result.queued ? 1 : 0);
   }, [mode, quoteMatchesMode]);
@@ -575,7 +612,10 @@ export default function VerifiedPricingCard({
   const chooseGrader = (grader: string) => {
     const grades = getGradedScaleOptions(grader, gradedQuoteOptions);
     const quotedGrades = grades.filter(option => option.quote);
-    const next = quotedGrades[quotedGrades.length - 1] ?? grades[grades.length - 1];
+    const next = quotedGrades.find(option => option.grade === '10')
+      ?? quotedGrades[0]
+      ?? grades.find(option => option.grade === '10')
+      ?? grades[0];
     setSelectedGrader(grader);
     setOpenGradedSelect(null);
     if (next) {
@@ -859,7 +899,7 @@ export default function VerifiedPricingCard({
         mode === 'graded' ? (
           <View style={[vpStyles.historyBlock, vpStyles.gradedHistoryBlock]}>
             <MiniLineChart
-              points={history?.points.map(pt => ({ date: pt.date, price: pt.price })) ?? []}
+              points={history?.points.map(pt => ({ date: pt.date, price: pt.price, currency: pt.currency })) ?? []}
               width={chartWidth}
               height={168}
               loading={historyLoading}
@@ -944,7 +984,7 @@ export default function VerifiedPricingCard({
             </ScrollView>
 
             <MiniLineChart
-              points={history?.points.map(pt => ({ date: pt.date, price: pt.price })) ?? []}
+              points={history?.points.map(pt => ({ date: pt.date, price: pt.price, currency: pt.currency })) ?? []}
               width={chartWidth}
               height={100}
               loading={historyLoading}
@@ -1255,6 +1295,20 @@ const vpStyles = StyleSheet.create({
   },
   unavailableTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   unavailableText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
+  chartTooltip: {
+    position: 'absolute', top: 8, left: 8, right: 8,
+    alignItems: 'center', pointerEvents: 'none',
+  },
+  chartTooltipPrice: {
+    color: C.foreground, fontSize: 13, fontFamily: 'Inter_700Bold',
+    backgroundColor: 'rgba(10,10,10,0.88)', borderRadius: 8,
+    paddingHorizontal: 9, paddingTop: 5, paddingBottom: 2,
+  },
+  chartTooltipDate: {
+    color: C.mutedForeground, fontSize: 10, fontFamily: 'Inter_400Regular',
+    backgroundColor: 'rgba(10,10,10,0.88)', borderRadius: 8,
+    paddingHorizontal: 9, paddingBottom: 5,
+  },
   historyBlock: { marginTop: 4 },
   gradedHistoryBlock: {
     marginTop: 10,
