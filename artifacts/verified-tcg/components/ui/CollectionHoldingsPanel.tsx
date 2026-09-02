@@ -90,6 +90,9 @@ export default function CollectionHoldingsPanel({ card, compact = false }: Colle
     option => option.identityKey === pickerGradeIdentity,
   ) ?? companyGradeOptions[companyGradeOptions.length - 1];
   const rawOption = COLLECTION_GRADE_OPTIONS.find(option => option.gradeKey === 'raw');
+  const removeCandidate = removeConfirmationId
+    ? holdings.find(item => item.id === removeConfirmationId) ?? null
+    : null;
 
   function setPending(id: string, pending: boolean) {
     if (pending) pendingRef.current.add(id);
@@ -324,23 +327,12 @@ export default function CollectionHoldingsPanel({ card, compact = false }: Colle
                     <Text style={styles.slabMarkText}>{item.grading?.company ?? 'SLAB'}</Text>
                   </View>
                   <View style={styles.slabCopy}>
-                    <Text style={styles.slabTitle}>{label}</Text>
-                    <Text style={styles.slabMeta}>
+                    <Text style={styles.slabTitle} numberOfLines={1}>{label}</Text>
+                    <Text style={styles.slabMeta} numberOfLines={1} ellipsizeMode="tail">
                       {item.grading?.population != null
                         ? `Pop. ${item.grading.population.toLocaleString('en-AU')} · exact match`
                         : 'Population unavailable · exact grade'}
                     </Text>
-                    {isConfirming && (
-                      <View style={styles.confirmRow}>
-                        <Text style={styles.confirmText}>Remove final copy?</Text>
-                        <Pressable onPress={() => setRemoveConfirmationId(null)} accessibilityRole="button" accessibilityLabel="Keep copy">
-                          <Text style={styles.keepText}>Keep</Text>
-                        </Pressable>
-                        <Pressable onPress={() => void confirmRemove(item)} accessibilityRole="button" accessibilityLabel={`Remove ${label}`}>
-                          <Text style={styles.removeText}>Remove</Text>
-                        </Pressable>
-                      </View>
-                    )}
                   </View>
                   <View style={styles.quantityControls}>
                     <Pressable
@@ -555,6 +547,48 @@ export default function CollectionHoldingsPanel({ card, compact = false }: Colle
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={removeCandidate != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRemoveConfirmationId(null)}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={styles.confirmSheet}>
+            <View style={styles.confirmIcon}>
+              <Feather name="trash-2" size={17} color={C.primary} />
+            </View>
+            <Text style={styles.confirmTitle}>Remove final copy?</Text>
+            <Text style={styles.confirmDescription}>
+              This will remove {removeCandidate ? formatCollectionHoldingLabel(removeCandidate) : 'this holding'} from your collection.
+            </Text>
+            <View style={styles.confirmActions}>
+              <Pressable
+                onPress={() => setRemoveConfirmationId(null)}
+                style={styles.confirmKeepButton}
+                accessibilityRole="button"
+                accessibilityLabel="Keep copy"
+              >
+                <Text style={styles.confirmKeepText}>Keep copy</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => removeCandidate && void confirmRemove(removeCandidate)}
+                disabled={removeCandidate ? pendingIds.has(removeCandidate.id) : true}
+                style={[styles.confirmRemoveButton, removeCandidate && pendingIds.has(removeCandidate.id) && styles.disabledButton]}
+                accessibilityRole="button"
+                accessibilityLabel="Remove copy"
+              >
+                {removeCandidate && pendingIds.has(removeCandidate.id) ? (
+                  <ActivityIndicator size="small" color={C.primaryForeground} />
+                ) : (
+                  <Text style={styles.confirmRemoveText}>Remove</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -568,7 +602,7 @@ const styles = StyleSheet.create({
     padding: 26,
     gap: 16,
   },
-  panelCompact: { marginBottom: 0 },
+  panelCompact: { marginBottom: 0, gap: 13 },
   header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   kicker: { fontSize: 10, fontFamily: 'Inter_500Medium', color: C.mutedForeground, letterSpacing: 1.2 },
   title: { fontSize: 19, lineHeight: 24, fontFamily: 'Inter_700Bold', color: C.foreground, marginTop: 8 },
@@ -727,10 +761,6 @@ const styles = StyleSheet.create({
   },
   slabsFooterLabel: { color: C.mutedForeground, fontSize: 10, fontFamily: 'Inter_400Regular' },
   slabsFooterValue: { color: C.primary, fontSize: 18, fontFamily: 'Rajdhani_700Bold' },
-  confirmRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 6 },
-  confirmText: { width: '100%', fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.warning },
-  keepText: { fontSize: 10, fontFamily: 'Inter_700Bold', color: C.foreground },
-  removeText: { fontSize: 10, fontFamily: 'Inter_700Bold', color: C.negative },
   disclaimer: { fontSize: 10, lineHeight: 15, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   chooseButton: {
     minHeight: 34,
@@ -832,4 +862,51 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   addGradeButtonText: { color: C.primaryForeground, fontSize: 14, fontFamily: 'Inter_700Bold' },
+  confirmBackdrop: {
+    flex: 1,
+    padding: 22,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmSheet: {
+    width: '100%',
+    maxWidth: 360,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 18,
+    backgroundColor: C.card,
+    gap: 10,
+  },
+  confirmIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: `${C.primary}18`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmTitle: { color: C.foreground, fontSize: 18, fontFamily: 'Inter_700Bold' },
+  confirmDescription: { color: C.mutedForeground, fontSize: 12, lineHeight: 17, fontFamily: 'Inter_400Regular' },
+  confirmActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  confirmKeepButton: {
+    flex: 1,
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmKeepText: { color: C.foreground, fontSize: 12, fontFamily: 'Inter_700Bold' },
+  confirmRemoveButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmRemoveText: { color: C.primaryForeground, fontSize: 12, fontFamily: 'Inter_700Bold' },
 });
