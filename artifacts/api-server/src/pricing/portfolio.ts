@@ -971,6 +971,7 @@ export function gradeKeyForHolding(
   // slab. They can only be selected when the holding explicitly identifies
   // itself as a generic grade.
   if (company === "GENERIC" || company === "UNSPECIFIED") {
+    if (grade === 7 || grade === 7.5) return normalizeGradeKey("graded_7_75");
     if (grade === 9) return normalizeGradeKey("graded_9");
     if (grade === 8 || grade === 8.5) return normalizeGradeKey("graded_8_85");
     if (grade === 9.5) return normalizeGradeKey("graded_95");

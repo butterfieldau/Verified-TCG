@@ -23,11 +23,16 @@ import type {
 } from '@/types';
 import {
   getItemCurrentValue,
+  getCollectionHoldingIdentity,
   fetchCollection,
   addCollectionItem,
   updateCollectionItem,
   removeCollectionItem,
 } from '@/services/collection';
+
+function collectionMutationFingerprint(item: CollectionItem): string {
+  return `${item.cardId}::${item.acquiredAt}::${getCollectionHoldingIdentity(item)}`;
+}
 import { fetchCollectionValueHistory } from '@/services/collectionPerformance';
 import { refreshVerifiedPricing } from '@/services/verifiedPricing';
 import {
@@ -171,7 +176,7 @@ interface AppActions {
     id: string,
     patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice' | 'acquiredAt' | 'currency'>>,
   ) => Promise<CollectionItem>;
-  removeFromCollection: (id: string) => void;
+  removeFromCollection: (id: string) => Promise<void>;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
   updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>) => void;
@@ -656,7 +661,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // that a concurrent loadCollection() cannot wipe them out.
   //
   // pendingItemIds     — Set of client-generated temp IDs
-  // pendingFingerprints — Maps temp ID → "cardId::acquiredAt" fingerprint
+  // pendingFingerprints — Maps temp ID → exact card/date/grade fingerprint
   //
   // During a server merge, a pending item is kept only if its fingerprint does
   // NOT already appear in the server response. This deduplicates the case where
@@ -731,7 +736,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         //    response — once the server row appears, the POST handler will swap
         //    in the persisted id, so we drop the optimistic row to avoid dupes.
         const serverFingerprints = new Set(
-          filteredServer.map(i => `${i.cardId}::${i.acquiredAt}`),
+          filteredServer.map(collectionMutationFingerprint),
         );
         const pendingIds = pendingItemIds.current;
         const pendingFps = pendingFingerprints.current;
@@ -1120,7 +1125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addToCollection = useCallback(async (item: CollectionItem): Promise<CollectionItem> => {
     // Register temp id and fingerprint BEFORE the optimistic insert so any
     // concurrent loadCollection() call can preserve or deduplicate correctly.
-    const fp = `${item.cardId}::${item.acquiredAt}`;
+    const fp = collectionMutationFingerprint(item);
     pendingItemIds.current.add(item.id);
     pendingFingerprints.current.set(item.id, fp);
     setCollection(prev => [...prev, item]);
@@ -1143,12 +1148,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         number: saved.card.number,
         game: saved.card.tcg,
       }).finally(() => {
-        void loadCollection();
+        void loadCollection(undefined, true);
         void refreshPortfolioHistory();
       });
       // Re-read the server canonical collection so Home, portfolio and
       // Insights all work from the same persisted holding after a mutation.
-      void loadCollection();
+      void loadCollection(undefined, true);
       return saved;
     } catch (error) {
       pendingItemIds.current.delete(item.id);
@@ -1165,26 +1170,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = await updateCollectionItem(id, patch);
     setCollection(prev => prev.map(item => item.id === id ? saved : item));
     // Re-read canonical data for every screen that depends on collection state.
-    void loadCollection();
+    void loadCollection(undefined, true);
     void refreshPortfolioHistory();
     return saved;
   }, [loadCollection, refreshPortfolioHistory]);
 
-  const removeFromCollection = useCallback((id: string) => {
+  const removeFromCollection = useCallback(async (id: string): Promise<void> => {
     // Register as pending-delete BEFORE the optimistic removal so any
     // concurrent loadCollection() call will filter it out of the server response.
     pendingDeleteIds.current.add(id);
     setCollection(prev => prev.filter(i => i.id !== id));
-    removeCollectionItem(id)
-      .then(() => {
-        pendingDeleteIds.current.delete(id);
-        void refreshPortfolioHistory();
-      })
-      .catch(() => {
-        // Server delete failed — restore item by re-fetching canonical state.
-        pendingDeleteIds.current.delete(id);
-        loadCollection();
-      });
+    try {
+      await removeCollectionItem(id);
+      pendingDeleteIds.current.delete(id);
+      // Replace the local list with the server's canonical response so every
+      // collection-backed surface converges after a removal.
+      await loadCollection(undefined, true);
+      void refreshPortfolioHistory();
+    } catch (error) {
+      // Server delete failed — restore item by re-fetching canonical state.
+      pendingDeleteIds.current.delete(id);
+      await loadCollection(undefined, true);
+      throw error;
+    }
   }, [loadCollection, refreshPortfolioHistory]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {

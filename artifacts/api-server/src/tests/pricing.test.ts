@@ -973,6 +973,13 @@ describe("Exact holding-grade resolution", () => {
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10, designation: "Black Label" }), "bgs_black_label_10");
   });
 
+  test("resolves only explicitly generic 7 and 7.5 holdings to the shared bucket", () => {
+    assert.equal(gradeKeyForHolding(true, { company: "Generic", grade: 7 }), "graded_7_75");
+    assert.equal(gradeKeyForHolding(true, { company: "Generic", grade: 7.5 }), "graded_7_75");
+    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 7.5 }), null);
+    assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 7 }), null);
+  });
+
   test("never falls back a graded holding to raw", () => {
     assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 6 }), null);
     assert.equal(gradeKeyForHolding(true, { company: "Unknown", grade: 10 }), null);

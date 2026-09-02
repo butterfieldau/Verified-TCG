@@ -26,7 +26,16 @@ export const TCG_LIST: TCG[] = [
 
 // ── Grading ───────────────────────────────────────────────────────────────────
 
-export type GradingCompany = 'PSA' | 'BGS' | 'CGC' | 'Beckett' | 'Raw';
+export type GradingCompany =
+  | 'PSA'
+  | 'BGS'
+  | 'CGC'
+  | 'Beckett'
+  | 'SGC'
+  | 'TAG'
+  | 'ACE'
+  | 'Generic'
+  | 'Raw';
 
 export type CardCondition =
   | 'mint'

@@ -28,6 +28,7 @@ jest.mock('../services/collection', () => ({
   updateCollectionItem: jest.fn(),
   removeCollectionItem: jest.fn(),
   getItemCurrentValue: jest.fn(() => 0),
+  getCollectionHoldingIdentity: jest.fn(() => 'raw'),
 }));
 
 jest.mock('../services/verifiedPricing', () => ({
@@ -92,7 +93,7 @@ import { AppProvider, useApp } from '../context/AppContext';
 import type { AppContextType } from '../context/AppContext';
 import { SettingsProvider } from '../context/SettingsContext';
 import { restoreSession, fetchCurrentUser } from '../services/auth';
-import { addCollectionItem } from '../services/collection';
+import { addCollectionItem, removeCollectionItem } from '../services/collection';
 import { fetchCollection } from '../services/collection';
 import { fetchCollectionValueHistory } from '../services/collectionPerformance';
 import { refreshVerifiedPricing } from '../services/verifiedPricing';
@@ -441,6 +442,50 @@ describe('AppContext — collection pricing refresh', () => {
     unmount();
   });
 
+  it('restores the authoritative holding when final-copy removal fails', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+    const item = {
+      id: 'persisted-holding',
+      cardId: 'card-001',
+      card: {
+        id: 'card-001',
+        name: 'Pikachu',
+        setId: 'base',
+        setName: 'Base',
+        tcg: 'pokemon',
+        number: '1',
+        rarity: 'common',
+        year: 1999,
+        gradientStart: '#111111',
+        gradientEnd: '#222222',
+        price: { raw: 0, currency: 'AUD', updatedAt: null },
+      },
+      quantity: 1,
+      condition: 'near_mint',
+      acquiredAt: '2026-09-01',
+      acquiredPrice: 0,
+      currency: 'AUD',
+    } as CollectionItem;
+    (fetchCollection as jest.Mock).mockReset().mockResolvedValue([item]);
+    (removeCollectionItem as jest.Mock).mockReset().mockRejectedValueOnce(new Error('offline'));
+
+    const { getValue, unmount } = await mountProviderAsync({ extraFlush: true });
+    let removalError: unknown;
+    await act(async () => {
+      try {
+        await getValue().removeFromCollection(item.id);
+      } catch (error) {
+        removalError = error;
+      }
+    });
+    expect(removalError).toEqual(expect.objectContaining({ message: 'offline' }));
+    await flushPromises();
+
+    expect(fetchCollection).toHaveBeenCalledTimes(2);
+    expect(getValue().collection).toEqual([item]);
+    unmount();
+  });
+
   it('deduplicates concurrent refreshes and refreshes ownership history once', async () => {
     (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
     const collectionRequest = new Promise<CollectionItem[]>(resolve => {
@@ -450,6 +495,7 @@ describe('AppContext — collection pricing refresh', () => {
     (fetchCollectionValueHistory as jest.Mock).mockClear();
 
     const { getValue, unmount } = await mountProviderAsync();
+    await flushPromises(1);
     await act(async () => {
       await Promise.all([getValue().refreshPrices(), getValue().refreshPrices()]);
     });

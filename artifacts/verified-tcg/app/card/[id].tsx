@@ -34,6 +34,7 @@ import { RARITY_LABELS } from '@/types';
 import type { Card, WatchlistItem } from '@/types';
 import { canViewAdvancedPricing } from '@/services/subscription';
 import VerifiedPricingCard, { type VerifiedPricingSummary } from '@/components/ui/VerifiedPricingCard';
+import CollectionHoldingsPanel from '@/components/ui/CollectionHoldingsPanel';
 import { useSettings } from '@/context/SettingsContext';
 import { triggerPriceSnapshot } from '@/services/priceHistory';
 
@@ -761,9 +762,9 @@ export default function CardDetailScreen() {
   // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
   const card = rawCard;
 
-  // Card passports are shown only when the server supplies one; fixtures are
-  // intentionally never used as a fallback in release builds.
-  const hasPassport = false;
+  // Every card can have a live Passport holdings record. The Passport screen
+  // owns the same collection-backed controls as this detail screen.
+  const hasPassport = true;
 
   const topPad = Platform.OS === 'web' ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
@@ -1101,35 +1102,7 @@ export default function CardDetailScreen() {
           </View>
         )}
 
-        <View style={[styles.card, styles.holdingsPanel]}>
-          <View style={styles.panelHeader}>
-            <View>
-              <Text style={styles.panelKicker}>YOUR HOLDINGS</Text>
-              <Text style={styles.panelTitle}>Your collection</Text>
-            </View>
-            <Text style={styles.holdingsCount}>{ownedQuantity} owned</Text>
-          </View>
-          {ownedItems.length > 0 ? (
-            ownedItems.map(item => (
-              <View key={item.id} style={styles.holdingRow}>
-                <View style={[styles.holdingMark, item.grading && styles.holdingMarkGraded]}>
-                  <Text style={styles.holdingMarkText}>{item.grading?.company ?? 'RAW'}</Text>
-                </View>
-                <View style={styles.holdingCopy}>
-                  <Text style={styles.holdingTitle}>
-                    {item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Ungraded'}
-                  </Text>
-                  <Text style={styles.holdingMeta}>{item.condition.replace(/_/g, ' ')} · {item.quantity} tracked</Text>
-                </View>
-                <Text style={styles.holdingValue}>
-                  {item.valuation ? `${item.valuation.currency} ${(item.valuation.price * item.quantity).toLocaleString('en-AU', { maximumFractionDigits: 0 })}` : '—'}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.holdingsEmpty}>This card is not in your collection yet.</Text>
-          )}
-        </View>
+        <CollectionHoldingsPanel card={card} compact />
 
         {/* Action buttons */}
         <View style={styles.actions}>
@@ -1169,7 +1142,10 @@ export default function CardDetailScreen() {
 
         {/* Card Passport link — only for cards with a graded passport record */}
         {hasPassport && <Pressable
-          onPress={() => router.push(`/card-passport/${card.id}` as any)}
+          onPress={() => router.push({
+            pathname: `/card-passport/${card.id}`,
+            params: { appCardJson: JSON.stringify(card) },
+          } as any)}
           style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
           accessibilityRole="button"
           accessibilityLabel="Card Passport — ownership history, grading record and provenance"

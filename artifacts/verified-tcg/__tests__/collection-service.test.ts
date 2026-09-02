@@ -25,6 +25,12 @@ import {
   updateCollectionItem,
   removeCollectionItem,
   getItemCurrentValue,
+  getCollectionGradeKey,
+  getCollectionHoldingIdentity,
+  formatCollectionHoldingLabel,
+  findMatchingCollectionHolding,
+  COLLECTION_GRADE_OPTIONS,
+  summarizeCollectionHoldings,
 } from '../services/collection';
 
 const FAKE_API_BASE = ''; // process.env.EXPO_PUBLIC_API_BASE_URL is '' in test env
@@ -113,6 +119,86 @@ describe('getItemCurrentValue', () => {
     } as CollectionItem;
 
     expect(getItemCurrentValue(item)).toBeNull();
+  });
+});
+
+describe('exact holdings grade identity', () => {
+  it('keeps raw, company-specific grade 10s, and generic buckets distinct', () => {
+    const raw = makeCollectionItem('raw');
+    const psa = { ...makeCollectionItem('psa'), grading: { company: 'PSA', grade: 10 } } as CollectionItem;
+    const bgs = { ...makeCollectionItem('bgs'), grading: { company: 'BGS', grade: 10 } } as CollectionItem;
+    const generic = { ...makeCollectionItem('generic'), grading: { company: 'Generic', grade: 7.5 } } as CollectionItem;
+
+    expect(getCollectionGradeKey(raw)).toBe('raw');
+    expect(getCollectionGradeKey(psa)).toBe('psa_10');
+    expect(getCollectionGradeKey(bgs)).toBe('bgs_10');
+    expect(getCollectionGradeKey(generic)).toBe('graded_7_75');
+    expect(getCollectionHoldingIdentity(generic)).toBe('generic_7.5');
+    expect(findMatchingCollectionHolding([raw, psa, bgs, generic], 'card-001', 'psa_10')).toBe(psa);
+    expect(findMatchingCollectionHolding([raw, psa, bgs, generic], 'card-001', 'cgc_10')).toBeUndefined();
+  });
+
+  it('does not map unsupported PSA grades onto generic or raw pricing, while retaining exact identity', () => {
+    const psaNine = {
+      ...makeCollectionItem('psa-nine'),
+      grading: { company: 'PSA', grade: 9 },
+      valuation: null,
+    } as CollectionItem;
+    expect(getCollectionGradeKey(psaNine)).toBeNull();
+    expect(getCollectionHoldingIdentity(psaNine)).toBe('psa_9');
+    expect(findMatchingCollectionHolding([psaNine], 'card-001', 'graded_9')).toBeUndefined();
+    expect(findMatchingCollectionHolding([psaNine], 'card-001', 'raw')).toBeUndefined();
+  });
+
+  it('keeps slab designations in the persisted identity', () => {
+    const blackLabel = { ...makeCollectionItem('black'), grading: { company: 'BGS', grade: 10, designation: 'Black Label' } } as CollectionItem;
+    const pristine = { ...makeCollectionItem('pristine'), grading: { company: 'CGC', grade: 10, designation: 'Pristine' } } as CollectionItem;
+    expect(getCollectionHoldingIdentity(blackLabel)).toBe('bgs_10_black_label');
+    expect(getCollectionHoldingIdentity(pristine)).toBe('cgc_10_pristine');
+    expect(findMatchingCollectionHolding([blackLabel, pristine], 'card-001', 'bgs_10')).toBeUndefined();
+    expect(findMatchingCollectionHolding([blackLabel, pristine], 'card-001', 'bgs_10_black_label')).toBe(blackLabel);
+    expect(formatCollectionHoldingLabel(blackLabel)).toBe('BGS 10 · Black Label');
+    expect(formatCollectionHoldingLabel(pristine)).toBe('CGC 10 · Pristine');
+  });
+
+  it('offers exact generic grades separately while sharing only their valuation bucket', () => {
+    const genericOptions = COLLECTION_GRADE_OPTIONS.filter(option => option.company === 'Generic');
+    expect(genericOptions.map(option => option.label)).toEqual([
+      'Generic Graded 7',
+      'Generic Graded 7.5',
+      'Generic Graded 8',
+      'Generic Graded 8.5',
+      'Generic Graded 9',
+      'Generic Graded 9.5',
+    ]);
+    expect(genericOptions.find(option => option.grade === 7)?.gradeKey).toBe('graded_7_75');
+    expect(genericOptions.find(option => option.grade === 7.5)?.gradeKey).toBe('graded_7_75');
+    expect(genericOptions.find(option => option.grade === 7)?.identityKey).not.toBe(
+      genericOptions.find(option => option.grade === 7.5)?.identityKey,
+    );
+  });
+
+  it('excludes unavailable variants from the aggregate without hiding their copies', () => {
+    const valued = {
+      ...makeCollectionItem('valued'),
+      quantity: 2,
+      valuation: {
+        priceCents: 12500,
+        price: 125,
+        currency: 'AUD',
+        gradeKey: 'raw',
+        updatedAt: '2026-09-01T00:00:00Z',
+      },
+    } as CollectionItem;
+    const unavailable = { ...makeCollectionItem('unavailable'), quantity: 3, valuation: null } as CollectionItem;
+
+    expect(summarizeCollectionHoldings([valued, unavailable])).toEqual({
+      quantity: 5,
+      totalValue: 250,
+      pricedVariants: 1,
+      unavailableVariants: 1,
+      currency: 'AUD',
+    });
   });
 });
 
