@@ -576,8 +576,8 @@ export default function CardDetailScreen() {
   const { currency: displayCurrency } = useSettings();
   const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
   const [marketSummary, setMarketSummary] = useState<VerifiedPricingSummary | null>(null);
-  const handleMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
-    if (summary) setMarketSummary(summary);
+  const handleRawMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
+    setMarketSummary(summary);
   }, []);
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
@@ -997,7 +997,7 @@ export default function CardDetailScreen() {
           </Animated.View>
         )}
 
-        {/* Identity and current value */}
+        {/* Card identity and raw market value */}
         <View style={styles.identityCard}>
           <View style={styles.identityTop}>
             <View style={styles.identityCopy}>
@@ -1024,7 +1024,7 @@ export default function CardDetailScreen() {
 
           <View style={styles.valueRow}>
             <View>
-              <Text style={styles.valueLabel}>{topMarketSummary?.label ?? 'Market'} value</Text>
+              <Text style={styles.valueLabel}>Raw / Ungraded value</Text>
               <Text style={styles.valueAmount}>
                 {topMarketSummary
                   ? `${topMarketSummary.currency} ${topMarketSummary.price.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -1061,7 +1061,7 @@ export default function CardDetailScreen() {
             onUpgradePress={() => router.push('/pro-subscription')}
             chartWidth={W - 40 - 36}
             mode={detailMode === 'Graded' ? 'graded' : 'raw'}
-            onMarketSummaryChange={handleMarketSummaryChange}
+            onRawMarketSummaryChange={handleRawMarketSummaryChange}
           />
         )}
 
@@ -1429,12 +1429,8 @@ const styles = StyleSheet.create({
     color: C.mutedForeground,
   },
   identityCard: {
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: C.border,
-    backgroundColor: C.card,
-    marginBottom: 12,
-    padding: 19,
+    marginBottom: 20,
+    paddingHorizontal: 8,
   },
   identityTop: {
     flexDirection: 'row',

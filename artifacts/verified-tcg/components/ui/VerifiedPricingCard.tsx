@@ -178,13 +178,33 @@ interface VerifiedPricingCardProps {
   onUpgradePress: () => void;
   chartWidth: number;
   mode?: 'raw' | 'graded';
-  onMarketSummaryChange?: (summary: VerifiedPricingSummary | null) => void;
+  onRawMarketSummaryChange?: (summary: VerifiedPricingSummary | null) => void;
 }
 
 export interface VerifiedPricingSummary {
   label: string;
   price: number;
   currency: string;
+}
+
+/**
+ * The detail page header always shows the raw/ungraded market value. Keep this
+ * separate from the lower card's selected quote, which may be a graded quote.
+ */
+export function getRawMarketSummary(
+  pricing: CardPricingResult | null,
+): VerifiedPricingSummary | null {
+  if (!pricing) return null;
+
+  const rawQuote = pricing.quotes.find(quote => quote.gradeKey === 'raw');
+  if (!rawQuote) return null;
+
+  const rawMarket = pricing.verifiedMarket.find(value => value.gradeKey === 'raw');
+  return {
+    label: 'Raw / Ungraded',
+    price: rawMarket?.verifiedMarketValue ?? rawQuote.price,
+    currency: rawMarket?.currency ?? rawQuote.currency,
+  };
 }
 
 export default function VerifiedPricingCard({
@@ -194,7 +214,7 @@ export default function VerifiedPricingCard({
   onUpgradePress,
   chartWidth,
   mode = 'raw',
-  onMarketSummaryChange,
+  onRawMarketSummaryChange,
 }: VerifiedPricingCardProps) {
   const [pricing, setPricing] = useState<CardPricingResult | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
@@ -234,6 +254,7 @@ export default function VerifiedPricingCard({
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    setPricing(null);
     setPricingLoading(true);
     setPricingError(false);
 
@@ -316,17 +337,8 @@ export default function VerifiedPricingCard({
   }, [card.id, pricingOptions, updatePricing]);
 
   useEffect(() => {
-    const visible = pricing?.quotes.filter(quoteMatchesMode) ?? [];
-    const quote = visible.find(value => value.gradeKey === selectedGradeKey) ?? visible[0];
-    const market = quote
-      ? (pricing?.verifiedMarket ?? []).find(value => value.gradeKey === quote.gradeKey)
-      : undefined;
-    onMarketSummaryChange?.(quote ? {
-      label: quote.label,
-      price: market?.verifiedMarketValue ?? quote.price,
-      currency: market?.currency ?? quote.currency,
-    } : null);
-  }, [onMarketSummaryChange, pricing, quoteMatchesMode, selectedGradeKey]);
+    onRawMarketSummaryChange?.(getRawMarketSummary(pricing));
+  }, [onRawMarketSummaryChange, pricing]);
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (pricingLoading) {

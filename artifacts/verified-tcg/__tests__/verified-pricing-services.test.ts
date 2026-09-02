@@ -10,6 +10,7 @@ import {
   fetchVerifiedPriceHistory,
   refreshVerifiedPricing,
 } from '../services/verifiedPricing';
+import { getRawMarketSummary } from '../components/ui/VerifiedPricingCard';
 import { fetchEbaySoldHistory } from '../services/priceHistory';
 import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
 import {
@@ -32,6 +33,43 @@ beforeEach(() => {
 });
 
 describe('Verified pricing mobile service', () => {
+  it('keeps the card-detail summary on raw value while graded quotes change below', () => {
+    const pricing = {
+      status: 'available',
+      quotes: [
+        { gradeKey: 'raw', label: 'Raw', price: 42, currency: 'AUD' },
+        { gradeKey: 'psa10', label: 'PSA 10', price: 180, currency: 'AUD' },
+      ],
+      verifiedMarket: [
+        { gradeKey: 'raw', verifiedMarketValue: 40, currency: 'AUD' },
+        { gradeKey: 'psa10', verifiedMarketValue: 175, currency: 'AUD' },
+      ],
+    } as any;
+
+    expect(getRawMarketSummary(pricing)).toEqual({
+      label: 'Raw / Ungraded',
+      price: 40,
+      currency: 'AUD',
+    });
+
+    pricing.quotes[1].price = 220;
+    pricing.verifiedMarket[1].verifiedMarketValue = 215;
+    expect(getRawMarketSummary(pricing)).toMatchObject({
+      label: 'Raw / Ungraded',
+      price: 40,
+      currency: 'AUD',
+    });
+  });
+
+  it('clears the card-detail summary when the raw quote is unavailable', () => {
+    expect(getRawMarketSummary({
+      status: 'available',
+      quotes: [{ gradeKey: 'psa10', label: 'PSA 10', price: 180, currency: 'AUD' }],
+      verifiedMarket: [],
+    } as any)).toBeNull();
+    expect(getRawMarketSummary(null)).toBeNull();
+  });
+
   it('preserves the honest missing-secret state without inventing quotes', async () => {
     mockFetch.mockResolvedValueOnce(response({
       status: 'unavailable',
