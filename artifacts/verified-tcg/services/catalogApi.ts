@@ -193,7 +193,9 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
   const sourceIsVerified =
     card.raw_quote?.provider === 'pricecharting'
-    || card.pricing_source?.trim().toLowerCase() === 'pricecharting';
+    || card.raw_quote?.provider === 'justtcg'
+    || card.pricing_source?.trim().toLowerCase() === 'pricecharting'
+    || card.pricing_source?.trim().toLowerCase() === 'justtcg';
   const variantPrice =
     typeof variant?.price === 'number' && Number.isFinite(variant.price) && variant.price > 0
       ? variant.price
@@ -210,8 +212,9 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
       : null;
   const hasVerifiedRawPrice =
     sourceIsVerified && (explicitPrice !== null || variantPrice !== null || marketPrice !== null);
-  // market_price is populated from the same persisted raw PriceCharting quote
-  // as the enriched variant. Accept it when a feed omits the variant price.
+  // market_price is populated from a persisted provider raw quote. Accept it
+  // when a feed omits the variant price; both PriceCharting and JustTCG are
+  // server-side provider sources, never client-supplied values.
   const price = hasVerifiedRawPrice ? (explicitPrice ?? variantPrice ?? marketPrice)! : 0;
   // A missing source timestamp is meaningful: do not present the mapping time
   // as if it were a verified quote timestamp.

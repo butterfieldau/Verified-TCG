@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   calculateSnapshotMovement,
   capByGameFromSorted,
+  enrichCardsWithLiveRawQuotes,
   extractData,
   enrichCardsWithQuoteRows,
   mergePool,
@@ -50,6 +51,31 @@ test("search quote enrichment joins PriceCharting quotes to exact external IDs",
   assert.equal(enriched[1]!.pricing_source, "PriceCharting");
   assert.equal(enriched[2]!.pricing_source, undefined);
   assert.equal((enriched[2]!.variants as Array<{ price: number }>)[0]!.price, 99);
+});
+
+test("catalogue cards expose a genuine JustTCG raw quote without a PriceCharting mapping", () => {
+  const [enriched] = enrichCardsWithLiveRawQuotes<Record<string, unknown>>([{
+    id: "onepiece-promotion-monkey-d-luffy-st10-006",
+    variants: [{
+      condition: "Near Mint",
+      printing: "Normal",
+      price: 18.5,
+      markets: [{ region: "NA", currency: "USD", price: 18.5 }],
+      lastUpdated: 1_788_307_200,
+    }],
+  }]);
+
+  assert.equal(enriched!.market_price, 18.5);
+  assert.equal(enriched!.pricing_source, "JustTCG");
+  assert.deepEqual(enriched!.raw_quote, {
+    provider: "justtcg",
+    productId: "onepiece-promotion-monkey-d-luffy-st10-006",
+    priceCents: 1850,
+    price: 18.5,
+    currency: "USD",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+    isStale: false,
+  });
 });
 
 test("catalog pagination normalizes camel, snake, and inferred provider metadata", () => {

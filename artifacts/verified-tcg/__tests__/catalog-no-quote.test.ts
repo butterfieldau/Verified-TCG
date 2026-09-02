@@ -27,6 +27,21 @@ describe('catalog cards without a quote', () => {
     expect(card.price.available).toBe(false);
   });
 
+  it('accepts an explicitly server-backed JustTCG raw quote for search display', () => {
+    const card = catalogCardToAppCard({
+      id: 'justtcg-priced',
+      name: 'Monkey.D.Luffy',
+      game: 'One Piece',
+      pricing_source: 'JustTCG',
+      currency: 'USD',
+      variants: [{ condition: 'Near Mint', price: 18.5, lastUpdated: 1_788_220_800 }],
+    });
+
+    expect(card.price.raw).toBe(18.5);
+    expect(card.price.available).toBe(true);
+    expect(card.price.currency).toBe('USD');
+  });
+
   it('accepts an exact persisted PriceCharting quote for search display', () => {
     const card = catalogCardToAppCard({
       id: 'priced',

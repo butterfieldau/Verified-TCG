@@ -4,6 +4,11 @@ import { eq, sql, type SQL } from "drizzle-orm";
 import jwt from "jsonwebtoken";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import {
+  JUSTTCG_PRICING_PROVIDER_KEY,
+  JUSTTCG_PRICING_PROVIDER_LABEL,
+  extractJustTcgRawQuote,
+} from "../pricing/justtcg.js";
+import {
   justTcg,
   type CatalogueRead,
 } from "../lib/catalogueProvider.js";
@@ -99,6 +104,7 @@ async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
   if (cardIds.length === 0) return cards;
   const quotes = await db.execute<{
     card_id: string;
+    provider_key: string;
     price_cents: number;
     currency: string;
     fetched_at: Date;
@@ -106,25 +112,40 @@ async function enrichCardsWithCurrentRawQuotes<T extends QuoteEnrichableCard>(
   }>(sql`
     SELECT card_id, price_cents, currency, fetched_at, provider_product_id
     FROM current_quotes
-    WHERE provider_key = 'pricecharting'
+    WHERE provider_key IN ('justtcg', 'pricecharting')
       AND grade_key = 'raw'
       AND price_cents > 0
       AND card_id IN (${sql.join(cardIds.map(id => sql`${id}`), sql`, `)})
   `);
-  return enrichCardsWithQuoteRows(cards, quotes.rows);
+  return enrichCardsWithLiveRawQuotes(enrichCardsWithQuoteRows(cards, quotes.rows));
 }
 
 export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
   cards: T[],
   rows: Array<{
     card_id: string;
+    provider_key?: string;
     price_cents: number;
     currency: string;
     fetched_at: Date;
     provider_product_id?: string | null;
   }>,
 ): T[] {
-  const byCardId = new Map(rows.map(row => [row.card_id, row]));
+  // JustTCG is the primary source for raw catalogue values. PriceCharting is
+  // retained as a fallback only for legacy cached raw quotes. Do not let the
+  // database's unspecified row order decide which source reaches the client.
+  const byCardId = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    const existing = byCardId.get(row.card_id);
+    const priority = row.provider_key === JUSTTCG_PRICING_PROVIDER_KEY ? 2 : 1;
+    const existingPriority = existing?.provider_key === JUSTTCG_PRICING_PROVIDER_KEY ? 2 : 1;
+    if (!existing || priority > existingPriority || (
+      priority === existingPriority
+      && new Date(row.fetched_at).getTime() > new Date(existing.fetched_at).getTime()
+    )) {
+      byCardId.set(row.card_id, row);
+    }
+  }
   return cards.map(card => {
     const quote = typeof card.id === "string" ? byCardId.get(card.id) : undefined;
     if (!quote) return card;
@@ -141,10 +162,14 @@ export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
       ...card,
       currency: quote.currency,
       market_price: quote.price_cents / 100,
-      pricing_source: "PriceCharting",
+      pricing_source: quote.provider_key === JUSTTCG_PRICING_PROVIDER_KEY
+        ? JUSTTCG_PRICING_PROVIDER_LABEL
+        : "PriceCharting",
       updated_at: new Date(quote.fetched_at).toISOString(),
       raw_quote: {
-        provider: "pricecharting",
+        provider: quote.provider_key === JUSTTCG_PRICING_PROVIDER_KEY
+          ? JUSTTCG_PRICING_PROVIDER_KEY
+          : "pricecharting",
         productId: quote.provider_product_id ?? null,
         priceCents: quote.price_cents,
         price: quote.price_cents / 100,
@@ -156,6 +181,36 @@ export function enrichCardsWithQuoteRows<T extends QuoteEnrichableCard>(
         pricedVariant,
         ...existing.filter(variant => variant.condition !== "Near Mint"),
       ],
+    } as T;
+  });
+}
+
+/**
+ * A JustTCG search result already contains a provider-observed Near Mint raw
+ * quote. Surface it immediately instead of hiding it until a separate
+ * PriceCharting mapping happens to be created. Persisted quotes above still
+ * take priority, so this is only the live-provider fallback.
+ */
+export function enrichCardsWithLiveRawQuotes<T extends QuoteEnrichableCard>(cards: T[]): T[] {
+  return cards.map(card => {
+    if (card.raw_quote) return card;
+    const quote = extractJustTcgRawQuote(card);
+    if (!quote) return card;
+    return {
+      ...card,
+      currency: quote.currency,
+      market_price: quote.priceCents / 100,
+      pricing_source: JUSTTCG_PRICING_PROVIDER_LABEL,
+      updated_at: quote.fetchedAt.toISOString(),
+      raw_quote: {
+        provider: JUSTTCG_PRICING_PROVIDER_KEY,
+        productId: quote.providerProductId,
+        priceCents: quote.priceCents,
+        price: quote.priceCents / 100,
+        currency: quote.currency,
+        updatedAt: quote.fetchedAt.toISOString(),
+        isStale: false,
+      },
     } as T;
   });
 }
@@ -217,9 +272,10 @@ export function normalizeCataloguePagination(
 }
 
 function pricingSourceFor(cards: Array<Record<string, unknown>>): string | null {
-  return cards.some(card => card.pricing_source === "PriceCharting")
-    ? "PriceCharting"
-    : null;
+  if (cards.some(card => card.pricing_source === JUSTTCG_PRICING_PROVIDER_LABEL)) {
+    return JUSTTCG_PRICING_PROVIDER_LABEL;
+  }
+  return cards.some(card => card.pricing_source === "PriceCharting") ? "PriceCharting" : null;
 }
 
 router.get("/catalog/games", async (_req, res) => {
@@ -953,6 +1009,20 @@ async function resolveJustTcgCatalogCardById(
   status: number;
   source: "JustTCG";
 } | null> {
+  // JustTCG supports direct slug lookup. This is both more accurate and less
+  // expensive than attempting to reconstruct a search query from a slug.
+  const directParams = new URLSearchParams({ cardId, priceHistoryDuration: "30d" });
+  const direct = await justTcg(`/cards?${directParams.toString()}`);
+  if (direct.status === 429) {
+    return { card: {} as Record<string, unknown>, cached: false, status: 429, source: "JustTCG" };
+  }
+  if (direct.status >= 500) throw new Error("Catalog provider unavailable");
+  if (direct.status < 400) {
+    const directBody = direct.body as { data?: Array<Record<string, unknown>> } | null;
+    const match = directBody?.data?.find(card => card.id === cardId) ?? null;
+    if (match) return { card: enrichCard(match), cached: direct.cached, status: 200, source: "JustTCG" };
+  }
+
   // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
   const parts = cardId.split("-");
   const gameWord = (parts[0] ?? "").toLowerCase();

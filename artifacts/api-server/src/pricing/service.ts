@@ -171,7 +171,10 @@ async function refreshJustTcgRawHistory(cardId: string): Promise<boolean> {
   if (existing) return existing;
   const request = (async () => {
     try {
-      const params = new URLSearchParams({ cardId, include_price_history: "true" });
+      // JustTCG's supported direct-lookup and retained-history parameters.
+      // The old include_price_history flag was ignored by the provider, which
+      // meant a card detail often persisted only one current observation.
+      const params = new URLSearchParams({ cardId, priceHistoryDuration: "30d" });
       const result = await justTcg(`/cards?${params.toString()}`);
       if (result.status >= 400) return false;
       const data = result.body as { data?: Array<Record<string, unknown>> } | null;
@@ -304,6 +307,100 @@ async function getStoredQuotes(cardId: string) {
     ...row,
     gradeKey: normalizeGradeKey(row.gradeKey) ?? row.gradeKey,
   }));
+}
+
+async function getStoredJustTcgRawQuote(cardId: string) {
+  const [row] = await db
+    .select()
+    .from(currentQuotesTable)
+    .where(and(
+      eq(currentQuotesTable.cardId, cardId),
+      eq(currentQuotesTable.providerKey, JUSTTCG_PRICING_PROVIDER_KEY),
+      eq(currentQuotesTable.gradeKey, "raw"),
+    ))
+    .limit(1);
+  return row ?? null;
+}
+
+async function justTcgRawPricingResponse(input: {
+  cardId: string;
+  quote: Awaited<ReturnType<typeof getStoredJustTcgRawQuote>>;
+  displayCurrency: string;
+}): Promise<PricingResponse | null> {
+  const { cardId, quote, displayCurrency } = input;
+  if (!quote || quote.priceCents <= 0) return null;
+
+  const convertedCents = quote.currency === displayCurrency
+    ? quote.priceCents
+    : await convertCents(quote.priceCents, quote.currency, displayCurrency);
+  const priceCents = convertedCents ?? quote.priceCents;
+  const currency = convertedCents == null ? quote.currency : displayCurrency;
+  const isStale = Date.now() - quote.fetchedAt.getTime() > STALE_THRESHOLD_MS;
+  const retained = await db
+    .select({ priceCents: providerPriceHistoryTable.priceCents })
+    .from(providerPriceHistoryTable)
+    .where(and(
+      eq(providerPriceHistoryTable.cardId, cardId),
+      eq(providerPriceHistoryTable.providerKey, JUSTTCG_PRICING_PROVIDER_KEY),
+      eq(providerPriceHistoryTable.gradeKey, "raw"),
+      gte(providerPriceHistoryTable.recordedAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+    ));
+  const retainedSnapshotCents = convertedCents == null
+    ? retained.map(row => row.priceCents)
+    : await Promise.all(retained.map(row => convertCents(row.priceCents, quote.currency, currency)))
+      .then(values => values.filter((value): value is number => value != null));
+  const market = aggregateVerifiedMarketValue({
+    gradeKey: "raw",
+    quotes: [{
+      providerKey: JUSTTCG_PRICING_PROVIDER_KEY,
+      providerLabel: "JustTCG",
+      providerProductId: quote.providerProductId,
+      gradeKey: "raw",
+      priceCents,
+      currency,
+      originalPriceCents: quote.priceCents,
+      originalCurrency: quote.currency,
+      fetchedAt: quote.fetchedAt,
+    }],
+    // The public card id is a JustTCG card id, so this is an exact provider
+    // identity rather than a fuzzy cross-provider match.
+    matchingConfidence: 1,
+    isStale,
+    retainedSnapshotCents,
+  });
+  return {
+    cardId,
+    status: isStale ? "stale" : "available",
+    configured: isJustTcgPricingConfigured(),
+    queued: false,
+    quotes: [{
+      gradeKey: "raw",
+      label: "Raw / Ungraded",
+      priceCents,
+      price: priceCents / 100,
+      currency,
+      originalPriceCents: quote.priceCents,
+      originalCurrency: quote.currency,
+    }],
+    verifiedMarket: market ? [market] : [],
+    source: {
+      provider: JUSTTCG_PRICING_PROVIDER_KEY,
+      label: "JustTCG",
+      productId: quote.providerProductId,
+    },
+    confidence: {
+      level: market?.confidence.level ?? "low",
+      score: market?.confidence.score ?? 0,
+      providerCount: market?.confidence.providerCount,
+      reasons: market?.confidence.reasons,
+    },
+    providerMetadata: null,
+    updatedAt: quote.fetchedAt.toISOString(),
+    isStale,
+    ...(quote.currency !== currency ? {
+      conversion: buildConversionProvenance(quote.currency, currency, priceCents / quote.priceCents),
+    } : {}),
+  };
 }
 
 /**
@@ -1574,6 +1671,20 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     productId: null as string | null,
   };
 
+  // A JustTCG public card id is already an exact provider identity. Hydrate
+  // its real raw quote before asking PriceCharting to establish a separate
+  // fuzzy mapping for slabs. This keeps a valid raw price visible for cards
+  // that PriceCharting does not catalogue (notably many promos/reprints).
+  if (isJustTcgPricingConfigured()) {
+    await refreshJustTcgRawHistory(cardId);
+  }
+  const justTcgRaw = await getStoredJustTcgRawQuote(cardId);
+  const justTcgRawResponse = await justTcgRawPricingResponse({
+    cardId,
+    quote: justTcgRaw,
+    displayCurrency,
+  });
+
   // Check existing mapping
   const mapping = await getExistingMapping(cardId);
   const normalizedIdentityChanged = mapping
@@ -1586,6 +1697,12 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
 
   // If no mapping, queue background match and return pending
   if (!mapping) {
+    if (justTcgRawResponse) {
+      // Continue the legacy graded-provider match in the background when it
+      // is configured, but do not make a genuine raw quote wait for it.
+      if (configured) void runBackgroundMatch(cardId, { name, set, number, game });
+      return justTcgRawResponse;
+    }
     if (!configured) {
       return {
         cardId,
@@ -1620,6 +1737,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
 
   // Mapping exists but is review_required or unmatched
   if (mapping.status === "review_required") {
+    if (justTcgRawResponse) return justTcgRawResponse;
     const retryQueued = configured && (
       normalizedIdentityChanged
       || Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS
@@ -1646,6 +1764,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   }
 
   if (mapping.status === "unmatched") {
+    if (justTcgRawResponse) return justTcgRawResponse;
     const retryQueued = configured && (
       normalizedIdentityChanged
       || Date.now() - mapping.updatedAt.getTime() >= NON_MATCH_RETRY_COOLDOWN_MS
@@ -1672,7 +1791,16 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   }
 
   // Matched — get quotes
-  const storedQuotes = await getStoredQuotes(cardId);
+  const priceChartingQuotes = await getStoredQuotes(cardId);
+  // Raw catalogue values now come from the exact JustTCG card identity. Keep
+  // PriceCharting's company-specific grades, but never let its raw quote
+  // override a newer JustTCG raw observation.
+  const storedQuotes = justTcgRaw
+    ? [
+        ...priceChartingQuotes.filter(quote => quote.gradeKey !== "raw"),
+        { ...justTcgRaw, gradeKey: "raw" as GradeKey },
+      ]
+    : priceChartingQuotes;
   const productId = mapping.providerProductId ?? null;
 
   if (storedQuotes.length === 0) {
@@ -1746,7 +1874,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     .where(
       and(
         eq(providerPriceHistoryTable.cardId, cardId),
-        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        inArray(providerPriceHistoryTable.providerKey, [PROVIDER_KEY, JUSTTCG_PRICING_PROVIDER_KEY]),
         gte(providerPriceHistoryTable.recordedAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
       ),
     );
@@ -1796,14 +1924,19 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       originalCurrency: q.currency,
     });
 
+    const historyProviderKey = gradeDef.key === "raw"
+      ? JUSTTCG_PRICING_PROVIDER_KEY
+      : PROVIDER_KEY;
     const retainedSnapshotCents = retainedHistory
-      .filter(row => row.gradeKey === gradeDef.key)
+      .filter(row => row.gradeKey === gradeDef.key && row.providerKey === historyProviderKey)
       .map(row => fxRate != null ? Math.round(row.priceCents * fxRate) : row.priceCents);
     const market = aggregateVerifiedMarketValue({
       gradeKey: gradeDef.key,
       quotes: [{
         providerKey: q.providerKey,
-        providerLabel: PROVIDER_LABEL,
+        providerLabel: q.providerKey === JUSTTCG_PRICING_PROVIDER_KEY
+          ? "JustTCG"
+          : PROVIDER_LABEL,
         providerProductId: q.providerProductId ?? productId,
         gradeKey: gradeDef.key,
         priceCents: displayCents,
