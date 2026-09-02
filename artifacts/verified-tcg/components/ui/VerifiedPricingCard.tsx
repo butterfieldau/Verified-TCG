@@ -56,13 +56,82 @@ interface GradedQuoteOption {
   grade: string;
 }
 
+interface GradedScaleOption {
+  key: string;
+  grader: string;
+  grade: string;
+  label: string;
+  quote?: PricingQuote;
+}
+
+const HALF_POINT_GRADES = [
+  '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5',
+  '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10',
+] as const;
+
+const GRADING_SCALES: Record<string, readonly string[]> = {
+  PSA: ['Authentic', ...HALF_POINT_GRADES.filter(grade => grade !== '9.5')],
+  BGS: ['Authentic', ...HALF_POINT_GRADES, '10 Black Label'],
+  CGC: ['Authentic', ...HALF_POINT_GRADES, 'Pristine 10'],
+  SGC: ['Authentic', ...HALF_POINT_GRADES],
+  TAG: ['Authentic', ...HALF_POINT_GRADES],
+  ACE: ['Authentic', ...HALF_POINT_GRADES],
+};
+
+const GRADING_COMPANIES = Object.keys(GRADING_SCALES);
+
+function normalizedGrade(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function getGradedQuoteOption(quote: PricingQuote): GradedQuoteOption {
   const label = quote.label.trim();
+  const specialMatch = label.match(/^(.*?)\s+(Authentic|Pristine(?:\s+10)?|10\s+Black\s+Label)$/i);
+  if (specialMatch) {
+    const rawGrader = specialMatch[1]!.trim();
+    const grader = rawGrader.toUpperCase() === 'BECKETT' ? 'BGS' : rawGrader;
+    return { quote, grader, grade: specialMatch[2]! };
+  }
   const match = label.match(/^(.*?)(?:\s+)(\d+(?:\.\d+)?)$/);
   if (!match) return { quote, grader: label || 'Graded', grade: label || '—' };
 
-  const grader = match[1]!.replace(/\s+graded$/i, '').trim() || 'Graded';
+  const rawGrader = match[1]!.replace(/\s+graded$/i, '').trim() || 'Graded';
+  const grader = rawGrader.toUpperCase() === 'BECKETT' ? 'BGS' : rawGrader;
   return { quote, grader, grade: match[2]! };
+}
+
+function getGradedScaleOptions(
+  grader: string,
+  quotedOptions: GradedQuoteOption[],
+): GradedScaleOption[] {
+  const configuredGrades = GRADING_SCALES[grader] ?? [];
+  const configured = configuredGrades.map(grade => {
+    const quoteOption = quotedOptions.find(option =>
+      option.grader.toLowerCase() === grader.toLowerCase()
+      && normalizedGrade(option.grade) === normalizedGrade(grade),
+    );
+    return {
+      key: quoteOption?.quote.gradeKey
+        ?? `${grader.toLowerCase()}_${grade.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+      grader,
+      grade,
+      label: `${grader} ${grade}`,
+      quote: quoteOption?.quote,
+    };
+  });
+  const extras = quotedOptions
+    .filter(option =>
+      option.grader.toLowerCase() === grader.toLowerCase()
+      && !configuredGrades.some(grade => normalizedGrade(grade) === normalizedGrade(option.grade)),
+    )
+    .map(option => ({
+      key: option.quote.gradeKey,
+      grader,
+      grade: option.grade,
+      label: option.quote.label,
+      quote: option.quote,
+    }));
+  return [...configured, ...extras];
 }
 
 interface VerifiedGradePopulation {
@@ -313,9 +382,8 @@ export default function VerifiedPricingCard({
       return valid.length > 0 ? valid : fallbackQuote ? [fallbackQuote.gradeKey] : [];
     });
     setSelectedGrader(previous => {
-      const graders = matchingQuotes.map(quote => getGradedQuoteOption(quote).grader);
-      if (previous && graders.includes(previous)) return previous;
-      return fallbackQuote ? getGradedQuoteOption(fallbackQuote).grader : '';
+      if (previous && GRADING_COMPANIES.includes(previous)) return previous;
+      return fallbackQuote ? getGradedQuoteOption(fallbackQuote).grader : GRADING_COMPANIES[0]!;
     });
     setPollAttempt(result.status === 'pending_match' || result.queued ? 1 : 0);
   }, [mode, quoteMatchesMode]);
@@ -448,16 +516,22 @@ export default function VerifiedPricingCard({
   const gradedQuoteOptions = mode === 'graded'
     ? visibleQuotes.map(getGradedQuoteOption)
     : [];
-  const graderOptions = [...new Set(gradedQuoteOptions.map(option => option.grader))];
+  const graderOptions = GRADING_COMPANIES;
   const activeGrader = selectedGrader || graderOptions[0] || '';
   const activeGraderQuotes = gradedQuoteOptions.filter(option => option.grader === activeGrader);
+  const activeGraderGrades = getGradedScaleOptions(activeGrader, gradedQuoteOptions);
+  const selectedGradeOption = activeGraderGrades.find(option => option.key === selectedGradeKey)
+    ?? activeGraderGrades[activeGraderGrades.length - 1];
   const selectedQuote: PricingQuote | undefined =
-    visibleQuotes.find(q => q.gradeKey === selectedGradeKey) ?? visibleQuotes[0];
+    visibleQuotes.find(q => q.gradeKey === selectedGradeKey)
+    ?? (mode === 'raw' ? visibleQuotes[0] : undefined);
   const selectedMarket =
     (pricing.verifiedMarket ?? []).find(value => value.gradeKey === selectedGradeKey)
-    ?? (pricing.verifiedMarket ?? []).find(value =>
-      visibleQuotes.some(quote => quote.gradeKey === value.gradeKey),
-    );
+    ?? (mode === 'raw'
+      ? (pricing.verifiedMarket ?? []).find(value =>
+          visibleQuotes.some(quote => quote.gradeKey === value.gradeKey),
+        )
+      : undefined);
 
   const hasQuotes = visibleQuotes.length > 0;
   const isAvailable = pricing.status === 'available' || pricing.status === 'stale';
@@ -469,7 +543,7 @@ export default function VerifiedPricingCard({
     card.name,
     card.setName,
     card.number,
-    mode === 'graded' ? selectedQuote?.label : null,
+    mode === 'graded' ? selectedGradeOption?.label : null,
   ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
   const selectedComparisonKeys = selectedGradeKeys.filter(key =>
@@ -487,36 +561,21 @@ export default function VerifiedPricingCard({
       );
 
   const chooseGrader = (grader: string) => {
-    const quotes = gradedQuoteOptions.filter(option => option.grader === grader);
-    const next = quotes[quotes.length - 1];
+    const grades = getGradedScaleOptions(grader, gradedQuoteOptions);
+    const quotedGrades = grades.filter(option => option.quote);
+    const next = quotedGrades[quotedGrades.length - 1] ?? grades[grades.length - 1];
     setSelectedGrader(grader);
     setOpenGradedSelect(null);
     if (next) {
-      setSelectedGradeKey(next.quote.gradeKey);
-      setSelectedGradeKeys([next.quote.gradeKey]);
+      setSelectedGradeKey(next.key);
+      setSelectedGradeKeys(next.quote ? [next.quote.gradeKey] : []);
     }
   };
 
-  const choosePrimaryGrade = (option: GradedQuoteOption) => {
-    setSelectedGradeKey(option.quote.gradeKey);
-    setSelectedGradeKeys(previous =>
-      previous.includes(option.quote.gradeKey)
-        ? previous
-        : [...previous, option.quote.gradeKey],
-    );
+  const choosePrimaryGrade = (option: GradedScaleOption) => {
+    setSelectedGradeKey(option.key);
+    setSelectedGradeKeys(option.quote ? [option.quote.gradeKey] : []);
     setOpenGradedSelect(null);
-  };
-
-  const toggleComparedGrade = (option: GradedQuoteOption) => {
-    setSelectedGradeKey(option.quote.gradeKey);
-    setSelectedGradeKeys(previous => {
-      if (!previous.includes(option.quote.gradeKey)) {
-        return [...previous, option.quote.gradeKey];
-      }
-      return previous.length === 1
-        ? previous
-        : previous.filter(key => key !== option.quote.gradeKey);
-    });
   };
 
   return (
@@ -528,11 +587,7 @@ export default function VerifiedPricingCard({
       {/* Header */}
       {mode === 'graded' ? (
         <View style={vpStyles.marketSignalHeader}>
-          <View>
-            <Text style={vpStyles.marketSignalKicker}>MARKET SIGNAL</Text>
-            <Text style={vpStyles.marketSignalTitle}>Graded market</Text>
-          </View>
-          <Text style={vpStyles.marketSignalMeta}>Verified history</Text>
+          <Text style={vpStyles.marketSignalTitle}>Graded market</Text>
         </View>
       ) : (
         <View style={vpStyles.header}>
@@ -566,7 +621,7 @@ export default function VerifiedPricingCard({
       <StatusBanner result={pricing} />
 
       {/* Exact graded-market controls from the selected card-detail design. */}
-      {mode === 'graded' && hasQuotes ? (
+      {mode === 'graded' ? (
         <View style={vpStyles.gradedControls}>
           <View style={[vpStyles.gradedSelectField, { zIndex: 4 }]}>
             <Text style={vpStyles.gradedFieldLabel}>Grading company</Text>
@@ -602,66 +657,52 @@ export default function VerifiedPricingCard({
           </View>
 
           <View style={[vpStyles.gradedSelectField, { zIndex: 3 }]}>
-            <Text style={vpStyles.gradedFieldLabel}>Primary grade</Text>
+            <Text style={vpStyles.gradedFieldLabel}>Grade</Text>
             <Pressable
               onPress={() => setOpenGradedSelect(current => current === 'grade' ? null : 'grade')}
               style={vpStyles.gradedSelectControl}
               accessibilityRole="button"
-              accessibilityLabel={`Primary grade, ${selectedQuote?.label ?? 'unavailable'}`}
+              accessibilityLabel={`Grade, ${selectedGradeOption?.label ?? 'unavailable'}`}
               accessibilityState={{ expanded: openGradedSelect === 'grade' }}
             >
               <Text style={vpStyles.gradedSelectText} numberOfLines={1}>
-                {selectedQuote?.label ?? 'Select grade'}
+                {selectedGradeOption?.label ?? 'Select grade'}
               </Text>
               <Feather name="chevron-down" size={15} color={C.foreground} />
             </Pressable>
             {openGradedSelect === 'grade' && (
               <View style={vpStyles.gradedDropdownMenu}>
-                {activeGraderQuotes.map(option => (
-                  <Pressable
-                    key={option.quote.gradeKey}
-                    onPress={() => choosePrimaryGrade(option)}
-                    style={[
-                      vpStyles.gradedDropdownOption,
-                      option.quote.gradeKey === selectedGradeKey && vpStyles.gradedDropdownOptionActive,
-                    ]}
+                  <ScrollView
+                    style={vpStyles.gradedDropdownScroll}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator
                   >
-                    <Text style={vpStyles.gradedDropdownText}>{option.quote.label}</Text>
-                    {option.quote.gradeKey === selectedGradeKey && (
-                      <Feather name="check" size={14} color={C.primary} />
-                    )}
-                  </Pressable>
-                ))}
+                    {activeGraderGrades.map(option => (
+                      <Pressable
+                        key={option.key}
+                        onPress={() => choosePrimaryGrade(option)}
+                        style={[
+                          vpStyles.gradedDropdownOption,
+                          option.key === selectedGradeOption?.key && vpStyles.gradedDropdownOptionActive,
+                        ]}
+                      >
+                        <Text style={vpStyles.gradedDropdownText}>{option.label}</Text>
+                        <View style={vpStyles.gradedDropdownStatus}>
+                          {!option.quote && <Text style={vpStyles.gradedNoQuoteText}>No quote</Text>}
+                          {option.key === selectedGradeOption?.key && (
+                            <Feather name="check" size={14} color={C.primary} />
+                          )}
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
               </View>
             )}
           </View>
         </View>
       ) : null}
 
-      {mode === 'graded' && hasQuotes ? (
-        <View style={vpStyles.gradedOptionList}>
-          {activeGraderQuotes.map(option => {
-            const isSelected = selectedGradeKeys.includes(option.quote.gradeKey);
-            return (
-              <Pressable
-                key={option.quote.gradeKey}
-                onPress={() => toggleComparedGrade(option)}
-                style={[vpStyles.gradedOption, isSelected && vpStyles.gradedOptionActive]}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: isSelected }}
-                accessibilityLabel={`${option.quote.label}, population ${getGradePopulation(option, populationRecords)}`}
-              >
-                <Text style={[vpStyles.gradedOptionGrade, isSelected && vpStyles.gradedOptionGradeActive]}>
-                  {option.quote.label}
-                </Text>
-                <Text style={[vpStyles.gradedOptionPop, isSelected && vpStyles.gradedOptionPopActive]}>
-                  POP {getGradePopulation(option, populationRecords)}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : hasQuotes ? (
+      {mode !== 'graded' && hasQuotes ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -697,18 +738,6 @@ export default function VerifiedPricingCard({
         </ScrollView>
       ) : null}
 
-      {mode === 'graded' && hasQuotes && (
-        <View style={vpStyles.gradedComparisonRow}>
-          <View style={vpStyles.gradedAvailabilityDot} />
-          <Text style={vpStyles.gradedComparisonText}>
-            <Text style={vpStyles.gradedComparisonStrong}>
-              {Math.max(selectedComparisonKeys.length, 1)} grades compared
-            </Text>
-            {' · tap to toggle'}
-          </Text>
-        </View>
-      )}
-
       {/* Current price display */}
       {selectedQuote ? (
         <View style={[vpStyles.priceBlock, mode === 'graded' && vpStyles.gradedPriceBlock]}>
@@ -721,7 +750,7 @@ export default function VerifiedPricingCard({
                selectedMarket?.currency ?? selectedQuote.currency,
              )}
           </Text>
-           {selectedMarket?.range && (
+           {mode !== 'graded' && selectedMarket?.range && (
              <Text style={vpStyles.marketRange}>
                Retained range {selectedMarket.range.currency}{' '}
                {(selectedMarket.range.lowCents / 100).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
@@ -730,7 +759,7 @@ export default function VerifiedPricingCard({
                {' · '}{selectedMarket.range.sampleCount} snapshots
              </Text>
            )}
-          {selectedQuote.originalCurrency !== selectedQuote.currency && (
+          {mode !== 'graded' && selectedQuote.originalCurrency !== selectedQuote.currency && (
             <Text style={vpStyles.conversionNote}>
               Originally {selectedQuote.originalCurrency}{' '}
               {(selectedQuote.originalPriceCents / 100).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
@@ -753,6 +782,11 @@ export default function VerifiedPricingCard({
               </Text>
             </View>
           )}
+        </View>
+      ) : mode === 'graded' && selectedGradeOption ? (
+        <View style={vpStyles.gradeUnavailableBlock}>
+          <Text style={vpStyles.gradeUnavailableLabel}>{selectedGradeOption.label}</Text>
+          <Text style={vpStyles.gradeUnavailableText}>Verified market price unavailable</Text>
         </View>
       ) : !isAvailable ? (
         <View style={vpStyles.unavailableBlock}>
@@ -790,7 +824,7 @@ export default function VerifiedPricingCard({
         </View>
       )}
 
-      {selectedMarket && (
+      {mode !== 'graded' && selectedMarket && (
         <View style={vpStyles.insightsBlock}>
           <Text style={vpStyles.insightsLabel}>MARKET INSIGHTS</Text>
           {selectedMarket.insights.slice(0, 2).map(insight => (
@@ -809,7 +843,7 @@ export default function VerifiedPricingCard({
       )}
 
       {/* Price history — Pro only */}
-      {isPro && hasQuotes && (
+      {isPro && hasQuotes && (mode !== 'graded' || selectedQuote) && (
         mode === 'graded' ? (
           <View style={[vpStyles.historyBlock, vpStyles.gradedHistoryBlock]}>
             <MiniLineChart
@@ -974,7 +1008,7 @@ function formatRelative(iso: string): string {
 const vpStyles = StyleSheet.create({
   card: { borderRadius: 16, padding: 16, marginBottom: 16 },
   gradedCard: {
-    padding: 24,
+    padding: 18,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.10)',
     borderRadius: 18,
@@ -987,26 +1021,13 @@ const vpStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: 18,
-  },
-  marketSignalKicker: {
-    color: '#A8A3AA',
-    fontSize: 10,
-    fontFamily: 'Inter_600SemiBold',
-    letterSpacing: 1.4,
+    marginBottom: 14,
   },
   marketSignalTitle: {
-    marginTop: 6,
     color: C.foreground,
     fontSize: 20,
     lineHeight: 24,
     fontFamily: 'Inter_700Bold',
-  },
-  marketSignalMeta: {
-    color: '#817E85',
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: 'Inter_400Regular',
   },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sectionLabel: {
@@ -1062,6 +1083,7 @@ const vpStyles = StyleSheet.create({
     top: 74,
     left: 0,
     right: 0,
+    maxHeight: 276,
     padding: 5,
     borderWidth: 1,
     borderColor: '#423D47',
@@ -1073,6 +1095,7 @@ const vpStyles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
   },
+  gradedDropdownScroll: { maxHeight: 264 },
   gradedDropdownOption: {
     minHeight: 40,
     paddingHorizontal: 10,
@@ -1085,9 +1108,16 @@ const vpStyles = StyleSheet.create({
     backgroundColor: 'rgba(237,64,80,0.12)',
   },
   gradedDropdownText: {
+    flex: 1,
     color: '#E7E1DC',
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
+  },
+  gradedDropdownStatus: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  gradedNoQuoteText: {
+    color: C.mutedForeground,
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
   },
   gradedOptionList: {
     flexDirection: 'row',
@@ -1169,6 +1199,24 @@ const vpStyles = StyleSheet.create({
     letterSpacing: 1, marginBottom: 4,
   },
   priceValue: { fontSize: 30, fontFamily: 'Inter_700Bold', color: C.foreground, letterSpacing: -0.5 },
+  gradeUnavailableBlock: {
+    minHeight: 78,
+    paddingHorizontal: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    borderRadius: 10,
+    backgroundColor: C.surface,
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  gradeUnavailableLabel: { color: C.foreground, fontSize: 14, fontFamily: 'Inter_700Bold' },
+  gradeUnavailableText: {
+    marginTop: 4,
+    color: C.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+  },
   marketRange: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground, marginTop: 3 },
   conversionNote: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
   movementRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
