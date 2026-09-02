@@ -4,6 +4,7 @@ export const modules: ModuleMap = {
   "./components/mockups/community-redesign/CollectorProfile.tsx": () => import("../components/mockups/community-redesign/CollectorProfile.tsx"),
   "./components/mockups/community-redesign/Current.tsx": () => import("../components/mockups/community-redesign/Current.tsx"),
   "./components/mockups/community-redesign/PremiumCommunity.tsx": () => import("../components/mockups/community-redesign/PremiumCommunity.tsx"),
+  "./components/mockups/home-redesign/HomeScreen.tsx": () => import("../components/mockups/home-redesign/HomeScreen.tsx"),
   "./components/mockups/scan-screen/Redesign.tsx": () => import("../components/mockups/scan-screen/Redesign.tsx"),
   "./components/mockups/verified-tcg/AddCard.tsx": () => import("../components/mockups/verified-tcg/AddCard.tsx"),
   "./components/mockups/verified-tcg/CardDetail.tsx": () => import("../components/mockups/verified-tcg/CardDetail.tsx"),
@@ -21,6 +22,5 @@ export const modules: ModuleMap = {
   "./components/mockups/verified-tcg/Welcome.tsx": () => import("../components/mockups/verified-tcg/Welcome.tsx"),
   "./components/mockups/verified-tcg-website/LandingPage.tsx": () => import("../components/mockups/verified-tcg-website/LandingPage.tsx"),
   "./components/mockups/verified-tcg-website/PrivacyPolicy.tsx": () => import("../components/mockups/verified-tcg-website/PrivacyPolicy.tsx"),
-  "./components/mockups/verified-tcg-website/WebApp.tsx": () => import("../components/mockups/verified-tcg-website/WebApp.tsx"),
-  "./components/mockups/home-redesign/HomeScreen.tsx": () => import("../components/mockups/home-redesign/HomeScreen.tsx")
+  "./components/mockups/verified-tcg-website/WebApp.tsx": () => import("../components/mockups/verified-tcg-website/WebApp.tsx")
 };
