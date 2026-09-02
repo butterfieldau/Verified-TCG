@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
+  Easing,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
@@ -576,6 +577,9 @@ export default function CardDetailScreen() {
   const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const { currency: displayCurrency } = useSettings();
   const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
+  const modeTabIndex: Record<DetailMode, number> = { Raw: 0, Graded: 1, POP: 2 };
+  const modeIndicatorX = useSharedValue(0);
+  const modeTabWidth = useSharedValue(0);
   const [marketSummary, setMarketSummary] = useState<VerifiedPricingSummary | null>(null);
   const handleRawMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
     setMarketSummary(summary);
@@ -698,6 +702,10 @@ export default function CardDetailScreen() {
   }, [id, catalogCard?.id]);
 
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
+  const modeIndicatorStyle = useAnimatedStyle(() => ({
+    width: modeTabWidth.value,
+    transform: [{ translateX: modeIndicatorX.value }],
+  }));
 
   function goToPrev() {
     if (!hasPrev) return;
@@ -782,6 +790,19 @@ export default function CardDetailScreen() {
 
   function selectDetailMode(mode: DetailMode) {
     setDetailMode(mode);
+    modeIndicatorX.value = withTiming(
+      modeTabIndex[mode] * modeTabWidth.value,
+      {
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+      },
+    );
+  }
+
+  function handleModeTabsLayout(width: number) {
+    const itemWidth = Math.max((width - 8) / 3, 0);
+    modeTabWidth.value = itemWidth;
+    modeIndicatorX.value = modeTabIndex[detailMode] * itemWidth;
   }
 
   function handleAddToCollection() {
@@ -1035,12 +1056,20 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        <View style={styles.modeTabs} accessibilityRole="tablist">
+        <View
+          style={styles.modeTabs}
+          onLayout={event => handleModeTabsLayout(event.nativeEvent.layout.width)}
+          accessibilityRole="tablist"
+        >
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.modeTabIndicator, modeIndicatorStyle]}
+          />
           {(['Raw', 'Graded', 'POP'] as DetailMode[]).map(mode => (
             <Pressable
               key={mode}
               onPress={() => selectDetailMode(mode)}
-              style={[styles.modeTab, detailMode === mode && styles.modeTabActive]}
+              style={styles.modeTab}
               accessibilityRole="tab"
               accessibilityLabel={`${mode} card details`}
               accessibilityState={{ selected: detailMode === mode }}
@@ -1483,6 +1512,7 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
   modeTabs: {
+    position: 'relative',
     flexDirection: 'row',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: C.border,
@@ -1491,13 +1521,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     padding: 4,
   },
+  modeTabIndicator: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 4,
+    borderRadius: 10,
+    backgroundColor: C.foreground,
+  },
   modeTab: {
     flex: 1,
     alignItems: 'center',
     borderRadius: 10,
     paddingVertical: 8,
+    zIndex: 1,
   },
-  modeTabActive: { backgroundColor: C.foreground },
   modeTabLabel: { color: C.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 12 },
   modeTabLabelActive: { color: C.background },
   modeTabCaption: {
