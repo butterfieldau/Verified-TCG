@@ -55,7 +55,15 @@ function RootLayoutNav() {
       <Stack.Screen name="create-account" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="reset-password" options={{ animation: 'slide_from_right' }} />
-      <Stack.Screen name="(tabs)" />
+      {/* The tab shell is the authenticated root. It must never expose a
+          previous tab route through iOS's interactive back gesture. */}
+      <Stack.Screen
+        name="(tabs)"
+        options={{
+          gestureEnabled: false,
+          animation: 'none',
+        }}
+      />
       <Stack.Screen
         name="scan"
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
