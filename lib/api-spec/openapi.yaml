@@ -184,6 +184,145 @@ paths:
         "401": { description: Authentication required. }
         "404": { description: Preview not found for this collector. }
         "409": { description: Preview expired or content fingerprint changed. }
+  /collection/lists:
+    get:
+      operationId: getCollectionOrganization
+      tags: [collection]
+      summary: Read the authenticated collector's custom lists and preferences
+      responses:
+        "200":
+          description: Canonical custom-list state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "401": { description: Authentication required. }
+    post:
+      operationId: createCollectionList
+      tags: [collection]
+      summary: Create a user-owned collection list
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CollectionListNameMutation" } } }
+      responses:
+        "201": { description: Canonical organization state, content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } } }
+        "400": { description: Invalid or excessive list request. }
+        "409": { description: A list with this name already exists. }
+  /collection/lists/order:
+    put:
+      operationId: reorderCollectionLists
+      tags: [collection]
+      summary: Replace the complete ordering of custom lists
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CollectionListOrderMutation" } } }
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "400": { description: Order does not exactly contain the collector's lists. }
+  /collection/lists/{listId}:
+    parameters:
+      - { name: listId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: renameCollectionList
+      tags: [collection]
+      summary: Rename an owned custom list
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CollectionListNameMutation" } } }
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "404": { description: List not found. }
+    delete:
+      operationId: deleteCollectionList
+      tags: [collection]
+      summary: Delete a list without deleting its holdings
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "404": { description: List not found. }
+  /collection/lists/{listId}/items:
+    parameters:
+      - { name: listId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      operationId: replaceCollectionListMembership
+      tags: [collection]
+      summary: Replace all list memberships with owned holdings
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/HoldingIdsMutation" } } }
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "404": { description: List or holding not found. }
+    post:
+      operationId: addCollectionListMembership
+      tags: [collection]
+      summary: Add owned holdings to a list
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/HoldingIdsMutation" } } }
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "404": { description: List or holding not found. }
+  /collection/lists/{listId}/items/{holdingId}:
+    delete:
+      operationId: removeCollectionListMembership
+      tags: [collection]
+      summary: Remove one holding membership from an owned list
+      parameters:
+        - { name: listId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: holdingId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Canonical organization state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionOrganization" } } }
+        "404": { description: List not found. }
+  /collection/lists/{listId}/subtotal:
+    get:
+      operationId: getCollectionListSubtotal
+      tags: [collection, portfolio]
+      summary: Get authoritative valuation subtotal for unique holdings in a list
+      parameters:
+        - { name: listId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses: { "200": { description: Pricing-pipeline subtotal, content: { application/json: { schema: { $ref: "#/components/schemas/CollectionListSubtotal" } } } }, "404": { description: List not found. } }
+  /collection/preferences:
+    get:
+      operationId: getCollectionPreferences
+      tags: [collection]
+      summary: Read persisted collection presentation preferences
+      responses: { "200": { description: Preferences, content: { application/json: { schema: { $ref: "#/components/schemas/CollectionPreferences" } } } } }
+    put:
+      operationId: updateCollectionPreferences
+      tags: [collection]
+      summary: Replace persisted collection presentation preferences
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CollectionPreferencesMutation" } } }
+      responses:
+        "200":
+          description: Persisted preferences.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionPreferences" } } }
+        "400": { description: Invalid preference. }
+  /collection/bulk:
+    post:
+      operationId: bulkUpdateCollection
+      tags: [collection]
+      summary: Atomically assign memberships, update sale/trade flags, or delete owned holdings
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CollectionBulkMutation" } } }
+      responses:
+        "200":
+          description: Canonical organization state and deleted IDs.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CollectionBulkResponse" } } }
+        "400": { description: Invalid bounded bulk operation. }
+        "404": { description: Owned list or holding not found. }
   /collection/{id}:
     patch:
       operationId: updateCollectionItem
@@ -425,6 +564,101 @@ components:
         meta:
           type: object
           additionalProperties: true
+    CollectionListNameMutation:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+    CollectionListOrderMutation:
+      type: object
+      required: [listIds]
+      properties:
+        listIds:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    HoldingIdsMutation:
+      type: object
+      required: [holdingIds]
+      properties:
+        holdingIds:
+          type: array
+          minItems: 1
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    CollectionList:
+      type: object
+      required: [id, name, position, createdAt, updatedAt, holdingIds]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        position: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        holdingIds: { type: array, items: { type: string, format: uuid } }
+    CollectionPreferences:
+      type: object
+      required: [viewMode, selectedListId, filterState, sortKey, updatedAt]
+      properties:
+        viewMode: { type: string, enum: [grid, list, compact] }
+        selectedListId: { type: [string, "null"], format: uuid }
+        filterState: { type: object, additionalProperties: true }
+        sortKey: { type: string, enum: [date_desc, date_asc, name_asc, name_desc, value_desc, value_asc, quantity_desc, quantity_asc, gain_desc, gain_asc] }
+        updatedAt: { type: [string, "null"], format: date-time }
+    CollectionPreferencesMutation:
+      type: object
+      properties:
+        viewMode: { type: string, enum: [grid, list, compact] }
+        selectedListId: { type: [string, "null"], format: uuid }
+        filterState: { type: object, additionalProperties: true }
+        sortKey: { type: string, enum: [date_desc, date_asc, name_asc, name_desc, value_desc, value_asc, quantity_desc, quantity_asc, gain_desc, gain_asc] }
+    CollectionOrganization:
+      type: object
+      required: [lists, preferences]
+      properties:
+        lists: { type: array, items: { $ref: "#/components/schemas/CollectionList" } }
+        preferences: { $ref: "#/components/schemas/CollectionPreferences" }
+    CollectionListSubtotal:
+      type: object
+      required: [listId, currency, holdingCount, uniqueHoldingCount, totalValueCents, totalValue, totalCostCents, totalCost, pricedHoldings, totalHoldings, valuationComplete]
+      properties:
+        listId: { type: string, format: uuid }
+        currency: { type: string }
+        holdingCount: { type: integer }
+        uniqueHoldingCount: { type: integer }
+        totalValueCents: { type: [integer, "null"] }
+        totalValue: { type: [number, "null"] }
+        totalCostCents: { type: [integer, "null"] }
+        totalCost: { type: [number, "null"] }
+        pricedHoldings: { type: integer }
+        totalHoldings: { type: integer }
+        valuationComplete: { type: boolean }
+    CollectionBulkMutation:
+      type: object
+      required: [holdingIds]
+      properties:
+        holdingIds:
+          type: array
+          minItems: 1
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        assignToListId: { type: string, format: uuid }
+        removeFromListId: { type: string, format: uuid }
+        isForSale: { type: boolean }
+        isForTrade: { type: boolean }
+        delete: { type: boolean }
+    CollectionBulkResponse:
+      allOf:
+        - { $ref: "#/components/schemas/CollectionOrganization" }
+        - type: object
+          required: [deletedHoldingIds]
+          properties:
+            deletedHoldingIds:
+              type: array
+              items: { type: string, format: uuid }
     CollectionMutation:
       type: object
       properties:

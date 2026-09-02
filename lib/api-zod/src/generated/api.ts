@@ -354,6 +354,339 @@ export const CommitCollectionCsvImportResponse = zod.object({
 
 
 /**
+ * @summary Read the authenticated collector's custom lists and preferences
+ */
+export const GetCollectionOrganizationResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Create a user-owned collection list
+ */
+export const createCollectionListBodyNameMax = 100;
+
+
+
+export const CreateCollectionListBody = zod.object({
+  "name": zod.string().min(1).max(createCollectionListBodyNameMax)
+})
+
+export const CreateCollectionListResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Replace the complete ordering of custom lists
+ */
+export const reorderCollectionListsBodyListIdsMax = 500;
+
+
+
+export const ReorderCollectionListsBody = zod.object({
+  "listIds": zod.array(zod.string().uuid()).max(reorderCollectionListsBodyListIdsMax)
+})
+
+export const ReorderCollectionListsResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Rename an owned custom list
+ */
+export const RenameCollectionListParams = zod.object({
+  "listId": zod.coerce.string().uuid()
+})
+
+export const renameCollectionListBodyNameMax = 100;
+
+
+
+export const RenameCollectionListBody = zod.object({
+  "name": zod.string().min(1).max(renameCollectionListBodyNameMax)
+})
+
+export const RenameCollectionListResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Delete a list without deleting its holdings
+ */
+export const DeleteCollectionListParams = zod.object({
+  "listId": zod.coerce.string().uuid()
+})
+
+export const DeleteCollectionListResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Replace all list memberships with owned holdings
+ */
+export const ReplaceCollectionListMembershipParams = zod.object({
+  "listId": zod.coerce.string().uuid()
+})
+
+export const replaceCollectionListMembershipBodyHoldingIdsMax = 500;
+
+
+
+export const ReplaceCollectionListMembershipBody = zod.object({
+  "holdingIds": zod.array(zod.string().uuid()).min(1).max(replaceCollectionListMembershipBodyHoldingIdsMax)
+})
+
+export const ReplaceCollectionListMembershipResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Add owned holdings to a list
+ */
+export const AddCollectionListMembershipParams = zod.object({
+  "listId": zod.coerce.string().uuid()
+})
+
+export const addCollectionListMembershipBodyHoldingIdsMax = 500;
+
+
+
+export const AddCollectionListMembershipBody = zod.object({
+  "holdingIds": zod.array(zod.string().uuid()).min(1).max(addCollectionListMembershipBodyHoldingIdsMax)
+})
+
+export const AddCollectionListMembershipResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Remove one holding membership from an owned list
+ */
+export const RemoveCollectionListMembershipParams = zod.object({
+  "listId": zod.coerce.string().uuid(),
+  "holdingId": zod.coerce.string().uuid()
+})
+
+export const RemoveCollectionListMembershipResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Get authoritative valuation subtotal for unique holdings in a list
+ */
+export const GetCollectionListSubtotalParams = zod.object({
+  "listId": zod.coerce.string().uuid()
+})
+
+export const getCollectionListSubtotalQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionListSubtotalQueryParams = zod.object({
+  "displayCurrency": zod.coerce.string().default(getCollectionListSubtotalQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionListSubtotalResponse = zod.object({
+  "listId": zod.string().uuid(),
+  "currency": zod.string(),
+  "holdingCount": zod.number().int(),
+  "uniqueHoldingCount": zod.number().int(),
+  "totalValueCents": zod.number().int().nullable(),
+  "totalValue": zod.number().nullable(),
+  "totalCostCents": zod.number().int().nullable(),
+  "totalCost": zod.number().nullable(),
+  "pricedHoldings": zod.number().int(),
+  "totalHoldings": zod.number().int(),
+  "valuationComplete": zod.boolean()
+})
+
+
+/**
+ * @summary Read persisted collection presentation preferences
+ */
+export const GetCollectionPreferencesResponse = zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Replace persisted collection presentation preferences
+ */
+export const UpdateCollectionPreferencesBody = zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']).optional(),
+  "selectedListId": zod.string().uuid().nullish(),
+  "filterState": zod.record(zod.string(), zod.unknown()).optional(),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']).optional()
+})
+
+export const UpdateCollectionPreferencesResponse = zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Atomically assign memberships, update sale/trade flags, or delete owned holdings
+ */
+export const bulkUpdateCollectionBodyHoldingIdsMax = 500;
+
+
+
+export const BulkUpdateCollectionBody = zod.object({
+  "holdingIds": zod.array(zod.string().uuid()).min(1).max(bulkUpdateCollectionBodyHoldingIdsMax),
+  "assignToListId": zod.string().uuid().optional(),
+  "removeFromListId": zod.string().uuid().optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional(),
+  "delete": zod.boolean().optional()
+})
+
+export const BulkUpdateCollectionResponse = zod.object({
+  "lists": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "position": zod.number().int(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "holdingIds": zod.array(zod.string().uuid())
+})),
+  "preferences": zod.object({
+  "viewMode": zod.enum(['grid', 'list', 'compact']),
+  "selectedListId": zod.string().uuid().nullable(),
+  "filterState": zod.record(zod.string(), zod.unknown()),
+  "sortKey": zod.enum(['date_desc', 'date_asc', 'name_asc', 'name_desc', 'value_desc', 'value_asc', 'quantity_desc', 'quantity_asc', 'gain_desc', 'gain_asc']),
+  "updatedAt": zod.coerce.date().nullable()
+})
+}).and(zod.object({
+  "deletedHoldingIds": zod.array(zod.string().uuid())
+}))
+
+
+/**
  * @summary Correct quantity, condition, grading, or acquisition cost
  */
 export const UpdateCollectionItemParams = zod.object({

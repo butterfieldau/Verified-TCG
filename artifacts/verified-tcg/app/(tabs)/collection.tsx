@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,7 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -31,13 +32,15 @@ import type { CollectionItem, WatchlistItem } from '@/types';
 import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
 import { tradingCardHeight, tradingCardRadius } from '@/services/collectionLayout';
 import { createRequestDeduper } from '@/services/requestDeduper';
+import { filterCollectionItems, sortCollectionItems } from '@/services/collectionOrganizer';
+import { fetchCollectionListSubtotal, type CollectionListSubtotal } from '@/services/collectionOrganizer';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
 const SUMMARY_STALE_MS = 60_000;
 
-type CollectionFilter = 'all' | 'pokemon' | 'graded' | 'raw' | 'forSale';
-type CollectionSort = 'value' | 'name' | 'recent';
+type CollectionFilter = 'all' | 'pokemon' | 'graded' | 'raw' | 'forSale' | 'forTrade';
+type CollectionSort = 'value' | 'name' | 'recent' | 'quantity' | 'gain';
 
 const COLLECTION_FILTERS: { label: string; value: CollectionFilter }[] = [
   { label: 'All', value: 'all' },
@@ -45,12 +48,15 @@ const COLLECTION_FILTERS: { label: string; value: CollectionFilter }[] = [
   { label: 'Graded', value: 'graded' },
   { label: 'Raw', value: 'raw' },
   { label: 'For Sale', value: 'forSale' },
+  { label: 'For Trade', value: 'forTrade' },
 ];
 
 const SORT_LABELS: Record<CollectionSort, string> = {
   value: 'Value',
   name: 'Name',
   recent: 'Recent',
+  quantity: 'Quantity',
+  gain: 'Gain',
 };
 
 
@@ -60,7 +66,6 @@ export default function CollectionScreen() {
   // Use AppContext's collection as the single source of truth.
   // AppContext caches the collection in AsyncStorage so it's available offline.
   const {
-    user,
     collection,
     collectionLoading,
     collectionError,
@@ -68,15 +73,41 @@ export default function CollectionScreen() {
     watchlist,
     addToWatchlist,
     removeFromWatchlist,
+    collectionOrganizerPreferences,
+    setCollectionOrganizerPreferences,
+    collectionLists,
+    collectionListMemberships,
+    createCollectionList,
+    deleteCollectionList,
+    updateCollectionListMembership,
+    bulkUpdateCollectionHoldings,
+    bulkDeleteCollectionHoldings,
+    renameCollectionList,
+    reorderCollectionLists,
   } = useApp();
   const { isConnected } = useNetwork();
   const { currency } = useSettings();
 
   const [activeFilter, setActiveFilter] = useState<CollectionFilter>('all');
-  const [sortBy, setSortBy] = useState<CollectionSort>('value');
+  const sortBy: CollectionSort = collectionOrganizerPreferences.sort.field === 'date'
+    ? 'recent'
+    : collectionOrganizerPreferences.sort.field;
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const viewMode = collectionOrganizerPreferences.viewMode;
+  const [listSheetOpen, setListSheetOpen] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<'holdings' | 'list' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [destinationListOpen, setDestinationListOpen] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [listSubtotals, setListSubtotals] = useState<Record<string, CollectionListSubtotal | null>>({});
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   // Sell modal state
   const [sellItem, setSellItem] = useState<CollectionItem | null>(null);
@@ -131,29 +162,19 @@ export default function CollectionScreen() {
   // Apply the approved Vault Index filters on the complete cached collection.
   const filteredItems = useMemo<CollectionItem[]>(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    const matching = collection.filter(item => {
-      const matchesQuery =
-        normalizedQuery.length === 0 ||
-        item.card.name.toLocaleLowerCase().includes(normalizedQuery) ||
-        item.card.setName.toLocaleLowerCase().includes(normalizedQuery) ||
-        item.card.number.toLocaleLowerCase().includes(normalizedQuery);
-      const matchesFilter =
-        activeFilter === 'all' ||
-        (activeFilter === 'pokemon' && item.card.tcg === 'pokemon') ||
-        (activeFilter === 'graded' && !!item.grading) ||
-        (activeFilter === 'raw' && !item.grading) ||
-        (activeFilter === 'forSale' && !!item.isForSale);
-      return matchesQuery && matchesFilter;
-    });
-
-    return matching.sort((a, b) => {
-      if (sortBy === 'name') return a.card.name.localeCompare(b.card.name);
-      if (sortBy === 'recent') {
-        return new Date(b.acquiredAt).getTime() - new Date(a.acquiredAt).getTime();
-      }
-      return (holdingValue(b) ?? -1) - (holdingValue(a) ?? -1);
-    });
-  }, [collection, activeFilter, query, sortBy, holdingValue]);
+    const filters = {
+      ...collectionOrganizerPreferences.filters,
+      ...(activeFilter === 'pokemon' ? { tcg: 'pokemon' as const } : {}),
+      ...(activeFilter === 'graded' ? { graded: true } : {}),
+      ...(activeFilter === 'raw' ? { graded: false } : {}),
+      ...(activeFilter === 'forSale' ? { forSale: true } : {}),
+      ...(activeFilter === 'forTrade' ? { forTrade: true } : {}),
+    };
+    const field = sortBy === 'recent' ? 'date' : sortBy;
+    const memberships = collectionOrganizerPreferences.selectedListId
+      ? new Set(collectionListMemberships[collectionOrganizerPreferences.selectedListId] ?? []) : undefined;
+    return sortCollectionItems(filterCollectionItems(collection, filters, normalizedQuery, memberships), field, collectionOrganizerPreferences.sort.direction);
+  }, [collection, activeFilter, query, sortBy, collectionOrganizerPreferences, collectionListMemberships]);
 
   // Windowed slice shown in the list; load-more just extends this window
   const visibleItems = useMemo(
@@ -195,15 +216,6 @@ export default function CollectionScreen() {
     });
   }, [collectionRefreshDeduper, refreshCollection, loadSummary]);
 
-  const avatarInitials = useMemo(() => {
-    const source = user?.displayName?.trim() || user?.username?.trim() || 'Collector';
-    return source
-      .split(/\s+/)
-      .slice(0, 2)
-      .map(part => part[0]?.toUpperCase() ?? '')
-      .join('');
-  }, [user]);
-
   const toggleSaved = useCallback((item: CollectionItem) => {
     const existing = watchlist.find(entry => entry.cardId === item.card.id);
     if (existing) {
@@ -227,6 +239,26 @@ export default function CollectionScreen() {
     if (!hasMore || collectionLoading) return;
     setDisplayCount(prev => prev + PAGE_SIZE);
   }, [hasMore, collectionLoading]);
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds(current => {
+      const next = new Set(current);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+  const runBulk = useCallback(async (operation: 'sale' | 'trade' | 'removeList') => {
+    try {
+      setWriting(true);
+      const ids = [...selectedIds];
+      if (operation === 'sale') await bulkUpdateCollectionHoldings(ids, { isForSale: true, isForTrade: false });
+      if (operation === 'trade') await bulkUpdateCollectionHoldings(ids, { isForSale: false, isForTrade: true });
+      if (operation === 'removeList' && collectionOrganizerPreferences.selectedListId) {
+        await updateCollectionListMembership(collectionOrganizerPreferences.selectedListId, ids, 'remove');
+      }
+      setSelectedIds(new Set());
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'That update could not be saved.'); }
+    finally { setWriting(false); }
+  }, [bulkUpdateCollectionHoldings, collectionOrganizerPreferences.selectedListId, selectedIds, updateCollectionListMembership]);
 
   // ── Header (shared across all tabs) ──────────────────────────────────────
 
@@ -264,13 +296,8 @@ export default function CollectionScreen() {
 
         <Animated.View entering={FadeIn.duration(380)} style={styles.header}>
           <View style={styles.identity}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{avatarInitials}</Text>
-            </View>
             <View>
-              <Text style={styles.kicker}>
-                {(user?.username || 'COLLECTOR').toUpperCase()} / VAULT
-              </Text>
+              <Text style={styles.kicker}>YOUR VAULT</Text>
               <Text style={styles.title}>COLLECTION</Text>
             </View>
           </View>
@@ -351,11 +378,13 @@ export default function CollectionScreen() {
             <Text style={styles.libraryCount}>{filteredItems.length} OF {collection.length} SHOWING</Text>
           </View>
           <View style={styles.toolbarActions}>
+            <Pressable onPress={() => { setSelectionMode(true); setSelectedIds(new Set()); }} style={styles.sortButton} accessibilityRole="button"><Text style={styles.sortText}>Select</Text></Pressable>
+            <Pressable onPress={() => { setListSheetOpen(true); collectionLists.forEach(list => { setListSubtotals(current => ({ ...current, [list.id]: current[list.id] === undefined ? null : current[list.id] })); void fetchCollectionListSubtotal(list.id, currency).then(value => setListSubtotals(current => ({ ...current, [list.id]: value }))).catch(() => setListSubtotals(current => ({ ...current, [list.id]: null }))); }); }} style={styles.sortButton} accessibilityRole="button" accessibilityLabel="Choose or manage collection list">
+              <Feather name="folder" size={12} color={C.primary} />
+              <Text style={styles.sortText}>{collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name ?? 'All Collection'}</Text>
+            </Pressable>
             <Pressable
-              onPress={() => {
-                setSortBy(current => current === 'value' ? 'name' : current === 'name' ? 'recent' : 'value');
-                resetWindow();
-              }}
+              onPress={() => setSortOpen(true)}
               style={styles.sortButton}
               accessibilityRole="button"
               accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
@@ -368,7 +397,7 @@ export default function CollectionScreen() {
               {(['grid', 'list'] as const).map(mode => (
                 <Pressable
                   key={mode}
-                  onPress={() => setViewMode(mode)}
+                  onPress={() => setCollectionOrganizerPreferences({ viewMode: mode })}
                   style={[styles.viewButton, viewMode === mode && styles.viewButtonActive]}
                   accessibilityRole="button"
                   accessibilityLabel={`${mode} view`}
@@ -379,6 +408,13 @@ export default function CollectionScreen() {
               ))}
             </View>
           </View>
+        </View>
+        <View style={styles.organizerSummary}>
+          <Pressable style={styles.filterChip} onPress={() => setAdvancedOpen(true)} accessibilityRole="button">
+            <Feather name="sliders" size={12} color={C.primary}/><Text style={styles.filterText}>Advanced filters</Text>
+          </Pressable>
+          {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all') && <Pressable onPress={() => { setActiveFilter('all'); setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); }}><Text style={styles.bulkAction}>Clear filters</Text></Pressable>}
+          <Text style={styles.sheetMeta}>{filteredItems.length} results · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}</Text>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
@@ -429,12 +465,17 @@ export default function CollectionScreen() {
     return (
       <Pressable
         key={item.id}
-        style={[styles.itemRow, { backgroundColor: C.card, marginHorizontal: 20 }]}
+        style={[styles.itemRow, { backgroundColor: C.card, marginHorizontal: 20 }, selectedIds.has(item.id) && { borderColor: C.primary, borderWidth: 1 }]}
         onPress={() => {
+          if (selectionMode) { toggleSelection(item.id); return; }
+          // Keep Passport swipes in exactly the rendered, deterministic order.
           const ids = filteredItems.map(i => i.card.id).join(',');
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
         }}
-        onLongPress={() => setSellItem(item)}
+        onLongPress={() => {
+          setSelectionMode(true);
+          toggleSelection(item.id);
+        }}
         delayLongPress={600}
         accessibilityRole="button"
         accessibilityLabel={`${item.card.name}, ${item.grading ? `${item.grading.company} ${item.grading.grade}` : item.condition}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
@@ -529,10 +570,16 @@ export default function CollectionScreen() {
     const isSaved = watchlist.some(entry => entry.cardId === item.card.id);
     return (
       <Pressable
-        style={[styles.gridItem, { width: gridItemWidth }]}
+        style={[styles.gridItem, { width: gridItemWidth }, selectedIds.has(item.id) && { borderColor: C.primary, borderWidth: 2, borderRadius: gridCardRadius }]}
         onPress={() => {
+          if (selectionMode) { toggleSelection(item.id); return; }
+          // Keep Passport swipes in exactly the rendered, deterministic order.
           const ids = filteredItems.map(i => i.card.id).join(',');
           router.push(`/card/${item.card.id}?cardIds=${ids}`);
+        }}
+        onLongPress={() => {
+          setSelectionMode(true);
+          toggleSelection(item.id);
         }}
         accessibilityRole="button"
         accessibilityLabel={`${item.card.name}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
@@ -626,13 +673,9 @@ export default function CollectionScreen() {
           numColumns={2}
           keyExtractor={item => item.id}
           renderItem={({ item, index }) => (
-            <Animated.View
-              entering={FadeInDown.delay(Math.min(index, 8) * 55).duration(360)}
-              layout={LinearTransition.springify().damping(18)}
-              style={index % 2 === 0 ? styles.gridCellLeft : styles.gridCellRight}
-            >
+            <View style={index % 2 === 0 ? styles.gridCellLeft : styles.gridCellRight}>
               {renderCardGrid(item)}
-            </Animated.View>
+            </View>
           )}
           ListHeaderComponent={() => renderHeader()}
           ListEmptyComponent={renderCollectionEmpty}
@@ -657,14 +700,10 @@ export default function CollectionScreen() {
         <FlashList
           data={visibleItems}
           keyExtractor={item => item.id}
-          renderItem={({ item, index }) => (
-            <Animated.View
-              entering={FadeInDown.delay(Math.min(index, 8) * 45).duration(320)}
-              layout={LinearTransition.springify().damping(18)}
-              style={styles.listCell}
-            >
+          renderItem={({ item }) => (
+            <View style={styles.listCell}>
               {renderCardRow(item)}
-            </Animated.View>
+            </View>
           )}
           ListHeaderComponent={() => renderHeader()}
           ListEmptyComponent={renderCollectionEmpty}
@@ -697,6 +736,117 @@ export default function CollectionScreen() {
           }}
         />
       )}
+      {selectionMode && (
+        <View style={[styles.bulkBar, { bottom: TAB_H + 10 }]} accessibilityRole="toolbar">
+          <Text style={styles.bulkText}>{selectedIds.size} selected</Text>
+          <Pressable onPress={() => setSelectedIds(new Set(filteredItems.map(item => item.id)))}><Text style={styles.bulkAction}>All</Text></Pressable>
+          {collectionOrganizerPreferences.selectedListId && <Pressable onPress={() => void runBulk('removeList')}><Text style={styles.bulkAction}>Remove list</Text></Pressable>}
+          {collectionLists.length > 0 && (
+            <Pressable disabled={writing || selectedIds.size === 0} onPress={() => setDestinationListOpen(true)}>
+              <Text style={[styles.bulkAction, selectedIds.size === 0 && { color: C.mutedForeground }]}>Add to list</Text>
+            </Pressable>
+          )}
+          <Pressable disabled={writing} onPress={() => void runBulk('sale')}><Text style={styles.bulkAction}>For sale</Text></Pressable>
+          <Pressable disabled={writing} onPress={() => void runBulk('trade')}><Text style={styles.bulkAction}>Trade</Text></Pressable>
+          <Pressable disabled={writing || selectedIds.size === 0} onPress={() => setDeleteTarget('holdings')}>
+            <Text style={[styles.bulkAction, { color: selectedIds.size ? C.destructive : C.mutedForeground }]}>Delete</Text>
+          </Pressable>
+          <Pressable onPress={() => { setSelectedIds(new Set()); setSelectionMode(false); }}><Feather name="x" size={18} color={C.foreground} /></Pressable>
+        </View>
+      )}
+      <Modal visible={sortOpen} transparent animationType="fade" onRequestClose={() => setSortOpen(false)}>
+        <View style={styles.sheetBackdrop}><View style={styles.sheet}>
+          <View style={styles.sheetHead}><Text style={styles.sheetTitle}>SORT COLLECTION</Text><Pressable onPress={() => setSortOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
+          {(['name', 'value', 'recent', 'quantity', 'gain'] as CollectionSort[]).map(field => <Pressable key={field} style={styles.sheetRow} onPress={() => { setCollectionOrganizerPreferences({ sort: { field: field === 'recent' ? 'date' : field, direction: collectionOrganizerPreferences.sort.direction } }); setSortOpen(false); }}><Text style={styles.sheetText}>{SORT_LABELS[field]}</Text>{sortBy === field && <Feather name="check" color={C.primary} size={16}/>}</Pressable>)}
+          <Pressable style={styles.sheetRow} onPress={() => setCollectionOrganizerPreferences({ sort: { ...collectionOrganizerPreferences.sort, direction: collectionOrganizerPreferences.sort.direction === 'asc' ? 'desc' : 'asc' } })}><Text style={styles.sheetText}>{collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending ↑' : 'Descending ↓'}</Text><Text style={styles.sheetMeta}>Tap to reverse</Text></Pressable>
+        </View></View>
+      </Modal>
+      <Modal visible={destinationListOpen} transparent animationType="slide" onRequestClose={() => setDestinationListOpen(false)}>
+        <View style={styles.sheetBackdrop}><View style={styles.sheet}>
+          <View style={styles.sheetHead}><Text style={styles.sheetTitle}>ADD TO LIST</Text><Pressable onPress={() => setDestinationListOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
+          <Text style={styles.sheetMeta}>Choose a destination for {selectedIds.size} selected holding{selectedIds.size === 1 ? '' : 's'}.</Text>
+          {collectionLists.map(list => (
+            <Pressable
+              key={list.id}
+              style={styles.sheetRow}
+              disabled={writing}
+              onPress={() => {
+                setWriting(true);
+                void updateCollectionListMembership(list.id, [...selectedIds], 'add')
+                  .then(() => {
+                    setSelectedIds(new Set());
+                    setSelectionMode(false);
+                    setDestinationListOpen(false);
+                  })
+                  .catch(error => setActionError(error instanceof Error ? error.message : 'That list could not be updated.'))
+                  .finally(() => setWriting(false));
+              }}
+            >
+              <Text style={styles.sheetText}>{list.name}</Text>
+              <Text style={styles.sheetMeta}>{list.itemCount ?? list.holdingIds.length} holdings</Text>
+            </Pressable>
+          ))}
+        </View></View>
+      </Modal>
+      <Modal visible={advancedOpen} transparent animationType="slide" onRequestClose={() => setAdvancedOpen(false)}>
+        <View style={styles.sheetBackdrop}><ScrollView style={styles.sheet}><View style={styles.sheetHead}><Text style={styles.sheetTitle}>ADVANCED FILTERS</Text><Pressable onPress={() => setAdvancedOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
+          <Text style={styles.sheetMeta}>Condition, grading company, grade, value and acquisition date</Text>
+          <View style={styles.filterInputRow}>
+            <TextInput placeholder="Condition (e.g. near_mint)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.conditions?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, conditions: text ? [text as any] : undefined } })}/>
+            <TextInput placeholder="Company (e.g. PSA)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.gradingCompanies?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, gradingCompanies: text ? [text as any] : undefined } })}/>
+          </View>
+          {(['minGrade','maxGrade','minValue','maxValue'] as const).map(key => <TextInput key={key} placeholder={key} placeholderTextColor={C.mutedForeground} keyboardType="decimal-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters[key]?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text ? Number(text) : undefined } })}/>)}
+          {(['acquiredAfter','acquiredBefore'] as const).map(key => <TextInput key={key} placeholder={`${key} (YYYY-MM-DD)`} placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters[key] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text || undefined } })}/>)}
+          <View style={styles.filterInputRow}>{(['priced','unpriced'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricing: collectionOrganizerPreferences.filters.pricing === value ? undefined : value } })}><Text style={styles.filterText}>{value}</Text></Pressable>)}{(['fresh','stale'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricingFreshness: collectionOrganizerPreferences.filters.pricingFreshness === value ? undefined : value } })}><Text style={styles.filterText}>{value} pricing</Text></Pressable>)}</View>
+          <TextInput placeholder="Freshness days (default 30)" placeholderTextColor={C.mutedForeground} keyboardType="number-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters.freshnessDays?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, freshnessDays: text ? Number(text) : undefined } })}/>
+          <Pressable onPress={() => { setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); setAdvancedOpen(false); }}><Text style={styles.bulkAction}>Reset all filters</Text></Pressable>
+        </ScrollView></View>
+      </Modal>
+      <Modal visible={listSheetOpen} transparent animationType="slide" onRequestClose={() => setListSheetOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHead}><Text style={styles.sheetTitle}>COLLECTION LISTS</Text><Pressable onPress={() => setListSheetOpen(false)}><Feather name="x" size={20} color={C.foreground} /></Pressable></View>
+            <Pressable style={styles.sheetRow} onPress={() => { setCollectionOrganizerPreferences({ selectedListId: null, filters: { ...collectionOrganizerPreferences.filters, listId: undefined } }); setListSheetOpen(false); }}>
+              <Text style={styles.sheetText}>All Collection</Text><Text style={styles.sheetMeta}>{collection.length} holdings</Text>
+            </Pressable>
+            {collectionLists.map((list, index) => <View key={list.id} style={styles.sheetRow}>
+              <Pressable style={{ flex: 1 }} onPress={() => { setCollectionOrganizerPreferences({ selectedListId: list.id, filters: { ...collectionOrganizerPreferences.filters, listId: list.id } }); setListSheetOpen(false); }}>
+                {renamingListId === list.id ? <TextInput autoFocus value={renameValue} onChangeText={setRenameValue} onSubmitEditing={() => void renameCollectionList(list.id, renameValue).then(() => setRenamingListId(null)).catch(error => setActionError(error.message))} style={styles.renameInput}/> : <Text style={styles.sheetText}>{list.name}</Text>}
+                <Text style={styles.sheetMeta}>{list.itemCount ?? list.holdingIds.length} holdings · {listSubtotals[list.id] === undefined ? 'Subtotal loading…' : listSubtotals[list.id]?.totalValue == null ? 'Subtotal unavailable' : `${listSubtotals[list.id]!.currency} ${(listSubtotals[list.id]?.totalValue ?? 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}`}</Text>
+              </Pressable>
+              <Pressable onPress={() => { setRenamingListId(list.id); setRenameValue(list.name); }}><Feather name="edit-2" size={15} color={C.mutedForeground}/></Pressable>
+              <Pressable disabled={writing || index === 0} onPress={() => void reorderCollectionLists(collectionLists.map((entry, position) => position === index ? collectionLists[index - 1]!.id : position === index - 1 ? list.id : entry.id)).catch(error => setActionError(error.message))}><Feather name="chevron-up" size={18} color={index === 0 ? C.mutedForeground : C.foreground}/></Pressable>
+              <Pressable disabled={writing || index === collectionLists.length - 1} onPress={() => void reorderCollectionLists(collectionLists.map((entry, position) => position === index ? collectionLists[index + 1]!.id : position === index + 1 ? list.id : entry.id)).catch(error => setActionError(error.message))}><Feather name="chevron-down" size={18} color={index === collectionLists.length - 1 ? C.mutedForeground : C.foreground}/></Pressable>
+            </View>)}
+            <View style={styles.createRow}><TextInput value={newListName} onChangeText={setNewListName} placeholder="New list name" placeholderTextColor={C.mutedForeground} style={styles.createInput}/><Pressable onPress={() => void createCollectionList(newListName).then(() => setNewListName('')).catch(error => setActionError(error.message))}><Feather name="plus-circle" size={24} color={C.primary}/></Pressable></View>
+            {collectionOrganizerPreferences.selectedListId && <Pressable onPress={() => { setDeleteTarget('list'); setListSheetOpen(false); }}><Text style={[styles.bulkAction, { color: C.destructive }]}>Delete selected list</Text></Pressable>}
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={deleteTarget !== null} transparent animationType="fade">
+        <View style={styles.sheetBackdrop}><View style={styles.confirmCard}>
+          <Text style={styles.sheetTitle}>Confirm delete</Text>
+          <Text style={styles.sheetMeta}>{deleteTarget === 'holdings' ? `Delete ${selectedIds.size} selected holding${selectedIds.size === 1 ? '' : 's'}? This cannot be undone.` : 'Delete this collection list? Holdings will be kept.'}</Text>
+          <View style={styles.confirmActions}>
+            <Pressable onPress={() => setDeleteTarget(null)}><Text style={styles.bulkAction}>Cancel</Text></Pressable>
+            <Pressable
+              disabled={writing || (deleteTarget === 'holdings' && selectedIds.size === 0)}
+              onPress={() => {
+                const action = deleteTarget === 'holdings'
+                  ? bulkDeleteCollectionHoldings([...selectedIds]).then(() => {
+                    setSelectedIds(new Set());
+                    setSelectionMode(false);
+                  })
+                  : deleteCollectionList(collectionOrganizerPreferences.selectedListId!);
+                void action.then(() => setDeleteTarget(null)).catch(error => setActionError(error.message));
+              }}
+            >
+              <Text style={[styles.bulkAction, { color: C.destructive }]}>Delete</Text>
+            </Pressable>
+          </View>
+        </View></View>
+      </Modal>
+      {!!actionError && <View style={styles.notice}><Text style={styles.errorText}>{actionError}</Text><Pressable onPress={() => setActionError(null)}><Feather name="x" size={16} color={C.foreground}/></Pressable></View>}
     </View>
   );
 }
@@ -712,22 +862,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#3E252B',
-    backgroundColor: '#271317',
-  },
-  avatarText: {
-    color: '#FF8F9A',
-    fontFamily: 'Inter_800ExtraBold',
-    fontSize: 10,
-    letterSpacing: 0.5,
-  },
   kicker: {
     color: '#7D7A7D',
     fontFamily: 'Inter_700Bold',
@@ -966,4 +1100,22 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
   },
+  bulkBar: { position: 'absolute', left: 12, right: 12, minHeight: 52, paddingHorizontal: 14, borderRadius: 16, backgroundColor: C.surfaceRaised, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 10 },
+  bulkText: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  bulkAction: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 12, padding: 5 },
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
+  sheet: { backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 10, maxHeight: '80%' },
+  sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  sheetTitle: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: .5 },
+  sheetRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: C.border },
+  sheetText: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  sheetMeta: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 6 },
+  createRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8 },
+  organizerSummary: { paddingHorizontal: 20, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  filterInputRow: { flexDirection: 'row', gap: 8, marginVertical: 5 },
+  createInput: { flex: 1, minHeight: 44, borderRadius: 10, paddingHorizontal: 12, color: C.foreground, backgroundColor: C.input, fontFamily: 'Inter_400Regular' },
+  renameInput: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, padding: 0 },
+  confirmCard: { margin: 20, borderRadius: 18, backgroundColor: C.surfaceRaised, padding: 22, gap: 12 },
+  confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 18, marginTop: 4 },
+  notice: { position: 'absolute', left: 20, right: 20, top: 76, borderRadius: 12, padding: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.destructive, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 });

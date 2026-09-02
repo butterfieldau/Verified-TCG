@@ -54,6 +54,148 @@ export interface CatalogResponse {
   meta?: CatalogResponseMeta;
 }
 
+export interface CollectionListNameMutation {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+}
+
+export interface CollectionListOrderMutation {
+  /** @maxItems 500 */
+  listIds: string[];
+}
+
+export interface HoldingIdsMutation {
+  /**
+     * @minItems 1
+     * @maxItems 500
+     */
+  holdingIds: string[];
+}
+
+export interface CollectionList {
+  id: string;
+  name: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+  holdingIds: string[];
+}
+
+export type CollectionPreferencesViewMode = typeof CollectionPreferencesViewMode[keyof typeof CollectionPreferencesViewMode];
+
+
+export const CollectionPreferencesViewMode = {
+  grid: 'grid',
+  list: 'list',
+  compact: 'compact',
+} as const;
+
+export type CollectionPreferencesFilterState = { [key: string]: unknown };
+
+export type CollectionPreferencesSortKey = typeof CollectionPreferencesSortKey[keyof typeof CollectionPreferencesSortKey];
+
+
+export const CollectionPreferencesSortKey = {
+  date_desc: 'date_desc',
+  date_asc: 'date_asc',
+  name_asc: 'name_asc',
+  name_desc: 'name_desc',
+  value_desc: 'value_desc',
+  value_asc: 'value_asc',
+  quantity_desc: 'quantity_desc',
+  quantity_asc: 'quantity_asc',
+  gain_desc: 'gain_desc',
+  gain_asc: 'gain_asc',
+} as const;
+
+export interface CollectionPreferences {
+  viewMode: CollectionPreferencesViewMode;
+  /** @nullable */
+  selectedListId: string | null;
+  filterState: CollectionPreferencesFilterState;
+  sortKey: CollectionPreferencesSortKey;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+export type CollectionPreferencesMutationViewMode = typeof CollectionPreferencesMutationViewMode[keyof typeof CollectionPreferencesMutationViewMode];
+
+
+export const CollectionPreferencesMutationViewMode = {
+  grid: 'grid',
+  list: 'list',
+  compact: 'compact',
+} as const;
+
+export type CollectionPreferencesMutationFilterState = { [key: string]: unknown };
+
+export type CollectionPreferencesMutationSortKey = typeof CollectionPreferencesMutationSortKey[keyof typeof CollectionPreferencesMutationSortKey];
+
+
+export const CollectionPreferencesMutationSortKey = {
+  date_desc: 'date_desc',
+  date_asc: 'date_asc',
+  name_asc: 'name_asc',
+  name_desc: 'name_desc',
+  value_desc: 'value_desc',
+  value_asc: 'value_asc',
+  quantity_desc: 'quantity_desc',
+  quantity_asc: 'quantity_asc',
+  gain_desc: 'gain_desc',
+  gain_asc: 'gain_asc',
+} as const;
+
+export interface CollectionPreferencesMutation {
+  viewMode?: CollectionPreferencesMutationViewMode;
+  /** @nullable */
+  selectedListId?: string | null;
+  filterState?: CollectionPreferencesMutationFilterState;
+  sortKey?: CollectionPreferencesMutationSortKey;
+}
+
+export interface CollectionOrganization {
+  lists: CollectionList[];
+  preferences: CollectionPreferences;
+}
+
+export interface CollectionListSubtotal {
+  listId: string;
+  currency: string;
+  holdingCount: number;
+  uniqueHoldingCount: number;
+  /** @nullable */
+  totalValueCents: number | null;
+  /** @nullable */
+  totalValue: number | null;
+  /** @nullable */
+  totalCostCents: number | null;
+  /** @nullable */
+  totalCost: number | null;
+  pricedHoldings: number;
+  totalHoldings: number;
+  valuationComplete: boolean;
+}
+
+export interface CollectionBulkMutation {
+  /**
+     * @minItems 1
+     * @maxItems 500
+     */
+  holdingIds: string[];
+  assignToListId?: string;
+  removeFromListId?: string;
+  isForSale?: boolean;
+  isForTrade?: boolean;
+  delete?: boolean;
+}
+
+export type CollectionBulkResponse = CollectionOrganization & {
+  deletedHoldingIds: string[];
+};
+
 export type CollectionMutationCard = { [key: string]: unknown };
 
 export type CollectionMutationCondition = typeof CollectionMutationCondition[keyof typeof CollectionMutationCondition];
@@ -497,6 +639,10 @@ export type CommitCollectionCsvImportBody = {
   contentSha256: string;
   /** @pattern ^[A-Za-z]{3}$ */
   sourceCurrency?: string;
+};
+
+export type GetCollectionListSubtotalParams = {
+displayCurrency?: string;
 };
 
 export type GetCollectionSummaryParams = {

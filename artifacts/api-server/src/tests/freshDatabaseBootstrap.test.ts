@@ -164,15 +164,15 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 78);
+       assert.equal(beforeSecondBootstrap.tables.length, 81);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }
 
-      assert.equal(beforeSecondBootstrap.migrations.length, 8);
+       assert.equal(beforeSecondBootstrap.migrations.length, 9);
       assert.equal(
         new Set(beforeSecondBootstrap.migrations).size,
-        8,
+         9,
         "each recorded migration must be present exactly once",
       );
       assert.deepEqual(
@@ -181,7 +181,7 @@ describe("fresh database bootstrap", () => {
         "journal rows must be the real Drizzle records for the repository migration sources",
       );
 
-      const [pushTokenFk, providerEpid] = await Promise.all([
+       const [pushTokenFk, providerEpid, collectionOrganizationConstraints] = await Promise.all([
         freshPool.query<{ conname: string }>(
           `SELECT conname
            FROM pg_constraint
@@ -196,9 +196,18 @@ describe("fresh database bootstrap", () => {
              AND table_name = 'card_provider_mappings'
              AND column_name = 'provider_epid'`,
         ),
+         freshPool.query<{ conname: string }>(
+           `SELECT conname FROM pg_constraint
+            WHERE conrelid IN ('collection_lists'::regclass, 'collection_list_items'::regclass, 'collection_preferences'::regclass)
+              AND (contype = 'f' OR contype = 'u' OR contype = 'p')`,
+         ),
       ]);
       assert.equal(pushTokenFk.rows.length, 1, "push_tokens must reference users");
       assert.equal(providerEpid.rows.length, 1, "card_provider_mappings.provider_epid must exist");
+       assert.ok(
+         collectionOrganizationConstraints.rows.length >= 7,
+         "collection organization tables must retain their ownership, cascade, and uniqueness constraints",
+       );
 
       const bootstrapData = await freshPool.query<{ table_name: string; count: string }>(
         `SELECT 'pricing_providers' AS table_name, count(*)::text FROM pricing_providers

@@ -184,6 +184,40 @@ export function getModerationTableDDL(): readonly string[] {
  * already-migrated database is always safe.
  */
 const TABLE_MIGRATIONS: string[] = [
+  // Collection organization is deliberately also reconciled here. Legacy
+  // installations bypass the tracked journal, while fresh installations see
+  // the identical shape through 0008_collection_organization.sql.
+  `CREATE TABLE IF NOT EXISTS collection_lists (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT collection_lists_user_name_uniq UNIQUE (user_id, name)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_lists_user_position_idx
+     ON collection_lists (user_id, position)`,
+  `CREATE TABLE IF NOT EXISTS collection_list_items (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    list_id UUID NOT NULL REFERENCES collection_lists(id) ON DELETE CASCADE,
+    collection_item_id UUID NOT NULL REFERENCES collection_items(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT collection_list_items_list_holding_uniq UNIQUE (list_id, collection_item_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_list_items_holding_idx
+     ON collection_list_items (collection_item_id)`,
+  `CREATE INDEX IF NOT EXISTS collection_list_items_user_list_idx
+     ON collection_list_items (user_id, list_id)`,
+  `CREATE TABLE IF NOT EXISTS collection_preferences (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    view_mode TEXT NOT NULL DEFAULT 'grid',
+    selected_list_id UUID REFERENCES collection_lists(id) ON DELETE SET NULL,
+    filter_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sort_key TEXT NOT NULL DEFAULT 'date_desc',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
   `CREATE TABLE IF NOT EXISTS collection_import_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -167,6 +167,58 @@ export interface CollectionItem {
   isForTrade?: boolean;
 }
 
+// ── Collection organizer ─────────────────────────────────────────────────────
+
+/** A collector-owned named grouping. Membership is stored by holding id. */
+export interface CollectionList {
+  id: string;
+  name: string;
+  position: number;
+  holdingIds: string[];
+  itemCount?: number;
+  subtotal?: {
+    currency: string;
+    totalValue: number | null;
+    totalCost: number | null;
+    pricedHoldings: number;
+    totalHoldings: number;
+    valuationComplete: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CollectionSortField = 'name' | 'value' | 'date' | 'quantity' | 'gain';
+export type CollectionSortDirection = 'asc' | 'desc';
+
+export interface CollectionOrganizerFilters {
+  tcg?: TCGId;
+  graded?: boolean;
+  forSale?: boolean;
+  forTrade?: boolean;
+  conditions?: CardCondition[];
+  gradingCompanies?: GradingCompany[];
+  minGrade?: number;
+  maxGrade?: number;
+  minValue?: number;
+  maxValue?: number;
+  acquiredAfter?: string;
+  acquiredBefore?: string;
+  pricing?: 'priced' | 'unpriced';
+  /** Quote age in days, calculated from valuation.updatedAt. */
+  pricingFreshness?: 'fresh' | 'stale';
+  freshnessDays?: number;
+  listId?: string;
+}
+
+export interface CollectionOrganizerPreferences {
+  version: 1;
+  selectedListId: string | null;
+  filters: CollectionOrganizerFilters;
+  sort: { field: CollectionSortField; direction: CollectionSortDirection };
+  viewMode: 'grid' | 'list';
+}
+
 /** Alert types supported by the current price-monitoring model. */
 export type PriceAlertType = 'price-drop' | 'price-rise';
 

@@ -51,4 +51,33 @@ describe('authenticated navigation contract', () => {
     expect(signInSource).toMatch(/router\.replace\([\s\S]*\?\?\s*'\/\(tabs\)'/);
     expect(onboardingSource.match(/router\.replace\('\/\(tabs\)'\)/g)).toHaveLength(2);
   });
+
+  it('keeps collection list deletion separate from selected-holding deletion', () => {
+    const collectionSource = readAppFile('(tabs)', 'collection.tsx');
+
+    expect(collectionSource).toContain("useState<'holdings' | 'list' | null>(null)");
+    expect(collectionSource).toContain("setDeleteTarget('holdings')");
+    expect(collectionSource).toContain("setDeleteTarget('list')");
+    expect(collectionSource).toContain("deleteTarget === 'holdings'");
+    expect(collectionSource).toContain('selectedIds.size === 0');
+    expect(collectionSource).toMatch(/onLongPress=\{\(\) => \{\s*setSelectionMode\(true\);\s*toggleSelection\(item\.id\);/);
+  });
+
+  it('derives every collection sort mode from hydrated organizer preferences', () => {
+    const collectionSource = readAppFile('(tabs)', 'collection.tsx');
+
+    expect(collectionSource).toContain("collectionOrganizerPreferences.sort.field === 'date'");
+    expect(collectionSource).toContain(': collectionOrganizerPreferences.sort.field;');
+    expect(collectionSource).not.toContain('const [sortBy, setSortBy]');
+    expect(collectionSource).toContain("['name', 'value', 'recent', 'quantity', 'gain']");
+  });
+
+  it('assigns selections from All Collection through a destination-list picker', () => {
+    const collectionSource = readAppFile('(tabs)', 'collection.tsx');
+
+    expect(collectionSource).toContain('setDestinationListOpen(true)');
+    expect(collectionSource).toContain('ADD TO LIST');
+    expect(collectionSource).toContain("updateCollectionListMembership(list.id, [...selectedIds], 'add')");
+    expect(collectionSource).toContain("runBulk('removeList')");
+  });
 });

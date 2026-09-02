@@ -20,7 +20,19 @@ import type {
   MarketFilters,
   User,
   PortfolioSummary,
+  CollectionList,
+  CollectionOrganizerPreferences,
 } from '@/types';
+import {
+  createCollectionList as createCollectionListRequest,
+  deleteCollectionList as deleteCollectionListRequest,
+  addCollectionListItems,
+  bulkUpdateCollectionItems,
+  fetchCollectionOrganization,
+  saveCollectionPreferences,
+  renameCollectionList as renameCollectionListRequest,
+  reorderCollectionLists as reorderCollectionListsRequest,
+} from '@/services/collectionOrganizer';
 import {
   getItemCurrentValue,
   getCollectionHoldingIdentity,
@@ -152,6 +164,10 @@ interface AppState {
   // ── Event Mode ─────────────────────────────────────────────────────────────
   /** ID of the event the collector is currently participating in, or null. */
   currentEventId: string | null;
+  /** Locally durable, account-scoped organizer presentation state. */
+  collectionOrganizerPreferences: CollectionOrganizerPreferences;
+  collectionLists: CollectionList[];
+  collectionListMemberships: Record<string, string[]>;
 }
 
 interface AppActions {
@@ -216,6 +232,14 @@ interface AppActions {
   // ── Event Mode ─────────────────────────────────────────────────────────────
   /** Set or clear the currently active event ID. */
   setCurrentEventId: (id: string | null) => void;
+  setCollectionOrganizerPreferences: (patch: Partial<CollectionOrganizerPreferences>) => void;
+  createCollectionList: (name: string, color?: string) => Promise<CollectionList>;
+  deleteCollectionList: (id: string) => Promise<void>;
+  renameCollectionList: (id: string, name: string) => Promise<void>;
+  reorderCollectionLists: (listIds: string[]) => Promise<void>;
+  updateCollectionListMembership: (listId: string, holdingIds: string[], operation: 'add' | 'remove') => Promise<void>;
+  bulkUpdateCollectionHoldings: (holdingIds: string[], patch: Pick<CollectionItem, 'isForSale' | 'isForTrade'>) => Promise<void>;
+  bulkDeleteCollectionHoldings: (holdingIds: string[]) => Promise<void>;
 }
 
 export type AppContextType = AppState & AppActions;
@@ -234,6 +258,11 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
 const COLLECTION_CACHE_PREFIX = '@verified_tcg/collection_cache_v2';
+const ORGANIZER_PREFERENCES_PREFIX = '@verified_tcg/collection_organizer_v1';
+const DEFAULT_ORGANIZER_PREFERENCES: CollectionOrganizerPreferences = {
+  version: 1, selectedListId: null, filters: {},
+  sort: { field: 'value', direction: 'desc' }, viewMode: 'grid',
+};
 const EMPTY_PORTFOLIO_CHART_DATA: PortfolioSummary['chartData'] = {
   '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [],
 };
@@ -253,6 +282,9 @@ interface CollectionCachePayload {
 
 function collectionCacheKey(userId: string): string {
   return `${COLLECTION_CACHE_PREFIX}:${encodeURIComponent(userId)}`;
+}
+function organizerPreferencesKey(userId: string): string {
+  return `${ORGANIZER_PREFERENCES_PREFIX}:${encodeURIComponent(userId)}`;
 }
 
 function collectionRefreshIssue(error: unknown): CollectionRefreshIssue {
@@ -441,6 +473,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Event Mode state ───────────────────────────────────────────────────────
   const [currentEventId, setCurrentEventId] = useState<string | null>(null);
+  const [collectionOrganizerPreferences, setCollectionOrganizerPreferencesState] =
+    useState<CollectionOrganizerPreferences>(DEFAULT_ORGANIZER_PREFERENCES);
+  const [collectionLists, setCollectionLists] = useState<CollectionList[]>([]);
+  const [collectionListMemberships, setCollectionListMemberships] = useState<Record<string, string[]>>({});
+  const organizerPreferencesLoadedFor = useRef<string | null>(null);
+  const organizerPreferencesDirty = useRef(false);
 
   // ── Subscription state ─────────────────────────────────────────────────────
   const [subscriptionTier, setSubscriptionTierState] = useState<SubscriptionTier>('free');
@@ -622,6 +660,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!scansLoaded) return;
     saveScanState(scansUsed, scanResetDate).catch(() => {});
   }, [scansUsed, scanResetDate, scansLoaded]);
+
+  // Organizer controls are deliberately per-account. Do not show a previous
+  // collector's list selection while an auth transition is in progress.
+  useEffect(() => {
+    const ownerId = user?.id;
+    let active = true;
+    if (!ownerId) {
+      organizerPreferencesLoadedFor.current = null;
+      organizerPreferencesDirty.current = false;
+      setCollectionOrganizerPreferencesState(DEFAULT_ORGANIZER_PREFERENCES);
+      setCollectionLists([]);
+      setCollectionListMemberships({});
+      return () => { active = false; };
+    }
+    organizerPreferencesLoadedFor.current = null;
+    organizerPreferencesDirty.current = false;
+    setCollectionOrganizerPreferencesState(DEFAULT_ORGANIZER_PREFERENCES);
+    setCollectionLists([]);
+    setCollectionListMemberships({});
+    void (async () => {
+      try {
+        // Cross-device server state wins. The local cache is read only if the
+        // organization request is unavailable, and hydration never triggers a PUT.
+        const organization = await fetchCollectionOrganization();
+        if (!active) return;
+        setCollectionLists(organization.lists.map(list => ({ ...list, itemCount: list.holdingIds.length })));
+        setCollectionListMemberships(Object.fromEntries(organization.lists.map(list => [list.id, list.holdingIds])));
+        const [field = 'date', direction = 'desc'] = organization.preferences.sortKey.split('_');
+        const safeField = ['name', 'value', 'date', 'quantity', 'gain'].includes(field) ? field as CollectionOrganizerPreferences['sort']['field'] : 'date';
+        const hydratedPreferences: CollectionOrganizerPreferences = {
+          ...DEFAULT_ORGANIZER_PREFERENCES,
+          selectedListId: organization.preferences.selectedListId,
+          filters: organization.preferences.filterState ?? {},
+          viewMode: organization.preferences.viewMode === 'list' ? 'list' : 'grid',
+          sort: { field: safeField, direction: direction === 'asc' ? 'asc' : 'desc' },
+        };
+        setCollectionOrganizerPreferencesState(hydratedPreferences);
+        await AsyncStorage.setItem(organizerPreferencesKey(ownerId), JSON.stringify(hydratedPreferences));
+      } catch {
+        try {
+          const raw = await AsyncStorage.getItem(organizerPreferencesKey(ownerId));
+          if (!active) return;
+          const parsed = raw ? JSON.parse(raw) as CollectionOrganizerPreferences : null;
+          if (parsed?.version === 1) {
+            setCollectionOrganizerPreferencesState({ ...DEFAULT_ORGANIZER_PREFERENCES, ...parsed, filters: parsed.filters ?? {} });
+          }
+        } catch { /* malformed or unavailable local preferences are safely reset */ }
+      } finally {
+        if (active) organizerPreferencesLoadedFor.current = ownerId;
+      }
+    })();
+    return () => { active = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || organizerPreferencesLoadedFor.current !== user.id || !organizerPreferencesDirty.current) return;
+    organizerPreferencesDirty.current = false;
+    AsyncStorage.setItem(
+      organizerPreferencesKey(user.id),
+      JSON.stringify(collectionOrganizerPreferences),
+    ).catch(() => {});
+    void saveCollectionPreferences({
+      viewMode: collectionOrganizerPreferences.viewMode,
+      selectedListId: collectionOrganizerPreferences.selectedListId,
+      filterState: collectionOrganizerPreferences.filters,
+      sortKey: `${collectionOrganizerPreferences.sort.field}_${collectionOrganizerPreferences.sort.direction}`,
+    }).catch(() => {});
+  }, [collectionOrganizerPreferences, user?.id]);
 
   /**
    * Server sync on initial load.
@@ -1050,6 +1156,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFoundingMemberClaimed(false);
     setPricesLastUpdated(null);
     setCurrentEventId(null);
+    setCollectionOrganizerPreferencesState(DEFAULT_ORGANIZER_PREFERENCES);
+    setCollectionLists([]);
+    setCollectionListMemberships({});
   }, []);
 
   const deleteAccount = useCallback(async (password: string) => {
@@ -1073,6 +1182,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFoundingMemberClaimed(false);
     setPricesLastUpdated(null);
     setCurrentEventId(null);
+    setCollectionOrganizerPreferencesState(DEFAULT_ORGANIZER_PREFERENCES);
+    setCollectionLists([]);
+    setCollectionListMemberships({});
   }, []);
 
   const updateProfile = useCallback(async (patch: Pick<User, 'firstName' | 'lastName' | 'username' | 'bio' | 'location'> & {
@@ -1194,6 +1306,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [loadCollection, refreshPortfolioHistory]);
+
+  const setCollectionOrganizerPreferences = useCallback((patch: Partial<CollectionOrganizerPreferences>) => {
+    organizerPreferencesDirty.current = true;
+    setCollectionOrganizerPreferencesState(current => ({
+      ...current,
+      ...patch,
+      filters: patch.filters === undefined ? current.filters : patch.filters,
+      sort: patch.sort === undefined ? current.sort : patch.sort,
+    }));
+  }, []);
+
+  const createCollectionList = useCallback(async (name: string, color?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Give this list a name.');
+    const organization = await createCollectionListRequest(trimmed);
+    setCollectionLists(organization.lists.map(list => ({ ...list, itemCount: list.holdingIds.length })));
+    setCollectionListMemberships(Object.fromEntries(organization.lists.map(list => [list.id, list.holdingIds])));
+    const created = organization.lists.find(list => list.name === trimmed);
+    if (!created) throw new Error('List was created but could not be resolved.');
+    return created;
+  }, []);
+
+  const deleteCollectionList = useCallback(async (id: string) => {
+    const organization = await deleteCollectionListRequest(id);
+    setCollectionLists(organization.lists.map(list => ({ ...list, itemCount: list.holdingIds.length })));
+    setCollectionListMemberships(Object.fromEntries(organization.lists.map(list => [list.id, list.holdingIds])));
+    setCollectionOrganizerPreferencesState(current => current.selectedListId === id
+      ? { ...current, selectedListId: null, filters: { ...current.filters, listId: undefined } }
+      : current);
+  }, []);
+
+  const applyOrganizationLists = useCallback((organization: { lists: CollectionList[] }) => {
+    setCollectionLists(organization.lists.map(list => ({ ...list, itemCount: list.holdingIds.length })));
+    setCollectionListMemberships(Object.fromEntries(organization.lists.map(list => [list.id, list.holdingIds])));
+  }, []);
+  const renameCollectionList = useCallback(async (id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Give this list a name.');
+    applyOrganizationLists(await renameCollectionListRequest(id, trimmed));
+  }, [applyOrganizationLists]);
+  const reorderCollectionLists = useCallback(async (listIds: string[]) => {
+    applyOrganizationLists(await reorderCollectionListsRequest(listIds));
+  }, [applyOrganizationLists]);
+
+  const updateCollectionListMembership = useCallback(async (
+    listId: string, holdingIds: string[], operation: 'add' | 'remove',
+  ) => {
+    if (!holdingIds.length) return;
+    let organization;
+    if (operation === 'add') organization = await addCollectionListItems(listId, holdingIds);
+    else organization = await bulkUpdateCollectionItems({ holdingIds, removeFromListId: listId });
+    applyOrganizationLists(organization);
+  }, [applyOrganizationLists]);
+
+  const bulkUpdateCollectionHoldings = useCallback(async (
+    holdingIds: string[], patch: Pick<CollectionItem, 'isForSale' | 'isForTrade'>,
+  ) => {
+    if (!holdingIds.length) return;
+    applyOrganizationLists(await bulkUpdateCollectionItems({ holdingIds, ...patch }));
+    await loadCollection(undefined, true);
+    void refreshPortfolioHistory();
+  }, [applyOrganizationLists, loadCollection, refreshPortfolioHistory]);
+  const bulkDeleteCollectionHoldings = useCallback(async (holdingIds: string[]) => {
+    if (!holdingIds.length) return;
+    applyOrganizationLists(await bulkUpdateCollectionItems({ holdingIds, delete: true }));
+    await loadCollection(undefined, true);
+    void refreshPortfolioHistory();
+  }, [applyOrganizationLists, loadCollection, refreshPortfolioHistory]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
     // Optimistic local update
@@ -1492,6 +1672,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         foundingMemberClaimed,
         claimFoundingMember: () => setFoundingMemberClaimed(true),
         currentEventId, setCurrentEventId,
+        collectionOrganizerPreferences, collectionLists, collectionListMemberships,
+        setCollectionOrganizerPreferences, createCollectionList, deleteCollectionList,
+        renameCollectionList, reorderCollectionLists,
+        updateCollectionListMembership, bulkUpdateCollectionHoldings,
+        bulkDeleteCollectionHoldings,
       }}
     >
       {children}
