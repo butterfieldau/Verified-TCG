@@ -80,6 +80,7 @@ jest.mock('../services/tcgPreferences', () => ({
 // ── Import under test (after mocks) ──────────────────────────────────────────
 import { AppProvider, useApp } from '../context/AppContext';
 import type { AppContextType } from '../context/AppContext';
+import { SettingsProvider } from '../context/SettingsContext';
 import { restoreSession, fetchCurrentUser } from '../services/auth';
 import { addCollectionItem } from '../services/collection';
 import { refreshVerifiedPricing } from '../services/verifiedPricing';
@@ -104,9 +105,11 @@ function mountProvider(): { getValue: () => AppContextType; unmount: () => void 
   let tree!: renderer.ReactTestRenderer;
   act(() => {
     tree = renderer.create(
-      <AppProvider>
-        <Spy />
-      </AppProvider>,
+      <SettingsProvider>
+        <AppProvider>
+          <Spy />
+        </AppProvider>
+      </SettingsProvider>,
     );
   });
 
@@ -287,9 +290,11 @@ async function mountProviderAsync({ extraFlush = false } = {}) {
   let tree!: renderer.ReactTestRenderer;
   await act(async () => {
     tree = renderer.create(
-      <AppProvider>
-        <Spy />
-      </AppProvider>,
+      <SettingsProvider>
+        <AppProvider>
+          <Spy />
+        </AppProvider>
+      </SettingsProvider>,
     );
   });
 

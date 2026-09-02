@@ -97,6 +97,7 @@ jest.mock('../services/profile', () => ({
 
 import { AppProvider, useApp } from '../context/AppContext';
 import type { AppContextType } from '../context/AppContext';
+import { SettingsProvider } from '../context/SettingsContext';
 
 function mountProvider(): { getValue: () => AppContextType; unmount: () => void } {
   const ctxRef = { current: null as AppContextType | null };
@@ -107,7 +108,9 @@ function mountProvider(): { getValue: () => AppContextType; unmount: () => void 
   let tree!: renderer.ReactTestRenderer;
   act(() => {
     tree = renderer.create(
-      <AppProvider><Spy /></AppProvider>,
+      <SettingsProvider>
+        <AppProvider><Spy /></AppProvider>
+      </SettingsProvider>,
     );
   });
   return {
