@@ -280,13 +280,14 @@ const { width: W } = Dimensions.get('window');
 
 
 /** Card aspect ratio: 2.5 wide × 3.5 tall */
-const CARD_W = W - 40;
+const CARD_W = Math.min(W - 48, 210);
 const CARD_H = CARD_W * (3.5 / 2.5);
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
 type PriceTab = 'Raw' | 'PSA 9' | 'PSA 10' | 'CGC 10' | 'BGS 9.5';
+type DetailMode = 'Raw' | 'Graded' | 'POP';
 
 const PRICE_TABS: PriceTab[] = ['Raw', 'PSA 9', 'PSA 10', 'CGC 10', 'BGS 9.5'];
 
@@ -520,7 +521,7 @@ const imgStyles = StyleSheet.create({
   container: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -532,7 +533,7 @@ const imgStyles = StyleSheet.create({
   imageWrap: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -540,7 +541,7 @@ const imgStyles = StyleSheet.create({
   image: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
   },
   spinner: {
     ...StyleSheet.absoluteFillObject,
@@ -607,6 +608,8 @@ export default function CardDetailScreen() {
   const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const { currency: displayCurrency } = useSettings();
   const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
+  const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
+  const [showSoldHistory, setShowSoldHistory] = useState(false);
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
@@ -861,6 +864,19 @@ export default function CardDetailScreen() {
 
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
+  const ownedItems = collection.filter(item => item.cardId === card.id);
+  const ownedQuantity = ownedItems.reduce((sum, item) => sum + item.quantity, 0);
+  const populationRecords = ownedItems.filter(item => item.grading?.population != null);
+  const change24h = card.price.change24h;
+
+  function selectDetailMode(mode: DetailMode) {
+    setDetailMode(mode);
+    if (mode === 'Raw') setPriceTab('Raw');
+    if (mode === 'Graded' && priceTab === 'Raw') {
+      const firstAvailable = PRICE_TABS.slice(1).find(tab => effectiveTabPrice(tab) !== undefined);
+      if (firstAvailable) setPriceTab(firstAvailable);
+    }
+  }
 
   function handleAddToCollection() {
     // Acquisition cost is collector-entered data. Never silently use the
@@ -911,6 +927,11 @@ export default function CardDetailScreen() {
           >
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
+          <View style={styles.navContext}>
+            <Text style={styles.navKicker}>CARD PASSPORT</Text>
+            <View style={styles.navDot} />
+            <Text style={styles.navVerified}>VERIFIED</Text>
+          </View>
           <View style={styles.navRight}>
             <Pressable
               onPress={handleWishlistToggle}
@@ -942,6 +963,9 @@ export default function CardDetailScreen() {
 
         {/* Card artwork + swipe navigation overlays */}
         <View style={styles.cardStage}>
+          <View style={styles.heroGlow} />
+          <View style={styles.heroRingOuter} />
+          <View style={styles.heroRingInner} />
           {card.imageUrl ? (
             <ZoomableCardImage
               imageUrl={card.imageUrl}
@@ -959,6 +983,10 @@ export default function CardDetailScreen() {
               verificationStatus={card.verificationStatus}
             />
           )}
+          <View style={styles.identityStamp}>
+            <Feather name="check" size={10} color={C.positive} />
+            <Text style={styles.identityStampText}>IDENTITY MATCHED</Text>
+          </View>
 
           {/* Prev/next arrow buttons */}
           {hasPrev && (
@@ -1019,10 +1047,29 @@ export default function CardDetailScreen() {
           </Animated.View>
         )}
 
-        {/* Title block */}
-        <View style={styles.titleBlock}>
-          <Text style={styles.cardName}>{card.name}</Text>
-          <Text style={styles.cardMeta}>{card.setName} · {card.number}</Text>
+        {/* Identity and current value */}
+        <View style={styles.identityCard}>
+          <View style={styles.identityTop}>
+            <View style={styles.identityCopy}>
+              <Text style={styles.identityEyebrow}>
+                {card.tcg === 'pokemon' ? 'POKÉMON' : card.tcg === 'magic' ? 'MAGIC: THE GATHERING' : card.tcg.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase()}
+                {' · '}{card.setName.toUpperCase()}
+              </Text>
+              <Text style={styles.cardName}>{card.name}</Text>
+              <Text style={styles.cardMeta}>{RARITY_LABELS[card.rarity]} · {card.number} · {card.isFoil || card.isHolo ? 'Foil' : card.year}</Text>
+            </View>
+            <Pressable
+              onPress={handleWishlistToggle}
+              style={styles.favoriteButton}
+              accessibilityRole="button"
+              accessibilityLabel={isWatched ? 'Open wishlist' : 'Add to wishlist'}
+              accessibilityState={{ selected: isWatched }}
+              hitSlop={8}
+            >
+              <Feather name="heart" size={21} color={isWatched ? C.primary : C.mutedForeground} />
+            </Pressable>
+          </View>
+
           <View style={styles.tagRow}>
             <View style={[styles.tag, { backgroundColor: C.muted }]}>
               <Text style={styles.tagText}>{RARITY_LABELS[card.rarity]}</Text>
@@ -1036,52 +1083,120 @@ export default function CardDetailScreen() {
               </Text>
             </View>
           </View>
+
+          <View style={styles.valueRow}>
+            <View>
+              <Text style={styles.valueLabel}>{priceTab} verified market value</Text>
+              <Text style={styles.valueAmount}>
+                {activePrice !== undefined
+                  ? `${displayCurrency} ${activePrice.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : 'Price unavailable'}
+              </Text>
+            </View>
+            {change24h !== undefined && (
+              <View style={styles.changeColumn}>
+                <View style={styles.changeRow}>
+                  <Feather
+                    name={change24h >= 0 ? 'trending-up' : 'trending-down'}
+                    size={13}
+                    color={change24h >= 0 ? C.positive : C.negative}
+                  />
+                  <Text style={[styles.changeText, { color: change24h >= 0 ? C.positive : C.negative }]}>
+                    {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
+                  </Text>
+                </View>
+                <Text style={styles.valueSource}>24 hour move</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.confidenceRow}>
+            <View style={styles.confidenceStatus}>
+              <View style={styles.confidenceDot} />
+              <Text style={styles.confidenceText}>{card.price.available ? 'Verified provider quote' : 'Awaiting verified quote'}</Text>
+            </View>
+            <Text style={styles.confidenceText}>{card.price.currency}</Text>
+          </View>
+
+          <Pressable
+            onPress={() => {
+              setDetailMode('Raw');
+              setShowSoldHistory(current => !current);
+            }}
+            style={styles.soldListingsButton}
+            accessibilityRole="button"
+            accessibilityLabel={showSoldHistory ? 'Hide sold listings' : 'View sold listings'}
+          >
+            <Feather name="tag" size={15} color={C.primaryForeground} />
+            <Text style={styles.soldListingsButtonText}>{showSoldHistory ? 'Hide sold listings' : 'View sold listings'}</Text>
+            <Feather name={showSoldHistory ? 'chevron-up' : 'external-link'} size={14} color={C.primaryForeground} />
+          </Pressable>
         </View>
 
-        {/* Condition/grade price tabs */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.priceTabs}
-          contentContainerStyle={styles.priceTabsContent}
-        >
-          {PRICE_TABS.map(t => {
-            const price = effectiveTabPrice(t);
-            if (!price) return null;
-            return (
-              <Pressable
-                key={t}
-                onPress={() => setPriceTab(t)}
-                style={[
-                  styles.priceTab,
-                  priceTab === t && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
-                ]}
-                accessibilityRole="tab"
-                accessibilityLabel={`${t} price: $${price.toLocaleString('en-AU')}`}
-                accessibilityState={{ selected: priceTab === t }}
-              >
-                <Text style={[styles.priceTabLabel, priceTab === t && { color: C.primary }]}>{t}</Text>
-                <Text style={[styles.priceTabValue, priceTab === t && { color: C.foreground }]}>
-                  ${price.toLocaleString('en-AU')}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <View style={styles.modeTabs} accessibilityRole="tablist">
+          {(['Raw', 'Graded', 'POP'] as DetailMode[]).map(mode => (
+            <Pressable
+              key={mode}
+              onPress={() => selectDetailMode(mode)}
+              style={[styles.modeTab, detailMode === mode && styles.modeTabActive]}
+              accessibilityRole="tab"
+              accessibilityLabel={`${mode} card details`}
+              accessibilityState={{ selected: detailMode === mode }}
+            >
+              <Text style={[styles.modeTabLabel, detailMode === mode && styles.modeTabLabelActive]}>{mode}</Text>
+              <Text style={[styles.modeTabCaption, detailMode === mode && styles.modeTabCaptionActive]}>
+                {mode === 'Raw' ? 'market' : mode === 'Graded' ? 'slabs' : 'population'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {detailMode === 'Graded' && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.priceTabs}
+            contentContainerStyle={styles.priceTabsContent}
+          >
+            {PRICE_TABS.slice(1).map(t => {
+              const price = effectiveTabPrice(t);
+              if (!price) return null;
+              return (
+                <Pressable
+                  key={t}
+                  onPress={() => setPriceTab(t)}
+                  style={[styles.priceTab, priceTab === t && styles.priceTabActive]}
+                  accessibilityRole="tab"
+                  accessibilityLabel={`${t} price: ${displayCurrency} ${price.toLocaleString('en-AU')}`}
+                  accessibilityState={{ selected: priceTab === t }}
+                >
+                  <Text style={[styles.priceTabLabel, priceTab === t && styles.priceTabLabelActive]}>{t}</Text>
+                  <Text style={[styles.priceTabValue, priceTab === t && styles.priceTabValueActive]}>
+                    {displayCurrency} {price.toLocaleString('en-AU')}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* ── Verified Market Pricing ──────────────────────────────────── */}
-        <VerifiedPricingCard
-          card={card}
-          displayCurrency={displayCurrency}
-          isPro={hasAdvancedPricing}
-          onUpgradePress={() => router.push('/pro-subscription')}
-          chartWidth={W - 40 - 36}
-        />
+        {detailMode !== 'POP' && (
+          <VerifiedPricingCard
+            card={card}
+            displayCurrency={displayCurrency}
+            isPro={hasAdvancedPricing}
+            onUpgradePress={() => router.push('/pro-subscription')}
+            chartWidth={W - 40 - 36}
+          />
+        )}
 
-        <EbaySoldHistoryCard card={card} displayCurrency={displayCurrency} />
+        {detailMode === 'Raw' && showSoldHistory && (
+          <EbaySoldHistoryCard card={card} displayCurrency={displayCurrency} />
+        )}
 
         {/* GRADED pricing section */}
-        <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12 }]}>
+        {detailMode === 'Graded' && <View style={[styles.card, styles.marketPanel]}>
           <View style={styles.rawHeader}>
             <View style={[styles.rawBadge, { backgroundColor: `${C.primary}22` }]}>
               <Text style={[styles.rawBadgeText, { color: C.primary }]}>GRADED</Text>
@@ -1186,6 +1301,72 @@ export default function CardDetailScreen() {
               </Pressable>
             </>
           )}
+        </View>}
+
+        {detailMode === 'POP' && (
+          <View style={[styles.card, styles.marketPanel]}>
+            <View style={styles.panelHeader}>
+              <View>
+                <Text style={styles.panelKicker}>SCARCITY INDEX</Text>
+                <Text style={styles.panelTitle}>Population report</Text>
+              </View>
+              <Feather name="bar-chart-2" size={18} color={C.primary} />
+            </View>
+            {populationRecords.length > 0 ? (
+              populationRecords.map(item => (
+                <View key={item.id} style={styles.populationRow}>
+                  <View style={styles.populationGrade}>
+                    <Text style={styles.populationGradeText}>
+                      {item.grading?.company} {item.grading?.grade}
+                    </Text>
+                  </View>
+                  <View style={styles.populationCopy}>
+                    <Text style={styles.populationLabel}>Recorded population</Text>
+                    <Text style={styles.populationValue}>{item.grading?.population?.toLocaleString('en-AU')}</Text>
+                  </View>
+                  <Text style={styles.populationQuantity}>×{item.quantity}</Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.populationEmpty}>
+                <Feather name="bar-chart" size={26} color={C.mutedForeground} />
+                <Text style={styles.populationEmptyTitle}>No verified population record</Text>
+                <Text style={styles.populationEmptyText}>
+                  Population data appears here when a graded copy in your collection has a verified grading record.
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        <View style={[styles.card, styles.holdingsPanel]}>
+          <View style={styles.panelHeader}>
+            <View>
+              <Text style={styles.panelKicker}>YOUR HOLDINGS</Text>
+              <Text style={styles.panelTitle}>Your collection</Text>
+            </View>
+            <Text style={styles.holdingsCount}>{ownedQuantity} owned</Text>
+          </View>
+          {ownedItems.length > 0 ? (
+            ownedItems.map(item => (
+              <View key={item.id} style={styles.holdingRow}>
+                <View style={[styles.holdingMark, item.grading && styles.holdingMarkGraded]}>
+                  <Text style={styles.holdingMarkText}>{item.grading?.company ?? 'RAW'}</Text>
+                </View>
+                <View style={styles.holdingCopy}>
+                  <Text style={styles.holdingTitle}>
+                    {item.grading ? `${item.grading.company} ${item.grading.grade}` : 'Ungraded'}
+                  </Text>
+                  <Text style={styles.holdingMeta}>{item.condition.replace(/_/g, ' ')} · {item.quantity} tracked</Text>
+                </View>
+                <Text style={styles.holdingValue}>
+                  {item.valuation ? `${item.valuation.currency} ${(item.valuation.price * item.quantity).toLocaleString('en-AU', { maximumFractionDigits: 0 })}` : '—'}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.holdingsEmpty}>This card is not in your collection yet.</Text>
+          )}
         </View>
 
         {/* Action buttons */}
@@ -1284,26 +1465,88 @@ export default function CardDetailScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.background },
-  content: { paddingHorizontal: 20 },
+  content: { paddingHorizontal: 12 },
   nav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 8,
+    paddingHorizontal: 8,
+  },
+  navContext: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  navKicker: {
+    color: C.primary,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.7,
+  },
+  navDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.primary,
+  },
+  navVerified: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.7,
   },
   navRight: { flexDirection: 'row', gap: 8 },
   navBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.card,
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cardStage: {
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    minHeight: 340,
+    marginBottom: 0,
     position: 'relative',
+    overflow: 'hidden',
+  },
+  heroGlow: {
+    position: 'absolute',
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    backgroundColor: `${C.primary}12`,
+  },
+  heroRingOuter: {
+    position: 'absolute',
+    width: 318,
+    height: 318,
+    borderRadius: 159,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: `${C.primary}2E`,
+  },
+  heroRingInner: {
+    position: 'absolute',
+    width: 244,
+    height: 244,
+    borderRadius: 122,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: `${C.primary}3D`,
+  },
+  identityStamp: {
+    position: 'absolute',
+    right: 14,
+    bottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  identityStampText: {
+    color: C.positive,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 8,
+    letterSpacing: 1,
   },
   swipeArrowLeft: {
     position: 'absolute',
@@ -1353,24 +1596,134 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: C.mutedForeground,
   },
-  titleBlock: { marginBottom: 20 },
+  identityCard: {
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    marginBottom: 12,
+    padding: 18,
+  },
+  identityTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  identityCopy: { flex: 1 },
+  identityEyebrow: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1,
+    lineHeight: 13,
+  },
+  favoriteButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cardName: {
-    fontSize: 26,
+    fontSize: 30,
     fontFamily: 'Rajdhani_700Bold',
     color: C.foreground,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
+    lineHeight: 31,
+    marginTop: 7,
   },
   cardMeta: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
-    marginTop: 2,
-    marginBottom: 10,
+    marginTop: 5,
+    textTransform: 'capitalize',
   },
-  tagRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  tagRow: { flexDirection: 'row', gap: 7, flexWrap: 'wrap', marginTop: 12 },
+  tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7 },
   tagText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  priceTabs: { marginBottom: 20 },
+  valueRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 18,
+  },
+  valueLabel: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    marginBottom: 4,
+  },
+  valueAmount: {
+    color: C.foreground,
+    fontFamily: 'Rajdhani_700Bold',
+    fontSize: 32,
+    lineHeight: 34,
+  },
+  changeColumn: { alignItems: 'flex-end', paddingBottom: 2 },
+  changeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  changeText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
+  valueSource: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 9,
+    marginTop: 4,
+  },
+  confidenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    marginTop: 14,
+    paddingTop: 12,
+  },
+  confidenceStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  confidenceDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.positive },
+  confidenceText: { color: C.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 10 },
+  soldListingsButton: {
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 15,
+    paddingHorizontal: 14,
+  },
+  soldListingsButtonText: {
+    color: C.primaryForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 12,
+  },
+  modeTabs: {
+    flexDirection: 'row',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    borderRadius: 14,
+    backgroundColor: C.surface,
+    marginBottom: 12,
+    padding: 4,
+  },
+  modeTab: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 8,
+  },
+  modeTabActive: { backgroundColor: C.foreground },
+  modeTabLabel: { color: C.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  modeTabLabelActive: { color: C.background },
+  modeTabCaption: {
+    color: `${C.mutedForeground}99`,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 8,
+    marginTop: 2,
+  },
+  modeTabCaptionActive: { color: C.muted },
+  priceTabs: { marginBottom: 12 },
   priceTabsContent: { gap: 8, paddingRight: 4 },
   priceTab: {
     paddingHorizontal: 14,
@@ -1382,18 +1735,116 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 80,
   },
+  priceTabActive: { borderColor: C.primary, backgroundColor: `${C.primary}18` },
   priceTabLabel: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     color: C.mutedForeground,
     marginBottom: 3,
   },
+  priceTabLabelActive: { color: C.primary },
   priceTabValue: {
     fontSize: 14,
     fontFamily: 'Inter_700Bold',
     color: C.mutedForeground,
   },
-  card: { borderRadius: 16, padding: 18, marginBottom: 16 },
+  priceTabValueActive: { color: C.foreground },
+  card: {
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    padding: 18,
+    marginBottom: 12,
+  },
+  marketPanel: { backgroundColor: C.card },
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  panelKicker: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1,
+  },
+  panelTitle: {
+    color: C.foreground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 16,
+    marginTop: 5,
+  },
+  populationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    paddingVertical: 12,
+  },
+  populationGrade: {
+    minWidth: 62,
+    minHeight: 28,
+    borderRadius: 7,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+  },
+  populationGradeText: { color: C.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 10 },
+  populationCopy: { flex: 1 },
+  populationLabel: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
+  populationValue: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, marginTop: 2 },
+  populationQuantity: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  populationEmpty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 22 },
+  populationEmptyTitle: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 14, marginTop: 10 },
+  populationEmptyText: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  holdingsPanel: { backgroundColor: C.card },
+  holdingsCount: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 11 },
+  holdingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    paddingVertical: 11,
+  },
+  holdingMark: {
+    minWidth: 42,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: C.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  holdingMarkGraded: { backgroundColor: C.primary },
+  holdingMarkText: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 9 },
+  holdingCopy: { flex: 1 },
+  holdingTitle: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  holdingMeta: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 10,
+    marginTop: 3,
+    textTransform: 'capitalize',
+  },
+  holdingValue: { color: C.primary, fontFamily: 'Rajdhani_700Bold', fontSize: 16 },
+  holdingsEmpty: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    paddingVertical: 8,
+  },
   marketHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

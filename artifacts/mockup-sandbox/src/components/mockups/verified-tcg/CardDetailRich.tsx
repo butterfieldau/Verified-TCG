@@ -250,7 +250,7 @@ export function CardDetailRich() {
       <button className={`floating-save ${saved ? "active" : ""}`} onClick={() => { setSaved((current) => !current); announce(saved ? "Removed from watchlist" : "Saved to watchlist"); }} aria-label={saved ? "Remove from watchlist" : "Save to watchlist"}><Bookmark size={16} fill={saved ? "currentColor" : "none"} /></button>
       {notice && <div className="toast" role="status"><Check size={14} /> {notice}</div>}
 
-      {showImage && <div className="image-modal" role="dialog" aria-modal="true" aria-label="Card inspection"><button className="image-modal__close" onClick={() => setShowImage(false)} aria-label="Close card inspection"><X size={19} /></button><div className="hero-card hero-card--large"><span className="hero-card__label">SM168 · TAG TEAM · HP 240</span><span className="hero-card__name">PIKACHU &amp; ZEKROM GX</span><span className="hero-card__power">FULL BLITZ 150</span><span className="hero-card__shine" /></div><p>Tap outside to close · verified identity match</p></div>}
+      {showImage && <div className="image-modal" role="dialog" aria-modal="true" aria-label="Card inspection" onClick={() => setShowImage(false)}><button className="image-modal__close" onClick={() => setShowImage(false)} aria-label="Close card inspection"><X size={19} /></button><div className="hero-card hero-card--large" onClick={(event) => event.stopPropagation()}><span className="hero-card__label">SM168 · TAG TEAM · HP 240</span><span className="hero-card__name">PIKACHU &amp; ZEKROM GX</span><span className="hero-card__power">FULL BLITZ 150</span><span className="hero-card__shine" /></div><p>Tap outside to close · verified identity match</p></div>}
     </main>
   );
 }
