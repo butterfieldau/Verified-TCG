@@ -23,3 +23,4 @@
 - [Community artifact boundary](community-artifact-boundary.md) — Community exists only inside Verified TCG; never create or restore a standalone Community artifact, package, workflow, or URL.
 - [Guide reconciliation durability](guide-reconciliation-durability.md) — bulk provider matching uses bounded DB-leased pages; exact identity proof is mandatory and prior valid quotes survive omissions.
 - [PriceCharting CSV contract](pricecharting-csv-contract.md) — bulk guides are slow dollar-formatted CSVs; validate non-empty price maps and release global leases when category claims fail.
+- [Expo file reading](expo-file-reading.md) — Expo File System v19 default legacy readers throw at runtime; use the File object API for imported documents.

@@ -18,7 +18,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
-import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
@@ -31,8 +30,24 @@ import {
 
 const C = colors.dark;
 const CURRENCIES = ['AUD', 'USD', 'EUR', 'GBP', 'JPY', 'CAD'];
+const MAX_IMPORT_BYTES = 1024 * 1024;
 
 type ScreenState = 'select' | 'preview' | 'success';
+
+async function readPickedCsv(asset: DocumentPicker.DocumentPickerAsset): Promise<string> {
+  if (Platform.OS === 'web' && asset.file) {
+    return asset.file.text();
+  }
+
+  // expo-file-system v19 removed the legacy readAsStringAsync export from
+  // the default module. File.text() works with the copied file URI on iOS
+  // and Android, and also gives us one reader for future native builds.
+  return new File(asset.uri).text();
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
 
 export default function ImportCollectionScreen() {
   const insets = useSafeAreaInsets();
@@ -56,11 +71,13 @@ export default function ImportCollectionScreen() {
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
       const asset = result.assets[0];
-      let content = '';
-      if (Platform.OS === 'web' && asset.file) {
-        content = await asset.file.text();
-      } else {
-        content = await FileSystem.readAsStringAsync(asset.uri);
+      const content = await readPickedCsv(asset);
+
+      if (!content.trim()) {
+        throw new Error('The selected CSV is empty.');
+      }
+      if (utf8ByteLength(content) > MAX_IMPORT_BYTES) {
+        throw new Error('This CSV is larger than the 1 MB import limit.');
       }
 
       setSelectedFile({ name: asset.name, content });
@@ -68,7 +85,8 @@ export default function ImportCollectionScreen() {
       setPreviewRes(null);
       setError(null);
     } catch (err: any) {
-      setError('Could not read the selected file. Please ensure it is a valid CSV.');
+      const message = err instanceof Error ? err.message : '';
+      setError(message || 'Could not read the selected file. Please choose a CSV file from Files and try again.');
     }
   };
 
