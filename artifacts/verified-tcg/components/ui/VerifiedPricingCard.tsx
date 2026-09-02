@@ -42,6 +42,57 @@ const HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
   { value: 'all', label: 'ALL' },
 ];
 
+const GRADED_HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
+  { value: '30d', label: '1M' },
+  { value: '90d', label: '3M' },
+  { value: '180d', label: '6M' },
+  { value: '1y', label: '12M' },
+  { value: 'all', label: 'MAX' },
+];
+
+interface GradedQuoteOption {
+  quote: PricingQuote;
+  grader: string;
+  grade: string;
+}
+
+function getGradedQuoteOption(quote: PricingQuote): GradedQuoteOption {
+  const label = quote.label.trim();
+  const match = label.match(/^(.*?)(?:\s+)(\d+(?:\.\d+)?)$/);
+  if (!match) return { quote, grader: label || 'Graded', grade: label || '—' };
+
+  const grader = match[1]!.replace(/\s+graded$/i, '').trim() || 'Graded';
+  return { quote, grader, grade: match[2]! };
+}
+
+interface VerifiedGradePopulation {
+  company: string;
+  grade: string | number;
+  population: number;
+}
+
+function getGradePopulation(
+  option: GradedQuoteOption,
+  populations: VerifiedGradePopulation[],
+): string {
+  // Population is grading-company evidence, not pricing-provider data.
+  // Never turn a quote or collection quantity into a POP claim.
+  const match = populations.find(record =>
+    record.company.trim().toLowerCase() === option.grader.trim().toLowerCase()
+    && String(record.grade).trim() === option.grade.trim(),
+  );
+  return match ? match.population.toLocaleString('en-AU') : '—';
+}
+
+function formatPrice(value: number, currency: string): string {
+  return new Intl.NumberFormat('en-AU', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 // ── Mini Line Chart ────────────────────────────────────────────────────────────
 
 interface MiniChartProps {
@@ -49,9 +100,10 @@ interface MiniChartProps {
   width: number;
   height: number;
   loading?: boolean;
+  graded?: boolean;
 }
 
-function MiniLineChart({ points, width, height, loading }: MiniChartProps) {
+function MiniLineChart({ points, width, height, loading, graded = false }: MiniChartProps) {
   if (loading) {
     return (
       <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
@@ -103,7 +155,7 @@ function MiniLineChart({ points, width, height, loading }: MiniChartProps) {
   const lastX = coords[coords.length - 1]!.x;
   const areaPath = `${linePath} L ${lastX} ${bottom} L ${firstX} ${bottom} Z`;
   const isUp = prices[prices.length - 1]! >= prices[0]!;
-  const lineColor = isUp ? '#22c55e' : '#ef4444';
+  const lineColor = graded ? C.primary : isUp ? '#22c55e' : '#ef4444';
 
   return (
     <Svg width={width} height={height}>
@@ -179,6 +231,7 @@ interface VerifiedPricingCardProps {
   chartWidth: number;
   mode?: 'raw' | 'graded';
   onRawMarketSummaryChange?: (summary: VerifiedPricingSummary | null) => void;
+  populationRecords?: VerifiedGradePopulation[];
 }
 
 export interface VerifiedPricingSummary {
@@ -215,6 +268,7 @@ export default function VerifiedPricingCard({
   chartWidth,
   mode = 'raw',
   onRawMarketSummaryChange,
+  populationRecords = [],
 }: VerifiedPricingCardProps) {
   const [pricing, setPricing] = useState<CardPricingResult | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
@@ -223,10 +277,15 @@ export default function VerifiedPricingCard({
   const [pollAttempt, setPollAttempt] = useState(0);
 
   const [selectedGradeKey, setSelectedGradeKey] = useState<string>('raw');
+  const [selectedGradeKeys, setSelectedGradeKeys] = useState<string[]>([]);
+  const [selectedGrader, setSelectedGrader] = useState('');
+  const [openGradedSelect, setOpenGradedSelect] = useState<'grader' | 'grade' | null>(null);
   const [history, setHistory] = useState<CardPriceHistoryResult | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
-  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('30d');
+  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>(
+    mode === 'graded' ? '90d' : '30d',
+  );
 
   const pricingOptions = {
     name: card.name,
@@ -242,13 +301,29 @@ export default function VerifiedPricingCard({
   const updatePricing = useCallback((result: CardPricingResult) => {
     setPricing(result);
     const matchingQuotes = result.quotes.filter(quoteMatchesMode);
-    setSelectedGradeKey(previous =>
-      matchingQuotes.some(quote => quote.gradeKey === previous)
-        ? previous
-        : matchingQuotes[0]?.gradeKey ?? (mode === 'raw' ? 'raw' : ''),
-    );
+    const fallbackQuote = mode === 'graded'
+      ? matchingQuotes[matchingQuotes.length - 1]
+      : matchingQuotes[0];
+    setSelectedGradeKey(previous => {
+      const nextQuote = matchingQuotes.find(quote => quote.gradeKey === previous) ?? fallbackQuote;
+      return nextQuote?.gradeKey ?? (mode === 'raw' ? 'raw' : '');
+    });
+    setSelectedGradeKeys(previous => {
+      const valid = previous.filter(key => matchingQuotes.some(quote => quote.gradeKey === key));
+      return valid.length > 0 ? valid : fallbackQuote ? [fallbackQuote.gradeKey] : [];
+    });
+    setSelectedGrader(previous => {
+      const graders = matchingQuotes.map(quote => getGradedQuoteOption(quote).grader);
+      if (previous && graders.includes(previous)) return previous;
+      return fallbackQuote ? getGradedQuoteOption(fallbackQuote).grader : '';
+    });
     setPollAttempt(result.status === 'pending_match' || result.queued ? 1 : 0);
   }, [mode, quoteMatchesMode]);
+
+  useEffect(() => {
+    setHistoryPeriod(mode === 'graded' ? '90d' : '30d');
+    setOpenGradedSelect(null);
+  }, [mode]);
 
   // Load pricing on mount / card change
   useEffect(() => {
@@ -370,11 +445,19 @@ export default function VerifiedPricingCard({
   }
 
   const visibleQuotes = pricing.quotes.filter(quoteMatchesMode);
+  const gradedQuoteOptions = mode === 'graded'
+    ? visibleQuotes.map(getGradedQuoteOption)
+    : [];
+  const graderOptions = [...new Set(gradedQuoteOptions.map(option => option.grader))];
+  const activeGrader = selectedGrader || graderOptions[0] || '';
+  const activeGraderQuotes = gradedQuoteOptions.filter(option => option.grader === activeGrader);
   const selectedQuote: PricingQuote | undefined =
     visibleQuotes.find(q => q.gradeKey === selectedGradeKey) ?? visibleQuotes[0];
   const selectedMarket =
     (pricing.verifiedMarket ?? []).find(value => value.gradeKey === selectedGradeKey)
-    ?? pricing.verifiedMarket?.[0];
+    ?? (pricing.verifiedMarket ?? []).find(value =>
+      visibleQuotes.some(quote => quote.gradeKey === value.gradeKey),
+    );
 
   const hasQuotes = visibleQuotes.length > 0;
   const isAvailable = pricing.status === 'available' || pricing.status === 'stale';
@@ -389,40 +472,196 @@ export default function VerifiedPricingCard({
     mode === 'graded' ? selectedQuote?.label : null,
   ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
+  const selectedComparisonKeys = selectedGradeKeys.filter(key =>
+    activeGraderQuotes.some(option => option.quote.gradeKey === key),
+  );
+  const historyMonthLabels = [...new Set(
+    (history?.points ?? []).map(point =>
+      new Date(point.date).toLocaleDateString('en-AU', { month: 'short' }),
+    ),
+  )].filter(Boolean);
+  const visibleMonthLabels = historyMonthLabels.length <= 4
+    ? historyMonthLabels
+    : [0, 1, 2, 3].map(index =>
+        historyMonthLabels[Math.round(index * (historyMonthLabels.length - 1) / 3)]!,
+      );
+
+  const chooseGrader = (grader: string) => {
+    const quotes = gradedQuoteOptions.filter(option => option.grader === grader);
+    const next = quotes[quotes.length - 1];
+    setSelectedGrader(grader);
+    setOpenGradedSelect(null);
+    if (next) {
+      setSelectedGradeKey(next.quote.gradeKey);
+      setSelectedGradeKeys([next.quote.gradeKey]);
+    }
+  };
+
+  const choosePrimaryGrade = (option: GradedQuoteOption) => {
+    setSelectedGradeKey(option.quote.gradeKey);
+    setSelectedGradeKeys(previous =>
+      previous.includes(option.quote.gradeKey)
+        ? previous
+        : [...previous, option.quote.gradeKey],
+    );
+    setOpenGradedSelect(null);
+  };
+
+  const toggleComparedGrade = (option: GradedQuoteOption) => {
+    setSelectedGradeKey(option.quote.gradeKey);
+    setSelectedGradeKeys(previous => {
+      if (!previous.includes(option.quote.gradeKey)) {
+        return [...previous, option.quote.gradeKey];
+      }
+      return previous.length === 1
+        ? previous
+        : previous.filter(key => key !== option.quote.gradeKey);
+    });
+  };
+
   return (
-    <View style={[vpStyles.card, { backgroundColor: C.card }]}>
+    <View style={[
+      vpStyles.card,
+      { backgroundColor: C.card },
+      mode === 'graded' && vpStyles.gradedCard,
+    ]}>
       {/* Header */}
-      <View style={vpStyles.header}>
-        <View style={vpStyles.sectionHeader}>
-          <Feather name="shield" size={13} color={C.primary} />
-          <Text style={vpStyles.sectionLabel}>VERIFIED MARKET</Text>
-          {selectedMarket && (
-            <Text style={vpStyles.sourceChip}>
-              {selectedMarket.confidence.providerCount} source
-            </Text>
-          )}
+      {mode === 'graded' ? (
+        <View style={vpStyles.marketSignalHeader}>
+          <View>
+            <Text style={vpStyles.marketSignalKicker}>MARKET SIGNAL</Text>
+            <Text style={vpStyles.marketSignalTitle}>Graded market</Text>
+          </View>
+          <Text style={vpStyles.marketSignalMeta}>Verified history</Text>
         </View>
-        <Pressable
-          onPress={handleRefresh}
-          disabled={refreshing}
-          style={vpStyles.refreshBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh pricing"
-          hitSlop={8}
-        >
-          {refreshing ? (
-            <ActivityIndicator size="small" color={C.primary} />
-          ) : (
-            <Feather name="refresh-cw" size={14} color={C.mutedForeground} />
-          )}
-        </Pressable>
-      </View>
+      ) : (
+        <View style={vpStyles.header}>
+          <View style={vpStyles.sectionHeader}>
+            <Feather name="shield" size={13} color={C.primary} />
+            <Text style={vpStyles.sectionLabel}>VERIFIED MARKET</Text>
+            {selectedMarket && (
+              <Text style={vpStyles.sourceChip}>
+                {selectedMarket.confidence.providerCount} source
+              </Text>
+            )}
+          </View>
+          <Pressable
+            onPress={handleRefresh}
+            disabled={refreshing}
+            style={vpStyles.refreshBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh pricing"
+            hitSlop={8}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={C.primary} />
+            ) : (
+              <Feather name="refresh-cw" size={14} color={C.mutedForeground} />
+            )}
+          </Pressable>
+        </View>
+      )}
 
       {/* Status banner */}
       <StatusBanner result={pricing} />
 
-      {/* Grade selector (only if quotes available) */}
-      {hasQuotes && (
+      {/* Exact graded-market controls from the selected card-detail design. */}
+      {mode === 'graded' && hasQuotes ? (
+        <View style={vpStyles.gradedControls}>
+          <View style={[vpStyles.gradedSelectField, { zIndex: 4 }]}>
+            <Text style={vpStyles.gradedFieldLabel}>Grading company</Text>
+            <Pressable
+              onPress={() => setOpenGradedSelect(current => current === 'grader' ? null : 'grader')}
+              style={vpStyles.gradedSelectControl}
+              accessibilityRole="button"
+              accessibilityLabel={`Grading company, ${activeGrader}`}
+              accessibilityState={{ expanded: openGradedSelect === 'grader' }}
+            >
+              <Text style={vpStyles.gradedSelectText}>{activeGrader}</Text>
+              <Feather name="chevron-down" size={15} color={C.foreground} />
+            </Pressable>
+            {openGradedSelect === 'grader' && (
+              <View style={vpStyles.gradedDropdownMenu}>
+                {graderOptions.map(grader => (
+                  <Pressable
+                    key={grader}
+                    onPress={() => chooseGrader(grader)}
+                    style={[
+                      vpStyles.gradedDropdownOption,
+                      grader === activeGrader && vpStyles.gradedDropdownOptionActive,
+                    ]}
+                  >
+                    <Text style={vpStyles.gradedDropdownText}>{grader}</Text>
+                    {grader === activeGrader && (
+                      <Feather name="check" size={14} color={C.primary} />
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+
+          <View style={[vpStyles.gradedSelectField, { zIndex: 3 }]}>
+            <Text style={vpStyles.gradedFieldLabel}>Primary grade</Text>
+            <Pressable
+              onPress={() => setOpenGradedSelect(current => current === 'grade' ? null : 'grade')}
+              style={vpStyles.gradedSelectControl}
+              accessibilityRole="button"
+              accessibilityLabel={`Primary grade, ${selectedQuote?.label ?? 'unavailable'}`}
+              accessibilityState={{ expanded: openGradedSelect === 'grade' }}
+            >
+              <Text style={vpStyles.gradedSelectText} numberOfLines={1}>
+                {selectedQuote?.label ?? 'Select grade'}
+              </Text>
+              <Feather name="chevron-down" size={15} color={C.foreground} />
+            </Pressable>
+            {openGradedSelect === 'grade' && (
+              <View style={vpStyles.gradedDropdownMenu}>
+                {activeGraderQuotes.map(option => (
+                  <Pressable
+                    key={option.quote.gradeKey}
+                    onPress={() => choosePrimaryGrade(option)}
+                    style={[
+                      vpStyles.gradedDropdownOption,
+                      option.quote.gradeKey === selectedGradeKey && vpStyles.gradedDropdownOptionActive,
+                    ]}
+                  >
+                    <Text style={vpStyles.gradedDropdownText}>{option.quote.label}</Text>
+                    {option.quote.gradeKey === selectedGradeKey && (
+                      <Feather name="check" size={14} color={C.primary} />
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
+      ) : null}
+
+      {mode === 'graded' && hasQuotes ? (
+        <View style={vpStyles.gradedOptionList}>
+          {activeGraderQuotes.map(option => {
+            const isSelected = selectedGradeKeys.includes(option.quote.gradeKey);
+            return (
+              <Pressable
+                key={option.quote.gradeKey}
+                onPress={() => toggleComparedGrade(option)}
+                style={[vpStyles.gradedOption, isSelected && vpStyles.gradedOptionActive]}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: isSelected }}
+                accessibilityLabel={`${option.quote.label}, population ${getGradePopulation(option, populationRecords)}`}
+              >
+                <Text style={[vpStyles.gradedOptionGrade, isSelected && vpStyles.gradedOptionGradeActive]}>
+                  {option.quote.label}
+                </Text>
+                <Text style={[vpStyles.gradedOptionPop, isSelected && vpStyles.gradedOptionPopActive]}>
+                  POP {getGradePopulation(option, populationRecords)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : hasQuotes ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -456,17 +695,31 @@ export default function VerifiedPricingCard({
             </Pressable>
           ))}
         </ScrollView>
+      ) : null}
+
+      {mode === 'graded' && hasQuotes && (
+        <View style={vpStyles.gradedComparisonRow}>
+          <View style={vpStyles.gradedAvailabilityDot} />
+          <Text style={vpStyles.gradedComparisonText}>
+            <Text style={vpStyles.gradedComparisonStrong}>
+              {Math.max(selectedComparisonKeys.length, 1)} grades compared
+            </Text>
+            {' · tap to toggle'}
+          </Text>
+        </View>
       )}
 
       {/* Current price display */}
       {selectedQuote ? (
-        <View style={vpStyles.priceBlock}>
+        <View style={[vpStyles.priceBlock, mode === 'graded' && vpStyles.gradedPriceBlock]}>
           <Text style={vpStyles.priceLabel}>
              {selectedQuote.label} · {selectedMarket?.currency ?? selectedQuote.currency}
           </Text>
           <Text style={vpStyles.priceValue}>
-             {(selectedMarket?.verifiedMarketValue ?? selectedQuote.price)
-               .toLocaleString('en-AU', { minimumFractionDigits: 2 })}
+             {formatPrice(
+               selectedMarket?.verifiedMarketValue ?? selectedQuote.price,
+               selectedMarket?.currency ?? selectedQuote.currency,
+             )}
           </Text>
            {selectedMarket?.range && (
              <Text style={vpStyles.marketRange}>
@@ -557,47 +810,111 @@ export default function VerifiedPricingCard({
 
       {/* Price history — Pro only */}
       {isPro && hasQuotes && (
-        <View style={vpStyles.historyBlock}>
-          <View style={vpStyles.historyHeader}>
-            <Text style={vpStyles.historyLabel}>VERIFIED MARKET HISTORY</Text>
+        mode === 'graded' ? (
+          <View style={[vpStyles.historyBlock, vpStyles.gradedHistoryBlock]}>
+            <MiniLineChart
+              points={history?.points.map(pt => ({ date: pt.date, price: pt.price })) ?? []}
+              width={chartWidth}
+              height={168}
+              loading={historyLoading}
+              graded
+            />
+
+            {selectedComparisonKeys.length > 0 && (
+              <View style={vpStyles.gradedLegend}>
+                {selectedComparisonKeys.map(key => {
+                  const option = activeGraderQuotes.find(item => item.quote.gradeKey === key);
+                  return option ? (
+                    <View key={key} style={vpStyles.gradedLegendItem}>
+                      <View style={vpStyles.gradedLegendDot} />
+                      <Text style={vpStyles.gradedLegendText}>{option.quote.label}</Text>
+                    </View>
+                  ) : null;
+                })}
+              </View>
+            )}
+
+            {visibleMonthLabels.length > 0 && (
+              <View style={vpStyles.gradedMonthLabels}>
+                {visibleMonthLabels.map((label, index) => (
+                  <Text key={`${label}-${index}`} style={vpStyles.gradedMonthLabel}>{label}</Text>
+                ))}
+              </View>
+            )}
+
+            <View style={vpStyles.gradedPeriodRow}>
+              {GRADED_HISTORY_PERIODS.map(period => {
+                const active = historyPeriod === period.value;
+                return (
+                  <Pressable
+                    key={period.value}
+                    onPress={() => setHistoryPeriod(period.value)}
+                    style={[vpStyles.gradedPeriodChip, active && vpStyles.gradedPeriodChipActive]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${period.label} period`}
+                  >
+                    <Text style={[
+                      vpStyles.gradedPeriodChipText,
+                      active && vpStyles.gradedPeriodChipTextActive,
+                    ]}>
+                      {period.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {historyError && !historyLoading ? (
+              <Text style={vpStyles.historyUnavailableText}>
+                Unable to load price history. Please try again.
+              </Text>
+            ) : history && !history.historyAvailable && !historyLoading && (
+              <Text style={vpStyles.historyUnavailableText}>
+                History not yet available for this period
+              </Text>
+            )}
           </View>
+        ) : (
+          <View style={vpStyles.historyBlock}>
+            <View style={vpStyles.historyHeader}>
+              <Text style={vpStyles.historyLabel}>VERIFIED MARKET HISTORY</Text>
+            </View>
 
-          {/* Period selector */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={vpStyles.periodScroll}>
-            {HISTORY_PERIODS.map(period => (
-              <Pressable
-                key={period.value}
-                onPress={() => setHistoryPeriod(period.value)}
-                style={[vpStyles.periodChip, historyPeriod === period.value && vpStyles.periodChipActive]}
-                accessibilityRole="button"
-                accessibilityLabel={`${period.label} period`}
-                hitSlop={{ top: 6, bottom: 6 }}
-              >
-                <Text style={[vpStyles.periodChipText, historyPeriod === period.value && { color: '#FFF' }]}>
-                  {period.label}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={vpStyles.periodScroll}>
+              {HISTORY_PERIODS.map(period => (
+                <Pressable
+                  key={period.value}
+                  onPress={() => setHistoryPeriod(period.value)}
+                  style={[vpStyles.periodChip, historyPeriod === period.value && vpStyles.periodChipActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${period.label} period`}
+                  hitSlop={{ top: 6, bottom: 6 }}
+                >
+                  <Text style={[vpStyles.periodChipText, historyPeriod === period.value && { color: '#FFF' }]}>
+                    {period.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
 
-          {/* Chart */}
-          <MiniLineChart
-            points={history?.points.map(pt => ({ date: pt.date, price: pt.price })) ?? []}
-            width={chartWidth}
-            height={100}
-            loading={historyLoading}
-          />
+            <MiniLineChart
+              points={history?.points.map(pt => ({ date: pt.date, price: pt.price })) ?? []}
+              width={chartWidth}
+              height={100}
+              loading={historyLoading}
+            />
 
-          {historyError && !historyLoading ? (
-            <Text style={vpStyles.historyUnavailableText}>
-              Unable to load price history. Please try again.
-            </Text>
-          ) : history && !history.historyAvailable && !historyLoading && (
-            <Text style={vpStyles.historyUnavailableText}>
-              History not yet available for this period
-            </Text>
-          )}
-        </View>
+            {historyError && !historyLoading ? (
+              <Text style={vpStyles.historyUnavailableText}>
+                Unable to load price history. Please try again.
+              </Text>
+            ) : history && !history.historyAvailable && !historyLoading && (
+              <Text style={vpStyles.historyUnavailableText}>
+                History not yet available for this period
+              </Text>
+            )}
+          </View>
+        )
       )}
 
       {/* Pro gate for history */}
@@ -656,9 +973,40 @@ function formatRelative(iso: string): string {
 
 const vpStyles = StyleSheet.create({
   card: { borderRadius: 16, padding: 16, marginBottom: 16 },
+  gradedCard: {
+    padding: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 18,
+  },
   header: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', marginBottom: 8,
+  },
+  marketSignalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  marketSignalKicker: {
+    color: '#A8A3AA',
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 1.4,
+  },
+  marketSignalTitle: {
+    marginTop: 6,
+    color: C.foreground,
+    fontSize: 20,
+    lineHeight: 24,
+    fontFamily: 'Inter_700Bold',
+  },
+  marketSignalMeta: {
+    color: '#817E85',
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: 'Inter_400Regular',
   },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sectionLabel: {
@@ -674,6 +1022,133 @@ const vpStyles = StyleSheet.create({
   },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
   loadingText: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+  gradedControls: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  gradedSelectField: {
+    flex: 1,
+    position: 'relative',
+  },
+  gradedFieldLabel: {
+    marginBottom: 7,
+    color: '#85818A',
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: 'Inter_400Regular',
+  },
+  gradedSelectControl: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#39353E',
+    borderRadius: 9,
+    backgroundColor: '#29262D',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  gradedSelectText: {
+    flex: 1,
+    color: C.foreground,
+    fontSize: 15,
+    lineHeight: 19,
+    fontFamily: 'Inter_700Bold',
+  },
+  gradedDropdownMenu: {
+    position: 'absolute',
+    top: 74,
+    left: 0,
+    right: 0,
+    padding: 5,
+    borderWidth: 1,
+    borderColor: '#423D47',
+    borderRadius: 10,
+    backgroundColor: '#242127',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.42,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  gradedDropdownOption: {
+    minHeight: 40,
+    paddingHorizontal: 10,
+    borderRadius: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  gradedDropdownOptionActive: {
+    backgroundColor: 'rgba(237,64,80,0.12)',
+  },
+  gradedDropdownText: {
+    color: '#E7E1DC',
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  gradedOptionList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  gradedOption: {
+    minWidth: 94,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#3B3740',
+    borderRadius: 8,
+    backgroundColor: '#1D1B20',
+  },
+  gradedOptionActive: {
+    borderColor: C.primary,
+    backgroundColor: 'rgba(237,64,80,0.14)',
+  },
+  gradedOptionGrade: {
+    color: '#BDB7B3',
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: 'Inter_700Bold',
+  },
+  gradedOptionGradeActive: { color: '#FFFFFF' },
+  gradedOptionPop: {
+    marginTop: 3,
+    color: '#989299',
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: 'Inter_400Regular',
+  },
+  gradedOptionPopActive: { color: '#FF9AA0' },
+  gradedComparisonRow: {
+    minHeight: 42,
+    paddingTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.10)',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  gradedAvailabilityDot: {
+    width: 7,
+    height: 7,
+    marginTop: 4,
+    borderRadius: 4,
+    backgroundColor: '#7AC4AA',
+  },
+  gradedComparisonText: {
+    color: '#9B969C',
+    fontSize: 13,
+    lineHeight: 17,
+    fontFamily: 'Inter_400Regular',
+  },
+  gradedComparisonStrong: {
+    color: '#EEE9E4',
+    fontFamily: 'Inter_700Bold',
+  },
   gradeScroll: { marginBottom: 12 },
   gradeScrollContent: { gap: 8, paddingRight: 4 },
   gradeChip: {
@@ -687,6 +1162,7 @@ const vpStyles = StyleSheet.create({
   gradeChipPrice: { fontSize: 13, fontFamily: 'Inter_700Bold', color: C.mutedForeground },
   gradeChipPriceActive: { color: C.foreground },
   priceBlock: { marginBottom: 10 },
+  gradedPriceBlock: { marginTop: 8, marginBottom: 14 },
   priceLabel: {
     fontSize: 10, fontFamily: 'Inter_600SemiBold',
     color: C.mutedForeground, textTransform: 'uppercase',
@@ -720,6 +1196,68 @@ const vpStyles = StyleSheet.create({
   unavailableTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   unavailableText: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center' },
   historyBlock: { marginTop: 4 },
+  gradedHistoryBlock: {
+    marginTop: 10,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  gradedLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 10,
+  },
+  gradedLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  gradedLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: C.primary,
+  },
+  gradedLegendText: {
+    color: '#99949A',
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+  },
+  gradedMonthLabels: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  gradedMonthLabel: {
+    color: '#716D75',
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+  },
+  gradedPeriodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+  },
+  gradedPeriodChip: {
+    minWidth: 42,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 7,
+    alignItems: 'center',
+  },
+  gradedPeriodChipActive: {
+    backgroundColor: '#EDE8E1',
+  },
+  gradedPeriodChipText: {
+    color: '#817C84',
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+  },
+  gradedPeriodChipTextActive: {
+    color: '#1B191D',
+  },
   historyHeader: { marginBottom: 8 },
   historyLabel: {
     fontSize: 10, fontFamily: 'Inter_600SemiBold',

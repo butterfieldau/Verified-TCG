@@ -1063,6 +1063,17 @@ export default function CardDetailScreen() {
             chartWidth={W - 40 - 36}
             mode={detailMode === 'Graded' ? 'graded' : 'raw'}
             onRawMarketSummaryChange={handleRawMarketSummaryChange}
+            populationRecords={populationRecords.flatMap(item =>
+              item.grading?.company != null
+              && item.grading.grade != null
+              && item.grading.population != null
+                ? [{
+                    company: item.grading.company,
+                    grade: item.grading.grade,
+                    population: item.grading.population,
+                  }]
+                : [],
+            )}
           />
         )}
 
