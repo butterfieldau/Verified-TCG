@@ -45,6 +45,8 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
   // Extended public-profile fields. Defaults preserve existing user visibility.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(2048)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS favourite_tcg VARCHAR(100)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_since VARCHAR(7)`,

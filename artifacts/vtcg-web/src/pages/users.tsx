@@ -9,6 +9,8 @@ import { Link, useLocation } from "wouter";
 interface UserRow {
   id: string;
   email: string;
+  firstName: string;
+  lastName: string;
   displayName: string;
   username: string;
   subscriptionTier: string;
@@ -225,7 +227,7 @@ export default function UsersPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-semibold truncate flex items-center gap-1.5">
-                      {user.displayName}
+                      {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.displayName}
                       {user.suspendedAt && <Ban size={12} className="text-amber-500" />}
                     </div>
                     <div className="text-xs text-muted-foreground truncate">@{user.username}</div>
@@ -264,7 +266,7 @@ export default function UsersPage() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-bold flex items-center gap-1.5">
-                  {user.displayName}
+                  {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.displayName}
                   {user.suspendedAt && <Ban size={12} className="text-amber-500" />}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">@{user.username}</div>
@@ -498,7 +500,9 @@ function UserDetailPanel({
               {initials}
             </div>
             <div className="min-w-0">
-              <div className="font-bold text-lg truncate">{user.displayName}</div>
+              <div className="font-bold text-lg truncate">
+                {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.displayName}
+              </div>
               <div className="text-sm text-muted-foreground truncate">@{user.username}</div>
               <div className="text-xs text-muted-foreground/70 truncate font-mono">{user.email}</div>
               {isSuspended && (
@@ -510,6 +514,22 @@ function UserDetailPanel({
           </div>
 
           <div className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card p-4 text-sm">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">First name</div>
+              <div>{user.firstName || "Not provided"}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Last name</div>
+              <div>{user.lastName || "Not provided"}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Email</div>
+              <div className="break-all font-mono text-xs">{user.email}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Username</div>
+              <div>@{user.username}</div>
+            </div>
             <div>
               <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Joined</div>
               <div>{fmtDate(user.createdAt)}</div>

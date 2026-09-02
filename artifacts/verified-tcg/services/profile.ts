@@ -4,6 +4,8 @@ import { MOCK_CARDS } from './cards';
 export const MOCK_USER: User = {
   id: 'usr-001',
   username: 'omar_tcg',
+  firstName: 'Omar',
+  lastName: 'Collector',
   displayName: 'Omar',
   email: 'omar@example.com',
   bio: 'Collector since 2018. Pokémon, One Piece & MTG. Always looking for high grade hits.',

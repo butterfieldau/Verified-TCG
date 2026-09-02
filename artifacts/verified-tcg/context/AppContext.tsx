@@ -151,11 +151,11 @@ interface AppState {
 
 interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
-  createAccount: (email: string, password: string, displayName: string) => Promise<boolean>;
+  createAccount: (email: string, password: string, firstName: string, lastName: string, username: string) => Promise<boolean>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
   deleteAccount: (password: string) => Promise<void>;
-  updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+  updateProfile: (patch: Pick<User, 'firstName' | 'lastName' | 'username' | 'bio' | 'location'> & {
     favouriteTcg?: string | null;
     collectorSince?: string | null;
     profilePublic?: boolean;
@@ -312,6 +312,8 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
   return {
     id: session.user.id,
     email,
+    firstName: typeof meta.first_name === 'string' ? meta.first_name : '',
+    lastName: typeof meta.last_name === 'string' ? meta.last_name : '',
     displayName,
     username,
     bio,
@@ -970,9 +972,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const createAccount = useCallback(async (
     email: string,
     password: string,
-    displayName: string,
+    firstName: string,
+    lastName: string,
+    username: string,
   ) => {
-    const session = await authSignUp(email, password, displayName);
+    const session = await authSignUp(email, password, firstName, lastName, username);
     if (!session) return false;
     applyAuthenticatedSession(session);
     return true;
@@ -1037,7 +1041,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentEventId(null);
   }, []);
 
-  const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+  const updateProfile = useCallback(async (patch: Pick<User, 'firstName' | 'lastName' | 'username' | 'bio' | 'location'> & {
     favouriteTcg?: string | null;
     collectorSince?: string | null;
     profilePublic?: boolean;
@@ -1048,7 +1052,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }) => {
     if (!user) throw new Error('Create an account to edit your profile.');
     const data: Record<string, unknown> = {
-      display_name: patch.displayName.trim(),
+      first_name: patch.firstName.trim(),
+      last_name: patch.lastName.trim(),
       username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
       bio: patch.bio?.trim() ?? '',
       location: patch.location?.trim() ?? '',
@@ -1064,7 +1069,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(current => current
       ? {
           ...current,
-          displayName: patch.displayName,
+          firstName: patch.firstName.trim(),
+          lastName: patch.lastName.trim(),
+          displayName: `${patch.firstName.trim()} ${patch.lastName.trim()}`,
           username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
           bio: patch.bio,
           location: patch.location,

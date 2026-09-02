@@ -113,7 +113,8 @@ export default function EditProfileScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   // Basic profile fields
-  const [displayName, setDisplayName] = useState(user?.displayName ?? '');
+  const [firstName, setFirstName] = useState(user?.firstName ?? '');
+  const [lastName, setLastName] = useState(user?.lastName ?? '');
   const [username, setUsername] = useState(user?.username ?? '');
   const [bio, setBio] = useState(user?.bio ?? '');
   const [location, setLocation] = useState(user?.location ?? '');
@@ -214,15 +215,20 @@ export default function EditProfileScreen() {
   // ── Save ──────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
-    if (!displayName.trim() || !username.trim()) {
-      setError('Display name and username are required.');
+    if (!firstName.trim() || !lastName.trim() || !username.trim()) {
+      setError('First name, last name, and username are required.');
+      return;
+    }
+    if (!/^[a-z0-9_]{3,24}$/.test(username.trim().replace(/^@+/, '').toLowerCase())) {
+      setError('Username must be 3–24 characters using letters, numbers, or underscores.');
       return;
     }
     setError('');
     setSaving(true);
     try {
       await updateProfile({
-        displayName,
+        firstName,
+        lastName,
         username,
         bio,
         location,
@@ -300,8 +306,16 @@ export default function EditProfileScreen() {
           <Text style={styles.sectionLabel}>BASIC INFO</Text>
           <View style={[styles.card, { backgroundColor: C.card }]}>
             <View style={styles.form}>
-              <Input label="Display Name" value={displayName} onChangeText={setDisplayName} autoCapitalize="words" leftIcon="user" />
-              <Input label="Username" value={username} onChangeText={setUsername} autoCapitalize="none" leftIcon="at-sign" />
+              <Input label="First Name" value={firstName} onChangeText={setFirstName} autoCapitalize="words" leftIcon="user" />
+              <Input label="Last Name" value={lastName} onChangeText={setLastName} autoCapitalize="words" leftIcon="user" />
+              <Input
+                label="Username"
+                value={username}
+                onChangeText={(value) => setUsername(value.replace(/^@+/, '').toLowerCase())}
+                autoCapitalize="none"
+                leftIcon="at-sign"
+                hint="3–24 letters, numbers, or underscores. Must be available."
+              />
               <Input label="Bio" value={bio} onChangeText={setBio} leftIcon="edit-3" />
               <Input label="Location" value={location} onChangeText={setLocation} leftIcon="map-pin" />
             </View>

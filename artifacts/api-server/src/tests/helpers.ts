@@ -40,6 +40,8 @@ export async function createTestUser(opts: {
     .values({
       email,
       passwordHash,
+      firstName: "Test",
+      lastName: "User",
       displayName,
       username,
       subscriptionTier: opts.subscriptionTier ?? "free",

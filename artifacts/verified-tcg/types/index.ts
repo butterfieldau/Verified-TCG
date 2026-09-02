@@ -178,6 +178,8 @@ export interface WatchlistItem {
 export interface User {
   id: string;
   username: string;
+  firstName: string;
+  lastName: string;
   displayName: string;
   email: string;
   avatarUrl?: string | null;

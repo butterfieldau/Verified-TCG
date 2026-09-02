@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/Logo';
 import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
+import { checkUsernameAvailability } from '@/services/auth';
 
 const C = colors.dark;
 
@@ -23,7 +24,11 @@ export default function CreateAccountScreen() {
   const insets = useSafeAreaInsets();
   const { next } = useLocalSearchParams<{ next?: string }>();
   const { createAccount } = useApp();
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [username, setUsername] = useState('');
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+  const [checkingUsername, setCheckingUsername] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,9 +38,34 @@ export default function CreateAccountScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
+  useEffect(() => {
+    const normalized = username.trim().replace(/^@+/, '').toLowerCase();
+    setUsernameAvailable(null);
+    if (!/^[a-z0-9_]{3,24}$/.test(normalized)) {
+      setCheckingUsername(false);
+      return;
+    }
+    setCheckingUsername(true);
+    const timer = setTimeout(() => {
+      checkUsernameAvailability(normalized)
+        .then(setUsernameAvailable)
+        .catch(() => setUsernameAvailable(null))
+        .finally(() => setCheckingUsername(false));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [username]);
+
   const handleCreate = async () => {
-    if (!name.trim() || !email.trim() || !password.trim()) {
+    if (!firstName.trim() || !lastName.trim() || !username.trim() || !email.trim() || !password.trim()) {
       setError('Please fill in all fields.');
+      return;
+    }
+    if (!/^[a-z0-9_]{3,24}$/.test(username.trim().replace(/^@+/, '').toLowerCase())) {
+      setError('Username must be 3–24 characters using letters, numbers, or underscores.');
+      return;
+    }
+    if (usernameAvailable === false) {
+      setError('That username is already taken. Please choose another.');
       return;
     }
     if (password.length < 8) {
@@ -45,7 +75,7 @@ export default function CreateAccountScreen() {
     setError('');
     setLoading(true);
     try {
-      const signedIn = await createAccount(email, password, name);
+      const signedIn = await createAccount(email, password, firstName, lastName, username);
       if (signedIn) {
         // Auto-confirmed — resume the feature that requested the account,
         // otherwise give the new collector the normal onboarding introduction.
@@ -112,13 +142,40 @@ export default function CreateAccountScreen() {
 
         <View style={styles.form}>
           <Input
-            label="Display Name"
-            placeholder="How collectors know you"
-            value={name}
-            onChangeText={setName}
+            label="First Name"
+            placeholder="Your first name"
+            value={firstName}
+            onChangeText={setFirstName}
             autoCapitalize="words"
             leftIcon="user"
           />
+          <Input
+            label="Last Name"
+            placeholder="Your last name"
+            value={lastName}
+            onChangeText={setLastName}
+            autoCapitalize="words"
+            leftIcon="user"
+          />
+          <Input
+            label="Username"
+            placeholder="collector_name"
+            value={username}
+            onChangeText={(value) => setUsername(value.replace(/^@+/, '').toLowerCase())}
+            autoCapitalize="none"
+            leftIcon="at-sign"
+            hint="3–24 letters, numbers, or underscores. Must be available."
+          />
+          {checkingUsername ? (
+            <Text style={styles.usernameStatus}>Checking username…</Text>
+          ) : usernameAvailable !== null ? (
+            <Text style={[
+              styles.usernameStatus,
+              { color: usernameAvailable ? C.positive : C.destructive },
+            ]}>
+              {usernameAvailable ? 'Username is available' : 'Username is already taken'}
+            </Text>
+          ) : null}
           <Input
             label="Email"
             placeholder="you@example.com"
@@ -189,6 +246,12 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   form: { gap: 16 },
+  usernameStatus: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
+    marginTop: -10,
+  },
   errorText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   legal: {
     fontSize: 12,

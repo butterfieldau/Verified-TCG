@@ -50,6 +50,8 @@ type UserRow = typeof usersTable.$inferSelect;
 
 function userToMetadata(user: UserRow) {
   return {
+    first_name: user.firstName,
+    last_name: user.lastName,
     display_name: user.displayName,
     username: user.username,
     bio: user.bio,
@@ -66,6 +68,28 @@ function userToMetadata(user: UserRow) {
     show_for_sale: user.showForSale,
     preferred_tcgs: user.preferredTcgs ?? null,
   };
+}
+
+function normalizeUsername(value: string): string {
+  return value.trim().replace(/^@+/, "").toLowerCase();
+}
+
+function validUsername(value: string): boolean {
+  return /^[a-z0-9_]{3,24}$/.test(value);
+}
+
+function validName(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length >= 1 && trimmed.length <= 50;
+}
+
+async function usernameTaken(username: string, excludingUserId?: string): Promise<boolean> {
+  const [existing] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.username, username))
+    .limit(1);
+  return Boolean(existing && existing.id !== excludingUserId);
 }
 
 function sessionResponse(
@@ -99,17 +123,32 @@ async function createSession(userId: string, plainRefreshToken: string): Promise
 // ── POST /api/auth/signup ────────────────────────────────────────────────────
 
 router.post("/auth/signup", authSignLimiter, async (req, res) => {
-  const { email, password, display_name: displayName } = req.body as {
+  const { email, password, first_name: firstName, last_name: lastName, username: requestedUsername } = req.body as {
     email?: string;
     password?: string;
-    display_name?: string;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
   };
 
-  if (!email || !password || !displayName) {
-    return res.status(400).json({ message: "email, password, and display_name are required" });
+  if (!email || !password || !firstName || !lastName || !requestedUsername) {
+    return res.status(400).json({
+      message: "email, password, first_name, last_name, and username are required",
+    });
   }
 
   const normEmail = email.trim().toLowerCase();
+  const normalizedFirstName = firstName.trim();
+  const normalizedLastName = lastName.trim();
+  const username = normalizeUsername(requestedUsername);
+  if (!validName(normalizedFirstName) || !validName(normalizedLastName)) {
+    return res.status(400).json({ message: "First name and last name are required and must be 50 characters or fewer" });
+  }
+  if (!validUsername(username)) {
+    return res.status(400).json({
+      message: "Username must be 3–24 characters using only lowercase letters, numbers, and underscores",
+    });
+  }
   if (password.length < 8) {
     return res.status(400).json({ message: "Password must be at least 8 characters" });
   }
@@ -124,14 +163,36 @@ router.post("/auth/signup", authSignLimiter, async (req, res) => {
   if (existing.length > 0) {
     return res.status(422).json({ message: "An account with that email already exists" });
   }
+  if (await usernameTaken(username)) {
+    return res.status(409).json({ message: "That username is already taken" });
+  }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const username = normEmail.split("@")[0]!.toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const displayName = `${normalizedFirstName} ${normalizedLastName}`;
 
-  const [user] = await db
-    .insert(usersTable)
-    .values({ email: normEmail, passwordHash, displayName: displayName.trim(), username })
-    .returning();
+  const [user] = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(873421)`);
+    const [claimed] = await tx
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(eq(usersTable.username, username))
+      .limit(1);
+    if (claimed) return [];
+    return tx
+      .insert(usersTable)
+      .values({
+        email: normEmail,
+        passwordHash,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        displayName,
+        username,
+      })
+      .returning();
+  });
+  if (!user) {
+    return res.status(409).json({ message: "That username is already taken" });
+  }
 
   const refreshToken = makeRefreshToken();
   const accessToken = makeAccessToken(user.id, user.email, user.displayName);
@@ -147,6 +208,18 @@ router.post("/auth/signup", authSignLimiter, async (req, res) => {
   });
 
   return res.status(201).json(sessionResponse(user, accessToken, refreshToken));
+});
+
+router.get("/auth/username-availability", authSignLimiter, async (req, res) => {
+  const username = normalizeUsername(String(req.query["username"] ?? ""));
+  if (!validUsername(username)) {
+    return res.status(400).json({
+      available: false,
+      message: "Username must be 3–24 characters using only lowercase letters, numbers, and underscores",
+    });
+  }
+  const taken = await usernameTaken(username);
+  return res.json({ username, available: !taken });
 });
 
 // ── POST /api/auth/signin ────────────────────────────────────────────────────
@@ -306,6 +379,8 @@ router.put("/auth/user", async (req, res) => {
 
   const { data } = req.body as {
     data?: {
+      first_name?: string;
+      last_name?: string;
       display_name?: string;
       username?: string;
       bio?: string;
@@ -328,8 +403,23 @@ router.put("/auth/user", async (req, res) => {
   const patch: Partial<typeof usersTable.$inferInsert> = {
     updatedAt: new Date(),
   };
-  if (data.display_name !== undefined) patch.displayName = data.display_name.trim();
-  if (data.username !== undefined) patch.username = data.username.trim().replace(/^@+/, "").toLowerCase();
+  if (data.first_name !== undefined) {
+    if (!validName(data.first_name)) return res.status(400).json({ message: "First name is required and must be 50 characters or fewer" });
+    patch.firstName = data.first_name.trim();
+  }
+  if (data.last_name !== undefined) {
+    if (!validName(data.last_name)) return res.status(400).json({ message: "Last name is required and must be 50 characters or fewer" });
+    patch.lastName = data.last_name.trim();
+  }
+  if (data.username !== undefined) {
+    const username = normalizeUsername(data.username);
+    if (!validUsername(username)) {
+      return res.status(400).json({
+        message: "Username must be 3–24 characters using only lowercase letters, numbers, and underscores",
+      });
+    }
+    patch.username = username;
+  }
   if (data.bio !== undefined) patch.bio = data.bio.trim();
   if (data.location !== undefined) patch.location = data.location.trim();
   // Use explicit null to write SQL NULL — undefined is skipped by Drizzle
@@ -344,7 +434,13 @@ router.put("/auth/user", async (req, res) => {
 
   // Check suspension before applying update
   const [existing] = await db
-    .select({ id: usersTable.id, suspendedAt: usersTable.suspendedAt })
+    .select({
+      id: usersTable.id,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      username: usersTable.username,
+      suspendedAt: usersTable.suspendedAt,
+    })
     .from(usersTable)
     .where(eq(usersTable.id, payload.sub))
     .limit(1);
@@ -357,14 +453,33 @@ router.put("/auth/user", async (req, res) => {
     return res.status(403).json({ message: "Account suspended — contact support" });
   }
 
-  const [updated] = await db
-    .update(usersTable)
-    .set(patch)
-    .where(eq(usersTable.id, payload.sub))
-    .returning();
+  const finalFirstName = patch.firstName ?? existing.firstName;
+  const finalLastName = patch.lastName ?? existing.lastName;
+  if (patch.firstName !== undefined || patch.lastName !== undefined) {
+    patch.displayName = `${finalFirstName} ${finalLastName}`.trim();
+  } else if (data.display_name !== undefined && existing.firstName === "" && existing.lastName === "") {
+    patch.displayName = data.display_name.trim();
+  }
+
+  const [updated] = await db.transaction(async (tx) => {
+    if (patch.username !== undefined && patch.username !== existing.username) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(873421)`);
+      const [claimed] = await tx
+        .select({ id: usersTable.id })
+        .from(usersTable)
+        .where(eq(usersTable.username, patch.username))
+        .limit(1);
+      if (claimed && claimed.id !== payload.sub) return [];
+    }
+    return tx
+      .update(usersTable)
+      .set(patch)
+      .where(eq(usersTable.id, payload.sub))
+      .returning();
+  });
 
   if (!updated) {
-    return res.status(404).json({ message: "User not found" });
+    return res.status(409).json({ message: "That username is already taken" });
   }
 
   // Record profile_updated telemetry event

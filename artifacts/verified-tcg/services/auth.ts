@@ -111,19 +111,33 @@ export async function signInWithPassword(
 export async function signUp(
   email: string,
   password: string,
-  displayName: string,
+  firstName: string,
+  lastName: string,
+  username: string,
 ): Promise<AuthSession | null> {
   const response = await request("/api/auth/signup", {
     method: "POST",
     body: JSON.stringify({
       email: email.trim().toLowerCase(),
       password,
-      display_name: displayName.trim(),
+      first_name: firstName.trim(),
+      last_name: lastName.trim(),
+      username: username.trim().replace(/^@+/, "").toLowerCase(),
     }),
   });
   const result = (await response.json()) as AuthSession;
   if (result.access_token) await persist(result);
   return result.access_token ? result : null;
+}
+
+export async function checkUsernameAvailability(username: string): Promise<boolean> {
+  const normalized = username.trim().replace(/^@+/, "").toLowerCase();
+  const response = await request(
+    `/api/auth/username-availability?username=${encodeURIComponent(normalized)}`,
+    {},
+  );
+  const result = (await response.json()) as { available: boolean };
+  return result.available;
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
