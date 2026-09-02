@@ -689,7 +689,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Historical market value of the cards currently in your collection
+              Your collection value across the dates you actually owned each card
             </Text>
           </View>
         ) : performanceView.kind === 'initial' ? (
@@ -700,7 +700,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Current-collection history needs another retained market observation
+              Your ownership timeline needs another retained market observation
             </Text>
           </View>
         ) : (
@@ -1272,7 +1272,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
-    marginTop: -8,
+    marginTop: 8,
   },
 
   // Range pills

@@ -6,6 +6,11 @@ import {
   getHomePerformanceView,
   getHomePortfolioValueState,
 } from '../services/homePortfolio';
+import {
+  TRADING_CARD_ASPECT_RATIO,
+  tradingCardHeight,
+  tradingCardRadius,
+} from '../services/collectionLayout';
 
 const summary = (overrides: Partial<CollectionSummary> = {}): CollectionSummary => ({
   totalValue: 100,
@@ -89,5 +94,13 @@ describe('home portfolio view models', () => {
       { date: '2025-01-01', value: 100, currency: 'AUD' },
       { date: '2025-01-02', value: 110, currency: 'AUD' },
     ]), '7D')).toMatchObject({ kind: 'chart' });
+  });
+});
+
+describe('collection card framing', () => {
+  it('uses physical trading-card proportions without an oversized corner radius', () => {
+    expect(TRADING_CARD_ASPECT_RATIO).toBeCloseTo(1.4);
+    expect(tradingCardHeight(150)).toBe(210);
+    expect(tradingCardRadius(150)).toBeCloseTo(6.75);
   });
 });

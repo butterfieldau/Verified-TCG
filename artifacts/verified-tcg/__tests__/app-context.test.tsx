@@ -34,6 +34,16 @@ jest.mock('../services/verifiedPricing', () => ({
   refreshVerifiedPricing: jest.fn(() => Promise.resolve({ status: 'available' })),
 }));
 
+jest.mock('../services/collectionPerformance', () => ({
+  fetchCollectionValueHistory: jest.fn(() => Promise.resolve({
+    points: [],
+    currency: 'AUD',
+    historyAvailable: true,
+    historyUnavailableReason: null,
+    chartData: { '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [], ALL: [] },
+  })),
+}));
+
 jest.mock('../services/wishlistApi', () => ({
   syncWishlistToServer: jest.fn(() => Promise.resolve([])),
   addWishlistItemToServer: jest.fn(),
@@ -83,6 +93,8 @@ import type { AppContextType } from '../context/AppContext';
 import { SettingsProvider } from '../context/SettingsContext';
 import { restoreSession, fetchCurrentUser } from '../services/auth';
 import { addCollectionItem } from '../services/collection';
+import { fetchCollection } from '../services/collection';
+import { fetchCollectionValueHistory } from '../services/collectionPerformance';
 import { refreshVerifiedPricing } from '../services/verifiedPricing';
 import type { CollectionItem } from '../types';
 
@@ -420,6 +432,25 @@ describe('AppContext — collection pricing refresh', () => {
       number: 'SM168',
       game: 'pokemon',
     });
+    unmount();
+  });
+
+  it('deduplicates concurrent refreshes and refreshes ownership history once', async () => {
+    (restoreSession as jest.Mock).mockResolvedValue(makeProSession('pro'));
+    const collectionRequest = new Promise<CollectionItem[]>(resolve => {
+      setTimeout(() => resolve([]), 5);
+    });
+    (fetchCollection as jest.Mock).mockReset().mockReturnValue(collectionRequest);
+    (fetchCollectionValueHistory as jest.Mock).mockClear();
+
+    const { getValue, unmount } = await mountProviderAsync();
+    await act(async () => {
+      await Promise.all([getValue().refreshPrices(), getValue().refreshPrices()]);
+    });
+
+    // One history request comes from authenticated hydration and one from the
+    // explicit refresh; the concurrent second refresh shares the same promise.
+    expect(fetchCollectionValueHistory).toHaveBeenCalledTimes(2);
     unmount();
   });
 });

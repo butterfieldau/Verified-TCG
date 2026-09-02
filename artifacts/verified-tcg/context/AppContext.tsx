@@ -411,6 +411,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
+  const priceRefreshRequest = useRef<Promise<void> | null>(null);
+  const historyRequestGeneration = useRef(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [serverUnreadCount, setServerUnreadCount] = useState(0);
   const [notificationsHasMore, setNotificationsHasMore] = useState(false);
@@ -437,23 +439,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     nextMonthFirstDay(new Date()),
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) {
+  const refreshPortfolioHistory = useCallback(async () => {
+    if (!isAuthenticatedRef.current) {
       setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
       return;
     }
-    let cancelled = false;
-    fetchCollectionValueHistory('ALL', 'AUD')
-      .then(history => {
-        if (!cancelled) setPortfolioChartData(history.chartData);
-      })
-      .catch(() => {
-        if (!cancelled) setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, collection]);
+    const generation = ++historyRequestGeneration.current;
+    try {
+      const history = await fetchCollectionValueHistory('ALL', currency);
+      if (generation === historyRequestGeneration.current) {
+        setPortfolioChartData(history.chartData);
+      }
+    } catch {
+      // Retain the last successful chart while a refresh is unavailable.
+    }
+  }, [currency]);
 
   /**
    * Quota period guard — fires on mount and whenever the reset date changes.
@@ -865,8 +865,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { currentUserIdRef.current = user?.id ?? null; }, [user]);
 
   useEffect(() => {
-    if (isAuthenticated) void loadCollection();
-  }, [currency, isAuthenticated, loadCollection]);
+    if (isAuthenticated) {
+      void loadCollection();
+      void refreshPortfolioHistory();
+    } else {
+      historyRequestGeneration.current += 1;
+      setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
+    }
+  }, [currency, isAuthenticated, loadCollection, refreshPortfolioHistory]);
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
@@ -1068,6 +1074,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         game: saved.card.tcg,
       }).finally(() => {
         void loadCollection();
+        void refreshPortfolioHistory();
       });
       // Re-read the server canonical collection so Home, portfolio and
       // Insights all work from the same persisted holding after a mutation.
@@ -1079,7 +1086,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCollection(prev => prev.filter(i => i.id !== item.id));
       throw error;
     }
-  }, [loadCollection]);
+  }, [loadCollection, refreshPortfolioHistory]);
 
   const updateCollectionHolding = useCallback(async (
     id: string,
@@ -1089,8 +1096,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCollection(prev => prev.map(item => item.id === id ? saved : item));
     // Re-read canonical data for every screen that depends on collection state.
     void loadCollection();
+    void refreshPortfolioHistory();
     return saved;
-  }, [loadCollection]);
+  }, [loadCollection, refreshPortfolioHistory]);
 
   const removeFromCollection = useCallback((id: string) => {
     // Register as pending-delete BEFORE the optimistic removal so any
@@ -1100,13 +1108,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     removeCollectionItem(id)
       .then(() => {
         pendingDeleteIds.current.delete(id);
+        void refreshPortfolioHistory();
       })
       .catch(() => {
         // Server delete failed — restore item by re-fetching canonical state.
         pendingDeleteIds.current.delete(id);
         loadCollection();
       });
-  }, [loadCollection]);
+  }, [loadCollection, refreshPortfolioHistory]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
     // Optimistic local update
@@ -1242,17 +1251,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
 
   const refreshPrices = useCallback(async () => {
-    if (isPriceRefreshing) return;
-    setIsPriceRefreshing(true);
-    try {
-      // Pricing is server-owned. A pull-to-refresh reads the latest persisted
-      // quotes and never manufactures a local price movement.
-      await loadCollection();
-      setPricesLastUpdated(new Date());
-    } finally {
-      setIsPriceRefreshing(false);
-    }
-  }, [isPriceRefreshing, loadCollection]);
+    if (priceRefreshRequest.current) return priceRefreshRequest.current;
+    const request = (async () => {
+      setIsPriceRefreshing(true);
+      try {
+        // Pricing is server-owned. Pull-to-refresh reads the latest persisted
+        // collection and ownership history without manufacturing movement.
+        await Promise.all([loadCollection(), refreshPortfolioHistory()]);
+        setPricesLastUpdated(new Date());
+      } finally {
+        setIsPriceRefreshing(false);
+        priceRefreshRequest.current = null;
+      }
+    })();
+    priceRefreshRequest.current = request;
+    return request;
+  }, [loadCollection, refreshPortfolioHistory]);
 
   // Track which watchlist item IDs have already generated a price-alert notification
   // so we don't create duplicates on every re-render.

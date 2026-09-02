@@ -6,6 +6,7 @@ import {
   cardPriceSnapshotsTable,
   portfolioSnapshotsTable,
   soldArchiveItemsTable,
+  usersTable,
 } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { convertCents } from "./fx.js";
@@ -84,15 +85,14 @@ function rowDate(value: string | null | undefined): string | null {
 }
 
 /**
- * Build a historical market-value series for the cards and quantities in the
- * collector's current collection. A point is emitted only when every current
- * holding has a known price on that date; this prevents changing price coverage
- * from looking like market performance.
+ * Build the collector's ownership-value timeline. Active rows and immutable
+ * sold-archive rows form ownership intervals, so quantities appear on their
+ * acquisition/restore date and disappear on their sale date. The account
+ * creation date supplies the truthful zero baseline.
  *
- * The daily provider history is preferred because it is the canonical,
- * deduplicated history. Timestamped snapshots fill gaps for older captures.
- * The current quote is used only for today's point, never to backfill the
- * past.
+ * A non-zero point is emitted only when every owned holding has an exact,
+ * retained price at or before that date. Daily provider history is preferred;
+ * timestamped snapshots fill gaps. The current quote is used only for today.
  */
 export async function calculatePortfolioValueHistory(
   userId: string,
@@ -102,25 +102,77 @@ export async function calculatePortfolioValueHistory(
   const currency = displayCurrency.trim().toUpperCase();
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
-  // This series answers “what would the cards currently in my collection have
-  // been worth?”. It intentionally uses today's active holdings and quantities
-  // across the full requested market-history range, including observations
-  // before acquisition. Ownership-period P&L remains a separate calculation.
-  const rows = await db
-    .select()
-    .from(collectionItemsTable)
-    .where(eq(collectionItemsTable.userId, userId));
-
-  if (rows.length === 0) {
+  const [rows, archivedRows, accountRows] = await Promise.all([
+    db.select().from(collectionItemsTable).where(eq(collectionItemsTable.userId, userId)),
+    db.select().from(soldArchiveItemsTable).where(eq(soldArchiveItemsTable.userId, userId)),
+    db
+      .select({ createdAt: usersTable.createdAt })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId)),
+  ]);
+  const accountDate = rowDate(accountRows[0]?.createdAt.toISOString()) ?? today;
+  if (accountRows.length === 0) {
     return {
       points: [],
       currency,
       historyAvailable: false,
-      historyUnavailableReason: "No items in collection",
+      historyUnavailableReason: "Collector account is unavailable",
     };
   }
 
-  const cardIds = [...new Set(rows.map(row => row.cardId))];
+  type OwnershipInterval = {
+    cardId: string;
+    quantity: number;
+    isGraded: boolean;
+    gradingData: unknown;
+    startDate: string;
+    endDate: string | null;
+  };
+  const intervals: OwnershipInterval[] = [
+    ...rows.flatMap(row => {
+      const startDate = rowDate(row.ownershipStartedAt ?? row.acquiredAt);
+      return startDate
+        ? [{
+            cardId: row.cardId,
+            quantity: row.quantity,
+            isGraded: row.isGraded,
+            gradingData: row.gradingData,
+            startDate,
+            endDate: null,
+          }]
+        : [];
+    }),
+    ...archivedRows.flatMap(row => {
+      const startDate = rowDate(row.ownershipStartedAt ?? row.acquiredAt);
+      const endDate = rowDate(row.soldAt);
+      return startDate && endDate && startDate <= endDate
+        ? [{
+            cardId: row.cardId,
+            quantity: row.quantity,
+            isGraded: row.isGraded,
+            gradingData: row.gradingData,
+            startDate,
+            endDate,
+          }]
+        : [];
+    }),
+  ];
+  const cardIds = [...new Set(intervals.map(row => row.cardId))];
+  if (cardIds.length === 0) {
+    return {
+      points: [{
+        date: accountDate,
+        valueCents: 0,
+        value: 0,
+        currency,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+      }],
+      currency,
+      historyAvailable: true,
+      historyUnavailableReason: null,
+    };
+  }
   const [quoteRows, dailyRows, timestampedRows] = await Promise.all([
     db
       .select()
@@ -211,13 +263,16 @@ export async function calculatePortfolioValueHistory(
   }
 
   const requestedStart = isoDateDaysAgo(Math.max(1, periodDays), now);
-  const earliestRetainedDate = [...historyByKey.values()]
-    .flatMap(history => history.map(point => point.date))
-    .sort()[0];
   const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
-    ? earliestRetainedDate ?? requestedStart
-    : requestedStart;
-  const dates = new Set<string>([today]);
+    ? accountDate
+    : accountDate > requestedStart ? accountDate : requestedStart;
+  const dates = new Set<string>([startDate, today]);
+  for (const interval of intervals) {
+    if (interval.startDate >= startDate && interval.startDate <= today) dates.add(interval.startDate);
+    if (interval.endDate && interval.endDate >= startDate && interval.endDate <= today) {
+      dates.add(interval.endDate);
+    }
+  }
   for (const history of historyByKey.values()) {
     for (const point of history) {
       if (point.date >= startDate && point.date <= today) dates.add(point.date);
@@ -227,9 +282,40 @@ export async function calculatePortfolioValueHistory(
   const points: PortfolioValueHistoryPoint[] = [];
   const conversionCache = new Map<string, number | null>();
   for (const date of [...dates].sort()) {
+    // Account creation is the product timeline's zero baseline even when a
+    // collector imports a card with an earlier real-world acquisition date.
+    // Daily data cannot represent a second, later event on the same date, so
+    // imported ownership first appears at the next retained observation.
+    if (date === accountDate) {
+      points.push({
+        date,
+        valueCents: 0,
+        value: 0,
+        currency,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+      });
+      continue;
+    }
+    const owned = intervals.filter(interval =>
+      interval.startDate <= date && (interval.endDate === null || date < interval.endDate)
+    );
+    const totalHoldings = owned.reduce((sum, interval) => sum + interval.quantity, 0);
+    if (totalHoldings === 0) {
+      points.push({
+        date,
+        valueCents: 0,
+        value: 0,
+        currency,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+      });
+      continue;
+    }
+
     let valueCents = 0;
     let complete = true;
-    for (const row of rows) {
+    for (const row of owned) {
       const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
       if (!gradeKey) {
         complete = false;
@@ -279,8 +365,8 @@ export async function calculatePortfolioValueHistory(
         valueCents,
         value: valueCents / 100,
         currency,
-        pricedHoldings: rows.length,
-        totalHoldings: rows.length,
+        pricedHoldings: totalHoldings,
+        totalHoldings,
       });
     }
   }
@@ -288,10 +374,10 @@ export async function calculatePortfolioValueHistory(
   return {
     points,
     currency,
-    historyAvailable: points.length >= 2,
-    historyUnavailableReason: points.length >= 2
+    historyAvailable: points.length > 0,
+    historyUnavailableReason: points.length > 0
       ? null
-      : "At least two complete retained price observations are required for the current collection",
+      : "No complete retained price observations are available during ownership",
   };
 }
 

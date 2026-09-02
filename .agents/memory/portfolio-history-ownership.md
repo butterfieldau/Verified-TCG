@@ -1,10 +1,10 @@
 ---
 name: Portfolio history semantics
-description: Keep current-holdings market backcasts distinct from ownership-period profit and loss.
+description: Home charts actual ownership value from account creation, separately from profit and loss.
 ---
 
-Verified TCG has two valid but different historical views. The Home market-value chart backcasts the cards and quantities currently held across real retained provider history, including dates before acquisition. Ownership-period profit and loss follows acquisitions and disposals and must include archived sold quantities until disposal.
+Verified TCG Home uses an ownership-value timeline: zero at account creation, active and archived quantities only during their actual ownership intervals, and real retained provider observations. Cards do not appear before acquisition; sold quantities disappear on sale and restored quantities begin a new interval. Profit and loss remains a separate calculation.
 
-**Why:** Collectors want to see how today’s collection moved in the market before they bought it, but that backcast is not the same as what they actually owned or earned. Mixing the two makes either market movement or P&L misleading.
+**Why:** The collector explicitly chose an account-to-present ownership timeline over a current-holdings market backcast. Showing pre-acquisition value or treating acquisition jumps as gains would misrepresent the account’s history.
 
-**How to apply:** Label current-holdings backcasts explicitly and use only real retained provider observations. Keep acquisition cost, realised gain, and ownership-period reporting lifecycle-aware; never use the backcast as ownership P&L.
+**How to apply:** Use account creation and acquisition/sale/restore boundaries as timeline events. Omit non-zero dates lacking complete real prices or FX; never interpolate. Keep acquisition cost, realised gain, and unrealised gain separate from value-chart movement.

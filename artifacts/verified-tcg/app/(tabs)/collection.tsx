@@ -29,6 +29,7 @@ import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { CollectionItem, WatchlistItem } from '@/types';
 import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
+import { tradingCardHeight, tradingCardRadius } from '@/services/collectionLayout';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
@@ -184,8 +185,11 @@ export default function CollectionScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
-    await Promise.all([refreshCollection(), loadSummary(true)]);
-    setIsRefreshing(false);
+    try {
+      await Promise.all([refreshCollection(), loadSummary(true)]);
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [refreshCollection, loadSummary]);
 
   const gradedCount = useMemo(
@@ -361,15 +365,7 @@ export default function CollectionScreen() {
           </Animated.View>
         )}
 
-        <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioCard}>
-          <LinearGradient
-            colors={['#281317', '#1C1115', '#141316']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={[styles.portfolioOrbit, styles.portfolioOrbitLarge]} />
-          <View style={[styles.portfolioOrbit, styles.portfolioOrbitSmall]} />
+        <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioSection}>
           <View style={styles.portfolioHeading}>
             <Text style={styles.portfolioLabel}>Portfolio value</Text>
             <View style={styles.liveLabel}>
@@ -654,6 +650,7 @@ export default function CollectionScreen() {
   // ── Card grid item ────────────────────────────────────────────────────────
 
   const gridItemWidth = Math.min((screenWidth - 52) / 2, 220);
+  const gridCardRadius = tradingCardRadius(gridItemWidth);
 
   function renderCardGrid(item: CollectionItem) {
     const isSaved = watchlist.some(entry => entry.cardId === item.card.id);
@@ -667,7 +664,10 @@ export default function CollectionScreen() {
         accessibilityRole="button"
         accessibilityLabel={`${item.card.name}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
       >
-        <View style={[styles.gridArt, { height: gridItemWidth * 1.34 }]}>
+        <View style={[
+          styles.gridArt,
+          { height: tradingCardHeight(gridItemWidth), borderRadius: gridCardRadius },
+        ]}>
           <LinearGradient
             colors={[item.card.gradientStart, item.card.gradientEnd]}
             start={{ x: 0, y: 0 }}
@@ -677,7 +677,7 @@ export default function CollectionScreen() {
           <CardImage
             uri={item.card.imageUrl}
             style={StyleSheet.absoluteFill}
-            contentFit="cover"
+            contentFit="contain"
           />
           <LinearGradient
             colors={['transparent', 'rgba(0,0,0,0.88)']}
@@ -921,30 +921,12 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     fontSize: 10,
   },
-  portfolioCard: {
+  portfolioSection: {
     position: 'relative',
-    overflow: 'hidden',
     marginHorizontal: 20,
-    borderWidth: 1,
-    borderColor: '#4B2027',
-    borderRadius: 18,
-    paddingHorizontal: 17,
-    paddingTop: 17,
-    paddingBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.24,
-    shadowRadius: 34,
-    elevation: 7,
+    paddingTop: 4,
+    paddingBottom: 6,
   },
-  portfolioOrbit: {
-    position: 'absolute',
-    borderWidth: 1,
-    borderColor: 'rgba(239,63,77,0.15)',
-    borderRadius: 999,
-  },
-  portfolioOrbitLarge: { width: 225, height: 225, top: -90, right: -74 },
-  portfolioOrbitSmall: { width: 130, height: 130, top: -42, right: -26 },
   portfolioHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   portfolioLabel: {
     color: '#B2A4A5',
@@ -983,7 +965,7 @@ const styles = StyleSheet.create({
   portfolioChart: {
     height: 58,
     marginTop: 15,
-    marginBottom: 11,
+    marginBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.11)',
     flexDirection: 'row',
@@ -1015,7 +997,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderWidth: 1,
     borderColor: '#2C2A2D',
-    borderRadius: 14,
+    borderRadius: 8,
     backgroundColor: '#18181B',
     paddingHorizontal: 14,
     paddingVertical: 13,
