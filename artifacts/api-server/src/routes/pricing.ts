@@ -18,6 +18,7 @@ import {
   refreshPricingForScheduler,
   recordSchedulerIdentityFailure,
   getPriceHistory,
+  isJustTcgPricingConfigured,
 } from "../pricing/service.js";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
 import { captureAllPortfolioSnapshots } from "../pricing/portfolio.js";
@@ -142,7 +143,7 @@ export async function selectCardsForScheduledRefresh(
     quote_refreshes AS (
       SELECT card_id, MAX(fetched_at) AS last_quote
       FROM current_quotes
-      WHERE provider_key = 'pricecharting'
+      WHERE provider_key = 'justtcg' AND grade_key = 'raw'
       GROUP BY card_id
     )
     SELECT d.card_id, d.card_data
@@ -181,13 +182,25 @@ router.get("/pricing/cards/:id", requireActiveUser, pricingReadLimiter, async (r
 
   try {
     const mapping = await getPricingMappingState(cardId);
-    if (!mapping && !name) {
+    if (!mapping && !name && !isJustTcgPricingConfigured()) {
       res.status(400).json({ message: "name query param is required for first-time matching" });
       return;
     }
     const identity = mapping?.identity
-      ?? await authoritativeIdentity(cardId, { name, set, number, game });
+      ?? await authoritativeIdentity(cardId, { name: name || cardId, set, number, game });
     if (!identity) {
+      if (isJustTcgPricingConfigured()) {
+        const result = await getPricing({
+          cardId,
+          name: name || cardId,
+          set,
+          number,
+          game,
+          displayCurrency,
+        });
+        res.json(result);
+        return;
+      }
       res.json(catalogIdentityUnavailable(cardId));
       return;
     }
@@ -227,7 +240,7 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
 
   try {
     const mapping = await getPricingMappingState(cardId);
-    if (!mapping && !name) {
+    if (!mapping && !name && !isJustTcgPricingConfigured()) {
       res.status(400).json({ message: "name is required for first-time matching (body or query)" });
       return;
     }
@@ -236,7 +249,7 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
       mapping?.status === "matched" && Boolean(mapping.providerProductId);
     const identity = canRefreshPersistedProduct
       ? mapping.identity
-      : await authoritativeIdentity(cardId, { name, set, number, game });
+      : await authoritativeIdentity(cardId, { name: name || cardId, set, number, game });
 
     if (!identity) {
       if (mapping) {
@@ -248,7 +261,18 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
             ?? "Stored pricing retained; card identity could not be resolved for rematching",
         });
       } else {
-        res.json(catalogIdentityUnavailable(cardId));
+        if (isJustTcgPricingConfigured()) {
+          res.json(await refreshPricing({
+            cardId,
+            name: name || cardId,
+            set,
+            number,
+            game,
+            displayCurrency,
+          }));
+        } else {
+          res.json(catalogIdentityUnavailable(cardId));
+        }
       }
       return;
     }
@@ -314,11 +338,11 @@ router.post("/pricing/scheduler/run", async (req, res): Promise<void> => {
     200,
   );
 
-  if (!isPCConfigured()) {
+  if (!isPCConfigured() && !isJustTcgPricingConfigured()) {
     res.json({
       queued: 0,
       configured: false,
-      message: "PriceCharting is not configured; no provider work was queued",
+      message: "No pricing provider is configured; no provider work was queued",
     });
     return;
   }
@@ -345,8 +369,13 @@ router.post("/pricing/scheduler/run", async (req, res): Promise<void> => {
             const catalogCard = await resolveCatalogCardById(card.cardId).catch(() => null);
             const identity = catalogCard ? identityFromCatalogCard(catalogCard.card) : null;
             if (!identity) {
-              await recordSchedulerIdentityFailure(card.cardId);
-              return null;
+              if (isPCConfigured()) {
+                await recordSchedulerIdentityFailure(card.cardId);
+                return null;
+              }
+              // JustTCG can refresh its exact public card id without a
+              // second cross-provider identity match.
+              return { cardId: card.cardId, name: card.cardId };
             }
             return { cardId: card.cardId, ...identity };
           }),

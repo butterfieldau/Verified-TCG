@@ -681,6 +681,21 @@ describe("Exact holding-grade resolution", () => {
     assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 10 }), "psa_10");
   });
 
+  test("preserves generic Grade 7 / 7.5 as a non-company-specific value", () => {
+    assert.equal(
+      gradeKeyForHolding(true, { company: "Generic", grade: 7 }),
+      "graded_7_75",
+    );
+    assert.equal(
+      gradeKeyForHolding(true, { company: "Unspecified", grade: 7.5 }),
+      "graded_7_75",
+    );
+    assert.notEqual(
+      gradeKeyForHolding(true, { company: "PSA", grade: 7 }),
+      "graded_7_75",
+    );
+  });
+
   test("keeps explicitly supported grade-10 companies distinct", () => {
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10 }), "bgs_10");
     assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10 }), "cgc_10");

@@ -13,7 +13,7 @@ import { and, eq, gte, desc, asc } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity } from "./activity.js";
 import { convertCents } from "../pricing/fx.js";
-import { PROVIDER_KEY } from "../pricing/pricecharting.js";
+import { selectPreferredQuote } from "../pricing/justtcg.js";
 import {
   calculatePortfolioValuation,
   capturePortfolioSnapshot,
@@ -56,18 +56,16 @@ function movement(
 async function currentQuoteForArchive(row: ArchiveRow): Promise<QuoteRow | null> {
   const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
   if (!gradeKey) return null;
-  const [quote] = await db
+  const quotes = await db
     .select()
     .from(currentQuotesTable)
     .where(
       and(
         eq(currentQuotesTable.cardId, row.cardId),
-        eq(currentQuotesTable.providerKey, PROVIDER_KEY),
         eq(currentQuotesTable.gradeKey, gradeKey),
       ),
-    )
-    .limit(1);
-  return quote ?? null;
+    );
+  return selectPreferredQuote(quotes, gradeKey);
 }
 
 async function archiveRowToResponse(
@@ -150,7 +148,7 @@ async function archiveRowToResponse(
     currentMarketValue: dollars(currentMarketValueCents),
     currentMarketCurrency,
     currentMarketUpdatedAt: quote?.fetchedAt.toISOString() ?? null,
-    currentMarketSource: quote ? "PriceCharting" : null,
+    currentMarketSource: quote?.providerKey === "justtcg" ? "JustTCG" : quote ? "PriceCharting" : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -207,19 +205,18 @@ router.post("/collection/:id/sell", requireActiveUser, async (req: AuthRequest, 
     }
 
     const gradeKey = gradeKeyForHolding(item.isGraded, item.gradingData);
-    const [quote] = gradeKey
+    const quotes = gradeKey
       ? await tx
           .select()
           .from(currentQuotesTable)
           .where(
             and(
               eq(currentQuotesTable.cardId, item.cardId),
-              eq(currentQuotesTable.providerKey, PROVIDER_KEY),
               eq(currentQuotesTable.gradeKey, gradeKey),
             ),
           )
-          .limit(1)
       : [];
+    const quote = gradeKey ? selectPreferredQuote(quotes, gradeKey) : null;
 
     const [archived] = await tx
       .insert(soldArchiveItemsTable)

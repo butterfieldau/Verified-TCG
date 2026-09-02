@@ -8,6 +8,11 @@ import {
   type CatalogueRead,
 } from "../lib/catalogueProvider.js";
 import {
+  extractJustTcgRawQuote,
+  JUSTTCG_PRICING_PROVIDER_KEY,
+  persistJustTcgRawQuote,
+} from "../pricing/justtcg.js";
+import {
   canonicalCatalogueReadsEnabled,
   readCanonicalPublicCard,
   readCanonicalPublicCards,
@@ -71,6 +76,35 @@ function enrichCard(card: Record<string, unknown>): Record<string, unknown> {
     if (derived) return { ...card, image_url: derived };
   }
   return card;
+}
+
+/**
+ * A live JustTCG card response is the primary raw-price source. Persist it in
+ * the background for collection valuation/history, but return it immediately
+ * so search and card detail never wait for a secondary provider match.
+ */
+function enrichJustTcgCard(card: Record<string, unknown>): Record<string, unknown> {
+  const enriched = enrichCard(card);
+  const quote = extractJustTcgRawQuote(enriched);
+  if (!quote) return enriched;
+  void persistJustTcgRawQuote(enriched).catch(() => {});
+  const variants = Array.isArray(enriched.variants) ? enriched.variants : [];
+  return {
+    ...enriched,
+    currency: quote.currency,
+    market_price: quote.priceCents / 100,
+    pricing_source: "JustTCG",
+    raw_quote: {
+      provider: JUSTTCG_PRICING_PROVIDER_KEY,
+      productId: quote.providerProductId,
+      priceCents: quote.priceCents,
+      price: quote.priceCents / 100,
+      currency: quote.currency,
+      updatedAt: quote.fetchedAt.toISOString(),
+      isStale: false,
+    },
+    variants,
+  };
 }
 
 /** Return the Near Mint variant, or the first variant as fallback. */
@@ -140,7 +174,7 @@ router.get("/catalog/cards", async (req, res) => {
             ...(game ? { game } : {}),
             limit: String(limit),
             offset: String(offset),
-            include_price_history: "false",
+            priceHistoryDuration: "30d",
           }).toString()}`,
         );
         const fallbackCards =
@@ -154,7 +188,7 @@ router.get("/catalog/cards", async (req, res) => {
                 (fallbackResult.body as {
                   data: Array<Record<string, unknown>>;
                 }).data
-              ).map(enrichCard)
+              ).map(enrichJustTcgCard)
             : [];
         if (fallbackResult.status >= 400) {
           recordCatalogueReadMetric(
@@ -216,7 +250,7 @@ router.get("/catalog/cards", async (req, res) => {
           ...(game ? { game } : {}),
           limit: String(limit),
           offset: String(offset),
-          include_price_history: "false",
+          priceHistoryDuration: "30d",
         }).toString()}`,
       );
       if (fallbackResult.status < 400) {
@@ -232,7 +266,7 @@ router.get("/catalog/cards", async (req, res) => {
           } | null) ?? {}),
         };
         if (Array.isArray(body.data))
-          body.data = body.data.map(enrichCard);
+          body.data = body.data.map(enrichJustTcgCard);
         return res.json({
           ...body,
           source: "JustTCG",
@@ -254,7 +288,7 @@ router.get("/catalog/cards", async (req, res) => {
     });
     if (query) params.set("q", query);
     if (game) params.set("game", game);
-    params.set("include_price_history", "false");
+    params.set("priceHistoryDuration", "30d");
     const result = await justTcg(`/cards?${params.toString()}`);
     if (result.status >= 400)
       return res.status(result.status).json(result.body);
@@ -272,10 +306,7 @@ router.get("/catalog/cards", async (req, res) => {
         {}),
     };
     if (body && Array.isArray(body.data)) {
-      body.data = body.data.map((card) => {
-        const enriched = enrichCard(card);
-        return enriched;
-      });
+      body.data = body.data.map(enrichJustTcgCard);
     }
 
     return res.json({ ...body, source: "JustTCG", ...cacheMetadata(result) });
@@ -441,8 +472,9 @@ function preferenceCandidateFilter(cardId: SQL, preferences: Set<string> | null)
 }
 
 /**
- * Market reads are based exclusively on persisted PriceCharting snapshots.
- * A row is eligible only when it has two non-zero raw observations from the
+ * Market reads are based on persisted primary-provider snapshots. Raw values
+ * use JustTCG, while explicit graded conditions remain PriceCharting-only.
+ * A row is eligible only when it has two non-zero observations from the
  * same provider/currency and the current observation is still fresh. This
  * intentionally returns no data during a new deployment rather than making
  * provider search results look like a genuine market movement feed.
@@ -454,6 +486,8 @@ export async function persistedMarketCards(
   currency?: string,
   preferences: Set<string> | null = null,
 ) {
+  const providerKey =
+    grade === "raw" ? JUSTTCG_PRICING_PROVIDER_KEY : "pricecharting";
   const direction = mode === "gainers"
     ? sql`AND movement_percent > 0`
     : mode === "losers"
@@ -471,7 +505,7 @@ export async function persistedMarketCards(
           ORDER BY captured_at DESC
         ) AS position
       FROM card_price_snapshots
-      WHERE provider_key = 'pricecharting'
+      WHERE provider_key = ${providerKey}
         AND grade_key = ${grade}
         AND capture_status = 'success'
         AND price_cents IS NOT NULL
@@ -549,10 +583,19 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
   }>(sql`
     SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at, e.created_at
     FROM catalogue_external_ids e
-    LEFT JOIN current_quotes q
-      ON q.card_id = e.external_id
-      AND q.provider_key = 'pricecharting'
-      AND q.grade_key = 'raw'
+    LEFT JOIN LATERAL (
+      SELECT price_cents, currency, fetched_at
+      FROM current_quotes
+      WHERE card_id = e.external_id
+        AND grade_key = 'raw'
+        AND provider_key IN ('justtcg', 'pricecharting')
+      ORDER BY CASE provider_key
+        WHEN 'justtcg' THEN 0
+        WHEN 'pricecharting' THEN 1
+        ELSE 2
+      END
+      LIMIT 1
+    ) q ON TRUE
     WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
       ${preferenceCandidateFilter(sql`e.external_id`, preferences)}
     -- Provenance timestamps can be equal during a sync batch; external ID
@@ -725,49 +768,10 @@ async function resolveJustTcgCatalogCardById(
   status: number;
   source: "JustTCG";
 } | null> {
-  // ID format: "{game}-{set}-{card-name-parts}-{rarity-parts}".
-  const parts = cardId.split("-");
-  const gameWord = (parts[0] ?? "").toLowerCase();
-  const GAME_MAP: Record<string, string> = {
-    pokemon: "Pokemon",
-    magic: "Magic: The Gathering",
-    yugioh: "Yu-Gi-Oh!",
-    lorcana: "Disney Lorcana",
-    onepiece: "One Piece",
-    dragonball: "Dragon Ball Super",
-  };
-  const game = GAME_MAP[gameWord];
-  const RARITY_TAIL = new Set([
-    "common",
-    "uncommon",
-    "rare",
-    "holo",
-    "ultra",
-    "secret",
-    "special",
-    "illustration",
-    "hyper",
-    "rainbow",
-    "full",
-    "art",
-  ]);
-  const nameParts = [...parts.slice(1)];
-  while (
-    nameParts.length > 0 &&
-    RARITY_TAIL.has(nameParts[nameParts.length - 1]!)
-  ) {
-    nameParts.pop();
-  }
-  const searchQuery = nameParts.join(" ").trim();
-  if (!searchQuery) return null;
-
   const params = new URLSearchParams({
-    q: searchQuery,
-    limit: "20",
-    include_price_history: "false",
+    cardId,
+    priceHistoryDuration: "30d",
   });
-  if (game) params.set("game", game);
-
   const result = await justTcg(`/cards?${params.toString()}`);
   if (result.status === 429) {
     return {
@@ -784,7 +788,7 @@ async function resolveJustTcgCatalogCardById(
   const match = body?.data?.find((card) => card.id === cardId) ?? null;
   if (!match) return null;
 
-  const card = enrichCard(match);
+  const card = enrichJustTcgCard(match);
   return { card, cached: result.cached, status: 200, source: "JustTCG" };
 }
 

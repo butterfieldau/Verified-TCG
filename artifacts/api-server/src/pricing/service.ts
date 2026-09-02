@@ -16,7 +16,7 @@ import {
   pricingProvidersTable,
   providerPriceHistoryTable,
 } from "@workspace/db";
-import { and, eq, desc, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, desc, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import {
   priceChartingProvider,
@@ -40,6 +40,16 @@ import {
   type VerifiedMarketValue,
 } from "./engine.js";
 import { recordTelemetry } from "../lib/telemetry.js";
+import { justTcg } from "../lib/catalogueProvider.js";
+import {
+  JUSTTCG_PRICING_PROVIDER_KEY,
+  JUSTTCG_PRICING_PROVIDER_LABEL,
+  persistJustTcgRawQuote,
+  refreshJustTcgGradedQuotes as refreshJustTcgV2GradedQuotes,
+  isJustTcgGradedPricingEnabled,
+  preferredProviderKeyForGrade,
+  selectPreferredQuote,
+} from "./justtcg.js";
 
 /**
  * Fixed operation enum for PriceCharting integration telemetry. Never
@@ -125,6 +135,55 @@ export interface PricingResponse {
 // ── In-flight background match jobs ──────────────────────────────────────────
 
 const matchInFlight = new Map<string, Promise<void>>();
+const justTcgPricingInFlight = new Map<string, Promise<boolean>>();
+const justTcgGradedPricingInFlight = new Map<string, Promise<number>>();
+
+export function isJustTcgPricingConfigured(): boolean {
+  return Boolean(process.env.JUSTTCG_API_KEY?.trim());
+}
+
+/**
+ * Fetch the exact existing JustTCG card id. This is deliberately separate
+ * from PriceCharting product matching: a raw catalogue quote does not need a
+ * cross-provider identity guess to be useful.
+ */
+async function refreshJustTcgRawQuote(cardId: string): Promise<boolean> {
+  if (!isJustTcgPricingConfigured()) return false;
+  const existing = justTcgPricingInFlight.get(cardId);
+  if (existing) return existing;
+
+  const request = (async () => {
+    try {
+      const params = new URLSearchParams({
+        cardId,
+        priceHistoryDuration: "30d",
+      });
+      const result = await justTcg(`/cards?${params.toString()}`);
+      if (result.status >= 400) return false;
+      const body = result.body as { data?: Array<Record<string, unknown>> } | null;
+      const card = body?.data?.find((candidate) => candidate.id === cardId);
+      return Boolean(card && await persistJustTcgRawQuote(card));
+    } catch {
+      // The public pricing response remains provider-neutral and sanitised.
+      return false;
+    }
+  })().finally(() => justTcgPricingInFlight.delete(cardId));
+
+  justTcgPricingInFlight.set(cardId, request);
+  return request;
+}
+
+/** Fetch exact v2 slab prices at most once per card across concurrent requests. */
+async function refreshJustTcgGradedQuotes(cardId: string): Promise<number> {
+  if (!isJustTcgGradedPricingEnabled()) return 0;
+  const existing = justTcgGradedPricingInFlight.get(cardId);
+  if (existing) return existing;
+  const request = refreshJustTcgV2GradedQuotes(cardId)
+    .catch(() => 0)
+    .finally(() => justTcgGradedPricingInFlight.delete(cardId));
+  justTcgGradedPricingInFlight.set(cardId, request);
+  return request;
+}
 
 async function recordProviderHealth(
   healthy: boolean,
@@ -224,12 +283,7 @@ async function getStoredQuotes(cardId: string) {
   const rows = await db
     .select()
     .from(currentQuotesTable)
-    .where(
-      and(
-        eq(currentQuotesTable.cardId, cardId),
-        eq(currentQuotesTable.providerKey, PROVIDER_KEY),
-      ),
-    );
+    .where(eq(currentQuotesTable.cardId, cardId));
   return rows.map((row) => ({
     ...row,
     gradeKey: normalizeGradeKey(row.gradeKey) ?? row.gradeKey,
@@ -495,23 +549,67 @@ export interface GetPricingOptions {
  */
 export async function getPricing(opts: GetPricingOptions): Promise<PricingResponse> {
   const { cardId, name, set, number, game, displayCurrency = "AUD" } = opts;
-  const configured = priceChartingProvider.isConfigured();
+  const priceChartingConfigured = priceChartingProvider.isConfigured();
+  const justTcgConfigured = isJustTcgPricingConfigured();
+  const configured = priceChartingConfigured || justTcgConfigured;
   const emptyMarket = {
     verifiedMarket: [] as VerifiedMarketValue[],
     providerMetadata: null,
   };
 
   const baseSource = {
-    provider: PROVIDER_KEY,
-    label: PROVIDER_LABEL,
+    provider: justTcgConfigured
+      ? JUSTTCG_PRICING_PROVIDER_KEY
+      : PROVIDER_KEY,
+    label: justTcgConfigured
+      ? JUSTTCG_PRICING_PROVIDER_LABEL
+      : PROVIDER_LABEL,
     productId: null as string | null,
   };
 
   // Check existing mapping
   const mapping = await getExistingMapping(cardId);
+  let storedQuotes = await getStoredQuotes(cardId);
+  let rawQuote = selectPreferredQuote(storedQuotes, "raw");
+  const justTcgRawQuote = storedQuotes.find(
+    (quote) =>
+      normalizeGradeKey(quote.gradeKey) === "raw" &&
+      quote.providerKey === JUSTTCG_PRICING_PROVIDER_KEY,
+  );
 
-  // If no mapping, queue background match and return pending
-  if (!mapping) {
+  // Search/card-detail calls persist JustTCG quotes in the background. When a
+  // pricing request wins that race, resolve the exact public card id now so a
+  // missing PriceCharting mapping never hides a valid raw quote.
+  if (!justTcgRawQuote && justTcgConfigured) {
+    await refreshJustTcgRawQuote(cardId);
+    storedQuotes = await getStoredQuotes(cardId);
+    rawQuote = selectPreferredQuote(storedQuotes, "raw");
+  }
+
+  // JustTCG v2 graded variants are deliberately separate from the stable v1
+  // catalogue call. When the server-side beta flag is enabled, fetch exact
+  // company/grade values only; raw or another grader can never substitute.
+  const justTcgGradedQuote = storedQuotes.find(
+    (quote) =>
+      normalizeGradeKey(quote.gradeKey) !== "raw" &&
+      quote.providerKey === JUSTTCG_PRICING_PROVIDER_KEY,
+  );
+  if (!justTcgGradedQuote && isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(cardId);
+    storedQuotes = await getStoredQuotes(cardId);
+    rawQuote = selectPreferredQuote(storedQuotes, "raw");
+  }
+
+  // PriceCharting remains a background supplement for exact grade/company
+  // quotes. Its mapping state must not make an already-stored JustTCG raw
+  // quote unavailable.
+  if (!mapping && priceChartingConfigured) {
+    void runBackgroundMatch(cardId, { name, set, number, game });
+  }
+
+  // If neither provider has supplied a quote, retain the established pending
+  // behaviour while making the source of the pending work explicit.
+  if (!mapping && storedQuotes.length === 0) {
     if (!configured) {
       return {
         cardId,
@@ -525,27 +623,27 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
         updatedAt: null,
         isStale: false,
         errorCode: "missing_secret",
-        message: "PriceCharting is not configured on the server",
+        message: "Pricing providers are not configured on the server",
       };
     }
-    runBackgroundMatch(cardId, { name, set, number, game });
     return {
       cardId,
       status: "pending_match",
       configured,
-      queued: true,
+      queued: justTcgConfigured || priceChartingConfigured,
       quotes: [],
       ...emptyMarket,
       source: baseSource,
       confidence: { level: null, score: null },
       updatedAt: null,
       isStale: false,
-      message: "Matching in progress, check back shortly",
+      message: "Fetching available provider prices, check back shortly",
     };
   }
 
-  // Mapping exists but is review_required or unmatched
-  if (mapping.status === "review_required") {
+  // PriceCharting mapping review states only block its own grade quotes.
+  // A verified JustTCG raw quote remains useful and truthful.
+  if (mapping?.status === "review_required" && storedQuotes.length === 0) {
     return {
       cardId,
       status: "review_required",
@@ -564,7 +662,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     };
   }
 
-  if (mapping.status === "unmatched") {
+  if (mapping?.status === "unmatched" && storedQuotes.length === 0) {
     return {
       cardId,
       status: "unmatched",
@@ -583,9 +681,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     };
   }
 
-  // Matched — get quotes
-  const storedQuotes = await getStoredQuotes(cardId);
-  const productId = mapping.providerProductId ?? null;
+  const productId = mapping?.providerProductId ?? rawQuote?.providerProductId ?? null;
 
   if (storedQuotes.length === 0) {
     if (!configured) {
@@ -598,18 +694,22 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
         ...emptyMarket,
         source: { ...baseSource, productId },
         confidence: {
-          level: mapping.confidenceLevel ?? null,
-          score: mapping.confidenceScore ?? null,
+          level: mapping?.confidenceLevel ?? null,
+          score: mapping?.confidenceScore ?? null,
         },
         updatedAt: null,
         isStale: false,
         errorCode: "missing_secret",
-        message: "Stored mapping exists, but PriceCharting is not configured for a quote refresh",
+        message: "Stored provider identity exists, but no pricing provider is configured for refresh",
       };
     }
     // No quotes yet — queue refresh
-    if (productId) void runMappedRefresh(cardId, productId);
-    else void runBackgroundMatch(cardId, { name, set, number, game });
+    if (productId && mapping?.status === "matched" && priceChartingConfigured) {
+      void runMappedRefresh(cardId, productId);
+    } else if (priceChartingConfigured) {
+      void runBackgroundMatch(cardId, { name, set, number, game });
+    }
+    if (justTcgConfigured) void refreshJustTcgRawQuote(cardId);
     return {
       cardId,
       status: "pending_match",
@@ -619,8 +719,8 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       ...emptyMarket,
       source: { ...baseSource, productId },
       confidence: {
-        level: mapping.confidenceLevel ?? null,
-        score: mapping.confidenceScore ?? null,
+        level: mapping?.confidenceLevel ?? null,
+        score: mapping?.confidenceScore ?? null,
       },
       updatedAt: null,
       isStale: false,
@@ -636,20 +736,26 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   const isStale = latestFetch
     ? Date.now() - latestFetch.getTime() > STALE_THRESHOLD_MS
     : true;
-  const refreshQueued = Boolean(isStale && configured && productId);
-  if (refreshQueued && productId) void runMappedRefresh(cardId, productId);
-
-  // Determine FX rate once for all quotes
-  let fxRate: number | null = null;
-  let conversionProvenance: ReturnType<typeof buildConversionProvenance> | undefined;
-  if (displayCurrency !== PC_CURRENCY) {
-    fxRate = await convertCents(100, PC_CURRENCY, displayCurrency).then(v =>
-      v != null ? v / 100 : null,
-    );
-    conversionProvenance = buildConversionProvenance(PC_CURRENCY, displayCurrency, fxRate);
+  const refreshQueued = Boolean(
+    isStale &&
+      ((mapping?.status === "matched" && productId && priceChartingConfigured) ||
+        justTcgConfigured),
+  );
+  if (isStale && mapping?.status === "matched" && productId && priceChartingConfigured) {
+    void runMappedRefresh(cardId, productId);
   }
+  if (isStale && justTcgConfigured) void refreshJustTcgRawQuote(cardId);
+  if (isStale && isJustTcgGradedPricingEnabled()) void refreshJustTcgGradedQuotes(cardId);
 
-  const quoteMap = new Map(storedQuotes.map(q => [q.gradeKey, q]));
+  const quotesByGrade = new Map<string, typeof storedQuotes>();
+  for (const quote of storedQuotes) {
+    const canonicalGrade = normalizeGradeKey(quote.gradeKey);
+    if (!canonicalGrade) continue;
+    quotesByGrade.set(canonicalGrade, [
+      ...(quotesByGrade.get(canonicalGrade) ?? []),
+      { ...quote, gradeKey: canonicalGrade },
+    ]);
+  }
   const quotes: QuoteItem[] = [];
   const verifiedMarket: VerifiedMarketValue[] = [];
   const retainedHistory = await db
@@ -658,7 +764,10 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     .where(
       and(
         eq(providerPriceHistoryTable.cardId, cardId),
-        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        inArray(providerPriceHistoryTable.providerKey, [
+          JUSTTCG_PRICING_PROVIDER_KEY,
+          PROVIDER_KEY,
+        ]),
         gte(providerPriceHistoryTable.recordedAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
       ),
     );
@@ -684,19 +793,21 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   const appliedOverrides: NonNullable<PricingResponse["manualOverrides"]> = [];
 
   for (const gradeDef of GRADE_DEFINITIONS) {
-    const q = quoteMap.get(gradeDef.key);
+    const q = selectPreferredQuote(
+      quotesByGrade.get(gradeDef.key) ?? [],
+      gradeDef.key,
+    );
     if (!q) continue;
 
-    let displayCents: number;
-    let displayCurrencyFinal: string;
-
-    if (fxRate != null) {
-      displayCents = Math.round(q.priceCents * fxRate);
-      displayCurrencyFinal = displayCurrency;
-    } else {
-      displayCents = q.priceCents;
-      displayCurrencyFinal = q.currency;
-    }
+    const fxRate =
+      q.currency.toUpperCase() === displayCurrency.toUpperCase()
+        ? 1
+        : await convertCents(100, q.currency, displayCurrency).then((value) =>
+            value != null ? value / 100 : null,
+          );
+    const displayCents =
+      fxRate != null ? Math.round(q.priceCents * fxRate) : q.priceCents;
+    const displayCurrencyFinal = fxRate != null ? displayCurrency : q.currency;
 
     quotes.push({
       gradeKey: gradeDef.key,
@@ -709,13 +820,22 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     });
 
     const retainedSnapshotCents = retainedHistory
-      .filter(row => row.gradeKey === gradeDef.key)
-      .map(row => fxRate != null ? Math.round(row.priceCents * fxRate) : row.priceCents);
+      .filter(
+        (row) =>
+          normalizeGradeKey(row.gradeKey) === gradeDef.key &&
+          row.providerKey === q.providerKey,
+      )
+      .map((row) =>
+        fxRate != null ? Math.round(row.priceCents * fxRate) : row.priceCents,
+      );
     const market = aggregateVerifiedMarketValue({
       gradeKey: gradeDef.key,
       quotes: [{
         providerKey: q.providerKey,
-        providerLabel: PROVIDER_LABEL,
+        providerLabel:
+          q.providerKey === JUSTTCG_PRICING_PROVIDER_KEY
+            ? JUSTTCG_PRICING_PROVIDER_LABEL
+            : PROVIDER_LABEL,
         providerProductId: q.providerProductId ?? productId,
         gradeKey: gradeDef.key,
         priceCents: displayCents,
@@ -724,7 +844,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
         originalCurrency: q.currency,
         fetchedAt: q.fetchedAt,
       }],
-      matchingConfidence: mapping.confidenceScore ?? null,
+      matchingConfidence: mapping?.confidenceScore ?? null,
       isStale,
       retainedSnapshotCents,
     });
@@ -771,6 +891,20 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
   }
 
   const primaryMarket = verifiedMarket.find(value => value.gradeKey === "raw") ?? verifiedMarket[0];
+  const primaryQuote =
+    selectPreferredQuote(quotesByGrade.get("raw") ?? [], "raw") ??
+    storedQuotes[0] ??
+    null;
+  const conversionProvenance =
+    primaryQuote && primaryQuote.currency.toUpperCase() !== displayCurrency.toUpperCase()
+      ? buildConversionProvenance(
+          primaryQuote.currency,
+          displayCurrency,
+          await convertCents(100, primaryQuote.currency, displayCurrency).then(
+            (value) => (value != null ? value / 100 : null),
+          ),
+        )
+      : undefined;
 
   return {
     cardId,
@@ -780,9 +914,12 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     quotes,
     verifiedMarket,
     source: {
-      provider: PROVIDER_KEY,
-      label: PROVIDER_LABEL,
-      productId,
+      provider: primaryQuote?.providerKey ?? baseSource.provider,
+      label:
+        primaryQuote?.providerKey === JUSTTCG_PRICING_PROVIDER_KEY
+          ? JUSTTCG_PRICING_PROVIDER_LABEL
+          : PROVIDER_LABEL,
+      productId: primaryQuote?.providerProductId ?? productId,
     },
     confidence: {
       level: primaryMarket?.confidence.level ?? null,
@@ -791,21 +928,21 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       reasons: primaryMarket?.confidence.reasons,
     },
     matchingConfidence: {
-      level: mapping.confidenceLevel ?? null,
-      score: mapping.confidenceScore ?? null,
+      level: mapping?.confidenceLevel ?? null,
+      score: mapping?.confidenceScore ?? null,
     },
     providerMetadata: {
-      salesVolume: mapping.providerSalesVolume ?? null,
-      releaseDate: mapping.providerReleaseDate ?? null,
-      genre: mapping.providerGenre ?? null,
-      upc: mapping.providerUpc ?? null,
-      epid: mapping.providerEpid ?? null,
+      salesVolume: mapping?.providerSalesVolume ?? null,
+      releaseDate: mapping?.providerReleaseDate ?? null,
+      genre: mapping?.providerGenre ?? null,
+      upc: mapping?.providerUpc ?? null,
+      epid: mapping?.providerEpid ?? null,
     },
     updatedAt: latestFetch?.toISOString() ?? null,
     isStale,
     ...(appliedOverrides.length > 0 ? { manualOverrides: appliedOverrides } : {}),
     ...(!configured
-      ? { message: "Stored PriceCharting value shown; automatic refresh is not configured" }
+      ? { message: "Stored provider value shown; automatic refresh is not configured" }
       : {}),
     ...(conversionProvenance ? { conversion: conversionProvenance } : {}),
   };
@@ -817,6 +954,14 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
  */
 export async function refreshPricing(opts: GetPricingOptions): Promise<PricingResponse> {
   const { cardId, name, set, number, game } = opts;
+  const justTcgConfigured = isJustTcgPricingConfigured();
+
+  if (justTcgConfigured) {
+    await refreshJustTcgRawQuote(cardId);
+  }
+  if (isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(cardId);
+  }
 
   if (!priceChartingProvider.isConfigured()) {
     return getPricing(opts);
@@ -859,6 +1004,12 @@ export async function refreshPricing(opts: GetPricingOptions): Promise<PricingRe
 export async function refreshPricingForScheduler(
   opts: Pick<GetPricingOptions, "cardId" | "name" | "set" | "number" | "game">,
 ): Promise<void> {
+  if (isJustTcgPricingConfigured()) {
+    await refreshJustTcgRawQuote(opts.cardId);
+  }
+  if (isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(opts.cardId);
+  }
   if (!priceChartingProvider.isConfigured()) return;
 
   const mapping = await getExistingMapping(opts.cardId);
@@ -974,22 +1125,46 @@ export async function getPriceHistory(opts: {
 }): Promise<PriceHistoryResult> {
   const { cardId, periodDays = 30, displayCurrency = "AUD" } = opts;
   const canonicalGradeKey = normalizeGradeKey(opts.gradeKey ?? "raw") ?? "raw";
+  const preferredProviderKey = preferredProviderKeyForGrade(canonicalGradeKey);
 
   const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
 
-  const snapshotRows = await db
+  let historyProviderKey = preferredProviderKey;
+  let snapshotRows = await db
     .select()
     .from(cardPriceSnapshotsTable)
     .where(
       and(
         eq(cardPriceSnapshotsTable.cardId, cardId),
-        eq(cardPriceSnapshotsTable.providerKey, PROVIDER_KEY),
+        eq(cardPriceSnapshotsTable.providerKey, preferredProviderKey),
         eq(cardPriceSnapshotsTable.gradeKey, canonicalGradeKey),
         gte(cardPriceSnapshotsTable.capturedAt, since),
         eq(cardPriceSnapshotsTable.captureStatus, "success"),
       ),
     )
     .orderBy(cardPriceSnapshotsTable.capturedAt);
+
+  // PriceCharting remains a secondary history source while a JustTCG cache is
+  // warming. It is never used to overwrite a JustTCG history when one exists.
+  if (
+    snapshotRows.length === 0 &&
+    preferredProviderKey !== PROVIDER_KEY
+  ) {
+    historyProviderKey = PROVIDER_KEY;
+    snapshotRows = await db
+      .select()
+      .from(cardPriceSnapshotsTable)
+      .where(
+        and(
+          eq(cardPriceSnapshotsTable.cardId, cardId),
+          eq(cardPriceSnapshotsTable.providerKey, historyProviderKey),
+          eq(cardPriceSnapshotsTable.gradeKey, canonicalGradeKey),
+          gte(cardPriceSnapshotsTable.capturedAt, since),
+          eq(cardPriceSnapshotsTable.captureStatus, "success"),
+        ),
+      )
+      .orderBy(cardPriceSnapshotsTable.capturedAt);
+  }
 
   // Preserve access to pre-Stage-2A provider history without pretending it has
   // timestamp precision. New captures always use card_price_snapshots.
@@ -999,7 +1174,7 @@ export async function getPriceHistory(opts: {
       .from(providerPriceHistoryTable)
       .where(and(
         eq(providerPriceHistoryTable.cardId, cardId),
-        eq(providerPriceHistoryTable.providerKey, PROVIDER_KEY),
+        eq(providerPriceHistoryTable.providerKey, historyProviderKey),
         eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
       ))
       .orderBy(providerPriceHistoryTable.snapshotDate)
@@ -1022,24 +1197,49 @@ export async function getPriceHistory(opts: {
         recordedAt: row.recordedAt,
       }));
 
-  // FX conversion
-  let fxRate: number | null = null;
-  if (displayCurrency !== "USD") {
-    fxRate = await convertCents(100, "USD", displayCurrency).then(v => v != null ? v / 100 : null);
+  if (
+    snapshotRows.length === 0 &&
+    legacyRows.length === 0 &&
+    historyProviderKey !== PROVIDER_KEY
+  ) {
+    historyProviderKey = PROVIDER_KEY;
+    const priceChartingHistory = await db
+      .select()
+      .from(providerPriceHistoryTable)
+      .where(and(
+        eq(providerPriceHistoryTable.cardId, cardId),
+        eq(providerPriceHistoryTable.providerKey, historyProviderKey),
+        eq(providerPriceHistoryTable.gradeKey, canonicalGradeKey),
+      ))
+      .orderBy(providerPriceHistoryTable.snapshotDate);
+    for (const row of priceChartingHistory) {
+      if (new Date(row.snapshotDate) < since || row.priceCents <= 0) continue;
+      pointsSource.push({
+        date: row.snapshotDate,
+        priceCents: row.priceCents,
+        currency: row.currency,
+        recordedAt: row.recordedAt,
+      });
+    }
   }
 
-  const points: HistoryPoint[] = pointsSource.map(r => {
-    const displayCents = fxRate != null
-      ? Math.round(r.priceCents * fxRate)
-      : r.priceCents;
-    const displayCurr = fxRate != null ? displayCurrency : r.currency;
-    return {
-      date: r.date,
+  const points: HistoryPoint[] = [];
+  for (const point of pointsSource) {
+    const fxRate =
+      point.currency.toUpperCase() === displayCurrency.toUpperCase()
+        ? 1
+        : await convertCents(100, point.currency, displayCurrency).then((value) =>
+            value != null ? value / 100 : null,
+          );
+    const displayCents =
+      fxRate != null ? Math.round(point.priceCents * fxRate) : point.priceCents;
+    points.push({
+      date: point.date,
       priceCents: displayCents,
       price: displayCents / 100,
-      currency: displayCurr,
-    };
-  });
+      currency: fxRate != null ? displayCurrency : point.currency,
+    });
+  }
 
   // Calculate movement if we have at least 2 points
   let movement: PriceHistoryResult["movement"] = null;
@@ -1061,7 +1261,10 @@ export async function getPriceHistory(opts: {
     cardId,
     gradeKey: canonicalGradeKey,
     points,
-    source: snapshotRows.length > 0 ? "pricecharting_snapshots" : PROVIDER_KEY,
+    source:
+      snapshotRows.length > 0
+        ? `${historyProviderKey}_snapshots`
+        : historyProviderKey,
     historyAvailable: points.length >= 2,
     movement,
     updatedAt: latestRow?.recordedAt?.toISOString() ?? null,
