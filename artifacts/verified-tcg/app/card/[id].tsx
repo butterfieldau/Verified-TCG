@@ -274,8 +274,8 @@ const C = colors.dark;
 const { width: W } = Dimensions.get('window');
 
 
-/** Card aspect ratio: 2.5 wide × 3.5 tall */
-const CARD_W = Math.min(W - 48, 210);
+/** Passport hero card matches the approved 170 × 238 portrait treatment. */
+const CARD_W = Math.min(W - 48, 170);
 const CARD_H = CARD_W * (3.5 / 2.5);
 
 const MIN_SCALE = 1;
@@ -448,13 +448,6 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         </>
       )}
 
-      {/* Zoom hint shown only while image is usable and loaded */}
-      {showImage && imageLoaded && (
-        <View style={imgStyles.zoomHint}>
-          <Feather name="zoom-in" size={11} color="rgba(255,255,255,0.55)" />
-          <Text style={imgStyles.zoomHintText}>Pinch or double-tap to zoom</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -487,11 +480,6 @@ function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, ver
       <View style={imgStyles.cardNumberBadge}>
         <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
       </View>
-      {verificationStatus === 'verified' && (
-        <View style={imgStyles.verifiedOverlay}>
-          <VerificationBadge status="verified" />
-        </View>
-      )}
       <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
       <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
     </View>
@@ -778,7 +766,7 @@ export default function CardDetailScreen() {
   // intentionally never used as a fallback in release builds.
   const hasPassport = false;
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const topPad = Platform.OS === 'web' ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
 
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
@@ -853,15 +841,6 @@ export default function CardDetailScreen() {
           </View>
           <View style={styles.navRight}>
             <Pressable
-              onPress={handleWishlistToggle}
-              style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
-              accessibilityRole="button"
-              accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
-              hitSlop={2}
-            >
-              <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
-            </Pressable>
-            <Pressable
               style={styles.navBtn}
               onPress={() => {
                 const url = `https://verifiedtcg.co/cards/${card.id}`;
@@ -875,7 +854,21 @@ export default function CardDetailScreen() {
               accessibilityLabel="Share this card"
               hitSlop={2}
             >
-              <Feather name="share-2" size={20} color={C.foreground} />
+              <Feather name="share-2" size={17} color={C.foreground} />
+            </Pressable>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => {
+                Alert.alert(card.name, 'Card actions', [
+                  { text: isWatched ? 'Open Wishlist' : 'Add to Wishlist', onPress: handleWishlistToggle },
+                  { text: 'Cancel', style: 'cancel' },
+                ]);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="More card actions"
+              hitSlop={2}
+            >
+              <Feather name="more-horizontal" size={18} color={C.foreground} />
             </Pressable>
           </View>
         </View>
@@ -885,23 +878,36 @@ export default function CardDetailScreen() {
           <View style={styles.heroGlow} />
           <View style={styles.heroRingOuter} />
           <View style={styles.heroRingInner} />
-          {card.imageUrl ? (
-            <ZoomableCardImage
-              imageUrl={card.imageUrl}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-              cardName={card.name}
-              cardNumber={card.number}
-            />
-          ) : (
-            <CardArtFallback
-              cardName={card.name}
-              cardNumber={card.number}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-              verificationStatus={card.verificationStatus}
-            />
-          )}
+          <View style={styles.heroCardOffset} />
+          <View style={styles.heroCardTilt}>
+            {card.imageUrl ? (
+              <ZoomableCardImage
+                imageUrl={card.imageUrl}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+                cardName={card.name}
+                cardNumber={card.number}
+              />
+            ) : (
+              <CardArtFallback
+                cardName={card.name}
+                cardNumber={card.number}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+                verificationStatus={card.verificationStatus}
+              />
+            )}
+          </View>
+
+          <Text style={styles.passportSerial}>PASSPORT / {card.number.toUpperCase()}</Text>
+          <View style={styles.inspectCaption}>
+            <Feather name="maximize" size={12} color="#AAA5A2" />
+            <Text style={styles.inspectCaptionText}>Tap to inspect</Text>
+          </View>
+          <View style={styles.identityStamp}>
+            <Feather name="check" size={12} color={C.positive} />
+            <Text style={styles.identityStampText}>IDENTITY MATCHED</Text>
+          </View>
 
           {/* Prev/next arrow buttons */}
           {hasPrev && (
@@ -971,7 +977,9 @@ export default function CardDetailScreen() {
                 {' · '}{card.setName.toUpperCase()}
               </Text>
               <Text style={styles.cardName}>{card.name}</Text>
-              <Text style={styles.cardMeta}>{RARITY_LABELS[card.rarity]} · {card.number} · {card.isFoil || card.isHolo ? 'Foil' : card.year}</Text>
+              <Text style={styles.cardMeta}>
+                {RARITY_LABELS[card.rarity]} · {card.number} · {card.isHolo ? 'Holofoil' : card.isFoil ? 'Foil' : card.year}
+              </Text>
             </View>
             <Pressable
               onPress={handleWishlistToggle}
@@ -981,22 +989,8 @@ export default function CardDetailScreen() {
               accessibilityState={{ selected: isWatched }}
               hitSlop={8}
             >
-              <Feather name="heart" size={21} color={isWatched ? C.primary : C.mutedForeground} />
+              <Feather name="bookmark" size={20} color={isWatched ? C.primary : C.foreground} />
             </Pressable>
-          </View>
-
-          <View style={styles.tagRow}>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>{RARITY_LABELS[card.rarity]}</Text>
-            </View>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>{card.year}</Text>
-            </View>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>
-                {card.tcg === 'pokemon' ? 'Pokémon' : card.tcg === 'magic' ? 'MTG' : 'One Piece'}
-              </Text>
-            </View>
           </View>
 
           <View style={styles.valueRow}>
@@ -1189,6 +1183,39 @@ export default function CardDetailScreen() {
         </View>
       </ScrollView>
 
+      <View
+        style={[
+          styles.passportBottomNav,
+          { bottom: Platform.OS === 'web' ? 10 : Math.max(10, insets.bottom) },
+        ]}
+        accessibilityRole="tablist"
+      >
+        {[
+          { label: 'Home', icon: 'home', route: '/(tabs)' },
+          { label: 'Search', icon: 'search', route: '/search' },
+          { label: 'Market', icon: 'square', route: '/(tabs)/market' },
+          { label: 'Community', icon: 'users', route: '/(tabs)/community' },
+          { label: 'Collection', icon: 'circle', route: '/(tabs)/collection' },
+        ].map(item => {
+          const active = item.label === 'Market';
+          return (
+            <Pressable
+              key={item.label}
+              onPress={() => router.push(item.route as any)}
+              style={styles.passportBottomNavItem}
+              accessibilityRole="tab"
+              accessibilityLabel={item.label}
+              accessibilityState={{ selected: active }}
+            >
+              <Feather name={item.icon as any} size={15} color={active ? C.primary : '#817C84'} />
+              <Text style={[styles.passportBottomNavText, active && styles.passportBottomNavTextActive]}>
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       {/* Added to collection banner */}
       {showAddedBanner && (
         <View style={styles.banner}>
@@ -1225,7 +1252,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 0,
+    paddingTop: 18,
+    paddingBottom: 14,
     paddingHorizontal: 8,
   },
   navContext: { flexDirection: 'row', alignItems: 'center', gap: 7 },
@@ -1261,10 +1290,12 @@ const styles = StyleSheet.create({
   cardStage: {
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 340,
+    minHeight: 310,
     marginBottom: 0,
     position: 'relative',
     overflow: 'hidden',
+    paddingTop: 14,
+    paddingBottom: 47,
   },
   heroGlow: {
     position: 'absolute',
@@ -1289,10 +1320,42 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: `${C.primary}3D`,
   },
+  heroCardOffset: {
+    position: 'absolute',
+    width: CARD_W,
+    height: CARD_H,
+    borderRadius: 14,
+    backgroundColor: `${C.primary}22`,
+    transform: [{ translateX: 14 }, { translateY: 17 }, { rotate: '3deg' }],
+  },
+  heroCardTilt: {
+    transform: [{ rotate: '3deg' }],
+  },
+  passportSerial: {
+    position: 'absolute',
+    left: 8,
+    bottom: 24,
+    color: '#716E76',
+    fontFamily: 'SpaceMono_400Regular',
+    fontSize: 8,
+    letterSpacing: 1.25,
+  },
+  inspectCaption: {
+    position: 'absolute',
+    bottom: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inspectCaptionText: {
+    color: '#AAA5A2',
+    fontFamily: 'Inter_400Regular',
+    fontSize: 10,
+  },
   identityStamp: {
     position: 'absolute',
-    right: 14,
-    bottom: 18,
+    right: 8,
+    bottom: 24,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -1374,10 +1437,15 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   favoriteButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 28,
   },
   cardName: {
     fontSize: 30,
@@ -1397,6 +1465,41 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', gap: 7, flexWrap: 'wrap', marginTop: 12 },
   tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7 },
   tagText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  passportBottomNav: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 40,
+    minHeight: 62,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#37343B',
+    borderRadius: 19,
+    backgroundColor: 'rgba(27,25,30,0.97)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    elevation: 18,
+  },
+  passportBottomNavItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  passportBottomNavText: {
+    color: '#817C84',
+    fontFamily: 'Inter_400Regular',
+    fontSize: 9,
+  },
+  passportBottomNavTextActive: {
+    color: C.primary,
+  },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
