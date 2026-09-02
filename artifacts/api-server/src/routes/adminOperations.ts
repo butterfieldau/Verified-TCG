@@ -78,25 +78,32 @@ function isSandboxEbayId(value: string): boolean {
 type ProviderStatus =
   | "LIVE"
   | "HEALTHY"
+  | "HEALTHY BUT STALE"
   | "DEGRADED"
   | "RATE LIMITED"
+  | "AUTHENTICATION FAILED"
   | "MISCONFIGURED"
   | "NOT CONNECTED";
 
-function priceChartingStatus(
+export function priceChartingStatus(
   configured: boolean,
-  row: typeof pricingProvidersTable.$inferSelect | undefined,
+  row: Pick<
+    typeof pricingProvidersTable.$inferSelect,
+    "lastHealthyAt" | "lastErrorAt" | "lastErrorKind"
+  > | undefined,
+  staleQuoteCards = 0,
 ): ProviderStatus {
   if (!configured) return "NOT CONNECTED";
-  if (row && !row.isActive) return "MISCONFIGURED";
   if (!row?.lastHealthyAt && !row?.lastErrorAt) return "LIVE";
   if (
     row.lastErrorAt &&
     (!row.lastHealthyAt || row.lastErrorAt.getTime() > row.lastHealthyAt.getTime())
   ) {
-    if (/rate|429|queue is full/i.test(row.lastErrorMessage ?? "")) return "RATE LIMITED";
+    if (row.lastErrorKind === "authentication") return "AUTHENTICATION FAILED";
+    if (row.lastErrorKind === "throttled") return "RATE LIMITED";
     return "DEGRADED";
   }
+  if (staleQuoteCards > 0) return "HEALTHY BUT STALE";
   return "HEALTHY";
 }
 
@@ -238,9 +245,18 @@ router.get(
   "/admin/pricing/providers",
   requireAdminPermission("pricing:read"),
   async (_req: AdminRequest, res: Response) => {
-    const rows = await db.select().from(pricingProvidersTable);
+    const [rows, staleRows] = await Promise.all([
+      db.select().from(pricingProvidersTable),
+      db.execute<{ count: number }>(sql`
+        SELECT COUNT(DISTINCT card_id)::int AS count
+        FROM current_quotes
+        WHERE provider_key = ${PROVIDER_KEY}
+          AND fetched_at < ${new Date(Date.now() - STALE_QUOTE_CUTOFF_MS)}
+      `),
+    ]);
     const priceChartingRow = rows.find((row) => row.providerKey === PROVIDER_KEY);
     const pcConfigured = isPCConfigured();
+    const staleQuoteCards = Number(staleRows.rows[0]?.count ?? 0);
     const ebayId = process.env.EBAY_APP_ID ?? "";
     const providers = [
       {
@@ -248,15 +264,21 @@ router.get(
           "pricecharting",
           "PriceCharting",
           pcConfigured,
-          priceChartingStatus(pcConfigured, priceChartingRow),
+          priceChartingStatus(pcConfigured, priceChartingRow, staleQuoteCards),
           "Verified Market quotes",
         ),
         lastHealthyAt: priceChartingRow?.lastHealthyAt?.toISOString() ?? null,
         lastErrorAt: priceChartingRow?.lastErrorAt?.toISOString() ?? null,
+        failureCategory: priceChartingRow?.lastErrorKind ?? null,
+        staleQuoteCards,
         lastResult: priceChartingRow?.lastErrorAt &&
           (!priceChartingRow.lastHealthyAt ||
             priceChartingRow.lastErrorAt > priceChartingRow.lastHealthyAt)
-          ? "The most recent provider request failed."
+          ? priceChartingRow.lastErrorKind === "authentication"
+            ? "The provider rejected the configured credential."
+            : priceChartingRow.lastErrorKind === "throttled"
+              ? "The provider is rate limiting requests; retained quotes remain available."
+              : "The most recent provider request failed transiently; retained quotes remain available."
           : null,
       },
       providerDescriptor(

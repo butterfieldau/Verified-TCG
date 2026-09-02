@@ -688,20 +688,22 @@ describe("PriceCharting bulk CSV guides", () => {
   test("parses quoted rows and decimal USD precisely into normal quote fields", () => {
     const rows = parsePriceChartingGuideCsv([
       "id,product-name,console-name,loose-price,graded-price,bgs-10-price",
-      '42,"Pikachu, V #043","Vivid Voltage",12.34,100,250.05',
+      '42,"Pikachu, V #043","Vivid Voltage",$12.34,"$1,000.00",$250.05',
     ].join("\n"));
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.id, "42");
     assert.equal(rows[0]?.["product-name"], "Pikachu, V #043");
     assert.equal(extractPrices(rows[0]!).get("raw"), 1234);
-    assert.equal(extractPrices(rows[0]!).get("graded_9"), 10000);
+    assert.equal(extractPrices(rows[0]!).get("graded_9"), 100000);
     assert.equal(extractPrices(rows[0]!).get("bgs_10"), 25005);
   });
 
   test("rejects unsafe decimal formats rather than rounding them", () => {
     assert.equal(usdDecimalToCents("0.01"), 1);
     assert.equal(usdDecimalToCents("12.3"), 1230);
-    for (const malformed of ["12.345", "-1.00", "1e2", "$12.00", ""]) {
+    assert.equal(usdDecimalToCents("$12.00"), 1200);
+    assert.equal(usdDecimalToCents("$1,234.56"), 123456);
+    for (const malformed of ["12.345", "-1.00", "1e2", "$1,23.00", ""]) {
       assert.equal(usdDecimalToCents(malformed), null);
     }
   });
@@ -724,6 +726,30 @@ describe("PriceCharting bulk CSV guides", () => {
       const first = await getBulkGuide("pokemon");
       assert.equal(calls, 1);
       assert.equal(first[0]?.id, "7");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+
+  test("rejects identity rows with no usable prices before they can replace a valid guide", async () => {
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "empty-price-token";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(
+        "id,product-name,console-name,loose-price,graded-price\n7,Pikachu,Vivid Voltage,,not-a-price\n",
+      );
+    }) as typeof fetch;
+    try {
+      await assert.rejects(
+        () => getBulkGuide("pokemon"),
+        PriceChartingTransientError,
+      );
+      assert.equal(calls, 1);
     } finally {
       globalThis.fetch = originalFetch;
       if (old == null) delete process.env.PRICECHARTING_API_TOKEN;

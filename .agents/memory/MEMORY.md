@@ -21,3 +21,4 @@
 - [Collection CSV migrations](collection-csv-migrations.md) — imports use strict versioned contracts, hash-bound previews, and per-collector atomic commit serialization.
 - [Community artifact boundary](community-artifact-boundary.md) — Community exists only inside Verified TCG; never create or restore a standalone Community artifact, package, workflow, or URL.
 - [Guide reconciliation durability](guide-reconciliation-durability.md) — bulk provider matching uses bounded DB-leased pages; exact identity proof is mandatory and prior valid quotes survive omissions.
+- [PriceCharting CSV contract](pricecharting-csv-contract.md) — bulk guides are slow dollar-formatted CSVs; validate non-empty price maps and release global leases when category claims fail.

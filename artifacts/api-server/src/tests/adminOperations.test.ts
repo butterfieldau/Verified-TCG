@@ -16,7 +16,7 @@ import {
 } from "@workspace/db";
 import app from "../app.js";
 import { runMigrations } from "../lib/migrate.js";
-import { recoverQueuedRefreshJobs } from "../routes/adminOperations.js";
+import { priceChartingStatus, recoverQueuedRefreshJobs } from "../routes/adminOperations.js";
 import {
   permissionsForRole,
   type AdminRole,
@@ -102,6 +102,27 @@ function assertNoCredentialFields(value: unknown): void {
 }
 
 describe("TCG data operations", () => {
+  test("classifies PriceCharting health from typed evidence and quote freshness", () => {
+    const healthyAt = new Date("2026-09-02T01:00:00.000Z");
+    const failedAt = new Date("2026-09-02T02:00:00.000Z");
+    const row = (kind: "authentication" | "throttled" | "transient") => ({
+      lastHealthyAt: healthyAt,
+      lastErrorAt: failedAt,
+      lastErrorKind: kind,
+    });
+
+    assert.equal(priceChartingStatus(false, undefined), "NOT CONNECTED");
+    assert.equal(priceChartingStatus(true, undefined), "LIVE");
+    assert.equal(priceChartingStatus(true, row("authentication")), "AUTHENTICATION FAILED");
+    assert.equal(priceChartingStatus(true, row("throttled")), "RATE LIMITED");
+    assert.equal(priceChartingStatus(true, row("transient")), "DEGRADED");
+    assert.equal(priceChartingStatus(true, {
+      lastHealthyAt: failedAt,
+      lastErrorAt: healthyAt,
+      lastErrorKind: "transient",
+    }, 3), "HEALTHY BUT STALE");
+  });
+
   test("requires scoped permissions and does not expose provider credentials", async () => {
     const support = await createAdmin("support", "support");
     const supportSession = await login(support);
@@ -117,9 +138,15 @@ describe("TCG data operations", () => {
     for (const provider of response.body.providers) {
       assert.match(
         provider.status,
-        /^(LIVE|HEALTHY|DEGRADED|RATE LIMITED|MISCONFIGURED|NOT CONNECTED)$/,
+        /^(LIVE|HEALTHY|HEALTHY BUT STALE|DEGRADED|RATE LIMITED|AUTHENTICATION FAILED|MISCONFIGURED|NOT CONNECTED)$/,
       );
     }
+
+    const coverage = await ownerSession.agent.get("/api/admin/pricing/coverage");
+    assert.equal(coverage.status, 200, JSON.stringify(coverage.body));
+    assert.ok(Array.isArray(coverage.body.byGame));
+    assert.ok(Array.isArray(coverage.body.imports));
+    assert.ok(Object.hasOwn(coverage.body, "latestSchedulerRun"));
   });
 
   test("catalogue import validation is dry-run only and CSRF protected", async () => {
@@ -370,6 +397,11 @@ describe("TCG data operations", () => {
   });
 
   test("queued refresh jobs are claimed on startup and marked failed when the provider is not configured", async () => {
+    const originalToken = process.env.PRICECHARTING_API_TOKEN;
+    const originalDeprecatedToken = process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
+    delete process.env.PRICECHARTING_TOKEN;
+    try {
     // Verifies two invariants of the explicit refresh path:
     // 1. The recovery function dispatches queued jobs (job transitions from 'queued')
     // 2. A job is marked 'failed' — not 'succeeded' — when the provider rejects the
@@ -426,21 +458,30 @@ describe("TCG data operations", () => {
     // 'failed', not 'succeeded'. This proves we attempted a real provider call
     // rather than taking a silent fresh-quote bypass.
     // (In CI/test the provider is not configured, so we always expect 'failed'.)
-    if (!process.env["PRICECHARTING_API_KEY"]) {
-      assert.equal(
-        after.status,
-        "failed",
-        `Without a configured provider the job must be 'failed', not '${after.status}'. ` +
-          `This means the explicit refresh path is NOT bypassing the provider for fresh data.`,
-      );
-      assert.ok(
-        after.errorMessage,
-        "A failed job must record an error message so operators can diagnose the issue",
-      );
+    assert.equal(
+      after.status,
+      "failed",
+      `Without a configured provider the job must be 'failed', not '${after.status}'. ` +
+        `This means the explicit refresh path is NOT bypassing the provider for fresh data.`,
+    );
+    assert.ok(
+      after.errorMessage,
+      "A failed job must record an error message so operators can diagnose the issue",
+    );
+    } finally {
+      if (originalToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = originalToken;
+      if (originalDeprecatedToken == null) delete process.env.PRICECHARTING_TOKEN;
+      else process.env.PRICECHARTING_TOKEN = originalDeprecatedToken;
     }
   });
 
   test("stale running jobs are re-queued and retried by the recovery function", async () => {
+    const originalToken = process.env.PRICECHARTING_API_TOKEN;
+    const originalDeprecatedToken = process.env.PRICECHARTING_TOKEN;
+    delete process.env.PRICECHARTING_API_TOKEN;
+    delete process.env.PRICECHARTING_TOKEN;
+    try {
     // Verifies that jobs left in 'running' by a killed process are reset to
     // 'queued' and re-dispatched so they are not permanently stranded.
     const cardId = `${TAG}stale-running-job`;
@@ -494,6 +535,12 @@ describe("TCG data operations", () => {
       "running",
       "Stale running job must be transitioned — it must not remain stuck in 'running' after recovery",
     );
+    } finally {
+      if (originalToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = originalToken;
+      if (originalDeprecatedToken == null) delete process.env.PRICECHARTING_TOKEN;
+      else process.env.PRICECHARTING_TOKEN = originalDeprecatedToken;
+    }
   });
 
   test("collection intelligence remains aggregate-only", async () => {

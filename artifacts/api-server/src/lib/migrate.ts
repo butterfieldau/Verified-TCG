@@ -83,6 +83,7 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_name TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_number TEXT`,
   `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_set TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE pricing_providers ADD COLUMN IF NOT EXISTS last_error_kind TEXT`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
@@ -386,6 +387,7 @@ const TABLE_MIGRATIONS: string[] = [
     last_healthy_at TIMESTAMPTZ,
     last_error_at TIMESTAMPTZ,
     last_error_message TEXT,
+    last_error_kind TEXT,
     base_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

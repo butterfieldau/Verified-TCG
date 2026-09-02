@@ -46,6 +46,9 @@ export const pricingProvidersTable = pgTable("pricing_providers", {
   /** Short human-readable description of the last error */
   lastErrorMessage: text("last_error_message"),
 
+  /** Sanitized typed failure category; never provider payload or credential data */
+  lastErrorKind: text("last_error_kind"),
+
   /** Provider base URL */
   baseUrl: text("base_url"),
 

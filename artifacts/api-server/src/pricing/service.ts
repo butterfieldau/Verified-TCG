@@ -65,6 +65,11 @@ import { recordTelemetry } from "../lib/telemetry.js";
  * includes URLs, query strings, card identifiers, or provider payloads.
  */
 type PCOperation = "product_refresh" | "search" | "explicit_refresh" | "bulk_import";
+export type ProviderFailureKind = PriceChartingError["kind"] | "transient";
+
+function providerFailureKind(error: unknown): ProviderFailureKind {
+  return error instanceof PriceChartingError ? error.kind : "transient";
+}
 
 // Quote staleness threshold (12 hours)
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
@@ -150,6 +155,7 @@ async function recordProviderHealth(
   healthy: boolean,
   message?: string,
   operation?: PCOperation,
+  failureKind?: ProviderFailureKind,
 ): Promise<void> {
   // Sanitized integration observability. Every external PriceCharting call
   // outcome flows through this centralized path. We record only the fixed
@@ -164,25 +170,35 @@ async function recordProviderHealth(
     });
   }
   const now = new Date();
+  const configured = priceChartingProvider.isConfigured();
+  const sanitizedKind = healthy ? null : (failureKind ?? "transient");
   await db
     .insert(pricingProvidersTable)
     .values({
       providerKey: PROVIDER_KEY,
       label: PROVIDER_LABEL,
-      isActive: healthy,
+      isActive: configured,
       baseUrl: "https://www.pricecharting.com/api",
       ...(healthy
-        ? { lastHealthyAt: now, lastErrorMessage: null }
-        : { lastErrorAt: now, lastErrorMessage: message ?? "Provider request failed" }),
+        ? { lastHealthyAt: now, lastErrorMessage: null, lastErrorKind: null }
+        : {
+            lastErrorAt: now,
+            lastErrorMessage: message ?? "Provider request failed",
+            lastErrorKind: sanitizedKind,
+          }),
     })
     .onConflictDoUpdate({
       target: pricingProvidersTable.providerKey,
       set: {
-        isActive: healthy,
+        isActive: configured,
         updatedAt: now,
         ...(healthy
-          ? { lastHealthyAt: now, lastErrorMessage: null }
-          : { lastErrorAt: now, lastErrorMessage: message ?? "Provider request failed" }),
+          ? { lastHealthyAt: now, lastErrorMessage: null, lastErrorKind: null }
+          : {
+              lastErrorAt: now,
+              lastErrorMessage: message ?? "Provider request failed",
+              lastErrorKind: sanitizedKind,
+            }),
       },
     });
 }
@@ -849,6 +865,9 @@ export async function continuePriceChartingReconciliation(): Promise<PriceCharti
 export async function runScheduledGuideReconciliation(): Promise<PriceChartingReconciliationResult | null> {
   const continued = await continuePriceChartingReconciliation();
   if (continued) return continued;
+  // Cached guide rows can still be reconciled without a live credential, but
+  // never attempt a new provider download when the integration is not configured.
+  if (!priceChartingProvider.isConfigured()) return null;
   const imports = await db.select().from(priceChartingGuideImportsTable);
   const byCategory = new Map(imports.map(row => [row.category, row]));
   const categories = Object.keys(GUIDE_GAME_NAMES) as PriceChartingGuideCategory[];
@@ -889,10 +908,24 @@ export async function getPriceChartingCoverageAudit(): Promise<{
     rowCount: number;
     fetchedAt: string;
     reconciledAt: string | null;
+    lastAttemptAt: string | null;
+    lastErrorKind: string | null;
+    reconciliationCursor: string | null;
+    reconciliationLeaseUntil: string | null;
     ageHours: number;
     stats: Record<string, unknown>;
   }>;
   failureReasons: Array<{ reason: string; count: number }>;
+  latestSchedulerRun: {
+    status: string;
+    trigger: string;
+    selectedCards: number;
+    refreshSucceeded: number;
+    refreshFailed: number;
+    startedAt: string;
+    finishedAt: string | null;
+    errorMessage: string | null;
+  } | null;
 }> {
   const rows = await db.execute<{
     game: string;
@@ -974,7 +1007,7 @@ export async function getPriceChartingCoverageAudit(): Promise<{
     gradedOnlyCards: 0, ambiguousCards: 0, unmatchedCards: 0,
     unprocessedCards: 0, staleQuoteCards: 0,
   });
-  const [imports, failures] = await Promise.all([
+  const [imports, failures, schedulerRuns] = await Promise.all([
     db.select().from(priceChartingGuideImportsTable).orderBy(priceChartingGuideImportsTable.category),
     db.execute<{ reason: string; count: number }>(sql`
       SELECT COALESCE(match_metadata->>'reason', 'unspecified') AS reason, COUNT(*)::int AS count
@@ -983,6 +1016,22 @@ export async function getPriceChartingCoverageAudit(): Promise<{
       GROUP BY COALESCE(match_metadata->>'reason', 'unspecified')
       ORDER BY count DESC, reason
       LIMIT 10
+    `),
+    db.execute<{
+      status: string;
+      trigger: string;
+      selected_cards: number;
+      refresh_succeeded: number;
+      refresh_failed: number;
+      started_at: Date;
+      finished_at: Date | null;
+      error_message: string | null;
+    }>(sql`
+      SELECT status, trigger, selected_cards, refresh_succeeded, refresh_failed,
+        started_at, finished_at, error_message
+      FROM pricing_scheduler_runs
+      ORDER BY started_at DESC
+      LIMIT 1
     `),
   ]);
   const now = Date.now();
@@ -998,10 +1047,28 @@ export async function getPriceChartingCoverageAudit(): Promise<{
       rowCount: row.rowCount,
       fetchedAt: row.fetchedAt.toISOString(),
       reconciledAt: row.reconciledAt?.toISOString() ?? null,
+      lastAttemptAt: row.lastAttemptAt?.toISOString() ?? null,
+      lastErrorKind: row.lastErrorKind,
+      reconciliationCursor: row.reconciliationCursor,
+      reconciliationLeaseUntil: row.reconciliationLeaseUntil?.toISOString() ?? null,
       ageHours: Number(((now - row.fetchedAt.getTime()) / 3_600_000).toFixed(1)),
       stats: row.reconciliationStats as Record<string, unknown>,
     })),
     failureReasons: failures.rows.map(row => ({ reason: row.reason.slice(0, 80), count: Number(row.count) })),
+    latestSchedulerRun: schedulerRuns.rows[0]
+      ? {
+          status: schedulerRuns.rows[0].status,
+          trigger: schedulerRuns.rows[0].trigger,
+          selectedCards: Number(schedulerRuns.rows[0].selected_cards),
+          refreshSucceeded: Number(schedulerRuns.rows[0].refresh_succeeded),
+          refreshFailed: Number(schedulerRuns.rows[0].refresh_failed),
+          startedAt: new Date(schedulerRuns.rows[0].started_at).toISOString(),
+          finishedAt: schedulerRuns.rows[0].finished_at
+            ? new Date(schedulerRuns.rows[0].finished_at).toISOString()
+            : null,
+          errorMessage: schedulerRuns.rows[0].error_message?.slice(0, 200) ?? null,
+        }
+      : null,
   };
 }
 
@@ -1030,6 +1097,19 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
       ))
       .limit(1);
     reusable = legacyRow.length === 0;
+  }
+  if (reusable) {
+    // A prior parser could persist the official CSV rows while dropping every
+    // dollar-prefixed price. Treat an all-empty guide as invalid cache data so
+    // the next bounded import repairs it rather than reconciling no quotes.
+    const pricedRow = await db.select({ id: priceChartingGuideRowsTable.providerProductId })
+      .from(priceChartingGuideRowsTable)
+      .where(and(
+        eq(priceChartingGuideRowsTable.category, category),
+        sql`${priceChartingGuideRowsTable.prices} <> '{}'::jsonb`,
+      ))
+      .limit(1);
+    reusable = pricedRow.length > 0;
   }
   let rowsRead: number;
   let reused = reusable;
@@ -1078,6 +1158,17 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
       RETURNING last_attempt_at
     `);
     if (!claim.rows[0]) {
+      // No provider request was made. Release the global claim immediately so
+      // another eligible category is not blocked for the full 30-minute
+      // download lease by this category's local cooldown.
+      await db.execute(sql`
+        UPDATE pricecharting_guide_download_lease
+        SET last_attempt_at = NOW() - INTERVAL '11 minutes',
+            lease_until = NOW() - INTERVAL '1 second',
+            claim_token = NULL,
+            updated_at = NOW()
+        WHERE lease_key = 'pricecharting-csv' AND claim_token = ${downloadClaimToken}
+      `).catch(() => {});
       const retryAfterMs = existing?.lastAttemptAt
         ? Math.max(0, 600_000 - (Date.now() - existing.lastAttemptAt.getTime()))
         : 600_000;
@@ -1097,7 +1188,12 @@ export async function importPriceChartingBulkGuide(category: PriceChartingGuideC
       const message = error instanceof PriceChartingError
         ? `PriceCharting bulk import ${error.kind}`
         : "PriceCharting bulk import failed";
-      await recordProviderHealth(false, message, "bulk_import").catch(() => {});
+      await recordProviderHealth(
+        false,
+        message,
+        "bulk_import",
+        error instanceof PriceChartingError ? error.kind : "transient",
+      ).catch(() => {});
       await db.update(priceChartingGuideImportsTable).set({
         status: "failed",
         lastErrorKind: error instanceof PriceChartingError ? error.kind : "transient",
@@ -1257,7 +1353,12 @@ function runMappedRefresh(
   })()
     .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Pricing refresh failed");
-      await recordProviderHealth(false, "PriceCharting product refresh failed", "product_refresh").catch(() => {});
+      await recordProviderHealth(
+        false,
+        "PriceCharting product refresh failed",
+        "product_refresh",
+        providerFailureKind(err),
+      ).catch(() => {});
       if (propagateFailures) throw err;
     })
     .finally(() => matchInFlight.delete(key));
@@ -1373,7 +1474,12 @@ async function runBackgroundMatch(
   })()
     .catch(async (err: unknown) => {
       logger.error({ err, cardId }, "Background pricing match failed");
-      await recordProviderHealth(false, "PriceCharting matching request failed", "search").catch(() => {});
+      await recordProviderHealth(
+        false,
+        "PriceCharting matching request failed",
+        "search",
+        providerFailureKind(err),
+      ).catch(() => {});
       if (propagateFailures) throw err;
     })
     .finally(() => {
@@ -1824,7 +1930,12 @@ export async function refreshPricingExplicit(
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 300) : "Unknown error during refresh";
     logger.error({ err, cardId, providerProductId }, "Explicit pricing refresh failed");
-    await recordProviderHealth(false, "PriceCharting explicit refresh failed", "explicit_refresh").catch(() => {});
+    await recordProviderHealth(
+      false,
+      "PriceCharting explicit refresh failed",
+      "explicit_refresh",
+      providerFailureKind(err),
+    ).catch(() => {});
     return { status: "failed", error: message };
   }
 }

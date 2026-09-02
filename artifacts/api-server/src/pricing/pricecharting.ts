@@ -159,6 +159,11 @@ export interface PCProductLookup {
 // ── Timeout + retry helpers ──────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+// Bulk CSVs are generated/downloaded as a single large response and regularly
+// take much longer than interactive JSON calls. A 10-second timeout caused
+// healthy credentials to be reported as transient provider failures.
+const BULK_GUIDE_TIMEOUT_MS = 180_000;
+const BULK_GUIDE_MAX_RETRIES = 1;
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 500;
 
@@ -358,9 +363,11 @@ export function extractPrices(detail: PCProductDetail): Map<GradeKey, number> {
 /** Parse a decimal USD value without a floating-point conversion. */
 export function usdDecimalToCents(value: unknown): number | null {
   const source = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
-  const match = /^([0-9]+)(?:\.([0-9]{1,2}))?$/.exec(source);
+  // Official CSV downloads prefix prices with "$" and may use grouped
+  // thousands. Keep the grammar strict rather than using parseFloat.
+  const match = /^\$?((?:[0-9]{1,3}(?:,[0-9]{3})+)|[0-9]+)(?:\.([0-9]{1,2}))?$/.exec(source);
   if (!match) return null;
-  const dollars = Number(match[1]);
+  const dollars = Number(match[1]!.replaceAll(",", ""));
   const cents = Number((match[2] ?? "").padEnd(2, "0"));
   const result = dollars * 100 + cents;
   return Number.isSafeInteger(result) && result > 0 ? result : null;
@@ -413,22 +420,43 @@ export function parsePriceChartingGuideCsv(csv: string): PCGuideRow[] {
 }
 
 /** Performs exactly one CSV request; durable callers must acquire an import lease first. */
-export async function downloadBulkGuide(category: PriceChartingGuideCategory): Promise<PCGuideRow[]> {
+export async function downloadBulkGuide(
+  category: PriceChartingGuideCategory,
+  attempt = 0,
+): Promise<PCGuideRow[]> {
   const token = getToken();
   if (!token) throw new PriceChartingAuthenticationError();
   const providerCategory = PRICECHARTING_GUIDE_CATEGORIES[category];
   let response: Response;
   try {
-    response = await fetch(`${PC_GUIDE_URL}?t=${encodeURIComponent(token)}&category=${encodeURIComponent(providerCategory)}`, { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
-  } catch { throw new PriceChartingTransientError(); }
+    response = await fetch(
+      `${PC_GUIDE_URL}?t=${encodeURIComponent(token)}&category=${encodeURIComponent(providerCategory)}`,
+      { signal: AbortSignal.timeout(BULK_GUIDE_TIMEOUT_MS) },
+    );
+  } catch {
+    if (attempt < BULK_GUIDE_MAX_RETRIES) {
+      await sleep(RATE_INTERVAL_MS);
+      return downloadBulkGuide(category, attempt + 1);
+    }
+    throw new PriceChartingTransientError();
+  }
   if (response.status === 401 || response.status === 403) throw new PriceChartingAuthenticationError(response.status);
   if (response.status === 429) throw new PriceChartingThrottleError(Number(response.headers.get("retry-after") ?? "0") * 1_000, response.status);
+  if (response.status >= 500 && attempt < BULK_GUIDE_MAX_RETRIES) {
+    const retryAfterMs = Number(response.headers.get("retry-after") ?? "0") * 1_000;
+    await sleep(Math.max(RATE_INTERVAL_MS, retryAfterMs));
+    return downloadBulkGuide(category, attempt + 1);
+  }
   const body = await response.text().catch(() => { throw new PriceChartingTransientError(); });
   if (/unknown\s+access\s+token|invalid\s+(?:api\s+)?token/i.test(body)) throw new PriceChartingAuthenticationError(response.status);
   if (!response.ok) throw new PriceChartingTransientError(response.status);
   try {
     const rows = parsePriceChartingGuideCsv(body);
-    if (rows.length === 0) throw new Error("empty");
+    // Identity-only rows are not a usable price guide. Reject before callers
+    // can replace a previously valid cache or report the provider as healthy.
+    if (rows.length === 0 || !rows.some(row => extractPrices(row).size > 0)) {
+      throw new Error("empty prices");
+    }
     return rows;
   } catch { throw new PriceChartingTransientError(response.status); }
 }
