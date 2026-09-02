@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
+  Easing,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
@@ -26,20 +26,16 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { GradeBadge, VerificationBadge } from '@/components/ui/Badge';
+import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { useApp } from '@/context/AppContext';
-import { fetchCatalogCard, catalogCardToAppCard } from '@/services/catalogApi';
-import { fetchGradedPrices, type GradedPricingAvailability } from '@/services/gradedPricing';
+import { fetchCatalogCard, catalogCardToAppCard, recordCatalogCardLookup } from '@/services/catalogApi';
 import colors from '@/constants/colors';
 import { RARITY_LABELS } from '@/types';
 import type { Card, WatchlistItem } from '@/types';
-import {
-  GRADERS,
-} from '@/services/pricingPlus';
 import { canViewAdvancedPricing } from '@/services/subscription';
-import VerifiedPricingCard from '@/components/ui/VerifiedPricingCard';
-import EbaySoldHistoryCard from '@/components/ui/EbaySoldHistoryCard';
+import VerifiedPricingCard, { type VerifiedPricingSummary } from '@/components/ui/VerifiedPricingCard';
+import CollectionHoldingsPanel from '@/components/ui/CollectionHoldingsPanel';
 import { useSettings } from '@/context/SettingsContext';
 import { triggerPriceSnapshot } from '@/services/priceHistory';
 
@@ -279,27 +275,14 @@ const C = colors.dark;
 const { width: W } = Dimensions.get('window');
 
 
-/** Card aspect ratio: 2.5 wide × 3.5 tall */
-const CARD_W = W - 40;
+/** Passport hero card matches the approved 170 × 238 portrait treatment. */
+const CARD_W = Math.min(W - 48, 170);
 const CARD_H = CARD_W * (3.5 / 2.5);
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
-type PriceTab = 'Raw' | 'PSA 9' | 'PSA 10' | 'CGC 10' | 'BGS 9.5';
-
-const PRICE_TABS: PriceTab[] = ['Raw', 'PSA 9', 'PSA 10', 'CGC 10', 'BGS 9.5'];
-
-function getTabPrice(card: any, tab: PriceTab): number | undefined {
-  switch (tab) {
-    case 'Raw': return card.price.raw;
-    case 'PSA 9': return card.price.psa9;
-    case 'PSA 10': return card.price.psa10;
-    case 'CGC 10': return card.price.cgc10;
-    case 'BGS 9.5': return card.price.bgs95;
-    default: return card.price.raw;
-  }
-}
+type DetailMode = 'Raw' | 'Graded' | 'POP';
 
 // ─── Zoomable card image ──────────────────────────────────────────────────────
 
@@ -466,13 +449,6 @@ function ZoomableCardImage({ imageUrl, gradientStart, gradientEnd, cardName, car
         </>
       )}
 
-      {/* Zoom hint shown only while image is usable and loaded */}
-      {showImage && imageLoaded && (
-        <View style={imgStyles.zoomHint}>
-          <Feather name="zoom-in" size={11} color="rgba(255,255,255,0.55)" />
-          <Text style={imgStyles.zoomHintText}>Pinch or double-tap to zoom</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -484,10 +460,9 @@ interface CardArtFallbackProps {
   cardNumber: string;
   gradientStart: string;
   gradientEnd: string;
-  verificationStatus?: string;
 }
 
-function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, verificationStatus }: CardArtFallbackProps) {
+function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd }: CardArtFallbackProps) {
   return (
     <View style={imgStyles.container}>
       <LinearGradient
@@ -505,11 +480,6 @@ function CardArtFallback({ cardName, cardNumber, gradientStart, gradientEnd, ver
       <View style={imgStyles.cardNumberBadge}>
         <Text style={imgStyles.cardNumberText}>{cardNumber}</Text>
       </View>
-      {verificationStatus === 'verified' && (
-        <View style={imgStyles.verifiedOverlay}>
-          <VerificationBadge status="verified" />
-        </View>
-      )}
       <Text style={imgStyles.cardInitialLarge}>{cardName[0]}</Text>
       <Text style={imgStyles.cardNameFallback} numberOfLines={2}>{cardName}</Text>
     </View>
@@ -520,7 +490,7 @@ const imgStyles = StyleSheet.create({
   container: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -532,7 +502,7 @@ const imgStyles = StyleSheet.create({
   imageWrap: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -540,7 +510,7 @@ const imgStyles = StyleSheet.create({
   image: {
     width: CARD_W,
     height: CARD_H,
-    borderRadius: 18,
+    borderRadius: 14,
   },
   spinner: {
     ...StyleSheet.absoluteFillObject,
@@ -606,10 +576,18 @@ export default function CardDetailScreen() {
   const insets = useSafeAreaInsets();
   const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
   const { currency: displayCurrency } = useSettings();
-  const [priceTab, setPriceTab] = useState<PriceTab>('Raw');
+  const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
+  const modeTabIndex: Record<DetailMode, number> = { Raw: 0, Graded: 1, POP: 2 };
+  const modeIndicatorX = useSharedValue(0);
+  const modeTabWidth = useSharedValue(0);
+  const [marketSummary, setMarketSummary] = useState<VerifiedPricingSummary | null>(null);
+  const handleRawMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
+    setMarketSummary(summary);
+  }, []);
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
+  const [showCardActions, setShowCardActions] = useState(false);
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
 
@@ -619,26 +597,9 @@ export default function CardDetailScreen() {
   //   catalogJson  — raw CatalogCard JSON (from search results)
   //   appCardJson  — already-converted Card JSON (from home/market screen taps)
   // Either bypasses the loading state and avoids a round-trip to the API.
-  const [catalogCard, setCatalogCard] = useState<Card | null>(() => {
-    if (appCardJson) {
-      try { return JSON.parse(appCardJson as string) as Card; } catch { /* fall through */ }
-    }
-    if (!catalogJson) return null;
-    try {
-      const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
-      return catalogCardToAppCard(parsed);
-    } catch {
-      return null;
-    }
-  });
-  const [catalogLoading, setCatalogLoading] = useState(!catalogJson && !appCardJson);
+  const [catalogCard, setCatalogCard] = useState<Card | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState(false);
-  const [liveGradedPrices, setLiveGradedPrices] = useState<Record<string, number>>({});
-  const [gradedLoading, setGradedLoading] = useState(false);
-  const [gradedRequiresUpgrade, setGradedRequiresUpgrade] = useState(false);
-  const [gradedAvailability, setGradedAvailability] = useState<GradedPricingAvailability>('available');
-  const [gradedMessage, setGradedMessage] = useState<string | null>(null);
-  const [gradedRetryNonce, setGradedRetryNonce] = useState(0);
 
   const hasAdvancedPricing = canViewAdvancedPricing(subscriptionTier);
 
@@ -667,22 +628,47 @@ export default function CardDetailScreen() {
   // Fetch cards from the Verified TCG catalogue when navigation did not include
   // an API result (for example, a persisted collection or wishlist card ID).
   useEffect(() => {
-    if (catalogJson) return;           // already initialised from navigation param (CatalogCard)
-    if (appCardJson) return;           // already initialised from navigation param (Card)
     if (!id) { setCatalogLoading(false); setCatalogError(true); return; }
+    setCatalogError(false);
+    let inlineCard: Card | null = null;
+    if (appCardJson) {
+      try {
+        const parsed = JSON.parse(appCardJson as string) as Card;
+        if (parsed.id === id && parsed.name) inlineCard = parsed;
+      } catch { /* fetch authoritative catalogue data below */ }
+    }
+    if (!inlineCard && catalogJson) {
+      try {
+        const parsed = JSON.parse(catalogJson as string) as import('@/services/catalogApi').CatalogCard;
+        if (parsed.id === id && parsed.name) inlineCard = catalogCardToAppCard(parsed);
+      } catch { /* fetch authoritative catalogue data below */ }
+    }
+    if (inlineCard) {
+      setCatalogCard(inlineCard);
+      setCatalogLoading(false);
+      return;
+    }
     const controller = new AbortController();
+    let cancelled = false;
+    setCatalogCard(null);
     setCatalogLoading(true);
     fetchCatalogCard(id, controller.signal)
       .then((data) => {
+        if (cancelled) return;
         if (data) setCatalogCard(catalogCardToAppCard(data));
         else setCatalogError(true);
       })
       .catch((err: unknown) => {
-        if ((err as Error)?.name !== 'AbortError') setCatalogError(true);
+        if (!cancelled && (err as Error)?.name !== 'AbortError') setCatalogError(true);
       })
-      .finally(() => setCatalogLoading(false));
-    return () => controller.abort();
+      .finally(() => { if (!cancelled) setCatalogLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
   }, [id, catalogJson, appCardJson]);
+
+  useEffect(() => {
+    if (!id) return;
+    recordCatalogCardLookup(id).catch(() => {});
+  }, [id]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;
@@ -700,37 +686,6 @@ export default function CardDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch real graded prices from eBay sold listings (via API server)
-  useEffect(() => {
-    const resolvedCard = catalogCard;
-    if (!resolvedCard) return;
-    const controller = new AbortController();
-    setGradedLoading(true);
-    setLiveGradedPrices({});
-    setGradedRequiresUpgrade(false);
-    setGradedMessage(null);
-    fetchGradedPrices(
-      resolvedCard.id,
-      resolvedCard.name,
-      resolvedCard.setName,
-      resolvedCard.tcg,
-      resolvedCard.number,
-      controller.signal,
-      gradedRetryNonce > 0,
-    )
-      .then(result => {
-        setLiveGradedPrices(result.prices);
-        setGradedRequiresUpgrade(result.requiresUpgrade);
-        setGradedAvailability(result.availability);
-        setGradedMessage(result.message);
-      })
-      .catch(() => {})
-      .finally(() => setGradedLoading(false));
-    return () => controller.abort();
-  // re-fetch when the card identity changes (navigation between cards)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, catalogCard?.id, gradedRetryNonce]);
-
   // A detail view is a natural, low-frequency opportunity to retain truthful
   // completed-sale medians for its chart. The API records nothing when eBay
   // is unavailable or no supported raw/grade evidence exists.
@@ -747,6 +702,10 @@ export default function CardDetailScreen() {
   }, [id, catalogCard?.id]);
 
   const hintAnimStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
+  const modeIndicatorStyle = useAnimatedStyle(() => ({
+    width: modeTabWidth.value,
+    transform: [{ translateX: modeIndicatorX.value }],
+  }));
 
   function goToPrev() {
     if (!hasPrev) return;
@@ -811,40 +770,40 @@ export default function CardDetailScreen() {
   // rawCard is narrowed to Card here; closures below capture Card (not Card|null)
   const card = rawCard;
 
-  // Card passports are shown only when the server supplies one; fixtures are
-  // intentionally never used as a fallback in release builds.
-  const hasPassport = false;
+  // Every card can have a live Passport holdings record. The Passport screen
+  // owns the same collection-backed controls as this detail screen.
+  const hasPassport = true;
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const topPad = Platform.OS === 'web' ? 0 : insets.top;
   const tabH = Platform.OS === 'web' ? 84 : 74;
-
-  // Pro completed-sale price rows intentionally never fall back to fixture or
-  // provider-market values. Missing grades are omitted until eBay returns a
-  // verified completed sale for that exact condition.
-  function effectiveTabPrice(tab: PriceTab): number | undefined {
-    if (hasAdvancedPricing) {
-      switch (tab) {
-        case 'Raw': return liveGradedPrices.raw;
-        case 'PSA 9': return liveGradedPrices.psa9;
-        case 'PSA 10': return liveGradedPrices.psa10;
-        case 'CGC 10': return liveGradedPrices.cgc10;
-        case 'BGS 9.5': return liveGradedPrices.bgs95;
-        default: return undefined;
-      }
-    }
-    switch (tab) {
-      case 'Raw':     return card.price.raw;
-      case 'PSA 9':   return liveGradedPrices['psa9']  ?? card.price.psa9;
-      case 'PSA 10':  return liveGradedPrices['psa10'] ?? card.price.psa10;
-      case 'CGC 10':  return liveGradedPrices['cgc10'] ?? card.price.cgc10;
-      case 'BGS 9.5': return liveGradedPrices['bgs95'] ?? card.price.bgs95;
-      default:        return card.price.raw;
-    }
-  }
-  const activePrice = effectiveTabPrice(priceTab);
 
   const isOwned = localInCollection || collection.some(i => i.cardId === card.id);
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
+  const ownedItems = collection.filter(item => item.cardId === card.id);
+  const ownedQuantity = ownedItems.reduce((sum, item) => sum + item.quantity, 0);
+  const populationRecords = ownedItems.filter(item => item.grading?.population != null);
+  const topMarketSummary = marketSummary ?? (
+    card.price.available
+      ? { label: 'Raw / Ungraded', price: card.price.raw, currency: card.price.currency }
+      : null
+  );
+
+  function selectDetailMode(mode: DetailMode) {
+    setDetailMode(mode);
+    modeIndicatorX.value = withTiming(
+      modeTabIndex[mode] * modeTabWidth.value,
+      {
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+      },
+    );
+  }
+
+  function handleModeTabsLayout(width: number) {
+    const itemWidth = Math.max((width - 8) / 3, 0);
+    modeTabWidth.value = itemWidth;
+    modeIndicatorX.value = modeTabIndex[detailMode] * itemWidth;
+  }
 
   function handleAddToCollection() {
     // Acquisition cost is collector-entered data. Never silently use the
@@ -895,23 +854,19 @@ export default function CardDetailScreen() {
           >
             <Feather name="arrow-left" size={20} color={C.foreground} />
           </Pressable>
+          <View style={styles.navContext}>
+            <Text style={styles.navKicker}>CARD PASSPORT</Text>
+            <View style={styles.navDot} />
+            <Text style={styles.navVerified}>VERIFIED</Text>
+          </View>
           <View style={styles.navRight}>
-            <Pressable
-              onPress={handleWishlistToggle}
-              style={[styles.navBtn, isWatched && { backgroundColor: `${C.primary}22` }]}
-              accessibilityRole="button"
-              accessibilityLabel={isWatched ? 'Remove from wishlist' : 'Add to wishlist'}
-              hitSlop={2}
-            >
-              <Feather name="heart" size={20} color={isWatched ? C.primary : C.foreground} />
-            </Pressable>
             <Pressable
               style={styles.navBtn}
               onPress={() => {
                 const url = `https://verifiedtcg.co/cards/${card.id}`;
                 Share.share({
                   title: `${card.name} — Verified TCG`,
-                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: $${card.price.raw.toLocaleString('en-AU')} AUD\n${url}`,
+                  message: `Check out ${card.name} on Verified TCG!\n${card.setName} · ${card.number}\nMarket: ${card.price.available ? `${card.price.currency} ${card.price.raw.toLocaleString('en-AU')}` : 'Unavailable'}\n${url}`,
                   url,
                 }).catch(() => {});
               }}
@@ -919,30 +874,91 @@ export default function CardDetailScreen() {
               accessibilityLabel="Share this card"
               hitSlop={2}
             >
-              <Feather name="share-2" size={20} color={C.foreground} />
+              <Feather name="share-2" size={17} color={C.foreground} />
+            </Pressable>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => setShowCardActions(previous => !previous)}
+              accessibilityRole="button"
+              accessibilityLabel="More card actions"
+              accessibilityState={{ expanded: showCardActions }}
+              hitSlop={2}
+            >
+              <Feather name="more-horizontal" size={18} color={C.foreground} />
             </Pressable>
           </View>
         </View>
 
+        {showCardActions && (
+          <View style={styles.cardActionsMenu}>
+            <Pressable
+              onPress={() => {
+                setShowCardActions(false);
+                void handleWishlistToggle();
+              }}
+              style={styles.cardActionsMenuItem}
+              accessibilityRole="button"
+            >
+              <Feather name={isWatched ? 'list' : 'bookmark'} size={16} color={C.foreground} />
+              <Text style={styles.cardActionsMenuText}>
+                {isWatched ? 'Open Wishlist' : 'Add to Wishlist'}
+              </Text>
+            </Pressable>
+            <View style={styles.cardActionsMenuDivider} />
+            <Pressable
+              onPress={() => {
+                setShowCardActions(false);
+                router.push({
+                  pathname: '/contact-support',
+                  params: {
+                    subject: `Card data issue: ${card.name}`,
+                    cardId: card.id,
+                  },
+                } as any);
+              }}
+              style={styles.cardActionsMenuItem}
+              accessibilityRole="button"
+            >
+              <Feather name="flag" size={16} color={C.foreground} />
+              <Text style={styles.cardActionsMenuText}>Report a data issue</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Card artwork + swipe navigation overlays */}
         <View style={styles.cardStage}>
-          {card.imageUrl ? (
-            <ZoomableCardImage
-              imageUrl={card.imageUrl}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-              cardName={card.name}
-              cardNumber={card.number}
-            />
-          ) : (
-            <CardArtFallback
-              cardName={card.name}
-              cardNumber={card.number}
-              gradientStart={card.gradientStart}
-              gradientEnd={card.gradientEnd}
-              verificationStatus={card.verificationStatus}
-            />
-          )}
+          <View style={styles.heroGlow} />
+          <View style={styles.heroRingOuter} />
+          <View style={styles.heroRingInner} />
+          <View style={styles.heroCardOffset} />
+          <View style={styles.heroCardTilt}>
+            {card.imageUrl ? (
+              <ZoomableCardImage
+                imageUrl={card.imageUrl}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+                cardName={card.name}
+                cardNumber={card.number}
+              />
+            ) : (
+              <CardArtFallback
+                cardName={card.name}
+                cardNumber={card.number}
+                gradientStart={card.gradientStart}
+                gradientEnd={card.gradientEnd}
+              />
+            )}
+          </View>
+
+          <Text style={styles.passportSerial}>PASSPORT / {card.number.toUpperCase()}</Text>
+          <View style={styles.inspectCaption}>
+            <Feather name="maximize" size={12} color="#AAA5A2" />
+            <Text style={styles.inspectCaptionText}>Tap to inspect</Text>
+          </View>
+          <View style={styles.identityStamp}>
+            <Feather name="check" size={12} color={C.positive} />
+            <Text style={styles.identityStampText}>IDENTITY MATCHED</Text>
+          </View>
 
           {/* Prev/next arrow buttons */}
           {hasPrev && (
@@ -1003,174 +1019,130 @@ export default function CardDetailScreen() {
           </Animated.View>
         )}
 
-        {/* Title block */}
-        <View style={styles.titleBlock}>
-          <Text style={styles.cardName}>{card.name}</Text>
-          <Text style={styles.cardMeta}>{card.setName} · {card.number}</Text>
-          <View style={styles.tagRow}>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>{RARITY_LABELS[card.rarity]}</Text>
+        {/* Card identity and raw market value */}
+        <View style={styles.identityCard}>
+          <View style={styles.identityTop}>
+            <View style={styles.identityCopy}>
+              <Text style={styles.identityEyebrow}>
+                {card.tcg === 'pokemon' ? 'POKÉMON' : card.tcg === 'magic' ? 'MAGIC: THE GATHERING' : card.tcg.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase()}
+                {' · '}{card.setName.toUpperCase()}
+              </Text>
+              <Text style={styles.cardName}>{card.name}</Text>
+              <Text style={styles.cardMeta}>
+                {RARITY_LABELS[card.rarity]} · {card.number} · {card.year}
+              </Text>
             </View>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>{card.year}</Text>
-            </View>
-            <View style={[styles.tag, { backgroundColor: C.muted }]}>
-              <Text style={styles.tagText}>
-                {card.tcg === 'pokemon' ? 'Pokémon' : card.tcg === 'magic' ? 'MTG' : 'One Piece'}
+            <Pressable
+              onPress={handleWishlistToggle}
+              style={styles.favoriteButton}
+              accessibilityRole="button"
+              accessibilityLabel={isWatched ? 'Open wishlist' : 'Add to wishlist'}
+              accessibilityState={{ selected: isWatched }}
+              hitSlop={8}
+            >
+              <Feather name="bookmark" size={20} color={C.primary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.valueRow}>
+            <View>
+              <Text style={styles.valueLabel}>Raw / Ungraded value</Text>
+              <Text style={styles.valueAmount}>
+                {topMarketSummary
+                  ? `${topMarketSummary.currency} ${topMarketSummary.price.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : 'Price unavailable'}
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Condition/grade price tabs */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.priceTabs}
-          contentContainerStyle={styles.priceTabsContent}
+        <View
+          style={styles.modeTabs}
+          onLayout={event => handleModeTabsLayout(event.nativeEvent.layout.width)}
+          accessibilityRole="tablist"
         >
-          {PRICE_TABS.map(t => {
-            const price = effectiveTabPrice(t);
-            if (!price) return null;
-            return (
-              <Pressable
-                key={t}
-                onPress={() => setPriceTab(t)}
-                style={[
-                  styles.priceTab,
-                  priceTab === t && { borderColor: C.primary, backgroundColor: `${C.primary}18` },
-                ]}
-                accessibilityRole="tab"
-                accessibilityLabel={`${t} price: $${price.toLocaleString('en-AU')}`}
-                accessibilityState={{ selected: priceTab === t }}
-              >
-                <Text style={[styles.priceTabLabel, priceTab === t && { color: C.primary }]}>{t}</Text>
-                <Text style={[styles.priceTabValue, priceTab === t && { color: C.foreground }]}>
-                  ${price.toLocaleString('en-AU')}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.modeTabIndicator, modeIndicatorStyle]}
+          />
+          {(['Raw', 'Graded', 'POP'] as DetailMode[]).map(mode => (
+            <Pressable
+              key={mode}
+              onPress={() => selectDetailMode(mode)}
+              style={styles.modeTab}
+              accessibilityRole="tab"
+              accessibilityLabel={`${mode} card details`}
+              accessibilityState={{ selected: detailMode === mode }}
+            >
+              <Text style={[styles.modeTabLabel, detailMode === mode && styles.modeTabLabelActive]}>{mode}</Text>
+              <Text style={[styles.modeTabCaption, detailMode === mode && styles.modeTabCaptionActive]}>
+                {mode === 'Raw' ? 'market' : mode === 'Graded' ? 'slabs' : 'population'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
 
         {/* ── Verified Market Pricing ──────────────────────────────────── */}
-        <VerifiedPricingCard
-          card={card}
-          displayCurrency={displayCurrency}
-          isPro={hasAdvancedPricing}
-          onUpgradePress={() => router.push('/pro-subscription')}
-          chartWidth={W - 40 - 36}
-        />
+        {detailMode !== 'POP' && (
+          <VerifiedPricingCard
+            card={card}
+            displayCurrency={displayCurrency}
+            isPro={hasAdvancedPricing}
+            onUpgradePress={() => router.push('/pro-subscription')}
+            chartWidth={W - 40 - 36}
+            mode={detailMode === 'Graded' ? 'graded' : 'raw'}
+            onRawMarketSummaryChange={handleRawMarketSummaryChange}
+            populationRecords={populationRecords.flatMap(item =>
+              item.grading?.company != null
+              && item.grading.grade != null
+              && item.grading.population != null
+                ? [{
+                    company: item.grading.company,
+                    grade: item.grading.grade,
+                    population: item.grading.population,
+                  }]
+                : [],
+            )}
+          />
+        )}
 
-        <EbaySoldHistoryCard card={card} displayCurrency={displayCurrency} />
-
-        {/* GRADED pricing section */}
-        <View style={[styles.card, { backgroundColor: C.card, marginBottom: 12 }]}>
-          <View style={styles.rawHeader}>
-            <View style={[styles.rawBadge, { backgroundColor: `${C.primary}22` }]}>
-              <Text style={[styles.rawBadgeText, { color: C.primary }]}>GRADED</Text>
+        {detailMode === 'POP' && (
+          <View style={[styles.card, styles.marketPanel]}>
+            <View style={styles.panelHeader}>
+              <View>
+                <Text style={styles.panelKicker}>SCARCITY INDEX</Text>
+                <Text style={styles.panelTitle}>Population report</Text>
+              </View>
+              <Feather name="bar-chart-2" size={18} color={C.primary} />
             </View>
-            <Text style={styles.sectionTitle}>Graded Prices</Text>
-          </View>
-
-          {hasAdvancedPricing ? (
-            <View>
-              {gradedLoading ? (
-                <ActivityIndicator
-                  color={C.primary}
-                  style={{ marginVertical: 14, alignSelf: 'center' }}
-                />
-              ) : gradedRequiresUpgrade ? (
-                <>
-                  {GRADERS.map(grader => (
-                    <View key={grader.key} style={styles.gradedRow}>
-                      <Text style={styles.gradedLabel}>{grader.label}</Text>
-                      <View style={styles.gradedBlurred}>
-                        <Text style={styles.gradedBlurText}>••••</Text>
-                        <Feather name="lock" size={12} color={C.mutedForeground} />
-                      </View>
-                    </View>
-                  ))}
-                  <Pressable
-                    onPress={() => router.push('/pro-subscription')}
-                    style={styles.gradedCta}
-                    accessibilityRole="button"
-                    accessibilityLabel="Upgrade to Pro to unlock graded pricing"
-                  >
-                    <Feather name="zap" size={13} color="#FFF" />
-                    <Text style={styles.gradedCtaText}>Upgrade to Pro</Text>
-                  </Pressable>
-                </>
-              ) : Object.keys(liveGradedPrices).length === 0 ? (
-                <View style={styles.gradedUnavailable}>
-                  <Text style={[styles.gradedLabel, { textAlign: 'center', color: C.mutedForeground }]}>
-                    {gradedMessage ?? (
-                      gradedAvailability === 'no_results'
-                        ? 'No matching eBay completed sales found for these grades.'
-                        : 'Graded price data unavailable'
-                    )}
-                  </Text>
-                  {gradedAvailability !== 'configuration_error' && (
-                    <Pressable
-                      onPress={() => setGradedRetryNonce((current) => current + 1)}
-                      style={styles.gradedRetry}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry eBay graded pricing"
-                    >
-                      <Feather name="refresh-cw" size={13} color={C.primary} />
-                      <Text style={styles.gradedRetryText}>Retry eBay sales</Text>
-                    </Pressable>
-                  )}
-                </View>
-              ) : (
-                GRADERS.filter(g => liveGradedPrices[g.key] !== undefined).map(grader => {
-                  // Map grader key to price tab so tapping a grader row switches the chart
-                  const tabMap: Record<string, PriceTab> = {
-                    psa9: 'PSA 9', psa10: 'PSA 10', cgc10: 'CGC 10', bgs95: 'BGS 9.5',
-                  };
-                  const tab = tabMap[grader.key];
-                  const isActive = tab && priceTab === tab;
-                  return (
-                    <Pressable
-                      key={grader.key}
-                      onPress={() => tab && setPriceTab(tab)}
-                      style={[styles.gradedRow, isActive && { backgroundColor: `${C.primary}12`, borderRadius: 8, marginHorizontal: -4, paddingHorizontal: 4 }]}
-                    >
-                      <Text style={[styles.gradedLabel, isActive && { color: C.primary }]}>{grader.label}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[styles.gradedValue, isActive && { color: C.primary }]}>
-                          ${(liveGradedPrices[grader.key]!).toLocaleString('en-AU')} AUD
-                        </Text>
-                        {tab && <Feather name="bar-chart-2" size={12} color={isActive ? C.primary : C.mutedForeground} />}
-                      </View>
-                    </Pressable>
-                  );
-                })
-              )}
-            </View>
-          ) : (
-            <>
-              {GRADERS.map(grader => (
-                <View key={grader.key} style={styles.gradedRow}>
-                  <Text style={styles.gradedLabel}>{grader.label}</Text>
-                  <View style={styles.gradedBlurred}>
-                    <Text style={styles.gradedBlurText}>••••</Text>
-                    <Feather name="lock" size={12} color={C.mutedForeground} />
+            {populationRecords.length > 0 ? (
+              populationRecords.map(item => (
+                <View key={item.id} style={styles.populationRow}>
+                  <View style={styles.populationGrade}>
+                    <Text style={styles.populationGradeText}>
+                      {item.grading?.company} {item.grading?.grade}
+                    </Text>
                   </View>
+                  <View style={styles.populationCopy}>
+                    <Text style={styles.populationLabel}>Recorded population</Text>
+                    <Text style={styles.populationValue}>{item.grading?.population?.toLocaleString('en-AU')}</Text>
+                  </View>
+                  <Text style={styles.populationQuantity}>×{item.quantity}</Text>
                 </View>
-              ))}
-              <Pressable
-                onPress={() => router.push('/pro-subscription')}
-                style={styles.gradedCta}
-                accessibilityRole="button"
-                accessibilityLabel="Unlock graded pricing with Pro"
-              >
-                <Feather name="zap" size={13} color="#FFF" />
-                <Text style={styles.gradedCtaText}>Unlock graded pricing</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
+              ))
+            ) : (
+              <View style={styles.populationEmpty}>
+                <Feather name="bar-chart" size={26} color={C.mutedForeground} />
+                <Text style={styles.populationEmptyTitle}>No verified population record</Text>
+                <Text style={styles.populationEmptyText}>
+                  Population data appears here when a graded copy in your collection has a verified grading record.
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        <CollectionHoldingsPanel card={card} compact />
 
         {/* Action buttons */}
         <View style={styles.actions}>
@@ -1210,7 +1182,10 @@ export default function CardDetailScreen() {
 
         {/* Card Passport link — only for cards with a graded passport record */}
         {hasPassport && <Pressable
-          onPress={() => router.push(`/card-passport/${card.id}` as any)}
+          onPress={() => router.push({
+            pathname: `/card-passport/${card.id}`,
+            params: { appCardJson: JSON.stringify(card) },
+          } as any)}
           style={[styles.passportBanner, { backgroundColor: '#D4AF3722', borderColor: '#D4AF3744' }]}
           accessibilityRole="button"
           accessibilityLabel="Card Passport — ownership history, grading record and provenance"
@@ -1268,26 +1243,158 @@ export default function CardDetailScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.background },
-  content: { paddingHorizontal: 20 },
+  content: { paddingHorizontal: 12 },
   nav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 0,
+    paddingTop: 18,
+    paddingBottom: 14,
+    paddingHorizontal: 8,
+  },
+  navContext: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  navKicker: {
+    color: C.primary,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.7,
+  },
+  navDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.primary,
+  },
+  navVerified: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.7,
   },
   navRight: { flexDirection: 'row', gap: 8 },
+  cardActionsMenu: {
+    position: 'absolute',
+    top: 64,
+    right: 20,
+    zIndex: 60,
+    width: 214,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#3B373F',
+    borderRadius: 14,
+    backgroundColor: '#211F25',
+    paddingVertical: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    elevation: 24,
+  },
+  cardActionsMenuItem: {
+    minHeight: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 14,
+  },
+  cardActionsMenuText: {
+    color: C.foreground,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+  },
+  cardActionsMenuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#3B373F',
+    marginHorizontal: 12,
+  },
   navBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.card,
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cardStage: {
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    minHeight: 310,
+    marginBottom: 0,
     position: 'relative',
+    overflow: 'hidden',
+    paddingTop: 14,
+    paddingBottom: 47,
+  },
+  heroGlow: {
+    position: 'absolute',
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    backgroundColor: `${C.primary}12`,
+  },
+  heroRingOuter: {
+    position: 'absolute',
+    width: 318,
+    height: 318,
+    borderRadius: 159,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: `${C.primary}2E`,
+  },
+  heroRingInner: {
+    position: 'absolute',
+    width: 244,
+    height: 244,
+    borderRadius: 122,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: `${C.primary}3D`,
+  },
+  heroCardOffset: {
+    position: 'absolute',
+    width: CARD_W,
+    height: CARD_H,
+    borderRadius: 14,
+    backgroundColor: `${C.primary}22`,
+    transform: [{ translateX: 14 }, { translateY: 17 }, { rotate: '3deg' }],
+  },
+  heroCardTilt: {
+    transform: [{ rotate: '3deg' }],
+  },
+  passportSerial: {
+    position: 'absolute',
+    left: 8,
+    bottom: 24,
+    color: '#716E76',
+    fontFamily: 'SpaceMono_400Regular',
+    fontSize: 8,
+    letterSpacing: 1.25,
+  },
+  inspectCaption: {
+    position: 'absolute',
+    bottom: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inspectCaptionText: {
+    color: '#AAA5A2',
+    fontFamily: 'Inter_400Regular',
+    fontSize: 10,
+  },
+  identityStamp: {
+    position: 'absolute',
+    right: 8,
+    bottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  identityStampText: {
+    color: C.positive,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 8,
+    letterSpacing: 1,
   },
   swipeArrowLeft: {
     position: 'absolute',
@@ -1337,24 +1444,108 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: C.mutedForeground,
   },
-  titleBlock: { marginBottom: 20 },
+  identityCard: {
+    marginBottom: 20,
+    paddingHorizontal: 8,
+  },
+  identityTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  identityCopy: { flex: 1 },
+  identityEyebrow: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1,
+    lineHeight: 13,
+  },
+  favoriteButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 28,
+    marginRight: -5,
+  },
   cardName: {
-    fontSize: 26,
+    fontSize: 30,
     fontFamily: 'Rajdhani_700Bold',
     color: C.foreground,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
+    lineHeight: 31,
+    marginTop: 7,
   },
   cardMeta: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
-    marginTop: 2,
-    marginBottom: 10,
+    marginTop: 5,
+    textTransform: 'capitalize',
   },
-  tagRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  tagRow: { flexDirection: 'row', gap: 7, flexWrap: 'wrap', marginTop: 12 },
+  tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7 },
   tagText: { fontSize: 11, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
-  priceTabs: { marginBottom: 20 },
+  valueRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 26,
+  },
+  valueLabel: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    marginBottom: 4,
+  },
+  valueAmount: {
+    color: C.foreground,
+    fontFamily: 'Rajdhani_700Bold',
+    fontSize: 32,
+    lineHeight: 34,
+  },
+  modeTabs: {
+    position: 'relative',
+    flexDirection: 'row',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    borderRadius: 14,
+    backgroundColor: C.surface,
+    marginBottom: 12,
+    padding: 4,
+  },
+  modeTabIndicator: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 4,
+    borderRadius: 10,
+    backgroundColor: C.foreground,
+  },
+  modeTab: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 8,
+    zIndex: 1,
+  },
+  modeTabLabel: { color: C.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  modeTabLabelActive: { color: C.background },
+  modeTabCaption: {
+    color: `${C.mutedForeground}99`,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 8,
+    marginTop: 2,
+  },
+  modeTabCaptionActive: { color: C.muted },
+  priceTabs: { marginBottom: 12 },
   priceTabsContent: { gap: 8, paddingRight: 4 },
   priceTab: {
     paddingHorizontal: 14,
@@ -1366,18 +1557,116 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 80,
   },
+  priceTabActive: { borderColor: C.primary, backgroundColor: `${C.primary}18` },
   priceTabLabel: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     color: C.mutedForeground,
     marginBottom: 3,
   },
+  priceTabLabelActive: { color: C.primary },
   priceTabValue: {
     fontSize: 14,
     fontFamily: 'Inter_700Bold',
     color: C.mutedForeground,
   },
-  card: { borderRadius: 16, padding: 18, marginBottom: 16 },
+  priceTabValueActive: { color: C.foreground },
+  card: {
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    padding: 18,
+    marginBottom: 12,
+  },
+  marketPanel: { backgroundColor: C.card },
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  panelKicker: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1,
+  },
+  panelTitle: {
+    color: C.foreground,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 16,
+    marginTop: 5,
+  },
+  populationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    paddingVertical: 12,
+  },
+  populationGrade: {
+    minWidth: 62,
+    minHeight: 28,
+    borderRadius: 7,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+  },
+  populationGradeText: { color: C.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 10 },
+  populationCopy: { flex: 1 },
+  populationLabel: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
+  populationValue: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, marginTop: 2 },
+  populationQuantity: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  populationEmpty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 22 },
+  populationEmptyTitle: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 14, marginTop: 10 },
+  populationEmptyText: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  holdingsPanel: { backgroundColor: C.card },
+  holdingsCount: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 11 },
+  holdingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    paddingVertical: 11,
+  },
+  holdingMark: {
+    minWidth: 42,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: C.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  holdingMarkGraded: { backgroundColor: C.primary },
+  holdingMarkText: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 9 },
+  holdingCopy: { flex: 1 },
+  holdingTitle: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  holdingMeta: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 10,
+    marginTop: 3,
+    textTransform: 'capitalize',
+  },
+  holdingValue: { color: C.primary, fontFamily: 'Rajdhani_700Bold', fontSize: 16 },
+  holdingsEmpty: {
+    color: C.mutedForeground,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    paddingVertical: 8,
+  },
   marketHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

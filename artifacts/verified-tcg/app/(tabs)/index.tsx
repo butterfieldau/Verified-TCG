@@ -1,5 +1,6 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   PanResponder,
   Pressable,
@@ -37,6 +38,8 @@ import {
   getMarketGainersCached,
   getMarketLosersCached,
   getTrendingCardsCached,
+  getLookupTrendingCards,
+  getLookupTrendingCardsCached,
   getRecentlyAddedCardsCached,
 } from '@/services/market';
 import { fetchActiveEvents, type EventSummary } from '@/services/eventsApi';
@@ -53,6 +56,8 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  getHomePortfolioGain,
+  chartXForIndex,
 } from '@/services/homePortfolio';
 import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
 import { CardImage } from '@/components/ui/CardImage';
@@ -61,7 +66,16 @@ import colors from '@/constants/colors';
 import type { Card, MarketMover, PortfolioRange } from '@/types';
 const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
 const C = colors.dark;
-const RANGES: PortfolioRange[] = ['1D', '7D', '1M', '3M', '1Y', 'ALL'];
+const RANGES: { id: PortfolioRange; label: string }[] = [
+  { id: '1D', label: 'Daily' },
+  { id: '7D', label: 'Weekly' },
+  { id: '1M', label: 'Monthly' },
+  { id: '3M', label: '3 Months' },
+  { id: '6M', label: '6 Months' },
+  { id: '1Y', label: '12 Months' },
+];
+export const CHART_GESTURE_THRESHOLD = 8;
+export const CHART_HORIZONTAL_INTENT_RATIO = 1.15;
 
 const MARKET_TABS: { id: MarketTab; label: string }[] = [
   { id: 'trending', label: 'Trending' },
@@ -95,15 +109,30 @@ function formatLastUpdated(date: Date): string {
   if (diffH < 24) return `${diffH}h ago`;
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
-interface ChartPoint { value: number; date: string; }
+interface ChartPoint {
+  value: number | null;
+  date: string;
+  available?: boolean;
+  dailyChange?: number | null;
+  dailyChangePercent?: number | null;
+  complete?: boolean;
+}
 
 interface InteractiveChartProps {
   data: ChartPoint[];
   isPositive: boolean;
   onPointSelect: (pt: ChartPoint | null) => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 }
 
-function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartProps) {
+function InteractiveChart({
+  data,
+  isPositive,
+  onPointSelect,
+  onInteractionStart,
+  onInteractionEnd,
+}: InteractiveChartProps) {
   const [width, setWidth] = useState(350);
   const height = 140;
   const padL = 0;
@@ -112,62 +141,62 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
   const padB = 4;
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const gestureActive = useRef(false);
 
-  const vals = data.map(d => d.value);
-  const minV = Math.min(...vals);
-  const maxV = Math.max(...vals);
-  const rangeV = maxV - minV || 1;
+  const vals = data.flatMap(d => d.value == null ? [] : [d.value]);
+  const minV = vals.length > 0 ? Math.min(...vals) : 0;
+  const maxV = vals.length > 0 ? Math.max(...vals) : 1;
+  const rangeV = maxV - minV;
 
   const chartColor = isPositive ? C.positive : C.negative;
   const gradId = isPositive ? 'chartGreen' : 'chartRed';
 
   // Map data index → pixel x
-  const xOf = (i: number) =>
-    padL + (i / Math.max(data.length - 1, 1)) * (width - padL - padR);
+  const xOf = (i: number) => chartXForIndex(i, data.length, width, padL, padR);
   // Map value → pixel y
-  const yOf = (v: number) =>
-    padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
+  const yOf = (v: number) => data.length === 1 || rangeV === 0
+    ? (padT + (height - padB)) / 2
+    : padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
 
   // Build smooth SVG path (monotone cubic)
   function buildPath() {
-    if (data.length < 2) return '';
-    const pts = data.map((d, i) => ({ x: xOf(i), y: yOf(d.value) }));
-    let d = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const cx = (pts[i].x + pts[i + 1].x) / 2;
-      d += ` C ${cx} ${pts[i].y}, ${cx} ${pts[i + 1].y}, ${pts[i + 1].x} ${pts[i + 1].y}`;
-    }
-    return d;
+    let path = '';
+    let previousAvailable = false;
+    data.forEach((point, index) => {
+      if (point.value == null || point.available === false) {
+        previousAvailable = false;
+        return;
+      }
+      const command = previousAvailable ? 'L' : 'M';
+      path += ` ${command} ${xOf(index)} ${yOf(point.value)}`;
+      previousAvailable = true;
+    });
+    return path.trim();
   }
 
   function buildArea() {
-    if (data.length < 2) return '';
-    const line = buildPath();
-    const last = { x: xOf(data.length - 1), y: height };
-    const first = { x: xOf(0), y: height };
-    return `${line} L ${last.x} ${last.y} L ${first.x} ${first.y} Z`;
+    const paths: string[] = [];
+    let segment: { x: number; y: number }[] = [];
+    const flush = () => {
+      if (segment.length >= 2) {
+        const first = segment[0]!;
+        const last = segment[segment.length - 1]!;
+        paths.push(
+          `M ${first.x} ${height} L ${segment.map(point => `${point.x} ${point.y}`).join(' L ')} L ${last.x} ${height} Z`,
+        );
+      }
+      segment = [];
+    };
+    data.forEach((point, index) => {
+      if (point.value == null || point.available === false) {
+        flush();
+      } else {
+        segment.push({ x: xOf(index), y: yOf(point.value) });
+      }
+    });
+    flush();
+    return paths.join(' ');
   }
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (e) => {
-        handleTouch(e.nativeEvent.locationX);
-      },
-      onPanResponderMove: (e) => {
-        handleTouch(e.nativeEvent.locationX);
-      },
-      onPanResponderRelease: () => {
-        setActiveIndex(null);
-        onPointSelect(null);
-      },
-      onPanResponderTerminate: () => {
-        setActiveIndex(null);
-        onPointSelect(null);
-      },
-    })
-  ).current;
 
   function handleTouch(touchX: number) {
     const n = data.length;
@@ -176,13 +205,46 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
     const ratio = Math.max(0, Math.min(1, (touchX - padL) / usableWidth));
     const idx = Math.min(Math.round(ratio * (n - 1)), n - 1);
     setActiveIndex(idx);
-    onPointSelect(data[idx]);
+    onPointSelect(data[idx]!);
   }
+
+  const finishGesture = useCallback(() => {
+    if (!gestureActive.current) return;
+    gestureActive.current = false;
+    onInteractionEnd?.();
+  }, [onInteractionEnd]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    // Let the parent ScrollView decide whether a touch is a vertical scroll.
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gesture) => {
+      const horizontal = Math.abs(gesture.dx) > CHART_GESTURE_THRESHOLD
+        && Math.abs(gesture.dx) > Math.abs(gesture.dy) * CHART_HORIZONTAL_INTENT_RATIO;
+      return horizontal;
+    },
+    onPanResponderGrant: (e) => {
+      gestureActive.current = true;
+      onInteractionStart?.();
+      handleTouch(e.nativeEvent.locationX);
+    },
+    onPanResponderMove: (e) => {
+      handleTouch(e.nativeEvent.locationX);
+    },
+    onPanResponderRelease: finishGesture,
+    onPanResponderTerminate: finishGesture,
+    // Once horizontal inspection starts, do not hand the gesture back to the
+    // page midway through a drag.
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  }), [data, width, finishGesture, onInteractionStart]);
+
+  useEffect(() => finishGesture, [finishGesture]);
 
   const linePath = buildPath();
   const areaPath = buildArea();
+  const activePoint = activeIndex !== null ? data[activeIndex] : null;
   const activeX = activeIndex !== null ? xOf(activeIndex) : null;
-  const activeY = activeIndex !== null ? yOf(data[activeIndex].value) : null;
+  const activeY = activePoint?.value != null ? yOf(activePoint.value) : null;
 
   return (
     <View
@@ -211,6 +273,25 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
           strokeLinejoin="round"
         />
 
+        {/* One provider observation is a baseline, not a historical trend. */}
+        {data.length === 1 && data[0]!.value != null && (
+          <>
+            <SvgLine
+              x1={padL + 18}
+              y1={yOf(data[0]!.value!)}
+              x2={width - padR - 18}
+              y2={yOf(data[0]!.value!)}
+              stroke={chartColor}
+              strokeWidth={2}
+              strokeDasharray="5,7"
+              opacity={0.45}
+            />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
+            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
+          </>
+        )}
+
         {/* Crosshair */}
         {activeX !== null && activeY !== null && (
           <>
@@ -238,8 +319,23 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 }
 
 // ── Tooltip pill shown above chart when touching ───────────────────────────────
-function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency: string }) {
+function ChartTooltip({
+  point,
+  currency,
+}: {
+  point: ChartPoint | null;
+  currency: string;
+}) {
   if (!point) return null;
+  if (point.value == null || point.available === false) {
+    return (
+      <View style={styles.tooltipBox}>
+        <Text style={styles.tooltipValue}>Value unavailable</Text>
+        <Text style={styles.tooltipLabel}>{point.date}</Text>
+        <Text style={styles.tooltipLabel}>No retained market price yet</Text>
+      </View>
+    );
+  }
   return (
     <View style={styles.tooltipBox}>
       <Text style={styles.tooltipValue}>
@@ -275,6 +371,7 @@ export default function HomeScreen() {
   const [gainers, setGainers] = useState<MarketMover[]>([]);
   const [losers, setLosers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
+  const [lookupTrending, setLookupTrending] = useState<Card[]>([]);
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [marketFeedStatus, setMarketFeedStatus] = useState<Record<'movers' | 'gainers' | 'losers' | 'trending' | 'recent', { loading: boolean; error: string | null }>>({
     movers: { loading: true, error: null },
@@ -284,6 +381,10 @@ export default function HomeScreen() {
     recent: { loading: true, error: null },
   });
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [lookupTrendingStatus, setLookupTrendingStatus] = useState<{ loading: boolean; error: string | null }>({
+    loading: true,
+    error: null,
+  });
   const [activityLoading, setActivityLoading] = useState(false);
 
   // Server-authoritative collection summary for portfolio totals
@@ -291,23 +392,31 @@ export default function HomeScreen() {
   const [serverPerformance, setServerPerformance] = useState<CollectionPerformance | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(false);
+  const [chartGestureActive, setChartGestureActive] = useState(false);
+  const portfolioRequestGeneration = useRef(0);
 
   const performanceRange: PerformanceRange = portfolioRange;
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    const generation = ++portfolioRequestGeneration.current;
     setSummaryLoading(true);
     setSummaryError(false);
     fetchCollectionSummary(currency)
-      .then(setServerSummary)
-      .catch(() => {
-        setServerSummary(null);
-        setSummaryError(true);
+      .then(summary => {
+        if (generation === portfolioRequestGeneration.current) setServerSummary(summary);
       })
-      .finally(() => setSummaryLoading(false));
+      .catch(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryError(true);
+      })
+      .finally(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryLoading(false);
+      });
     fetchCollectionPerformance(performanceRange, currency)
-      .then(setServerPerformance)
-      .catch(() => setServerPerformance(null));
+      .then(performance => {
+        if (generation === portfolioRequestGeneration.current) setServerPerformance(performance);
+      })
+      .catch(() => {});
   }, [isAuthenticated, currency, performanceRange]);
 
   // Chart tooltip state
@@ -341,6 +450,21 @@ export default function HomeScreen() {
     loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope }), setLosers);
     loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope }), setTrending);
     loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope }), setRecentCards);
+    setLookupTrendingStatus({ loading: true, error: null });
+    getLookupTrendingCardsCached(
+      fresh => { if (!cancelled) setLookupTrending(fresh); },
+      { cacheScope: marketCacheScope },
+    )
+      .then(data => { if (!cancelled) setLookupTrending(data); })
+      .catch(error => {
+        if (!cancelled) setLookupTrendingStatus({
+          loading: false,
+          error: error instanceof Error ? error.message : 'Trending data is unavailable.',
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLookupTrendingStatus(previous => ({ ...previous, loading: false }));
+      });
 
     fetchRecentActivity(10)
       .then(a => { if (!cancelled) setActivity(a); })
@@ -351,13 +475,15 @@ export default function HomeScreen() {
   }, [marketCacheScope]);
 
   const onRefresh = useCallback(async () => {
+    const generation = ++portfolioRequestGeneration.current;
     await refreshPrices();
-    const [moversResult, gainersResult, losersResult, trendingResult, recentResult, activityResult, summaryResult, performanceResult] =
+    const [moversResult, gainersResult, losersResult, trendingResult, lookupTrendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
       getMarketMovers({ cacheScope: marketCacheScope }),
        getMarketGainers({ cacheScope: marketCacheScope }),
        getMarketLosers({ cacheScope: marketCacheScope }),
       getTrendingCards({ cacheScope: marketCacheScope }),
+      getLookupTrendingCards({ cacheScope: marketCacheScope }),
       getRecentlyAddedCards({ cacheScope: marketCacheScope }),
       fetchRecentActivity(10),
       fetchCollectionSummary(currency),
@@ -367,31 +493,38 @@ export default function HomeScreen() {
     if (gainersResult.status === 'fulfilled') setGainers(gainersResult.value);
     if (losersResult.status === 'fulfilled') setLosers(losersResult.value);
     if (trendingResult.status === 'fulfilled') setTrending(trendingResult.value);
+    if (lookupTrendingResult.status === 'fulfilled') setLookupTrending(lookupTrendingResult.value);
     if (recentResult.status === 'fulfilled') setRecentCards(recentResult.value);
     if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
+    if (generation !== portfolioRequestGeneration.current) return;
     if (summaryResult.status === 'fulfilled') {
       setServerSummary(summaryResult.value);
       setSummaryError(false);
     } else {
-      setServerSummary(null);
       setSummaryError(true);
     }
-    setServerPerformance(performanceResult.status === 'fulfilled' ? performanceResult.value : null);
+    if (performanceResult.status === 'fulfilled') setServerPerformance(performanceResult.value);
   }, [refreshPrices, currency, performanceRange, marketCacheScope]);
 
   const retryPortfolio = useCallback(() => {
+    const generation = ++portfolioRequestGeneration.current;
     setSummaryLoading(true);
     setSummaryError(false);
     fetchCollectionSummary(currency)
-      .then(setServerSummary)
-      .catch(() => {
-        setServerSummary(null);
-        setSummaryError(true);
+      .then(summary => {
+        if (generation === portfolioRequestGeneration.current) setServerSummary(summary);
       })
-      .finally(() => setSummaryLoading(false));
+      .catch(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryError(true);
+      })
+      .finally(() => {
+        if (generation === portfolioRequestGeneration.current) setSummaryLoading(false);
+      });
     fetchCollectionPerformance(performanceRange, currency)
-      .then(setServerPerformance)
-      .catch(() => setServerPerformance(null));
+      .then(performance => {
+        if (generation === portfolioRequestGeneration.current) setServerPerformance(performance);
+      })
+      .catch(() => {});
   }, [currency, performanceRange]);
 
   // ── Live event banner (real API-backed) ─────────────────────────────────────
@@ -439,19 +572,20 @@ export default function HomeScreen() {
 
   const valueState = getHomePortfolioValueState(serverSummary, summaryLoading, summaryError, currency);
   const performanceView = getHomePerformanceView(serverPerformance, portfolioRange);
+  const allChartData = serverPerformance?.points ?? [];
   const chartData = performanceView.kind === 'chart' ? performanceView.points : [];
-  const displayValue = activeChartPoint?.value ?? (
-    valueState.kind === 'empty' || valueState.kind === 'priced' ? valueState.value : null
-  );
-  const gain =
-    chartData.length >= 2
-      ? chartData[chartData.length - 1]!.value - chartData[0]!.value
+  const portfolioGain = getHomePortfolioGain(serverSummary);
+  const displayValue = activeChartPoint
+    ? activeChartPoint.value
+    : valueState.kind === 'empty' || valueState.kind === 'priced'
+      ? valueState.value
       : null;
-  const gainPct =
-    gain != null && chartData[0]!.value > 0
-      ? (gain / chartData[0]!.value) * 100
-      : null;
-  const isPositive = (gain ?? 0) >= 0;
+  // First-to-last portfolio value can include acquisitions and sales, so it is
+  // not a market gain signal. Colour follows only the authoritative daily move.
+  const isPositive = (serverSummary?.todayMovement?.absolute ?? 0) >= 0;
+  const unavailableChartPoints = allChartData.filter(
+    point => point.available === false || point.value == null,
+  ).length;
 
   const oneDayGain = serverSummary?.todayMovement?.absolute ?? 0;
   const oneDayGainPct = serverSummary?.todayMovement?.percent ?? 0;
@@ -498,6 +632,7 @@ export default function HomeScreen() {
       showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior="never"
       automaticallyAdjustContentInsets={false}
+      scrollEnabled={!chartGestureActive}
       scrollEventThrottle={16}
       refreshControl={
         <RefreshControl
@@ -566,27 +701,30 @@ export default function HomeScreen() {
               </Text>
               <Text style={styles.portfolioCurrency}>{serverSummary?.currency ?? currency}</Text>
             </View>
-            {serverSummary?.unrealizedGainPercent !== null && serverSummary?.unrealizedGainPercent !== undefined && (
+            {portfolioGain && (
               <View style={styles.changeBadgeRow}>
                 <View style={[
                   styles.changeBadge,
-                  { backgroundColor: (serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative) + '18' },
+                  { backgroundColor: (portfolioGain.amount >= 0 ? C.positive : C.negative) + '18' },
                 ]}>
                   <Feather
-                    name={serverSummary.unrealizedGainPercent >= 0 ? 'trending-up' : 'trending-down'}
+                    name={portfolioGain.amount >= 0 ? 'trending-up' : 'trending-down'}
                     size={11}
-                    color={serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative}
+                    color={portfolioGain.amount >= 0 ? C.positive : C.negative}
                   />
-                  <Text style={[styles.changeBadgeText, { color: serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative }]}>
-                    {serverSummary.unrealizedGainPercent >= 0 ? '+' : ''}{serverSummary.unrealizedGainPercent.toFixed(2)}%
+                  <Text style={[styles.changeBadgeText, { color: portfolioGain.amount >= 0 ? C.positive : C.negative }]}>
+                    {portfolioGain.percent == null
+                      ? 'Gain'
+                      : `${portfolioGain.percent >= 0 ? '+' : ''}${portfolioGain.percent.toFixed(2)}%`}
                   </Text>
                 </View>
-                {serverSummary.unrealizedGain !== null && serverSummary.unrealizedGain !== undefined && (
-                  <Text style={styles.changePeriod}>
-                    {serverSummary.unrealizedGain >= 0 ? '+' : ''}
-                    {serverSummary.unrealizedGain.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
-                  </Text>
-                )}
+                <Text style={styles.changePeriod}>
+                  {portfolioGain.amount >= 0 ? '+' : ''}
+                  {portfolioGain.amount.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary?.currency ?? currency}
+                  {portfolioGain.partial
+                    ? ` · ${portfolioGain.pricedHoldings} priced holding${portfolioGain.pricedHoldings === 1 ? '' : 's'}`
+                    : ''}
+                </Text>
               </View>
             )}
             {valueState.kind === 'priced' && valueState.unpricedHoldings > 0 && (
@@ -616,22 +754,38 @@ export default function HomeScreen() {
 
       {/* ── Chart tooltip (shows while touching) ───────────────────────── */}
       <View style={styles.tooltipContainer}>
-        <ChartTooltip point={activeChartPoint} currency={currency} />
+        <ChartTooltip
+          point={activeChartPoint}
+          currency={currency}
+        />
       </View>
 
       {/* ── Interactive chart ───────────────────────────────────────────── */}
       <View style={styles.chartContainer}>
         {performanceView.kind === 'chart' ? (
-          <InteractiveChart
-            data={chartData}
-            isPositive={isPositive}
-            onPointSelect={setActiveChartPoint}
-          />
+          <View>
+            <InteractiveChart
+              data={chartData}
+              isPositive={isPositive}
+              onPointSelect={setActiveChartPoint}
+              onInteractionStart={() => setChartGestureActive(true)}
+              onInteractionEnd={() => setChartGestureActive(false)}
+            />
+            <Text style={styles.initialSnapshotText}>
+              Profile market value from the date each card was added
+            </Text>
+          </View>
         ) : performanceView.kind === 'initial' ? (
-          <View style={styles.chartUnavailable}>
-            <Feather name="minus" size={18} color={C.mutedForeground} />
-            <Text style={styles.chartUnavailableText}>
-              Initial snapshot recorded · {performanceView.point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {performanceView.point.currency}
+          <View>
+            <InteractiveChart
+              data={[performanceView.point]}
+              isPositive
+              onPointSelect={setActiveChartPoint}
+              onInteractionStart={() => setChartGestureActive(true)}
+              onInteractionEnd={() => setChartGestureActive(false)}
+            />
+            <Text style={styles.initialSnapshotText}>
+              Latest verified baseline · historical movement appears after another retained price
             </Text>
           </View>
         ) : (
@@ -642,28 +796,36 @@ export default function HomeScreen() {
             </Text>
           </View>
         )}
+        {serverPerformance && (
+          <Text style={styles.chartHistoryNote}>
+            {unavailableChartPoints > 0
+              ? `${serverPerformance.completeness} · ${unavailableChartPoints} sampled date${unavailableChartPoints === 1 ? '' : 's'} unavailable`
+              : serverPerformance.completeness}
+          </Text>
+        )}
       </View>
 
       {/* ── Range pills ─────────────────────────────────────────────────── */}
       <View style={styles.rangeRow}>
-        {RANGES.map(r => (
+        {RANGES.map(range => (
           <Pressable
-            key={r}
-            onPress={() => { setPortfolioRange(r); setActiveChartPoint(null); }}
+            key={range.id}
+            testID={`portfolio-range-${range.id}`}
+            onPress={() => { setPortfolioRange(range.id); setActiveChartPoint(null); }}
             accessibilityRole="button"
-            accessibilityLabel={`${r} range`}
-            accessibilityState={{ selected: portfolioRange === r }}
+            accessibilityLabel={`${range.label} portfolio range`}
+            accessibilityState={{ selected: portfolioRange === range.id }}
             hitSlop={{ top: 10, bottom: 10 }}
             style={[
               styles.rangeBtn,
-              portfolioRange === r && styles.rangeBtnActive,
+              portfolioRange === range.id && styles.rangeBtnActive,
             ]}
           >
             <Text style={[
               styles.rangeText,
-              { color: portfolioRange === r ? '#FFFFFF' : C.mutedForeground },
+              { color: portfolioRange === range.id ? '#FFFFFF' : C.mutedForeground },
             ]}>
-              {r}
+              {range.label}
             </Text>
           </Pressable>
         ))}
@@ -876,6 +1038,64 @@ export default function HomeScreen() {
       {/* ── Market ────────────────────────────────────────────────────────── */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>Trending</Text>
+            <Text style={styles.sectionSubtitle}>Most looked-up cards · refreshes every 12 hours</Text>
+          </View>
+          <Feather name="activity" size={18} color={C.primary} />
+        </View>
+        {lookupTrendingStatus.loading ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {[0, 1, 2, 3].map(i => <MarketMoverSkeleton key={i} />)}
+          </ScrollView>
+        ) : lookupTrendingStatus.error ? (
+          <View style={styles.marketFeedMessage}>
+            <Text style={styles.emptySection}>Trending lookups are unavailable.</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setLookupTrendingStatus({ loading: true, error: null });
+                getLookupTrendingCards({ cacheScope: marketCacheScope })
+                  .then(setLookupTrending)
+                  .catch(error => setLookupTrendingStatus({
+                    loading: false,
+                    error: error instanceof Error ? error.message : 'Trending data is unavailable.',
+                  }))
+                  .finally(() => setLookupTrendingStatus(previous => ({ ...previous, loading: false })));
+              }}
+            >
+              <Text style={styles.marketRetry}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : lookupTrending.length === 0 ? (
+          <Text style={styles.emptySection}>Popular card lookups will appear here as collectors browse.</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+            {lookupTrending.map(card => (
+              <Pressable
+                key={card.id}
+                style={{ gap: 8, width: 110 }}
+                onPress={() => router.push({ pathname: `/card/${card.id}` as any, params: { appCardJson: JSON.stringify(card) } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${card.name} from ${card.setName}, trending lookup`}
+              >
+                <CardThumbnail card={card} compact />
+                <View>
+                  <Text style={styles.moverName} numberOfLines={1}>{card.name}</Text>
+                  <Text style={styles.moverSet} numberOfLines={1}>{card.setName}</Text>
+                  <Text style={styles.moverPrice}>
+                    {card.price.raw > 0 ? `${card.price.currency} ${card.price.raw.toLocaleString('en-AU')}` : 'Price unavailable'}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* ── Market ────────────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Market</Text>
           <Pressable
             onPress={() => router.push('/(tabs)/market')}
@@ -1041,7 +1261,6 @@ export default function HomeScreen() {
         )}
       </View>
 
-
     </ScrollView>
   );
 }
@@ -1113,7 +1332,7 @@ const styles = StyleSheet.create({
   changePeriod: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
 
   // Tooltip
-  tooltipContainer: { height: 42, justifyContent: 'flex-end', paddingBottom: 4 },
+  tooltipContainer: { minHeight: 58, justifyContent: 'flex-end', paddingBottom: 4 },
   tooltipBox: {
     alignSelf: 'center',
     backgroundColor: C.card,
@@ -1123,7 +1342,105 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tooltipValue: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground, letterSpacing: -0.3 },
+  tooltipChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   tooltipLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
+  tooltipAction: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
+  tooltipActionText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: C.primary },
+
+  // Portfolio movement sheet
+  movementOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.66)',
+    justifyContent: 'flex-end',
+  },
+  movementSheet: {
+    maxHeight: '82%',
+    minHeight: 360,
+    backgroundColor: C.background,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 18,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  movementHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    marginBottom: 14,
+  },
+  movementHeaderText: { flex: 1 },
+  movementEyebrow: {
+    color: C.primary,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.3,
+    marginBottom: 4,
+  },
+  movementTitle: {
+    color: C.foreground,
+    fontSize: 22,
+    fontFamily: 'Rajdhani_700Bold',
+  },
+  movementSummary: {
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+  },
+  movementSummaryLabel: {
+    color: C.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    marginBottom: 3,
+  },
+  movementSummaryValue: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  movementSummaryNote: {
+    color: C.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 16,
+    marginTop: 5,
+  },
+  movementList: { flexGrow: 0 },
+  movementListContent: { paddingBottom: 10 },
+  movementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  movementImage: {
+    width: 42,
+    height: 56,
+    borderRadius: 7,
+    overflow: 'hidden',
+    backgroundColor: C.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  movementBody: { flex: 1, minWidth: 0 },
+  movementCardName: { color: C.foreground, fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  movementMeta: { color: C.mutedForeground, fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 3 },
+  movementUnavailable: { color: C.mutedForeground, fontSize: 10, lineHeight: 14, marginTop: 4 },
+  movementAmount: { maxWidth: 94, textAlign: 'right', fontSize: 12, fontFamily: 'Inter_700Bold' },
+  movementState: { minHeight: 220, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 },
+  movementEmpty: { alignItems: 'center', justifyContent: 'center', gap: 10, padding: 34 },
+  movementStateText: {
+    color: C.mutedForeground,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  movementRetry: { borderWidth: 1, borderColor: C.border, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  movementRetryText: { color: C.primary, fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
   // Chart
   chartContainer: { marginHorizontal: -20, marginBottom: 4 },
@@ -1140,15 +1457,30 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     textAlign: 'center',
   },
+  initialSnapshotText: {
+    color: C.mutedForeground,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  chartHistoryNote: {
+    color: C.mutedForeground,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: 'center',
+    marginTop: 5,
+    paddingHorizontal: 20,
+  },
 
   // Range pills
   rangeRow: {
     flexDirection: 'row', justifyContent: 'space-between',
     paddingHorizontal: 4, marginBottom: 20,
   },
-  rangeBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  rangeBtn: { paddingHorizontal: 7, paddingVertical: 6, borderRadius: 8 },
   rangeBtnActive: { backgroundColor: C.primary },
-  rangeText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  rangeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 
   // Divider
   divider: { height: 1, backgroundColor: C.border, marginBottom: 20 },
@@ -1281,6 +1613,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 14,
   },
   sectionTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: C.foreground },
+  sectionSubtitle: { marginTop: 3, fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
   seeAll: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.primary },
   emptySection: { fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, paddingVertical: 8 },
   moverName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground, width: 110 },

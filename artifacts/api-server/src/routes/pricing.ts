@@ -7,28 +7,31 @@
  * POST /pricing/scheduler/run               — enqueue batch pricing (admin)
  */
 import { Router } from "express";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logger } from "../lib/logger.js";
 import {
   getPricing,
   getPricingMappingState,
   refreshPricing,
-  refreshPricingForScheduler,
-  recordSchedulerIdentityFailure,
   getPriceHistory,
-  isJustTcgPricingConfigured,
+  importPriceChartingBulkGuide,
 } from "../pricing/service.js";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
-import { captureAllPortfolioSnapshots } from "../pricing/portfolio.js";
 import { pricingReadLimiter, pricingRefreshLimiter } from "../lib/rateLimiters.js";
 import {
   isPCConfigured,
   PROVIDER_KEY,
   PROVIDER_LABEL,
+  PRICECHARTING_GUIDE_CATEGORIES,
+  PriceChartingError,
 } from "../pricing/pricecharting.js";
 import { resolveCatalogCardById } from "./catalog.js";
+import {
+  runScheduledPricingBatch,
+  selectCardsForScheduledRefresh,
+} from "../pricing/scheduler.js";
+
+export { selectCardsForScheduledRefresh } from "../pricing/scheduler.js";
 
 const router = Router();
 
@@ -102,67 +105,6 @@ function catalogIdentityUnavailable(cardId: string) {
   };
 }
 
-interface ScheduledCardRow extends Record<string, unknown> {
-  card_id: string;
-  card_data: Record<string, unknown>;
-}
-
-/**
- * Fair bounded scheduler selection. Never-attempted cards come first, then
- * cards whose mapping/quote was refreshed least recently. The query spans the
- * complete eligible set rather than repeatedly reading a fixed first page.
- */
-export async function selectCardsForScheduledRefresh(
-  maxCards: number,
-  options: { cardIdPrefix?: string } = {},
-): Promise<Array<{ cardId: string; cardData: Record<string, unknown> }>> {
-  const result = await db.execute<ScheduledCardRow>(sql`
-    WITH eligible AS (
-      SELECT card_id, card_data, created_at, 1 AS source_priority
-      FROM collection_items
-      UNION ALL
-      SELECT card_id, card_data, created_at, 2 AS source_priority
-      FROM wishlist_items
-      WHERE deleted_at IS NULL
-      UNION ALL
-      SELECT card_id, card_data, created_at, 3 AS source_priority
-      FROM sold_archive_items
-    ),
-    deduped AS (
-      SELECT DISTINCT ON (card_id)
-        card_id, card_data, created_at
-      FROM eligible
-      ORDER BY card_id, source_priority, created_at
-    ),
-    attempts AS (
-      SELECT card_id, MAX(updated_at) AS last_attempt
-      FROM card_provider_mappings
-      WHERE provider_key = 'pricecharting'
-      GROUP BY card_id
-    ),
-    quote_refreshes AS (
-      SELECT card_id, MAX(fetched_at) AS last_quote
-      FROM current_quotes
-      WHERE provider_key = 'justtcg' AND grade_key = 'raw'
-      GROUP BY card_id
-    )
-    SELECT d.card_id, d.card_data
-    FROM deduped d
-    LEFT JOIN attempts a ON a.card_id = d.card_id
-    LEFT JOIN quote_refreshes q ON q.card_id = d.card_id
-    WHERE (${options.cardIdPrefix ?? null}::text IS NULL OR d.card_id LIKE ${`${options.cardIdPrefix ?? ""}%`})
-    ORDER BY
-      GREATEST(
-        COALESCE(a.last_attempt, '-infinity'::timestamptz),
-        COALESCE(q.last_quote, '-infinity'::timestamptz)
-      ) ASC,
-      d.created_at ASC,
-      d.card_id ASC
-    LIMIT ${maxCards}
-  `);
-  return result.rows.map(row => ({ cardId: row.card_id, cardData: row.card_data }));
-}
-
 // ── GET /pricing/cards/:id ────────────────────────────────────────────────────
 
 router.get("/pricing/cards/:id", requireActiveUser, pricingReadLimiter, async (req: AuthRequest, res): Promise<void> => {
@@ -182,25 +124,14 @@ router.get("/pricing/cards/:id", requireActiveUser, pricingReadLimiter, async (r
 
   try {
     const mapping = await getPricingMappingState(cardId);
-    if (!mapping && !name && !isJustTcgPricingConfigured()) {
+    if (!mapping && !name) {
       res.status(400).json({ message: "name query param is required for first-time matching" });
       return;
     }
-    const identity = mapping?.identity
-      ?? await authoritativeIdentity(cardId, { name: name || cardId, set, number, game });
+    const identity = mapping?.status === "matched" && mapping.providerProductId
+      ? mapping.identity
+      : await authoritativeIdentity(cardId, { name, set, number, game });
     if (!identity) {
-      if (isJustTcgPricingConfigured()) {
-        const result = await getPricing({
-          cardId,
-          name: name || cardId,
-          set,
-          number,
-          game,
-          displayCurrency,
-        });
-        res.json(result);
-        return;
-      }
       res.json(catalogIdentityUnavailable(cardId));
       return;
     }
@@ -240,7 +171,7 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
 
   try {
     const mapping = await getPricingMappingState(cardId);
-    if (!mapping && !name && !isJustTcgPricingConfigured()) {
+    if (!mapping && !name) {
       res.status(400).json({ message: "name is required for first-time matching (body or query)" });
       return;
     }
@@ -249,7 +180,7 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
       mapping?.status === "matched" && Boolean(mapping.providerProductId);
     const identity = canRefreshPersistedProduct
       ? mapping.identity
-      : await authoritativeIdentity(cardId, { name: name || cardId, set, number, game });
+      : await authoritativeIdentity(cardId, { name, set, number, game });
 
     if (!identity) {
       if (mapping) {
@@ -261,18 +192,7 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
             ?? "Stored pricing retained; card identity could not be resolved for rematching",
         });
       } else {
-        if (isJustTcgPricingConfigured()) {
-          res.json(await refreshPricing({
-            cardId,
-            name: name || cardId,
-            set,
-            number,
-            game,
-            displayCurrency,
-          }));
-        } else {
-          res.json(catalogIdentityUnavailable(cardId));
-        }
+        res.json(catalogIdentityUnavailable(cardId));
       }
       return;
     }
@@ -338,64 +258,69 @@ router.post("/pricing/scheduler/run", async (req, res): Promise<void> => {
     200,
   );
 
-  if (!isPCConfigured() && !isJustTcgPricingConfigured()) {
+  if (!isPCConfigured()) {
     res.json({
       queued: 0,
       configured: false,
-      message: "No pricing provider is configured; no provider work was queued",
+      message: "PriceCharting is not configured; no provider work was queued",
     });
     return;
   }
 
   try {
-    const eligibleRows = await selectCardsForScheduledRefresh(maxCards);
-
-    const cards = eligibleRows.map(row => ({ cardId: row.cardId }));
-
-    // Background work remains bounded by maxCards and every provider attempt
-    // passes through the shared one-request-per-second queue.
-    void (async () => {
-      const verifiedCards: Array<{
-        cardId: string;
-        name: string;
-        set?: string;
-        number?: string;
-        game?: string;
-      }> = [];
-      for (let index = 0; index < cards.length; index += 10) {
-        const batch = cards.slice(index, index + 10);
-        const resolved = await Promise.all(
-          batch.map(async card => {
-            const catalogCard = await resolveCatalogCardById(card.cardId).catch(() => null);
-            const identity = catalogCard ? identityFromCatalogCard(catalogCard.card) : null;
-            if (!identity) {
-              if (isPCConfigured()) {
-                await recordSchedulerIdentityFailure(card.cardId);
-                return null;
-              }
-              // JustTCG can refresh its exact public card id without a
-              // second cross-provider identity match.
-              return { cardId: card.cardId, name: card.cardId };
-            }
-            return { cardId: card.cardId, ...identity };
-          }),
-        );
-        verifiedCards.push(...resolved.filter((card): card is NonNullable<typeof card> => card !== null));
-      }
-      await Promise.allSettled(verifiedCards.map(card => refreshPricingForScheduler(card)));
-      await captureAllPortfolioSnapshots();
-    })().catch((err: unknown) => {
-      logger.error({ err }, "Scheduled pricing/snapshot batch failed");
+    const result = await runScheduledPricingBatch({
+      maxCards,
+      trigger: "admin",
+      force: body["force"] === true,
     });
-
     res.json({
-      queued: cards.length,
-      configured: true,
-      selectedEligibleCards: eligibleRows.length,
+      queued: result.selectedCards,
+      configured: result.configured,
+      status: result.status,
+      bucket: result.bucket,
+      selectedEligibleCards: result.selectedCards,
+      identityFailures: result.identityFailures,
+      refreshSucceeded: result.refreshSucceeded,
+      refreshFailed: result.refreshFailed,
+      snapshotsCaptured: result.snapshotsCaptured,
+      snapshotsSkipped: result.snapshotsSkipped,
     });
   } catch (err) {
     logger.error({ err }, "POST /pricing/scheduler/run error");
     res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// ── POST /pricing/guides/import ───────────────────────────────────────────────
+// One explicitly selected official category per protected invocation.
+router.post("/pricing/guides/import", async (req, res): Promise<void> => {
+  const expectedSecret = process.env.ADMIN_SECRET;
+  if (!expectedSecret || req.headers["x-admin-secret"] !== expectedSecret) {
+    res.status(403).json({ message: "Forbidden" });
+    return;
+  }
+  const category = (req.body as Record<string, unknown> | undefined)?.["category"];
+  if (typeof category !== "string" || !(category in PRICECHARTING_GUIDE_CATEGORIES)) {
+    res.status(400).json({ message: "category must be one of pokemon, magic, yugioh, or one_piece" });
+    return;
+  }
+  try {
+    const result = await importPriceChartingBulkGuide(category as keyof typeof PRICECHARTING_GUIDE_CATEGORIES);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof PriceChartingError) {
+      const status = error.kind === "authentication" ? 502 : error.kind === "throttled" ? 429 : 503;
+      res.status(status).json({
+        errorCode: `pricecharting_${error.kind}`,
+        message: error.message,
+        ...(error.kind === "throttled" && error instanceof Error && "retryAfterMs" in error
+          ? { retryAfterMs: (error as { retryAfterMs: number }).retryAfterMs }
+          : {}),
+      });
+      return;
+    }
+    logger.error({ err: error }, "PriceCharting guide import failed");
+    res.status(500).json({ message: "Guide import failed" });
   }
 });
 

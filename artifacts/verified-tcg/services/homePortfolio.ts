@@ -39,12 +39,90 @@ export function getHomePerformanceView(
   range: PortfolioRange,
 ): HomePerformanceView {
   if (!performance) return { kind: 'unavailable', message: 'Price history is not available yet' };
-  if (performance.points.length === 1) return { kind: 'initial', point: performance.points[0]! };
-  if (performance.points.length >= 2) return { kind: 'chart', points: performance.points };
+  const drawablePoints = getRenderableHomeChartPoints(performance.points);
+  const available = drawablePoints.filter(point => point.available !== false && point.value != null);
+  if (!performance.historyAvailable || available.length === 0) {
+    return {
+      kind: 'unavailable',
+      message: performance.historyUnavailableReason
+        ?? `No retained market value is available for ${range}`,
+    };
+  }
+  if (available.length === 1) return { kind: 'initial', point: available[0]! };
+  if (drawablePoints.length >= 2) return { kind: 'chart', points: drawablePoints };
   return {
     kind: 'unavailable',
     message: performance.historyUnavailableReason
       ?? `No retained history is available for ${range}`,
+  };
+}
+
+/**
+ * Keep the first and last timeline observations on the chart edges. A single
+ * retained observation is the latest known value, so it is right-anchored
+ * rather than presented as a misleading centered trend.
+ */
+export function chartXForIndex(
+  index: number,
+  count: number,
+  width: number,
+  padLeft = 0,
+  padRight = 0,
+): number {
+  if (count <= 1) return width - padRight;
+  return padLeft + (index / (count - 1)) * Math.max(width - padLeft - padRight, 0);
+}
+
+/**
+ * Do not let an account-creation zero or unavailable samples create an empty
+ * leading span before the first real market observation. The baseline is an
+ * ownership event, not a price, so including it would manufacture a portfolio
+ * gain. Missing samples remain available to the caller for completeness copy.
+ */
+export function getRenderableHomeChartPoints(points: PerformancePoint[]): PerformancePoint[] {
+  const firstMarketObservationIndex = points.findIndex(
+    point =>
+      point.baseline !== true &&
+      point.available !== false &&
+      point.value != null &&
+      (point.pricedHoldings === undefined || point.pricedHoldings > 0),
+  );
+  return firstMarketObservationIndex > 0 ? points.slice(firstMarketObservationIndex) : points;
+}
+
+export type HomePortfolioGain = {
+  amount: number;
+  percent: number | null;
+  partial: boolean;
+  pricedHoldings: number;
+  totalHoldings: number;
+};
+
+/**
+ * A fully priced collection can show its complete unrealised gain. When a
+ * holding has no exact quote, show only the gain for holdings with both a
+ * verified value and a recorded cost basis, explicitly labelled as partial.
+ */
+export function getHomePortfolioGain(summary: CollectionSummary | null): HomePortfolioGain | null {
+  if (!summary) return null;
+  if (summary.unrealizedGain !== null && summary.unrealizedGain !== undefined) {
+    return {
+      amount: summary.unrealizedGain,
+      percent: summary.unrealizedGainPercent ?? null,
+      partial: false,
+      pricedHoldings: summary.coverage.pricedHoldings,
+      totalHoldings: summary.coverage.totalHoldings,
+    };
+  }
+  if (summary.partialUnrealizedGain === null || summary.partialUnrealizedGain === undefined) {
+    return null;
+  }
+  return {
+    amount: summary.partialUnrealizedGain,
+    percent: summary.partialUnrealizedGainPercent ?? null,
+    partial: true,
+    pricedHoldings: summary.gainCoverage?.pricedHoldings ?? summary.coverage.pricedHoldings,
+    totalHoldings: summary.gainCoverage?.totalHoldings ?? summary.coverage.totalHoldings,
   };
 }
 
@@ -71,18 +149,17 @@ export function getHomeCollectionCards(items: CollectionItem[]): HomeCollectionC
     .map(item => {
       const currentValue = item.valuation?.price;
       const hasValuation = typeof currentValue === 'number' && Number.isFinite(currentValue);
-      const hasComparableCost =
-        typeof item.acquiredPrice === 'number' &&
-        Number.isFinite(item.acquiredPrice) &&
-        item.acquiredPrice > 0 &&
-        item.valuation?.currency === item.currency;
+      const serverGainPercent = item.valuation?.gainPercent;
       return {
         item,
         currentValue: hasValuation ? currentValue : null,
         currency: hasValuation ? item.valuation!.currency : null,
-        gainPercent: hasValuation && hasComparableCost
-          ? ((currentValue! - item.acquiredPrice) / item.acquiredPrice) * 100
-          : null,
+        gainPercent:
+          hasValuation &&
+          typeof serverGainPercent === 'number' &&
+          Number.isFinite(serverGainPercent)
+            ? serverGainPercent
+            : null,
       };
     })
     .sort((a, b) => {

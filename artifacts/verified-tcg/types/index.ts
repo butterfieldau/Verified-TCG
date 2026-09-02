@@ -26,7 +26,16 @@ export const TCG_LIST: TCG[] = [
 
 // ── Grading ───────────────────────────────────────────────────────────────────
 
-export type GradingCompany = 'PSA' | 'BGS' | 'CGC' | 'Beckett' | 'Raw';
+export type GradingCompany =
+  | 'PSA'
+  | 'BGS'
+  | 'CGC'
+  | 'Beckett'
+  | 'SGC'
+  | 'TAG'
+  | 'ACE'
+  | 'Generic'
+  | 'Raw';
 
 export type CardCondition =
   | 'mint'
@@ -82,6 +91,8 @@ export interface GradingRecord {
 
 export interface PriceRecord {
   raw: number;
+  /** True only when raw is backed by a verified provider quote. */
+  available?: boolean;
   psa9?: number;
   psa10?: number;
   bgs9?: number;
@@ -145,6 +156,11 @@ export interface CollectionItem {
     currency: string;
     gradeKey: string;
     updatedAt: string;
+    /** Unit acquisition cost converted to the valuation currency by the server. */
+    costBasis?: number | null;
+    /** Unit unrealised gain in the valuation currency. */
+    gain?: number | null;
+    gainPercent?: number | null;
   } | null;
   notes?: string;
   isForSale?: boolean;
@@ -171,6 +187,8 @@ export interface WatchlistItem {
 export interface User {
   id: string;
   username: string;
+  firstName: string;
+  lastName: string;
   displayName: string;
   email: string;
   avatarUrl?: string | null;
@@ -250,7 +268,9 @@ export interface PortfolioDataPoint {
   value: number;
 }
 
-export type PortfolioRange = '1D' | '7D' | '1M' | '3M' | '1Y' | 'ALL';
+/** The six collector-facing Home chart ranges. Collection Insights retains
+ * its separate PerformanceRange contract, including ALL. */
+export type PortfolioRange = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y';
 
 export interface PortfolioSummary {
   totalValue: number;

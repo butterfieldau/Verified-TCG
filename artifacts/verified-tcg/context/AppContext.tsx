@@ -23,11 +23,17 @@ import type {
 } from '@/types';
 import {
   getItemCurrentValue,
+  getCollectionHoldingIdentity,
   fetchCollection,
   addCollectionItem,
   updateCollectionItem,
   removeCollectionItem,
 } from '@/services/collection';
+
+function collectionMutationFingerprint(item: CollectionItem): string {
+  return `${item.cardId}::${item.acquiredAt}::${getCollectionHoldingIdentity(item)}`;
+}
+import { fetchCollectionValueHistory } from '@/services/collectionPerformance';
 import { refreshVerifiedPricing } from '@/services/verifiedPricing';
 import {
   syncWishlistToServer,
@@ -72,11 +78,16 @@ import {
 import { FREE_SCAN_LIMIT, FREE_ALERT_LIMIT } from '@/services/subscription';
 import type { SubscriptionTier } from '@/services/subscription';
 import { clearRecentScans } from '@/services/scanStatePersistence';
-import { apiJson } from '@/services/apiClient';
+import {
+  ApiClientError,
+  apiJson,
+  type ApiErrorKind,
+} from '@/services/apiClient';
 import {
   recordStartupPhase,
   recoverStartupTask,
 } from '@/services/startupDiagnostics';
+import { useSettings } from '@/context/SettingsContext';
 
 /**
  * Fetch the authoritative scan count for the current period from the server.
@@ -105,7 +116,7 @@ interface AppState {
   collection: CollectionItem[];
   collectionLoading: boolean;
   /** A failed server refresh must not be presented as an empty collection. */
-  collectionError: string | null;
+  collectionError: CollectionRefreshIssue | null;
   refreshCollection: () => Promise<void>;
   portfolio: PortfolioSummary;
   collectionFilters: CollectionFilters;
@@ -145,11 +156,11 @@ interface AppState {
 
 interface AppActions {
   signIn: (email: string, password: string) => Promise<void>;
-  createAccount: (email: string, password: string, displayName: string) => Promise<boolean>;
+  createAccount: (email: string, password: string, firstName: string, lastName: string, username: string) => Promise<boolean>;
   signInWithProvider: (provider: OAuthProvider) => Promise<boolean>;
   signOut: () => void;
   deleteAccount: (password: string) => Promise<void>;
-  updateProfile: (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+  updateProfile: (patch: Pick<User, 'firstName' | 'lastName' | 'username' | 'bio' | 'location'> & {
     favouriteTcg?: string | null;
     collectorSince?: string | null;
     profilePublic?: boolean;
@@ -165,7 +176,7 @@ interface AppActions {
     id: string,
     patch: Partial<Pick<CollectionItem, 'quantity' | 'condition' | 'grading' | 'notes' | 'isForSale' | 'isForTrade' | 'acquiredPrice' | 'acquiredAt' | 'currency'>>,
   ) => Promise<CollectionItem>;
-  removeFromCollection: (id: string) => void;
+  removeFromCollection: (id: string) => Promise<void>;
   addToWatchlist: (item: WatchlistItem) => void;
   removeFromWatchlist: (id: string) => void;
   updateWatchlistItem: (id: string, patch: Partial<Pick<WatchlistItem, 'desiredGrade' | 'targetPrice' | 'priceAlertEnabled' | 'alertType'>>) => void;
@@ -207,7 +218,7 @@ interface AppActions {
   setCurrentEventId: (id: string | null) => void;
 }
 
-type AppContextType = AppState & AppActions;
+export type AppContextType = AppState & AppActions;
 
 const AppContext = createContext<AppContextType | null>(null);
 
@@ -222,7 +233,55 @@ const DEFAULT_MARKET_FILTERS: MarketFilters = {
 };
 
 const WATCHLIST_STORAGE_KEY = '@verified_tcg/watchlist';
-const COLLECTION_CACHE_KEY = '@verified_tcg/collection_cache';
+const COLLECTION_CACHE_PREFIX = '@verified_tcg/collection_cache_v2';
+const EMPTY_PORTFOLIO_CHART_DATA: PortfolioSummary['chartData'] = {
+  '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [],
+};
+
+export interface CollectionRefreshIssue {
+  kind: ApiErrorKind | 'unknown';
+  message: string;
+  endpoint: string | null;
+  recoverable: boolean;
+}
+
+interface CollectionCachePayload {
+  ownerId: string;
+  items: CollectionItem[];
+  timestamp: string;
+}
+
+function collectionCacheKey(userId: string): string {
+  return `${COLLECTION_CACHE_PREFIX}:${encodeURIComponent(userId)}`;
+}
+
+function collectionRefreshIssue(error: unknown): CollectionRefreshIssue {
+  if (error instanceof ApiClientError) {
+    const messages: Partial<Record<ApiErrorKind, string>> = {
+      configuration: 'This app build cannot reach the Verified TCG service. Check for an updated build.',
+      network: 'You appear to be offline. Your saved collection is still available.',
+      timeout: 'The collection refresh timed out. Your saved collection is still available.',
+      unauthorized: 'Your session has expired. Sign in again to refresh your collection.',
+      forbidden: 'This account cannot refresh its collection right now.',
+      update_required: 'Update Verified TCG before refreshing your collection.',
+      rate_limited: 'Too many refreshes were requested. Wait a moment, then try again.',
+      provider_unavailable: 'Live collection data is temporarily unavailable. Your saved collection is still shown.',
+      server: 'The Verified TCG service could not refresh your collection. Your saved collection is still shown.',
+    };
+    return {
+      kind: error.kind,
+      message: messages[error.kind] ?? error.message,
+      endpoint: error.endpoint ?? null,
+      recoverable: error.kind !== 'unauthorized' && error.kind !== 'update_required',
+    };
+  }
+  return {
+    kind: 'unknown',
+    message: 'Your collection could not be refreshed. Your saved collection is still shown.',
+    endpoint: null,
+    recoverable: true,
+  };
+}
 
 /**
  * Bump this constant whenever WatchlistItem's shape changes (fields added,
@@ -258,6 +317,8 @@ function userFromSession(session: { user: { id: string; email?: string; user_met
   return {
     id: session.user.id,
     email,
+    firstName: typeof meta.first_name === 'string' ? meta.first_name : '',
+    lastName: typeof meta.last_name === 'string' ? meta.last_name : '',
     displayName,
     username,
     bio,
@@ -325,6 +386,7 @@ function migrateWatchlist(payload: WatchlistPayload): WatchlistItem[] | null {
 
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const { currency } = useSettings();
   useEffect(() => {
     recordStartupPhase('app-provider', 'success');
   }, []);
@@ -345,15 +407,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
-  const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [collectionError, setCollectionError] = useState<CollectionRefreshIssue | null>(null);
+  const [portfolioChartData, setPortfolioChartData] =
+    useState<PortfolioSummary['chartData']>(EMPTY_PORTFOLIO_CHART_DATA);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
+  // Seven days is the shortest useful default for a line chart. A one-day
+  // range contains only today's point, which can legitimately be unavailable
+  // while any current holding is still waiting for an exact retained price.
   const [portfolioRange, setPortfolioRange] = useState<PortfolioRange>('7D');
   const [collectionFilters, setCollectionFiltersState] = useState<CollectionFilters>(DEFAULT_COLLECTION_FILTERS);
   const [marketFilters, setMarketFiltersState] = useState<MarketFilters>(DEFAULT_MARKET_FILTERS);
   const [activeTCG, setActiveTCG] = useState<TCGId | null>(null);
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
+  const priceRefreshRequest = useRef<Promise<void> | null>(null);
+  const collectionRef = useRef<CollectionItem[]>([]);
+  const collectionLoadedAt = useRef(0);
+  const pricingRecoveryAttempted = useRef<Set<string>>(new Set());
+  const historyRequestGeneration = useRef(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [serverUnreadCount, setServerUnreadCount] = useState(0);
   const [notificationsHasMore, setNotificationsHasMore] = useState(false);
@@ -379,6 +451,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [scanResetDate, setScanResetDate] = useState<Date>(() =>
     nextMonthFirstDay(new Date()),
   );
+
+  const refreshPortfolioHistory = useCallback(async () => {
+    if (!isAuthenticatedRef.current) {
+      setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
+      return;
+    }
+    const generation = ++historyRequestGeneration.current;
+    try {
+      const history = await fetchCollectionValueHistory('ALL', currency);
+      if (generation === historyRequestGeneration.current) {
+        setPortfolioChartData({
+          '1D': history.chartData['1D'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '7D': history.chartData['7D'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '1M': history.chartData['1M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '3M': history.chartData['3M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '6M': history.chartData['6M'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+          '1Y': history.chartData['1Y'].flatMap(point => point.value == null ? [] : [{ date: point.date, value: point.value }]),
+        });
+      }
+    } catch {
+      // Retain the last successful chart while a refresh is unavailable.
+    }
+  }, [currency]);
 
   /**
    * Quota period guard — fires on mount and whenever the reset date changes.
@@ -566,7 +661,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // that a concurrent loadCollection() cannot wipe them out.
   //
   // pendingItemIds     — Set of client-generated temp IDs
-  // pendingFingerprints — Maps temp ID → "cardId::acquiredAt" fingerprint
+  // pendingFingerprints — Maps temp ID → exact card/date/grade fingerprint
   //
   // During a server merge, a pending item is kept only if its fingerprint does
   // NOT already appear in the server response. This deduplicates the case where
@@ -583,36 +678,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Monotonically increasing counter; each loadCollection call captures it on
   // entry so a stale response cannot overwrite a newer one.
   const loadGeneration = useRef(0);
+  const activeCollectionLoadKey = useRef<string | null>(null);
+  const activeCollectionRequest = useRef<Promise<void> | null>(null);
 
   // ── Load collection from server ────────────────────────────────────────────
 
-  const loadCollection = useCallback(async () => {
+  useEffect(() => {
+    collectionRef.current = collection;
+  }, [collection]);
+
+  const loadCollection = useCallback((ownerIdOverride?: string, force = false): Promise<void> => {
+    const ownerId = ownerIdOverride ?? currentUserIdRef.current;
+    if (!ownerId) {
+      setCollectionLoading(false);
+      return Promise.resolve();
+    }
+    const loadKey = `${ownerId}:${currency}`;
+    if (!force && Date.now() - collectionLoadedAt.current < 60_000) return Promise.resolve();
+    if (activeCollectionLoadKey.current === loadKey && activeCollectionRequest.current) {
+      return activeCollectionRequest.current;
+    }
+    activeCollectionLoadKey.current = loadKey;
     const gen = ++loadGeneration.current; // capture before first await
-    setCollectionLoading(true);
+    const request = (async () => {
+      setCollectionLoading(true);
 
-    // Show cached collection immediately so the screen isn't blank while fetching
-    try {
-      const cached = await AsyncStorage.getItem(COLLECTION_CACHE_KEY);
-      if (cached && gen === loadGeneration.current) {
-        const { items } = JSON.parse(cached) as { items: CollectionItem[]; timestamp: string };
-        if (Array.isArray(items) && items.length > 0) {
-          setCollection(items);
+      // Show cached collection immediately so the screen isn't blank while fetching
+      try {
+        const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
+        if (cached && gen === loadGeneration.current) {
+          const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
+          if (cachedOwnerId === ownerId && Array.isArray(items)) {
+            setCollection(items);
+          }
         }
-      }
-    } catch { /* ignore cache read errors */ }
+      } catch { /* ignore cache read errors */ }
 
-    try {
-      const serverItems = await fetchCollection();
-      // If a newer loadCollection started after this one, discard this result.
-      if (gen !== loadGeneration.current) return;
+      try {
+        const serverItems = await fetchCollection(currency);
+        // If a newer loadCollection started after this one, discard this result.
+        if (gen !== loadGeneration.current) return;
 
-      // Persist the fresh list so the next cold launch has it immediately
-      AsyncStorage.setItem(
-        COLLECTION_CACHE_KEY,
-        JSON.stringify({ items: serverItems, timestamp: new Date().toISOString() }),
-      ).catch(() => {});
+        // Persist the fresh list so the next cold launch has it immediately
+        AsyncStorage.setItem(
+          collectionCacheKey(ownerId),
+          JSON.stringify({ ownerId, items: serverItems, timestamp: new Date().toISOString() }),
+        ).catch(() => {});
 
-      setCollection(prev => {
+        setCollection(prev => {
         // 1. Exclude server items that have been optimistically deleted but
         //    whose DELETE hasn't landed on the server yet.
         const deletedIds = pendingDeleteIds.current;
@@ -623,7 +736,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         //    response — once the server row appears, the POST handler will swap
         //    in the persisted id, so we drop the optimistic row to avoid dupes.
         const serverFingerprints = new Set(
-          filteredServer.map(i => `${i.cardId}::${i.acquiredAt}`),
+          filteredServer.map(collectionMutationFingerprint),
         );
         const pendingIds = pendingItemIds.current;
         const pendingFps = pendingFingerprints.current;
@@ -633,20 +746,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return fp !== undefined && !serverFingerprints.has(fp);
         });
 
-        return [...filteredServer, ...stillPending];
-      });
-      setCollectionError(null);
-    } catch {
+          return [...filteredServer, ...stillPending];
+        });
+        collectionLoadedAt.current = Date.now();
+        setCollectionError(null);
+
+      // Recover missing PriceCharting values once per card/currency/session.
+      // This is bounded and never polls: cards that still cannot be matched
+      // remain explicitly unpriced.
+        const unpriced = serverItems.filter(item => !item.valuation);
+        const recoveryCards = unpriced.filter(item => {
+          const key = `${item.cardId}:${currency}`;
+          if (pricingRecoveryAttempted.current.has(key)) return false;
+          pricingRecoveryAttempted.current.add(key);
+          return true;
+        });
+        if (recoveryCards.length > 0) {
+          void Promise.allSettled(recoveryCards.map(item =>
+            refreshVerifiedPricing(item.cardId, {
+              name: item.card.name,
+              set: item.card.setName,
+              number: item.card.number,
+              game: item.card.tcg,
+              displayCurrency: currency,
+            })
+          )).then(() => {
+            void loadCollectionRef.current(undefined, true);
+            void refreshPortfolioHistory();
+          });
+        }
+      } catch (error) {
       // Retain a usable offline cache, but surface the failed refresh so it is
       // never mistaken for a genuinely empty, up-to-date collection.
-      if (gen === loadGeneration.current) {
-        setCollectionError('Your collection could not be refreshed. Please try again.');
+        if (gen === loadGeneration.current) {
+          const issue = collectionRefreshIssue(error);
+          setCollectionError(issue);
+          if (issue.kind === 'unauthorized') {
+            authSignOut().catch(() => {});
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+        }
+      } finally {
+        if (activeCollectionLoadKey.current === loadKey) {
+          activeCollectionLoadKey.current = null;
+        }
+        // Only the latest generation clears the loading flag.
+        if (gen === loadGeneration.current) setCollectionLoading(false);
       }
-    } finally {
-      // Only the latest generation clears the loading flag.
-      if (gen === loadGeneration.current) setCollectionLoading(false);
-    }
-  }, []);
+    })();
+    activeCollectionRequest.current = request;
+    void request.then(
+      () => {
+        if (activeCollectionRequest.current === request) activeCollectionRequest.current = null;
+      },
+      () => {
+        if (activeCollectionRequest.current === request) activeCollectionRequest.current = null;
+      },
+    );
+    return request;
+  }, [currency]);
+  const refreshCollection = useCallback(
+    () => loadCollection(undefined, true),
+    [loadCollection],
+  );
+  const loadCollectionRef = useRef(loadCollection);
+  useEffect(() => {
+    loadCollectionRef.current = loadCollection;
+  }, [loadCollection]);
 
   // ── Notifications ───────────────────────────────────────────────────────────
 
@@ -701,7 +868,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (restoredTier === 'pro') setSubscriptionTierState('pro');
       if (meta.is_founding_member === true) setFoundingMemberClaimed(true);
 
-      loadCollection();
+      loadCollection(session.user.id);
       loadNotifications();
 
       // Fetch fresh profile data from the server so edits made on another
@@ -768,9 +935,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { currentUserIdRef.current = user?.id ?? null; }, [user]);
 
   useEffect(() => {
+    if (isAuthenticated) {
+      void loadCollection();
+      void refreshPortfolioHistory();
+    } else {
+      historyRequestGeneration.current += 1;
+      setPortfolioChartData(EMPTY_PORTFOLIO_CHART_DATA);
+    }
+  }, [currency, isAuthenticated, loadCollection, refreshPortfolioHistory]);
+
+  useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'active' && isAuthenticatedRef.current) {
-        loadCollection();
+        loadCollectionRef.current();
         // Refresh notifications on app focus so new server-side alerts appear
         loadNotifications();
       }
@@ -791,7 +968,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFoundingMemberClaimed(meta.is_founding_member === true);
 
     // Load real account data from the server.
-    loadCollection();
+    loadCollection(session.user.id);
     loadNotifications();
 
     // Register push token silently if permission already granted — no prompt.
@@ -829,9 +1006,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const createAccount = useCallback(async (
     email: string,
     password: string,
-    displayName: string,
+    firstName: string,
+    lastName: string,
+    username: string,
   ) => {
-    const session = await authSignUp(email, password, displayName);
+    const session = await authSignUp(email, password, firstName, lastName, username);
     if (!session) return false;
     applyAuthenticatedSession(session);
     return true;
@@ -847,8 +1026,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     // Clear server-side sessions and wipe all local AsyncStorage data
     authSignOut().catch(() => {});
-    // Clear collection cache so the next user doesn't see stale data
-    AsyncStorage.removeItem(COLLECTION_CACHE_KEY).catch(() => {});
+    // Clear only the active account's collection cache. Other accounts keep
+    // their own offline cache and can never read this account's payload.
+    const ownerId = currentUserIdRef.current;
+    if (ownerId) AsyncStorage.removeItem(collectionCacheKey(ownerId)).catch(() => {});
     // Clear scan history so it never leaks to the next user regardless of
     // which tabs are mounted (tabs are lazily mounted in Expo).
     clearRecentScans().catch(() => {});
@@ -894,7 +1075,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentEventId(null);
   }, []);
 
-  const updateProfile = useCallback(async (patch: Pick<User, 'displayName' | 'username' | 'bio' | 'location'> & {
+  const updateProfile = useCallback(async (patch: Pick<User, 'firstName' | 'lastName' | 'username' | 'bio' | 'location'> & {
     favouriteTcg?: string | null;
     collectorSince?: string | null;
     profilePublic?: boolean;
@@ -905,7 +1086,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }) => {
     if (!user) throw new Error('Create an account to edit your profile.');
     const data: Record<string, unknown> = {
-      display_name: patch.displayName.trim(),
+      first_name: patch.firstName.trim(),
+      last_name: patch.lastName.trim(),
       username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
       bio: patch.bio?.trim() ?? '',
       location: patch.location?.trim() ?? '',
@@ -921,7 +1103,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(current => current
       ? {
           ...current,
-          displayName: patch.displayName,
+          firstName: patch.firstName.trim(),
+          lastName: patch.lastName.trim(),
+          displayName: `${patch.firstName.trim()} ${patch.lastName.trim()}`,
           username: patch.username.trim().replace(/^@+/, '').toLowerCase(),
           bio: patch.bio,
           location: patch.location,
@@ -941,7 +1125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addToCollection = useCallback(async (item: CollectionItem): Promise<CollectionItem> => {
     // Register temp id and fingerprint BEFORE the optimistic insert so any
     // concurrent loadCollection() call can preserve or deduplicate correctly.
-    const fp = `${item.cardId}::${item.acquiredAt}`;
+    const fp = collectionMutationFingerprint(item);
     pendingItemIds.current.add(item.id);
     pendingFingerprints.current.set(item.id, fp);
     setCollection(prev => [...prev, item]);
@@ -964,11 +1148,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         number: saved.card.number,
         game: saved.card.tcg,
       }).finally(() => {
-        void loadCollection();
+        void loadCollection(undefined, true);
+        void refreshPortfolioHistory();
       });
       // Re-read the server canonical collection so Home, portfolio and
       // Insights all work from the same persisted holding after a mutation.
-      void loadCollection();
+      void loadCollection(undefined, true);
       return saved;
     } catch (error) {
       pendingItemIds.current.delete(item.id);
@@ -976,7 +1161,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCollection(prev => prev.filter(i => i.id !== item.id));
       throw error;
     }
-  }, [loadCollection]);
+  }, [loadCollection, refreshPortfolioHistory]);
 
   const updateCollectionHolding = useCallback(async (
     id: string,
@@ -985,25 +1170,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = await updateCollectionItem(id, patch);
     setCollection(prev => prev.map(item => item.id === id ? saved : item));
     // Re-read canonical data for every screen that depends on collection state.
-    void loadCollection();
+    void loadCollection(undefined, true);
+    void refreshPortfolioHistory();
     return saved;
-  }, [loadCollection]);
+  }, [loadCollection, refreshPortfolioHistory]);
 
-  const removeFromCollection = useCallback((id: string) => {
+  const removeFromCollection = useCallback(async (id: string): Promise<void> => {
     // Register as pending-delete BEFORE the optimistic removal so any
     // concurrent loadCollection() call will filter it out of the server response.
     pendingDeleteIds.current.add(id);
     setCollection(prev => prev.filter(i => i.id !== id));
-    removeCollectionItem(id)
-      .then(() => {
-        pendingDeleteIds.current.delete(id);
-      })
-      .catch(() => {
-        // Server delete failed — restore item by re-fetching canonical state.
-        pendingDeleteIds.current.delete(id);
-        loadCollection();
-      });
-  }, [loadCollection]);
+    try {
+      await removeCollectionItem(id);
+      pendingDeleteIds.current.delete(id);
+      // Replace the local list with the server's canonical response so every
+      // collection-backed surface converges after a removal.
+      await loadCollection(undefined, true);
+      void refreshPortfolioHistory();
+    } catch (error) {
+      // Server delete failed — restore item by re-fetching canonical state.
+      pendingDeleteIds.current.delete(id);
+      await loadCollection(undefined, true);
+      throw error;
+    }
+  }, [loadCollection, refreshPortfolioHistory]);
 
   const addToWatchlist = useCallback((item: WatchlistItem) => {
     // Optimistic local update
@@ -1139,17 +1329,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
 
   const refreshPrices = useCallback(async () => {
-    if (isPriceRefreshing) return;
-    setIsPriceRefreshing(true);
-    try {
-      // Pricing is server-owned. A pull-to-refresh reads the latest persisted
-      // quotes and never manufactures a local price movement.
-      await loadCollection();
-      setPricesLastUpdated(new Date());
-    } finally {
-      setIsPriceRefreshing(false);
-    }
-  }, [isPriceRefreshing, loadCollection]);
+    if (priceRefreshRequest.current) return priceRefreshRequest.current;
+    const request = (async () => {
+      setIsPriceRefreshing(true);
+      try {
+        // Explicit refresh asks PriceCharting for every unique collected card,
+        // then reloads the canonical server valuations and retained history.
+        const uniqueCards = [
+          ...new Map(collectionRef.current.map(item => [item.cardId, item])).values(),
+        ];
+        await Promise.allSettled(uniqueCards.map(item =>
+          refreshVerifiedPricing(item.cardId, {
+            name: item.card.name,
+            set: item.card.setName,
+            number: item.card.number,
+            game: item.card.tcg,
+            displayCurrency: currency,
+          })
+        ));
+        await Promise.all([loadCollection(undefined, true), refreshPortfolioHistory()]);
+        setPricesLastUpdated(new Date());
+      } finally {
+        setIsPriceRefreshing(false);
+        priceRefreshRequest.current = null;
+      }
+    })();
+    priceRefreshRequest.current = request;
+    return request;
+  }, [currency, loadCollection, refreshPortfolioHistory]);
 
   // Track which watchlist item IDs have already generated a price-alert notification
   // so we don't create duplicates on every re-render.
@@ -1256,18 +1463,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currency: 'AUD',
       cardCount,
       uniqueCardCount,
-      // Chart history is a separate task — provide empty ranges as placeholder
-      chartData: {
-        '1D': [], '7D': [], '1M': [], '3M': [], '1Y': [], 'ALL': [],
-      },
+      chartData: portfolioChartData,
     };
-  }, [collection]);
+  }, [collection, portfolioChartData]);
 
   return (
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, collectionLoading, collectionError, refreshCollection: loadCollection, portfolio, collectionFilters,
+        collection, collectionLoading, collectionError, refreshCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,

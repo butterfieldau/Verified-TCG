@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import {
+  classifyCanonicalPage,
   deduplicatePublicCards,
   getCatalogueReadMetrics,
   isUnsupportedCanonicalRecord,
@@ -28,6 +29,16 @@ const completeRow = {
 afterEach(() => resetCatalogueReadMetrics());
 
 describe("Stage 3C canonical public DTO boundaries", () => {
+  test("falls back for a whole page when normalization filters any selected row", () => {
+    const rows = [
+      completeRow,
+      { ...completeRow, external_id: "pokemon-jp-spaced", language: " JP " },
+    ];
+    const delivered = rows.filter(row => !isUnsupportedCanonicalRecord(row)).length;
+    assert.equal(delivered, 1);
+    assert.equal(classifyCanonicalPage(rows, delivered), "unsupported_fallback");
+  });
+
   test("keeps the JustTCG identifier while never exposing the canonical UUID", () => {
     const card = shapeCanonicalCard({
       ...completeRow,
@@ -40,9 +51,10 @@ describe("Stage 3C canonical public DTO boundaries", () => {
     assert.equal("id" in (card.variants[0] ?? {}), false);
   });
 
-  test("rejects an incomplete canonical row without a primary image", () => {
+  test("keeps a canonical card available when the provider has no image", () => {
     const card = shapeCanonicalCard({ ...completeRow, image_url: null });
-    assert.equal(card, null);
+    assert.ok(card);
+    assert.equal(card.image_url, null);
   });
 
   test("requires the public fields needed for a compatible card response", () => {
@@ -94,27 +106,6 @@ describe("Stage 3C canonical/fallback joining and telemetry", () => {
       [completeRow.external_id, "pokemon-stage3c-unmapped"],
     );
     assert.equal(joined[0]?.name, "Pikachu");
-  });
-
-  test("keeps canonical identity while retaining a live JustTCG raw quote", () => {
-    const canonical = shapeCanonicalCard(completeRow);
-    assert.ok(canonical);
-    const [joined] = deduplicatePublicCards([canonical], [
-      {
-        id: completeRow.external_id,
-        name: "Provider duplicate",
-        currency: "USD",
-        market_price: 12.34,
-        pricing_source: "JustTCG",
-        raw_quote: { provider: "justtcg", priceCents: 1234 },
-        variants: [{ condition: "Near Mint", price: 12.34 }],
-      },
-    ]);
-    assert.equal(joined?.id, completeRow.external_id);
-    assert.equal(joined?.name, "Pikachu");
-    assert.equal(joined?.pricing_source, "JustTCG");
-    assert.equal(joined?.market_price, 12.34);
-    assert.deepEqual(joined?.variants, [{ condition: "Near Mint", price: 12.34 }]);
   });
 
   test("reports hit, fallback, error, unsupported and latency metrics", () => {

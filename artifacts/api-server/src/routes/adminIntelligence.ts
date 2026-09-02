@@ -43,6 +43,17 @@ import {
 } from "../lib/adminSession";
 import { recordAdminAudit } from "../lib/adminAudit";
 import { runRefreshJob } from "./adminOperations";
+
+export function apiHealthFromCounts(observedResponses: number, serverErrors: number) {
+  if (observedResponses <= 0) {
+    return { status: "unobserved" as const, errorRate: null };
+  }
+  const errorRate = serverErrors / observedResponses;
+  return {
+    status: errorRate >= 0.05 ? "degraded" as const : "healthy" as const,
+    errorRate,
+  };
+}
 import { isPCConfigured } from "../pricing/pricecharting";
 
 const router = Router();
@@ -597,8 +608,9 @@ router.get(
 );
 
 // ── GET /api/admin/intelligence/health ────────────────────────────────────────
-// Actual observed signals only — no fabrication. API status from retained telemetry.
-// overall: unavailable when DB fails.
+// Actual observed signals only — no fabrication. Each subsystem is allowed to
+// fail independently, and failed reads use null/explicit unavailable states
+// rather than looking like an empty, healthy system.
 
 router.get(
   "/admin/intelligence/health",
@@ -610,38 +622,35 @@ router.get(
     // ── DB probe ──────────────────────────────────────────────────────────────
     const dbProbeStart = Date.now();
     let dbStatus: "healthy" | "unavailable" = "healthy";
-    let dbLatencyMs = 0;
+    let dbLatencyMs: number | null = null;
     try {
       await db.execute(sql`SELECT 1`);
-      dbLatencyMs = Date.now() - dbProbeStart;
+      dbLatencyMs = Math.max(1, Date.now() - dbProbeStart);
     } catch {
-      dbLatencyMs = Date.now() - dbProbeStart;
       dbStatus = "unavailable";
     }
 
     // ── API status from retained telemetry (last 24h) ─────────────────────────
     const oneDayAgo = new Date(Date.now() - 86_400_000);
-    let requests24h = 0;
-    let errors24h = 0;
+    let requests24h: number | null = null;
+    let errors24h: number | null = null;
     let recentErrorPaths: Array<{ path: string; statusCode: number | null; recordedAt: string }> = [];
-    let apiStatus: "healthy" | "degraded" | "unobserved" = "unobserved";
+    let apiStatus: "healthy" | "degraded" | "unobserved" | "unavailable" = "unavailable";
 
-    try {
-      const apiStatsRow = await db.execute<{ requests: string; errors: string }>(sql`
+    if (dbStatus === "healthy") try {
+      const apiStatsRow = await db.execute<{ observed_responses: string; errors: string }>(sql`
         SELECT
-          COUNT(*)::int AS requests,
-          COUNT(*) FILTER (WHERE action = 'api.error')::int AS errors
+          COUNT(*)::int AS observed_responses,
+          COUNT(*) FILTER (
+            WHERE action = 'api.error' AND status_code >= 500
+          )::int AS errors
         FROM telemetry_events
         WHERE action IN ('api.request', 'api.error')
           AND recorded_at >= ${oneDayAgo}
       `);
-      requests24h = Number(apiStatsRow.rows[0]?.requests ?? 0);
+      requests24h = Number(apiStatsRow.rows[0]?.observed_responses ?? 0);
       errors24h = Number(apiStatsRow.rows[0]?.errors ?? 0);
-
-      if (requests24h > 0) {
-        const errorRate = errors24h / requests24h;
-        apiStatus = errorRate >= 0.05 ? "degraded" : "healthy";
-      }
+      apiStatus = apiHealthFromCounts(requests24h, errors24h).status;
 
       const errorRows = await db
         .select({
@@ -669,15 +678,23 @@ router.get(
         };
       });
     } catch {
-      // DB already failed — apiStatus stays unobserved
+      // Keep the explicit unavailable state when telemetry cannot be read.
     }
 
     // ── Job queue health ──────────────────────────────────────────────────────
-    let queued = 0, running = 0, failed = 0, cancelled = 0;
-    let queueStatus: "healthy" | "degraded" = "healthy";
-    let recoveryActions: Array<{ label: string }> = [];
+    let queued: number | null = null;
+    let running: number | null = null;
+    let failed: number | null = null;
+    let cancelled: number | null = null;
+    let queueStatus: "healthy" | "degraded" | "unavailable" = "unavailable";
+    let recoveryActions: Array<{
+      label: string;
+      description: string;
+      evidence: string;
+      observedAt: string;
+    }> = [];
 
-    try {
+    if (dbStatus === "healthy") try {
       const jobStats = await db.execute<{
         queued: number; running: number; failed: number; cancelled: number;
         stale_running: number; oldest_queued_at: Date | null;
@@ -704,26 +721,47 @@ router.get(
       const queueStale =
         Boolean(oldestQueuedAt) &&
         Date.now() - (oldestQueuedAt?.getTime() ?? Date.now()) > 30 * 60_000;
-      if (failed > 0 || staleRunning > 0 || queueStale) {
+      queueStatus = "healthy";
+      if ((failed ?? 0) > 0 || staleRunning > 0 || queueStale) {
         queueStatus = "degraded";
-        if (failed > 0) {
-          recoveryActions.push({ label: "Review failed pricing refresh jobs and retry them when safe." });
+        if ((failed ?? 0) > 0) {
+          recoveryActions.push({
+            label: "Review failed pricing refresh jobs and retry them when safe.",
+            description: "Failed refresh work is waiting for operator review.",
+            evidence: `${failed} failed job(s) in the last 24 hours`,
+            observedAt: checkedAt,
+          });
         }
         if (staleRunning > 0) {
-          recoveryActions.push({ label: "Review pricing jobs that have been running for more than 30 minutes." });
+          recoveryActions.push({
+            label: "Review pricing jobs that have been running for more than 30 minutes.",
+            description: "A running job has exceeded the operational observation window.",
+            evidence: `${staleRunning} stale running job(s)`,
+            observedAt: checkedAt,
+          });
         }
         if (queueStale) {
-          recoveryActions.push({ label: "Review queued pricing jobs waiting longer than 30 minutes." });
+          recoveryActions.push({
+            label: "Review queued pricing jobs waiting longer than 30 minutes.",
+            description: "Queued work may be waiting for a worker.",
+            evidence: oldestQueuedAt ? `Oldest queued at ${oldestQueuedAt.toISOString()}` : "Queue age unavailable",
+            observedAt: checkedAt,
+          });
         }
       }
     } catch {
-      queueStatus = "degraded";
-      recoveryActions = [{ label: "Could not read job queue — check database connection." }];
+      queueStatus = "unavailable";
+      recoveryActions = [{
+        label: "Job queue could not be observed.",
+        description: "The queue query failed; no queue count or latency is being inferred.",
+        evidence: "Database query failed",
+        observedAt: checkedAt,
+      }];
     }
 
     const overallStatus =
       dbStatus === "unavailable" ? "unavailable" :
-      apiStatus !== "healthy" || queueStatus === "degraded" ? "degraded" : "healthy";
+      apiStatus !== "healthy" || queueStatus !== "healthy" ? "degraded" : "healthy";
 
     res.json({
       status: overallStatus,
@@ -741,7 +779,9 @@ router.get(
         status: apiStatus,
         requests24h,
         errors24h,
-        errorRate: requests24h > 0 ? +(errors24h / requests24h).toFixed(4) : 0,
+        errorRate: requests24h !== null && requests24h > 0 && errors24h !== null
+          ? +(errors24h / requests24h).toFixed(4)
+          : null,
         recentErrors: recentErrorPaths,
       },
       providers: [],
@@ -817,39 +857,64 @@ router.get(
     };
     const byKey: Record<string, IntegrationState> = {};
 
-    const [aggregateResult, recentFailures] = await Promise.all([
-      db.execute<{
-        integration_key: string;
-        last_success_at: Date | null;
-        last_failure_at: Date | null;
-        events_7d: number;
-      }>(sql`
-        SELECT
-          SPLIT_PART(action, '.', 2) AS integration_key,
-          MAX(recorded_at) FILTER (WHERE status = 'ok') AS last_success_at,
-          MAX(recorded_at) FILTER (WHERE status = 'failed') AS last_failure_at,
-          COUNT(*) FILTER (WHERE recorded_at >= ${sevenDaysAgo})::int AS events_7d
-        FROM telemetry_events
-        WHERE category = 'integration'
-          AND action LIKE 'integration.%.%'
-        GROUP BY SPLIT_PART(action, '.', 2)
-      `),
-      db
-        .select({
-          action: telemetryEventsTable.action,
-          statusCode: telemetryEventsTable.statusCode,
-        })
-        .from(telemetryEventsTable)
-        .where(
-          and(
-            eq(telemetryEventsTable.category, "integration"),
-            eq(telemetryEventsTable.status, "failed"),
-            gte(telemetryEventsTable.recordedAt, sevenDaysAgo),
-          ),
-        )
-        .orderBy(desc(telemetryEventsTable.recordedAt))
-        .limit(100),
-    ]);
+    let aggregateResult: { rows: Array<{
+      integration_key: string;
+      last_success_at: Date | null;
+      last_failure_at: Date | null;
+      events_7d: number;
+    }> };
+    let recentFailures: Array<{ action: string; statusCode: number | null }>;
+    try {
+      [aggregateResult, recentFailures] = await Promise.all([
+        db.execute<{
+          integration_key: string;
+          last_success_at: Date | null;
+          last_failure_at: Date | null;
+          events_7d: number;
+        }>(sql`
+          SELECT
+            SPLIT_PART(action, '.', 2) AS integration_key,
+            MAX(recorded_at) FILTER (WHERE status = 'ok') AS last_success_at,
+            MAX(recorded_at) FILTER (WHERE status = 'failed') AS last_failure_at,
+            COUNT(*) FILTER (WHERE recorded_at >= ${sevenDaysAgo})::int AS events_7d
+          FROM telemetry_events
+          WHERE category = 'integration'
+            AND action LIKE 'integration.%.%'
+            AND recorded_at >= ${sevenDaysAgo}
+          GROUP BY SPLIT_PART(action, '.', 2)
+        `),
+        db
+          .select({
+            action: telemetryEventsTable.action,
+            statusCode: telemetryEventsTable.statusCode,
+          })
+          .from(telemetryEventsTable)
+          .where(
+            and(
+              eq(telemetryEventsTable.category, "integration"),
+              eq(telemetryEventsTable.status, "failed"),
+              gte(telemetryEventsTable.recordedAt, sevenDaysAgo),
+            ),
+          )
+          .orderBy(desc(telemetryEventsTable.recordedAt))
+          .limit(100),
+      ]);
+    } catch {
+      res.json({
+        status: "unavailable",
+        checkedAt: new Date().toISOString(),
+        integrations: INTEGRATIONS.map((i) => ({
+          ...i,
+          status: "unavailable" as const,
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          recentErrors: [],
+          usage: null,
+          observabilityNote: "Integration telemetry is unavailable; configuration cannot be verified from the database.",
+        })),
+      });
+      return;
+    }
 
     for (const row of aggregateResult.rows) {
       if (!row.integration_key) continue;
@@ -871,6 +936,8 @@ router.get(
     }
 
     res.json({
+      status: "healthy",
+      checkedAt: new Date().toISOString(),
       integrations: INTEGRATIONS.map((i) => {
         const observed = byKey[i.key];
         const status: "missing" | "unobserved" | "healthy" | "degraded" = !i.configured
@@ -912,7 +979,7 @@ router.get(
   "/admin/intelligence/jobs",
   requireAdminPermission("pricing:read"),
   async (req: AdminRequest, res: Response): Promise<void> => {
-    const page = pageValue(req.query["page"], 1, 1_000_000);
+    const page = pageValue(req.query["page"], 1, 10_000);
     const limit = pageValue(req.query["limit"], 25, 100);
     const offset = (page - 1) * limit;
 
@@ -940,26 +1007,39 @@ router.get(
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const [[totalRow], rows] = await Promise.all([
-      db
-        .select({ total: sql<number>`COUNT(*)::int` })
-        .from(pricingRefreshJobsTable)
-        .where(where),
-      db
-        .select()
-        .from(pricingRefreshJobsTable)
-        .where(where)
-        .orderBy(desc(pricingRefreshJobsTable.createdAt))
-        .limit(limit)
-        .offset(offset),
-    ]);
+    try {
+      const [[totalRow], rows] = await Promise.all([
+        db
+          .select({ total: sql<number>`COUNT(*)::int` })
+          .from(pricingRefreshJobsTable)
+          .where(where),
+        db
+          .select()
+          .from(pricingRefreshJobsTable)
+          .where(where)
+          .orderBy(desc(pricingRefreshJobsTable.createdAt))
+          .limit(limit)
+          .offset(offset),
+      ]);
 
-    res.json({
-      jobs: rows,
-      total: Number(totalRow?.total ?? 0),
-      page,
-      limit,
-    });
+      res.json({
+        status: "available",
+        jobs: rows,
+        total: Number(totalRow?.total ?? 0),
+        page,
+        limit,
+      });
+    } catch (err) {
+      req.log.error({ err }, "Admin job list query failed");
+      res.status(503).json({
+        status: "unavailable",
+        jobs: [],
+        total: null,
+        page,
+        limit,
+        message: "Job data is temporarily unavailable. Retry this panel.",
+      });
+    }
   },
 );
 

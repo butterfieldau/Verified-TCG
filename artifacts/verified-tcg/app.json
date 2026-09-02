@@ -9,9 +9,9 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/icon.png",
+      "image": "./assets/images/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A0A0A"
+      "backgroundColor": "#100E0F"
     },
     "ios": {
       "supportsTablet": false,
@@ -19,10 +19,12 @@
       "buildNumber": "8"
     },
     "android": {
-      "backgroundColor": "#0A0A0A"
+      "backgroundColor": "#100E0F"
     },
     "web": {
-      "favicon": "./assets/images/icon.png"
+      "favicon": "./assets/images/icon.png",
+      "themeColor": "#100E0F",
+      "backgroundColor": "#100E0F"
     },
     "extra": {
       "apiBaseUrl": "https://app.verifiedtcg.co",

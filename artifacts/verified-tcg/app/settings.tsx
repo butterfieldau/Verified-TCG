@@ -373,6 +373,7 @@ export default function SettingsScreen() {
       {/* Data */}
       <Text style={styles.sectionLabel}>Data & Account</Text>
       <View style={[styles.card, { backgroundColor: C.card }]}>
+        <SettingRow icon="upload" label="Import Collection (CSV)" onPress={() => requireAccount('/import-collection')} />
         <SettingRow icon="list" label="Export Collection (CSV)" onPress={() => requireAccount('/export-collection')} />
         <SettingRow icon="download" label="Export Account Data" onPress={() => requireAccount('/export-account')} />
         <Pressable

@@ -8,7 +8,9 @@ global.fetch = mockFetch;
 import {
   fetchVerifiedPricing,
   fetchVerifiedPriceHistory,
+  refreshVerifiedPricing,
 } from '../services/verifiedPricing';
+import { getRawMarketSummary } from '../components/ui/VerifiedPricingCard';
 import { fetchEbaySoldHistory } from '../services/priceHistory';
 import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
 import {
@@ -31,6 +33,43 @@ beforeEach(() => {
 });
 
 describe('Verified pricing mobile service', () => {
+  it('keeps the card-detail summary on raw value while graded quotes change below', () => {
+    const pricing = {
+      status: 'available',
+      quotes: [
+        { gradeKey: 'raw', label: 'Raw', price: 42, currency: 'AUD' },
+        { gradeKey: 'psa10', label: 'PSA 10', price: 180, currency: 'AUD' },
+      ],
+      verifiedMarket: [
+        { gradeKey: 'raw', verifiedMarketValue: 40, currency: 'AUD' },
+        { gradeKey: 'psa10', verifiedMarketValue: 175, currency: 'AUD' },
+      ],
+    } as any;
+
+    expect(getRawMarketSummary(pricing)).toEqual({
+      label: 'Raw / Ungraded',
+      price: 40,
+      currency: 'AUD',
+    });
+
+    pricing.quotes[1].price = 220;
+    pricing.verifiedMarket[1].verifiedMarketValue = 215;
+    expect(getRawMarketSummary(pricing)).toMatchObject({
+      label: 'Raw / Ungraded',
+      price: 40,
+      currency: 'AUD',
+    });
+  });
+
+  it('clears the card-detail summary when the raw quote is unavailable', () => {
+    expect(getRawMarketSummary({
+      status: 'available',
+      quotes: [{ gradeKey: 'psa10', label: 'PSA 10', price: 180, currency: 'AUD' }],
+      verifiedMarket: [],
+    } as any)).toBeNull();
+    expect(getRawMarketSummary(null)).toBeNull();
+  });
+
   it('preserves the honest missing-secret state without inventing quotes', async () => {
     mockFetch.mockResolvedValueOnce(response({
       status: 'unavailable',
@@ -77,6 +116,67 @@ describe('Verified pricing mobile service', () => {
     expect(result.historyAvailable).toBe(false);
     expect(result.points).toEqual([]);
     expect(result.movement).toBeNull();
+  });
+
+  it('does not cache a pending match ahead of the provider result', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-card', status: 'pending_match', configured: true,
+        queued: true, quotes: [], verifiedMarket: [], source: null,
+        confidence: null, providerMetadata: null, updatedAt: null, isStale: false,
+      }))
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-card', status: 'available', configured: true,
+        queued: false,
+        quotes: [{ gradeKey: 'raw', label: 'Raw', priceCents: 1250, price: 12.5, currency: 'AUD', originalPriceCents: 800, originalCurrency: 'USD' }],
+        verifiedMarket: [], source: null, confidence: null, providerMetadata: null,
+        updatedAt: '2026-08-31T00:00:00.000Z', isStale: false,
+      }));
+
+    const pending = await fetchVerifiedPricing('pending-card', { displayCurrency: 'AUD' });
+    const available = await fetchVerifiedPricing('pending-card', { displayCurrency: 'AUD' });
+
+    expect(pending.status).toBe('pending_match');
+    expect(available.status).toBe('available');
+    expect(available.quotes[0]?.gradeKey).toBe('raw');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a pending refresh ahead of bounded polling', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-refresh-card', status: 'pending_match', configured: true,
+        queued: true, quotes: [], verifiedMarket: [], source: null,
+        confidence: null, providerMetadata: null, updatedAt: null, isStale: false,
+      }))
+      .mockResolvedValueOnce(response({
+        cardId: 'pending-refresh-card', status: 'available', configured: true,
+        queued: false,
+        quotes: [{ gradeKey: 'raw', label: 'Raw', priceCents: 1500, price: 15, currency: 'AUD', originalPriceCents: 950, originalCurrency: 'USD' }],
+        verifiedMarket: [], source: null, confidence: null, providerMetadata: null,
+        updatedAt: '2026-09-02T00:00:00.000Z', isStale: false,
+      }));
+
+    const pending = await refreshVerifiedPricing('pending-refresh-card', { displayCurrency: 'AUD' });
+    const available = await fetchVerifiedPricing('pending-refresh-card', { displayCurrency: 'AUD' });
+
+    expect(pending.status).toBe('pending_match');
+    expect(available.status).toBe('available');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a failed pricing request distinct from a genuinely unpriced card', async () => {
+    mockFetch.mockResolvedValueOnce(response({}, false));
+
+    await expect(fetchVerifiedPricing('network-error-card', { displayCurrency: 'AUD' }))
+      .rejects.toThrow('temporarily unavailable');
+  });
+
+  it('keeps a failed price-history request distinct from empty retained history', async () => {
+    mockFetch.mockResolvedValueOnce(response({}, false));
+
+    await expect(fetchVerifiedPriceHistory('history-error-card', 'raw', '30d', 'AUD'))
+      .rejects.toThrow('temporarily unavailable');
   });
 
   it.each([

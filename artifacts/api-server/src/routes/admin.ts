@@ -541,6 +541,8 @@ router.post(
         .returning({
           id: usersTable.id,
           email: usersTable.email,
+          firstName: usersTable.firstName,
+          lastName: usersTable.lastName,
           displayName: usersTable.displayName,
           suspendedAt: usersTable.suspendedAt,
         });
@@ -1504,6 +1506,8 @@ router.get(
         .select({
           id: usersTable.id,
           email: usersTable.email,
+          firstName: usersTable.firstName,
+          lastName: usersTable.lastName,
           displayName: usersTable.displayName,
           username: usersTable.username,
           bio: usersTable.bio,

@@ -215,6 +215,7 @@ describe("pcPriceToCents", () => {
 // ── Matching algorithm ────────────────────────────────────────────────────────
 
 import {
+  buildMatchSearchQueries,
   normalizeString,
   scoreSingle,
   pickBestMatch,
@@ -237,6 +238,30 @@ describe("normalizeString", () => {
 
   test("collapses multiple spaces", () => {
     assert.equal(normalizeString("  Bulbasaur  "), "bulbasaur");
+  });
+});
+
+describe("provider search query construction", () => {
+  test("uses card name plus collector number before a broad contextual fallback", () => {
+    assert.deepEqual(
+      buildMatchSearchQueries({
+        name: "Umbreon ex",
+        number: "161/131",
+        set: "Prismatic Evolutions",
+        game: "pokemon",
+      }),
+      [
+        "Umbreon ex 161/131",
+        "Umbreon ex Prismatic Evolutions pokemon",
+      ],
+    );
+  });
+
+  test("uses the contextual query when the canonical card has no collector number", () => {
+    assert.deepEqual(
+      buildMatchSearchQueries({ name: "Ancient Mew", set: "Promos", game: "pokemon" }),
+      ["Ancient Mew Promos pokemon"],
+    );
   });
 });
 
@@ -303,6 +328,65 @@ describe("pickBestMatch", () => {
     assert.equal(result.status, "matched");
     assert.equal(result.candidate?.id, "1");
     assert.ok(result.score.total >= 0.85);
+  });
+
+  test("uses exact number and PRB01 variant evidence for One Piece reprints", () => {
+    const result = pickBestMatch(
+      {
+        name: "Monkey.D.Luffy (OP05-119) (Manga)",
+        set: "Premium Booster -The Best-",
+        number: "OP05-119",
+        game: "one piece card game",
+      },
+      [
+        {
+          id: "original-manga",
+          name: "Monkey.D.Luffy [Alternate Art Manga]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+        {
+          id: "prb01-manga",
+          name: "Monkey.D.Luffy [Manga PRB01]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+        {
+          id: "prb01-alt",
+          name: "Monkey.D.Luffy [Alternate Art PRB01]",
+          consoleName: "One Piece Awakening of the New Era",
+          cardNumber: "OP05-119",
+          genre: "One Piece Card",
+        },
+      ],
+    );
+
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "prb01-manga");
+  });
+
+  test("does not auto-match duplicate candidates with the same number and variant", () => {
+    const input: MatchInput = {
+      name: "Monkey.D.Luffy (Manga)",
+      set: "Premium Booster -The Best-",
+      number: "OP05-119",
+      game: "one piece card game",
+    };
+    const duplicate = {
+      name: "Monkey.D.Luffy [Manga PRB01]",
+      consoleName: "One Piece Awakening of the New Era",
+      cardNumber: "OP05-119",
+      genre: "One Piece Card",
+    };
+    const result = pickBestMatch(input, [
+      { id: "english-a", ...duplicate },
+      { id: "english-b", ...duplicate },
+    ]);
+
+    assert.notEqual(result.status, "matched");
+    assert.equal(result.candidate, null);
   });
 
   test("returns unmatched for empty candidates", () => {
@@ -391,6 +475,44 @@ describe("pickBestMatch", () => {
     assert.equal(result.status, "matched");
     assert.equal(result.candidate?.id, "2");
   });
+
+  test("matches a unique exact promo identity despite PriceCharting's generic set label", () => {
+    const result = pickBestMatch(
+      { name: "Pikachu & Zekrom GX", set: "SM Promos", number: "SM168", game: "pokemon" },
+      [
+        { id: "other", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Promo", cardNumber: "SM248" },
+        { id: "exact", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Promo", cardNumber: "SM168" },
+        { id: "team-up", name: "Pikachu & Zekrom GX", consoleName: "Pokemon Team Up", cardNumber: "33" },
+      ],
+    );
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "exact");
+  });
+
+  test("matches a unique exact identity when PriceCharting omits the printed denominator", () => {
+    const result = pickBestMatch(
+      { name: "Umbreon ex - 161/131", set: "SV: Prismatic Evolutions", number: "161/131", game: "pokemon" },
+      [
+        { id: "base", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "60" },
+        { id: "exact", name: "Umbreon ex", consoleName: "Pokemon Prismatic Evolutions", cardNumber: "161" },
+        { id: "korean", name: "Umbreon EX", consoleName: "Pokemon Korean Terastal Festival ex", cardNumber: "161" },
+      ],
+    );
+    assert.equal(result.status, "matched");
+    assert.equal(result.candidate?.id, "exact");
+  });
+
+  test("keeps same-name same-number reprints in review", () => {
+    const result = pickBestMatch(
+      { name: "Charizard", set: "Unknown Set", number: "4/102", game: "pokemon" },
+      [
+        { id: "base", name: "Charizard", consoleName: "Pokemon Base Set", cardNumber: "4" },
+        { id: "celebrations", name: "Charizard", consoleName: "Pokemon Celebrations", cardNumber: "4" },
+      ],
+    );
+    assert.equal(result.status, "review_required");
+    assert.equal(result.candidate, null);
+  });
 });
 
 // ── PriceCharting adapter with injected fetch ─────────────────────────────────
@@ -403,9 +525,72 @@ import {
   PROVIDER_KEY,
   searchProducts,
   getProductDetail,
+  getBulkGuide,
+  parsePriceChartingGuideCsv,
+  usdDecimalToCents,
+  PriceChartingAuthenticationError,
+  PriceChartingThrottleError,
+  PriceChartingTransientError,
 } from "../pricing/pricecharting.js";
 
 import type { PCProductDetail } from "../pricing/pricecharting.js";
+import { matchCanonicalCardToGuide } from "../pricing/service.js";
+
+describe("bulk guide deterministic reconciliation", () => {
+  const raw = { raw: 1250 };
+
+  const representativeCases = [
+    {
+      category: "pokemon" as const,
+      input: { cardId: "pk", name: "Flabébé", set: "Scarlet & Violet", number: "091/198", game: "Pokemon" },
+      row: { providerProductId: "1001", productName: "Flabebe #091", consoleName: "Pokemon Scarlet & Violet", prices: raw },
+    },
+    {
+      category: "magic" as const,
+      input: { cardId: "mtg", name: "Black Lotus", set: "Limited Edition Alpha", number: "232", game: "Magic: The Gathering" },
+      row: { providerProductId: "1002", productName: "Black Lotus #232", consoleName: "Magic Alpha", prices: raw },
+    },
+    {
+      category: "yugioh" as const,
+      input: { cardId: "ygo", name: "Blue-Eyes White Dragon", set: "Legend of Blue Eyes White Dragon", number: "LOB-001", game: "Yu-Gi-Oh!" },
+      row: { providerProductId: "1003", productName: "Blue-Eyes White Dragon #LOB-001", consoleName: "YuGiOh Legend of Blue Eyes", prices: raw },
+    },
+    {
+      category: "one_piece" as const,
+      input: { cardId: "op", name: "Monkey.D.Luffy", set: "Romance Dawn", number: "OP01-003", game: "One Piece" },
+      row: { providerProductId: "1004", productName: "Monkey.D.Luffy #OP01-003", consoleName: "One Piece Romance Dawn", prices: raw },
+    },
+  ] as const;
+  for (const { category, input, row } of representativeCases) {
+    test(`maps a representative ${category} identity without fuzzy proof`, () => {
+      const result = matchCanonicalCardToGuide(input, [row], category);
+      assert.equal(result.status, "matched");
+      assert.equal(result.candidate?.providerProductId, row.providerProductId);
+    });
+  }
+
+  test("keeps duplicate printings ambiguous instead of choosing a plausible price", () => {
+    const result = matchCanonicalCardToGuide(
+      { cardId: "dup", name: "Charizard", set: "Unknown Printing", number: "4/102", game: "Pokemon" },
+      [
+        { providerProductId: "base", productName: "Charizard #4", consoleName: "Pokemon Base Set", prices: raw },
+        { providerProductId: "celebrations", productName: "Charizard #4", consoleName: "Pokemon Celebrations", prices: raw },
+      ],
+      "pokemon",
+    );
+    assert.equal(result.status, "review_required");
+    assert.equal(result.candidate, null);
+  });
+
+  test("rejects contradictory language evidence", () => {
+    const result = matchCanonicalCardToGuide(
+      { cardId: "language", name: "Umbreon ex", set: "Prismatic Evolutions", number: "161/131", game: "Pokemon", language: "en" },
+      [{ providerProductId: "kr", productName: "Umbreon ex #161", consoleName: "Pokemon Korean Terastal Festival", prices: raw }],
+      "pokemon",
+    );
+    assert.equal(result.status, "unmatched");
+  });
+});
 
 describe("isPCConfigured", () => {
   const originalToken = process.env.PRICECHARTING_TOKEN;
@@ -558,6 +743,102 @@ describe("extractPrices", () => {
   });
 });
 
+describe("PriceCharting bulk CSV guides", () => {
+  test("parses quoted rows and decimal USD precisely into normal quote fields", () => {
+    const rows = parsePriceChartingGuideCsv([
+      "id,product-name,console-name,loose-price,graded-price,bgs-10-price",
+      '42,"Pikachu, V #043","Vivid Voltage",$12.34,"$1,000.00",$250.05',
+    ].join("\n"));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.id, "42");
+    assert.equal(rows[0]?.["product-name"], "Pikachu, V #043");
+    assert.equal(extractPrices(rows[0]!).get("raw"), 1234);
+    assert.equal(extractPrices(rows[0]!).get("graded_9"), 100000);
+    assert.equal(extractPrices(rows[0]!).get("bgs_10"), 25005);
+  });
+
+  test("rejects unsafe decimal formats rather than rounding them", () => {
+    assert.equal(usdDecimalToCents("0.01"), 1);
+    assert.equal(usdDecimalToCents("12.3"), 1230);
+    assert.equal(usdDecimalToCents("$12.00"), 1200);
+    assert.equal(usdDecimalToCents("$1,234.56"), 123456);
+    for (const malformed of ["12.345", "-1.00", "1e2", "$1,23.00", ""]) {
+      assert.equal(usdDecimalToCents(malformed), null);
+    }
+  });
+
+  test("uses the canonical token and official guide category in one attempt", async () => {
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "csv-token";
+    clearPCCache();
+    resetRateLimiter();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async input => {
+      calls += 1;
+      assert.ok(String(input).includes("t=csv-token"));
+      assert.ok(String(input).includes("download-custom"));
+      assert.ok(String(input).includes("category=pokemon-cards"));
+      return new Response("id,product-name,console-name,loose-price\n7,Pikachu,Vivid Voltage,1.25\n");
+    }) as typeof fetch;
+    try {
+      const first = await getBulkGuide("pokemon");
+      assert.equal(calls, 1);
+      assert.equal(first[0]?.id, "7");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+
+  test("rejects identity rows with no usable prices before they can replace a valid guide", async () => {
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "empty-price-token";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(
+        "id,product-name,console-name,loose-price,graded-price\n7,Pikachu,Vivid Voltage,,not-a-price\n",
+      );
+    }) as typeof fetch;
+    try {
+      await assert.rejects(
+        () => getBulkGuide("pokemon"),
+        PriceChartingTransientError,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+
+  test("exposes typed authentication and throttle failures", async () => {
+    const originalFetch = globalThis.fetch;
+    const old = process.env.PRICECHARTING_API_TOKEN;
+    process.env.PRICECHARTING_API_TOKEN = "typed-error-token";
+    clearPCCache();
+    resetRateLimiter();
+    try {
+      globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-auth"), PriceChartingAuthenticationError);
+      globalThis.fetch = (async () => new Response("", { status: 429 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-throttle"), PriceChartingThrottleError);
+      globalThis.fetch = (async () => new Response(JSON.stringify({ error: "Unknown access token" }), { status: 404 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("typed-envelope-auth"), PriceChartingAuthenticationError);
+      globalThis.fetch = (async () => new Response("{not json", { status: 200 })) as typeof fetch;
+      await assert.rejects(() => searchProducts("malformed-json"), PriceChartingTransientError);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (old == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = old;
+    }
+  });
+});
+
 describe("PROVIDER_KEY", () => {
   test("is the expected stable value", () => {
     assert.equal(PROVIDER_KEY, "pricecharting");
@@ -671,6 +952,7 @@ describe("Rate limiter queue state", () => {
 import { clearFxCache, getExchangeRate, convertCents } from "../pricing/fx.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { snapshotBucketFor } from "../pricing/service.js";
+import { chunkGuideRows } from "../pricing/service.js";
 
 describe("Exact holding-grade resolution", () => {
   test("does not assign generic provider conditions to numeric grades", () => {
@@ -681,21 +963,6 @@ describe("Exact holding-grade resolution", () => {
     assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 10 }), "psa_10");
   });
 
-  test("preserves generic Grade 7 / 7.5 as a non-company-specific value", () => {
-    assert.equal(
-      gradeKeyForHolding(true, { company: "Generic", grade: 7 }),
-      "graded_7_75",
-    );
-    assert.equal(
-      gradeKeyForHolding(true, { company: "Unspecified", grade: 7.5 }),
-      "graded_7_75",
-    );
-    assert.notEqual(
-      gradeKeyForHolding(true, { company: "PSA", grade: 7 }),
-      "graded_7_75",
-    );
-  });
-
   test("keeps explicitly supported grade-10 companies distinct", () => {
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10 }), "bgs_10");
     assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10 }), "cgc_10");
@@ -704,6 +971,13 @@ describe("Exact holding-grade resolution", () => {
     assert.equal(gradeKeyForHolding(true, { company: "ACE", grade: 10 }), "ace_10");
     assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 10, designation: "Pristine" }), "cgc_pristine_10");
     assert.equal(gradeKeyForHolding(true, { company: "BGS", grade: 10, designation: "Black Label" }), "bgs_black_label_10");
+  });
+
+  test("resolves only explicitly generic 7 and 7.5 holdings to the shared bucket", () => {
+    assert.equal(gradeKeyForHolding(true, { company: "Generic", grade: 7 }), "graded_7_75");
+    assert.equal(gradeKeyForHolding(true, { company: "Generic", grade: 7.5 }), "graded_7_75");
+    assert.equal(gradeKeyForHolding(true, { company: "PSA", grade: 7.5 }), null);
+    assert.equal(gradeKeyForHolding(true, { company: "CGC", grade: 7 }), null);
   });
 
   test("never falls back a graded holding to raw", () => {
@@ -723,6 +997,14 @@ describe("Timestamped snapshot buckets", () => {
     assert.equal(snapshotBucketFor(new Date("2026-08-21T11:59:59.999Z")), "2026-08-21:AM");
     assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
     assert.equal(snapshotBucketFor(new Date("2026-08-21T12:00:00.000Z")), "2026-08-21:PM");
+  });
+});
+
+describe("Bulk guide persistence batching", () => {
+  test("splits more than 11k rows below the PostgreSQL parameter ceiling", () => {
+    const chunks = chunkGuideRows(Array.from({ length: 11_001 }, (_, id) => id));
+    assert.deepEqual(chunks.map(chunk => chunk.length), [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1]);
+    assert.ok(chunks.every(chunk => chunk.length * 6 < 65_535));
   });
 });
 

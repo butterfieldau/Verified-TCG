@@ -6,23 +6,45 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
 
 import type {
+  CatalogResponse,
+  CollectionImportCommit,
+  CollectionImportPreview,
+  CollectionItem,
+  CollectionMutation,
+  CollectionPerformance,
+  CollectionSummary,
+  CollectionValueHistory,
+  CommitCollectionCsvImportBody,
   EbaySoldHistoryResponse,
+  GetCatalogCard200,
+  GetCollectionPerformanceParams,
+  GetCollectionSummaryParams,
+  GetCollectionValueHistoryMovementParams,
+  GetCollectionValueHistoryParams,
   GetEbaySoldHistoryParams,
-  HealthStatus
+  GetTrendingCardLookups200,
+  HealthStatus,
+  PortfolioMovementBreakdown,
+  PreviewCollectionCsvImportBody,
+  SearchCatalogCardsParams
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
-import type { ErrorType } from '../custom-fetch';
+import type { ErrorType , BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -119,6 +141,1324 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
+export const getSearchCatalogCardsUrl = (params: SearchCatalogCardsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/catalog/cards?${stringifiedParams}` : `/api/catalog/cards`
+}
+
+/**
+ * @summary Search the persisted card catalogue
+ */
+export const searchCatalogCards = async (params: SearchCatalogCardsParams, options?: Parameters<typeof customFetch>[1]): Promise<CatalogResponse> => {
+
+  return customFetch<CatalogResponse>(getSearchCatalogCardsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSearchCatalogCardsQueryKey = (params?: SearchCatalogCardsParams,) => {
+    return [
+    `/api/catalog/cards`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSearchCatalogCardsQueryOptions = <TData = Awaited<ReturnType<typeof searchCatalogCards>>, TError = ErrorType<void>>(params: SearchCatalogCardsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchCatalogCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchCatalogCardsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchCatalogCards>>> = ({ signal }) => searchCatalogCards(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchCatalogCards>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type SearchCatalogCardsQueryResult = NonNullable<Awaited<ReturnType<typeof searchCatalogCards>>>
+export type SearchCatalogCardsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Search the persisted card catalogue
+ */
+
+export function useSearchCatalogCards<TData = Awaited<ReturnType<typeof searchCatalogCards>>, TError = ErrorType<void>>(
+ params: SearchCatalogCardsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchCatalogCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getSearchCatalogCardsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCatalogCardUrl = (id: string,) => {
+
+
+
+
+  return `/api/catalog/cards/${id}`
+}
+
+/**
+ * @summary Read one canonical card
+ */
+export const getCatalogCard = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<GetCatalogCard200> => {
+
+  return customFetch<GetCatalogCard200>(getGetCatalogCardUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCatalogCardQueryKey = (id: string,) => {
+    return [
+    `/api/catalog/cards/${id}`
+    ] as const;
+    }
+
+
+export const getGetCatalogCardQueryOptions = <TData = Awaited<ReturnType<typeof getCatalogCard>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCatalogCard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCatalogCardQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCatalogCard>>> = ({ signal }) => getCatalogCard(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCatalogCard>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCatalogCardQueryResult = NonNullable<Awaited<ReturnType<typeof getCatalogCard>>>
+export type GetCatalogCardQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read one canonical card
+ */
+
+export function useGetCatalogCard<TData = Awaited<ReturnType<typeof getCatalogCard>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCatalogCard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCatalogCardQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRecordCatalogCardLookupUrl = (id: string,) => {
+
+
+
+
+  return `/api/catalog/cards/${id}/lookup`
+}
+
+/**
+ * Records only an anonymous aggregate count for the current 12-hour window.
+ * @summary Record an aggregate card-detail lookup
+ */
+export const recordCatalogCardLookup = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getRecordCatalogCardLookupUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRecordCatalogCardLookupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['recordCatalogCardLookup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordCatalogCardLookup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  recordCatalogCardLookup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordCatalogCardLookupMutationResult = NonNullable<Awaited<ReturnType<typeof recordCatalogCardLookup>>>
+
+    export type RecordCatalogCardLookupMutationError = ErrorType<void>
+
+    /**
+ * @summary Record an aggregate card-detail lookup
+ */
+export const useRecordCatalogCardLookup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordCatalogCardLookup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordCatalogCardLookup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRecordCatalogCardLookupMutationOptions(options));
+    }
+
+export const getGetTrendingCardLookupsUrl = () => {
+
+
+
+
+  return `/api/catalog/trending-lookups`
+}
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+export const getTrendingCardLookups = async ( options?: Parameters<typeof customFetch>[1]): Promise<GetTrendingCardLookups200> => {
+
+  return customFetch<GetTrendingCardLookups200>(getGetTrendingCardLookupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTrendingCardLookupsQueryKey = () => {
+    return [
+    `/api/catalog/trending-lookups`
+    ] as const;
+    }
+
+
+export const getGetTrendingCardLookupsQueryOptions = <TData = Awaited<ReturnType<typeof getTrendingCardLookups>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTrendingCardLookupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrendingCardLookups>>> = ({ signal }) => getTrendingCardLookups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTrendingCardLookupsQueryResult = NonNullable<Awaited<ReturnType<typeof getTrendingCardLookups>>>
+export type GetTrendingCardLookupsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+
+export function useGetTrendingCardLookups<TData = Awaited<ReturnType<typeof getTrendingCardLookups>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCardLookups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTrendingCardLookupsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListCollectionUrl = () => {
+
+
+
+
+  return `/api/collection`
+}
+
+/**
+ * @summary List the authenticated collector's persisted holdings
+ */
+export const listCollection = async ( options?: Parameters<typeof customFetch>[1]): Promise<CollectionItem[]> => {
+
+  return customFetch<CollectionItem[]>(getListCollectionUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListCollectionQueryKey = () => {
+    return [
+    `/api/collection`
+    ] as const;
+    }
+
+
+export const getListCollectionQueryOptions = <TData = Awaited<ReturnType<typeof listCollection>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listCollection>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListCollectionQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listCollection>>> = ({ signal }) => listCollection({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listCollection>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListCollectionQueryResult = NonNullable<Awaited<ReturnType<typeof listCollection>>>
+export type ListCollectionQueryError = ErrorType<void>
+
+
+/**
+ * @summary List the authenticated collector's persisted holdings
+ */
+
+export function useListCollection<TData = Awaited<ReturnType<typeof listCollection>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listCollection>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListCollectionQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateCollectionItemUrl = () => {
+
+
+
+
+  return `/api/collection`
+}
+
+/**
+ * @summary Add a holding with collector-entered acquisition details
+ */
+export const createCollectionItem = async (collectionMutation: CollectionMutation, options?: Parameters<typeof customFetch>[1]): Promise<CollectionItem> => {
+
+  return customFetch<CollectionItem>(getCreateCollectionItemUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(collectionMutation)
+  }
+);}
+
+
+
+
+
+export const getCreateCollectionItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCollectionItem>>, TError,{data: BodyType<CollectionMutation>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createCollectionItem>>, TError,{data: BodyType<CollectionMutation>}, TContext> => {
+
+const mutationKey = ['createCollectionItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createCollectionItem>>, {data: BodyType<CollectionMutation>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createCollectionItem(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateCollectionItemMutationResult = NonNullable<Awaited<ReturnType<typeof createCollectionItem>>>
+    export type CreateCollectionItemMutationBody = BodyType<CollectionMutation>
+    export type CreateCollectionItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Add a holding with collector-entered acquisition details
+ */
+export const useCreateCollectionItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCollectionItem>>, TError,{data: BodyType<CollectionMutation>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createCollectionItem>>,
+        TError,
+        {data: BodyType<CollectionMutation>},
+        TContext
+      > => {
+      return useMutation(getCreateCollectionItemMutationOptions(options));
+    }
+
+export const getPreviewCollectionCsvImportUrl = () => {
+
+
+
+
+  return `/api/collection/import/preview`
+}
+
+/**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const previewCollectionCsvImport = async (previewCollectionCsvImportBody: PreviewCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportPreview> => {
+
+  return customFetch<CollectionImportPreview>(getPreviewCollectionCsvImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(previewCollectionCsvImportBody)
+  }
+);}
+
+
+
+
+
+export const getPreviewCollectionCsvImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext> => {
+
+const mutationKey = ['previewCollectionCsvImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewCollectionCsvImport>>, {data: BodyType<PreviewCollectionCsvImportBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewCollectionCsvImport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewCollectionCsvImportMutationResult = NonNullable<Awaited<ReturnType<typeof previewCollectionCsvImport>>>
+    export type PreviewCollectionCsvImportMutationBody = BodyType<PreviewCollectionCsvImportBody>
+    export type PreviewCollectionCsvImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const usePreviewCollectionCsvImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewCollectionCsvImport>>,
+        TError,
+        {data: BodyType<PreviewCollectionCsvImportBody>},
+        TContext
+      > => {
+      return useMutation(getPreviewCollectionCsvImportMutationOptions(options));
+    }
+
+export const getCommitCollectionCsvImportUrl = (jobId: string,) => {
+
+
+
+
+  return `/api/collection/import/${jobId}/commit`
+}
+
+/**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const commitCollectionCsvImport = async (jobId: string,
+    commitCollectionCsvImportBody: CommitCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportCommit> => {
+
+  return customFetch<CollectionImportCommit>(getCommitCollectionCsvImportUrl(jobId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(commitCollectionCsvImportBody)
+  }
+);}
+
+
+
+
+
+export const getCommitCollectionCsvImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext> => {
+
+const mutationKey = ['commitCollectionCsvImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof commitCollectionCsvImport>>, {jobId: string;data: BodyType<CommitCollectionCsvImportBody>}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  commitCollectionCsvImport(jobId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CommitCollectionCsvImportMutationResult = NonNullable<Awaited<ReturnType<typeof commitCollectionCsvImport>>>
+    export type CommitCollectionCsvImportMutationBody = BodyType<CommitCollectionCsvImportBody>
+    export type CommitCollectionCsvImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const useCommitCollectionCsvImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof commitCollectionCsvImport>>,
+        TError,
+        {jobId: string;data: BodyType<CommitCollectionCsvImportBody>},
+        TContext
+      > => {
+      return useMutation(getCommitCollectionCsvImportMutationOptions(options));
+    }
+
+export const getUpdateCollectionItemUrl = (id: string,) => {
+
+
+
+
+  return `/api/collection/${id}`
+}
+
+/**
+ * @summary Correct quantity, condition, grading, or acquisition cost
+ */
+export const updateCollectionItem = async (id: string,
+    collectionMutation: CollectionMutation, options?: Parameters<typeof customFetch>[1]): Promise<CollectionItem> => {
+
+  return customFetch<CollectionItem>(getUpdateCollectionItemUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(collectionMutation)
+  }
+);}
+
+
+
+
+
+export const getUpdateCollectionItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCollectionItem>>, TError,{id: string;data: BodyType<CollectionMutation>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateCollectionItem>>, TError,{id: string;data: BodyType<CollectionMutation>}, TContext> => {
+
+const mutationKey = ['updateCollectionItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCollectionItem>>, {id: string;data: BodyType<CollectionMutation>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateCollectionItem(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateCollectionItemMutationResult = NonNullable<Awaited<ReturnType<typeof updateCollectionItem>>>
+    export type UpdateCollectionItemMutationBody = BodyType<CollectionMutation>
+    export type UpdateCollectionItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Correct quantity, condition, grading, or acquisition cost
+ */
+export const useUpdateCollectionItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCollectionItem>>, TError,{id: string;data: BodyType<CollectionMutation>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateCollectionItem>>,
+        TError,
+        {id: string;data: BodyType<CollectionMutation>},
+        TContext
+      > => {
+      return useMutation(getUpdateCollectionItemMutationOptions(options));
+    }
+
+export const getDeleteCollectionItemUrl = (id: string,) => {
+
+
+
+
+  return `/api/collection/${id}`
+}
+
+/**
+ * @summary Remove a holding
+ */
+export const deleteCollectionItem = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteCollectionItemUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteCollectionItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCollectionItem>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteCollectionItem>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteCollectionItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteCollectionItem>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteCollectionItem(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteCollectionItemMutationResult = NonNullable<Awaited<ReturnType<typeof deleteCollectionItem>>>
+
+    export type DeleteCollectionItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove a holding
+ */
+export const useDeleteCollectionItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCollectionItem>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteCollectionItem>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteCollectionItemMutationOptions(options));
+    }
+
+export const getGetCollectionSummaryUrl = (params?: GetCollectionSummaryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/collection/summary?${stringifiedParams}` : `/api/collection/summary`
+}
+
+/**
+ * @summary Get authoritative value, cost basis, gain, and coverage
+ */
+export const getCollectionSummary = async (params?: GetCollectionSummaryParams, options?: Parameters<typeof customFetch>[1]): Promise<CollectionSummary> => {
+
+  return customFetch<CollectionSummary>(getGetCollectionSummaryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCollectionSummaryQueryKey = (params?: GetCollectionSummaryParams,) => {
+    return [
+    `/api/collection/summary`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCollectionSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getCollectionSummary>>, TError = ErrorType<void>>(params?: GetCollectionSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCollectionSummaryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCollectionSummary>>> = ({ signal }) => getCollectionSummary(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCollectionSummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCollectionSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getCollectionSummary>>>
+export type GetCollectionSummaryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get authoritative value, cost basis, gain, and coverage
+ */
+
+export function useGetCollectionSummary<TData = Awaited<ReturnType<typeof getCollectionSummary>>, TError = ErrorType<void>>(
+ params?: GetCollectionSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCollectionSummaryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCollectionPerformanceUrl = (params?: GetCollectionPerformanceParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/collection/performance?${stringifiedParams}` : `/api/collection/performance`
+}
+
+/**
+ * @summary Get retained portfolio history and performance
+ */
+export const getCollectionPerformance = async (params?: GetCollectionPerformanceParams, options?: Parameters<typeof customFetch>[1]): Promise<CollectionPerformance> => {
+
+  return customFetch<CollectionPerformance>(getGetCollectionPerformanceUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCollectionPerformanceQueryKey = (params?: GetCollectionPerformanceParams,) => {
+    return [
+    `/api/collection/performance`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCollectionPerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getCollectionPerformance>>, TError = ErrorType<void>>(params?: GetCollectionPerformanceParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCollectionPerformanceQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCollectionPerformance>>> = ({ signal }) => getCollectionPerformance(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCollectionPerformance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCollectionPerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getCollectionPerformance>>>
+export type GetCollectionPerformanceQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get retained portfolio history and performance
+ */
+
+export function useGetCollectionPerformance<TData = Awaited<ReturnType<typeof getCollectionPerformance>>, TError = ErrorType<void>>(
+ params?: GetCollectionPerformanceParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCollectionPerformanceQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCollectionValueHistoryUrl = (params?: GetCollectionValueHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/collection/value-history?${stringifiedParams}` : `/api/collection/value-history`
+}
+
+/**
+ * @summary Get portfolio value history derived from collection holdings
+ */
+export const getCollectionValueHistory = async (params?: GetCollectionValueHistoryParams, options?: Parameters<typeof customFetch>[1]): Promise<CollectionValueHistory> => {
+
+  return customFetch<CollectionValueHistory>(getGetCollectionValueHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCollectionValueHistoryQueryKey = (params?: GetCollectionValueHistoryParams,) => {
+    return [
+    `/api/collection/value-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCollectionValueHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getCollectionValueHistory>>, TError = ErrorType<void>>(params?: GetCollectionValueHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCollectionValueHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCollectionValueHistory>>> = ({ signal }) => getCollectionValueHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCollectionValueHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getCollectionValueHistory>>>
+export type GetCollectionValueHistoryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get portfolio value history derived from collection holdings
+ */
+
+export function useGetCollectionValueHistory<TData = Awaited<ReturnType<typeof getCollectionValueHistory>>, TError = ErrorType<void>>(
+ params?: GetCollectionValueHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCollectionValueHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCollectionValueHistoryMovementUrl = (params: GetCollectionValueHistoryMovementParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/collection/value-history/movement?${stringifiedParams}` : `/api/collection/value-history/movement`
+}
+
+/**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+export const getCollectionValueHistoryMovement = async (params: GetCollectionValueHistoryMovementParams, options?: Parameters<typeof customFetch>[1]): Promise<PortfolioMovementBreakdown> => {
+
+  return customFetch<PortfolioMovementBreakdown>(getGetCollectionValueHistoryMovementUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCollectionValueHistoryMovementQueryKey = (params?: GetCollectionValueHistoryMovementParams,) => {
+    return [
+    `/api/collection/value-history/movement`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCollectionValueHistoryMovementQueryOptions = <TData = Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError = ErrorType<void>>(params: GetCollectionValueHistoryMovementParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCollectionValueHistoryMovementQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>> = ({ signal }) => getCollectionValueHistoryMovement(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCollectionValueHistoryMovementQueryResult = NonNullable<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>>
+export type GetCollectionValueHistoryMovementQueryError = ErrorType<void>
+
+
+/**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+
+export function useGetCollectionValueHistoryMovement<TData = Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError = ErrorType<void>>(
+ params: GetCollectionValueHistoryMovementParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCollectionValueHistoryMovement>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCollectionValueHistoryMovementQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMarketMoversUrl = () => {
+
+
+
+
+  return `/api/catalog/market-movers`
+}
+
+/**
+ * @summary Get persisted comparable price movements
+ */
+export const getMarketMovers = async ( options?: Parameters<typeof customFetch>[1]): Promise<CatalogResponse> => {
+
+  return customFetch<CatalogResponse>(getGetMarketMoversUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMarketMoversQueryKey = () => {
+    return [
+    `/api/catalog/market-movers`
+    ] as const;
+    }
+
+
+export const getGetMarketMoversQueryOptions = <TData = Awaited<ReturnType<typeof getMarketMovers>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketMovers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMarketMoversQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketMovers>>> = ({ signal }) => getMarketMovers({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMarketMovers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMarketMoversQueryResult = NonNullable<Awaited<ReturnType<typeof getMarketMovers>>>
+export type GetMarketMoversQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get persisted comparable price movements
+ */
+
+export function useGetMarketMovers<TData = Awaited<ReturnType<typeof getMarketMovers>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketMovers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMarketMoversQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTrendingCardsUrl = () => {
+
+
+
+
+  return `/api/catalog/trending`
+}
+
+/**
+ * @summary Get deterministic persisted trend rankings
+ */
+export const getTrendingCards = async ( options?: Parameters<typeof customFetch>[1]): Promise<CatalogResponse> => {
+
+  return customFetch<CatalogResponse>(getGetTrendingCardsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTrendingCardsQueryKey = () => {
+    return [
+    `/api/catalog/trending`
+    ] as const;
+    }
+
+
+export const getGetTrendingCardsQueryOptions = <TData = Awaited<ReturnType<typeof getTrendingCards>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTrendingCardsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrendingCards>>> = ({ signal }) => getTrendingCards({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrendingCards>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTrendingCardsQueryResult = NonNullable<Awaited<ReturnType<typeof getTrendingCards>>>
+export type GetTrendingCardsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get deterministic persisted trend rankings
+ */
+
+export function useGetTrendingCards<TData = Awaited<ReturnType<typeof getTrendingCards>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrendingCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTrendingCardsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetRecentlyAddedCardsUrl = () => {
+
+
+
+
+  return `/api/catalog/recently-added`
+}
+
+/**
+ * @summary Get recently persisted canonical catalogue records
+ */
+export const getRecentlyAddedCards = async ( options?: Parameters<typeof customFetch>[1]): Promise<CatalogResponse> => {
+
+  return customFetch<CatalogResponse>(getGetRecentlyAddedCardsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRecentlyAddedCardsQueryKey = () => {
+    return [
+    `/api/catalog/recently-added`
+    ] as const;
+    }
+
+
+export const getGetRecentlyAddedCardsQueryOptions = <TData = Awaited<ReturnType<typeof getRecentlyAddedCards>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRecentlyAddedCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRecentlyAddedCardsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRecentlyAddedCards>>> = ({ signal }) => getRecentlyAddedCards({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRecentlyAddedCards>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetRecentlyAddedCardsQueryResult = NonNullable<Awaited<ReturnType<typeof getRecentlyAddedCards>>>
+export type GetRecentlyAddedCardsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get recently persisted canonical catalogue records
+ */
+
+export function useGetRecentlyAddedCards<TData = Awaited<ReturnType<typeof getRecentlyAddedCards>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRecentlyAddedCards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetRecentlyAddedCardsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getGetEbaySoldHistoryUrl = (id: string,
     params: GetEbaySoldHistoryParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -202,3 +1542,10 @@ export function useGetEbaySoldHistory<TData = Awaited<ReturnType<typeof getEbayS
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+

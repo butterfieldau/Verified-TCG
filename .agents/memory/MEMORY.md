@@ -4,6 +4,7 @@
 - [Expo web confirmations](expo-web-action-controls.md) — system Alert action callbacks are unreliable in browser previews; prefer visible in-app confirmation state.
 - [Pricing provider independence](pricing-provider-independence.md) — serve persisted mappings and quotes before catalog lookups so one provider outage cannot hide another provider's cached data.
 - [PriceCharting condition semantics](pricecharting-condition-semantics.md) — provider price fields are category-overloaded; never infer numeric card grades without durable category provenance.
+- [PriceCharting reprint identity](pricecharting-reprint-identity.md) — exact numbers may span originals and reprints; require unique variant evidence when provider set labels stay on the original release.
 - [Trust operations truthfulness](trust-operations-truthfulness.md) — safety/event reviews must cover admin and consumer surfaces; unavailable capabilities stay explicit, never mocked.
 - [Append-only evidence ledgers](append-only-evidence-ledgers.md) — immutable audit rows retain pseudonymous actor IDs and reject database mutation, including account-lifecycle rewrites.
 - [App-version policy enforcement](app-version-policy-enforcement.md) — active version policies reject unversioned consumer requests; supported clients attach their build version centrally.
@@ -15,3 +16,11 @@
 - [Fresh database migration gap](fresh-database-migration-gap.md) — the tracked Drizzle history needs independent fresh-install validation; runtime schema helpers are not a replacement.
 - [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.
 - [Mobile API origins](mobile-api-origins.md) — development web previews use the first-party Replit proxy; release builds use the public production origin.
+- [Catalogue images are optional](catalogue-images-optional.md) — canonical cards remain readable without provider images; UI fallbacks must prevent missing artwork from blanking data.
+- [Profile market-value history](portfolio-history-ownership.md) — Home charts current-profile market value from each card's added date; movement breakdowns stay out of the chart.
+- [Expo preview ownership](expo-preview-ownership.md) — multiple running Expo artifacts can contend for one workspace Expo domain; keep Verified TCG as the active mobile preview.
+- [Collection CSV migrations](collection-csv-migrations.md) — imports use strict versioned contracts, hash-bound previews, and per-collector atomic commit serialization.
+- [Community artifact boundary](community-artifact-boundary.md) — Community exists only inside Verified TCG; never create or restore a standalone Community artifact, package, workflow, or URL.
+- [Guide reconciliation durability](guide-reconciliation-durability.md) — bulk provider matching uses bounded DB-leased pages; exact identity proof is mandatory and prior valid quotes survive omissions.
+- [PriceCharting CSV contract](pricecharting-csv-contract.md) — bulk guides are slow dollar-formatted CSVs; validate non-empty price maps and release global leases when category claims fail.
+- [Expo file reading](expo-file-reading.md) — Expo File System v19 default legacy readers throw at runtime; use the File object API for imported documents.

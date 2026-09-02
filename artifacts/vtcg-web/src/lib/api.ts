@@ -57,6 +57,15 @@ export function apiFetch<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
+export async function apiProbe<T>(path: string): Promise<{ status: number; data: T }> {
+  const response = await fetch(`${API}${path}`, {
+    credentials: "include",
+    headers: { "x-app-version": packageMetadata.version },
+  });
+  const data = (await response.json().catch(() => ({}))) as T;
+  return { status: response.status, data };
+}
+
 export function apiPost<T>(
   path: string,
   body: unknown,

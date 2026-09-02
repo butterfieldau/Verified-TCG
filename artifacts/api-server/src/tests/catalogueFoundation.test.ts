@@ -135,6 +135,33 @@ describe("Stage 3A catalogue normalisation", () => {
     assert.equal(candidate.collectorNumber, "001/102");
   });
 
+  test("derives verified TCGPlayer artwork from the provider product ID", () => {
+    const candidate = normalizeJustTcgCard({
+      id: "justtcg-123",
+      game: "Pokémon",
+      name: "Pikachu",
+      set_name: "Base Set",
+      number: "001/102",
+      tcgplayerId: 123456,
+    });
+    assert.equal(
+      candidate.imageUrl,
+      "https://product-images.tcgplayer.com/fit-in/1000x1000/123456.jpg",
+    );
+  });
+
+  test("does not construct artwork URLs from malformed provider IDs", () => {
+    const candidate = normalizeJustTcgCard({
+      id: "justtcg-123",
+      game: "Pokémon",
+      name: "Pikachu",
+      set_name: "Base Set",
+      number: "001/102",
+      tcgplayerId: "123/../../secret",
+    });
+    assert.equal(candidate.imageUrl, null);
+  });
+
   test("keeps import counters isolated and sanitises provider secrets", () => {
     assert.deepEqual(emptyImportCounters(), {
       recordsRead: 0,

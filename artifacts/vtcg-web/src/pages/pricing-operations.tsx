@@ -21,7 +21,45 @@ interface Provider {
   status: string;
   lastHealthyAt?: string | null;
   lastErrorAt?: string | null;
+  failureCategory?: string | null;
+  staleQuoteCards?: number;
   lastResult?: string | null;
+}
+
+interface Coverage {
+  generatedAt: string;
+  totals: CoverageGame;
+  byGame: CoverageGame[];
+  imports: {
+    category: string;
+    status: string;
+    reconciliationStatus: string;
+    rowCount: number;
+    ageHours: number;
+    lastErrorKind: string | null;
+    reconciliationCursor: string | null;
+    stats: Record<string, unknown>;
+  }[];
+  failureReasons: { reason: string; count: number }[];
+  latestSchedulerRun: {
+    status: string;
+    selectedCards: number;
+    refreshSucceeded: number;
+    refreshFailed: number;
+    startedAt: string;
+  } | null;
+}
+
+interface CoverageGame {
+  game: string;
+  supportedCards: number;
+  matchedCards: number;
+  rawQuoteCards: number;
+  gradedOnlyCards: number;
+  ambiguousCards: number;
+  unmatchedCards: number;
+  unprocessedCards: number;
+  staleQuoteCards: number;
 }
 
 interface Overview {
@@ -76,6 +114,7 @@ export default function PricingOperationsPage() {
   const canManage = auth?.permissions.includes("pricing:manage") ?? false;
   const [providers, setProviders] = useState<Provider[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [mappings, setMappings] = useState<Mapping[]>([]);
   const [jobs, setJobs] = useState<RefreshJob[]>([]);
   const initialParams = new URLSearchParams(window.location.search);
@@ -103,14 +142,16 @@ export default function PricingOperationsPage() {
     try {
       const params = new URLSearchParams({ status, limit: "50" });
       if (query.trim()) params.set("q", query.trim());
-      const [providerData, overviewData, mappingData, jobData] = await Promise.all([
+      const [providerData, overviewData, coverageData, mappingData, jobData] = await Promise.all([
         apiFetch<{ providers: Provider[] }>("/admin/pricing/providers"),
         apiFetch<Overview>("/admin/pricing/overview"),
+        apiFetch<Coverage>("/admin/pricing/coverage"),
         apiFetch<{ mappings: Mapping[] }>(`/admin/pricing/mappings?${params.toString()}`),
         apiFetch<{ jobs: RefreshJob[] }>("/admin/pricing/refresh-jobs?limit=30"),
       ]);
       setProviders(providerData.providers);
       setOverview(overviewData);
+      setCoverage(coverageData);
       setMappings(mappingData.mappings);
       if (initialMappingId) {
         const linkedMapping = mappingData.mappings.find((mapping) => mapping.id === initialMappingId);
@@ -320,8 +361,68 @@ export default function PricingOperationsPage() {
               </div>
             )}
             {provider.lastResult && <p className="mt-2 text-xs text-negative">{provider.lastResult}</p>}
+            {provider.failureCategory && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Latest failure: {provider.failureCategory}
+              </div>
+            )}
           </div>
         ))}
+      </div>
+
+      <SectionTitle>PRICECHARTING COVERAGE &amp; RECOVERY</SectionTitle>
+      <div className="mb-8 rounded-xl border border-border bg-card p-4">
+        {!coverage ? (
+          <div className="text-sm text-muted-foreground">Coverage evidence is loading.</div>
+        ) : (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {coverage.byGame.map((game) => (
+                <div key={game.game} className="rounded-lg border border-border bg-background p-3">
+                  <div className="text-xs font-bold uppercase">{game.game.replaceAll("_", " ")}</div>
+                  <div className="mt-2 text-xl font-bold">{game.rawQuoteCards}/{game.supportedCards}</div>
+                  <div className="text-xs text-muted-foreground">
+                    raw quotes · {game.unprocessedCards} unprocessed · {game.ambiguousCards} ambiguous
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px] text-left text-xs">
+                <thead className="text-muted-foreground">
+                  <tr>
+                    <th className="pb-2">Guide</th><th className="pb-2">Import</th>
+                    <th className="pb-2">Reconciliation</th><th className="pb-2">Rows</th>
+                    <th className="pb-2">Age</th><th className="pb-2">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {coverage.imports.map((guide) => (
+                    <tr key={guide.category}>
+                      <td className="py-2 font-bold">{guide.category.replaceAll("_", " ")}</td>
+                      <td className="py-2">{guide.status}</td>
+                      <td className="py-2">{guide.reconciliationStatus}</td>
+                      <td className="py-2">{guide.rowCount.toLocaleString()}</td>
+                      <td className="py-2">{guide.ageHours}h</td>
+                      <td className="py-2 text-muted-foreground">
+                        {guide.lastErrorKind
+                          ? `blocked: ${guide.lastErrorKind}`
+                          : guide.reconciliationCursor
+                            ? "bounded work remains"
+                            : "no current failure"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {coverage.latestSchedulerRun
+                ? `Latest scheduler: ${coverage.latestSchedulerRun.status} · ${coverage.latestSchedulerRun.refreshSucceeded} succeeded · ${coverage.latestSchedulerRun.refreshFailed} failed · ${new Date(coverage.latestSchedulerRun.startedAt).toLocaleString()}`
+                : "No scheduler run has been recorded yet."}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mb-8 grid gap-6 xl:grid-cols-[1.45fr_1fr]">
@@ -569,7 +670,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function ProviderBadge({ status }: { status: string }) {
   const good = status === "HEALTHY" || status === "LIVE";
-  const warning = status === "DEGRADED" || status === "RATE LIMITED" || status === "MISCONFIGURED";
+  const warning = status === "HEALTHY BUT STALE" || status === "DEGRADED" || status === "RATE LIMITED" || status === "MISCONFIGURED";
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
       good

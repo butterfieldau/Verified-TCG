@@ -1,27 +1,41 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link } from "wouter";
 import { apiFetch, apiPost, UnauthorizedError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
 import { StatCard, SkeletonCard, ErrorBanner } from "@/components/admin-ui";
 import { Activity, AlertTriangle, CheckCircle2, RotateCcw, XCircle, RefreshCw, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { canReadPricingJobs, isLatestPanelRequest } from "@/lib/polling";
 
 interface HealthData {
-  status: string;
+  status: "healthy" | "degraded" | "unavailable";
   checkedAt: string;
   process: { startedAt: string; uptimeSeconds: number; label: string };
-  database: { status: string; latencyMs: number };
+  database: { status: string; latencyMs: number | null };
   api: {
     status: string;
-    requests24h: number;
-    errors24h: number;
-    errorRate: number;
+    requests24h: number | null;
+    errors24h: number | null;
+    errorRate: number | null;
     recentErrors: { path: string; statusCode: number | null; recordedAt: string }[];
   };
   providers: any[];
-  jobs: { queued: number; running: number; failed: number; cancelled: number; recovery: { label: string }[] };
-  queue: { status: string; depth: number };
-  recoveryActions?: any[];
+  jobs: {
+    queued: number | null;
+    running: number | null;
+    failed: number | null;
+    cancelled: number | null;
+    recovery: RecoveryAction[];
+  };
+  queue: { status: string; depth: number | null };
+  recoveryActions: RecoveryAction[];
+}
+
+interface RecoveryAction {
+  label: string;
+  description?: string;
+  evidence?: string;
+  observedAt?: string;
 }
 
 interface Integration {
@@ -33,7 +47,7 @@ interface Integration {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   recentErrors: string[];
-  usage: any;
+  usage: { events7d: number } | null;
   observabilityNote: string;
 }
 
@@ -50,19 +64,60 @@ interface Job {
   finishedAt: string | null;
 }
 
+interface PanelState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+  lastSuccessAt: string | null;
+}
+
+function panelState<T>(): PanelState<T> {
+  return { data: null, loading: true, error: null, lastSuccessAt: null };
+}
+
+function PanelNotice({
+  title,
+  error,
+  loading,
+  onRetry,
+}: {
+  title: string;
+  error: string | null;
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-5 text-sm">
+      <div>
+        <div className="font-bold">{loading ? "Loading…" : title}</div>
+        {!loading && error && <div className="mt-1 text-muted-foreground">{error}</div>}
+      </div>
+      {!loading && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-bold hover:border-primary"
+        >
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function SystemPage() {
   const { auth, logout } = useAuth();
   const { toast } = useToast();
+  const canReadJobs = canReadPricingJobs(auth?.permissions);
   const canManagePricing = auth?.permissions.includes("pricing:manage") || false;
   const initialJobId = new URLSearchParams(window.location.search).get("job") || "";
 
-  const [health, setHealth] = useState<HealthData | null>(null);
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
-  const [jobs, setJobs] = useState<{ jobs: Job[]; total: number; page: number; limit: number }>({ jobs: [], total: 0, page: 1, limit: 50 });
+  const [healthPanel, setHealthPanel] = useState<PanelState<HealthData>>(panelState);
+  const [integrationsPanel, setIntegrationsPanel] = useState<PanelState<Integration[]>>(panelState);
+  const [jobsPanel, setJobsPanel] = useState<PanelState<{ jobs: Job[]; total: number; page: number; limit: number }>>(panelState);
   const [jobStatus, setJobStatus] = useState<string>("");
   const [jobPage, setJobPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const requestIds = useRef({ health: 0, integrations: 0, jobs: 0 });
 
   // Dialog state
   const [actionJob, setActionJob] = useState<{ job: Job; action: "retry" | "cancel" } | null>(null);
@@ -70,33 +125,77 @@ export default function SystemPage() {
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const loadData = useCallback(async (isPolling = false) => {
-    if (!isPolling) setLoading(true);
+  const loadHealth = useCallback(async () => {
+    const requestId = ++requestIds.current.health;
+    setHealthPanel((current) => ({ ...current, loading: true, error: null }));
     try {
-      const [h, i, j] = await Promise.all([
-        apiFetch<HealthData>("/admin/intelligence/health"),
-        apiFetch<{ integrations: Integration[] }>("/admin/intelligence/integrations"),
-        apiFetch<{ jobs: Job[]; total: number; page: number; limit: number }>(
-          `/admin/intelligence/jobs?page=${jobPage}&limit=50&status=${jobStatus}&jobId=${encodeURIComponent(initialJobId)}`
-        )
-      ]);
-      setHealth(h);
-      setIntegrations(i.integrations);
-      setJobs(j);
-      setError(null);
+      const data = await apiFetch<HealthData>("/admin/intelligence/health");
+      if (isLatestPanelRequest(requestId, requestIds.current.health)) {
+        setHealthPanel({ data, loading: false, error: null, lastSuccessAt: new Date().toISOString() });
+      }
     } catch (err) {
       if (err instanceof UnauthorizedError) logout();
-      else if (!isPolling) setError(err instanceof Error ? err.message : "Failed to load system data.");
-    } finally {
-      if (!isPolling) setLoading(false);
+      else if (isLatestPanelRequest(requestId, requestIds.current.health)) {
+        setHealthPanel((current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Health data unavailable." }));
+      }
     }
-  }, [logout, jobPage, jobStatus]);
+  }, [logout]);
+
+  const loadIntegrations = useCallback(async () => {
+    const requestId = ++requestIds.current.integrations;
+    setIntegrationsPanel((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const data = await apiFetch<{ integrations: Integration[] }>("/admin/intelligence/integrations");
+      if (isLatestPanelRequest(requestId, requestIds.current.integrations)) {
+        setIntegrationsPanel({ data: data.integrations, loading: false, error: null, lastSuccessAt: new Date().toISOString() });
+      }
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logout();
+      else if (isLatestPanelRequest(requestId, requestIds.current.integrations)) {
+        setIntegrationsPanel((current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Integration data unavailable." }));
+      }
+    }
+  }, [logout]);
+
+  const loadJobs = useCallback(async () => {
+    if (!canReadJobs) return;
+    const requestId = ++requestIds.current.jobs;
+    setJobsPanel((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const data = await apiFetch<{ jobs: Job[]; total: number; page: number; limit: number }>(
+        `/admin/intelligence/jobs?page=${jobPage}&limit=50&status=${encodeURIComponent(jobStatus)}&jobId=${encodeURIComponent(initialJobId)}`
+      );
+      if (isLatestPanelRequest(requestId, requestIds.current.jobs)) {
+        setJobsPanel({ data, loading: false, error: null, lastSuccessAt: new Date().toISOString() });
+      }
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logout();
+      else if (isLatestPanelRequest(requestId, requestIds.current.jobs)) {
+        setJobsPanel((current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Job data unavailable." }));
+      }
+    }
+  }, [canReadJobs, logout, jobPage, jobStatus, initialJobId]);
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(() => loadData(true), 15000); // Poll every 15s
+    void loadHealth();
+    void loadIntegrations();
+    if (canReadJobs) void loadJobs();
+    const interval = setInterval(() => {
+      void loadHealth();
+      void loadIntegrations();
+      if (canReadJobs) void loadJobs();
+    }, 15_000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [canReadJobs, loadHealth, loadIntegrations, loadJobs]);
+
+  useEffect(() => {
+    if (!actionJob) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) setActionJob(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [actionJob, submitting]);
 
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,7 +214,7 @@ export default function SystemPage() {
       setActionJob(null);
       setReason("");
       setConfirmation("");
-      loadData();
+       void loadJobs();
     } catch (err) {
       toast({ title: "Action failed", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
     } finally {
@@ -130,6 +229,10 @@ export default function SystemPage() {
     return `${d}d ${h}h ${m}m`;
   };
 
+  const health = healthPanel.data;
+  const integrations = integrationsPanel.data ?? [];
+  const jobs = jobsPanel.data ?? { jobs: [], total: 0, page: jobPage, limit: 50 };
+
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto w-full space-y-8">
       <div>
@@ -137,12 +240,20 @@ export default function SystemPage() {
         <p className="text-sm text-muted-foreground">Real-time health, integrations, and background job queues.</p>
       </div>
 
-      {error && <ErrorBanner message={error} />}
-
       <section>
-        <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3 uppercase">Platform Health</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {loading ? (
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <h2 className="text-xs font-bold text-muted-foreground tracking-wider uppercase">Platform Health</h2>
+          {healthPanel.lastSuccessAt && (
+            <span className="text-[11px] text-muted-foreground">
+              Last successful refresh {new Date(healthPanel.lastSuccessAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+        {healthPanel.error && health && (
+          <ErrorBanner message={`Health refresh failed. Showing stale data from ${new Date(healthPanel.lastSuccessAt!).toLocaleTimeString()}. ${healthPanel.error}`} />
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {healthPanel.loading && !health ? (
             Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
           ) : health ? (
             <>
@@ -157,15 +268,30 @@ export default function SystemPage() {
                 <div className="text-xs text-muted-foreground mt-2">Checked {new Date(health.checkedAt).toLocaleTimeString()}</div>
               </div>
               <StatCard label="UPTIME" value={formatUptime(health.process.uptimeSeconds)} sub={health.process.label} />
-              <StatCard label="DB LATENCY" value={`${health.database.latencyMs}ms`} sub={`Status: ${health.database.status}`} />
+              <StatCard
+                label="DB LATENCY"
+                value={health.database.latencyMs === null ? "Unavailable" : `${health.database.latencyMs}ms`}
+                sub={`Status: ${health.database.status}`}
+                accent={health.database.status !== "healthy"}
+              />
               <StatCard
                 label="API ERROR RATE"
-                value={health.api.status === "unobserved" ? "Unobserved" : `${(health.api.errorRate * 100).toFixed(2)}%`}
-                sub={health.api.status === "unobserved" ? "No retained API requests in 24h" : `${health.api.errors24h} errors / 24h`}
+                value={health.api.status === "unobserved" ? "Unobserved" : health.api.errorRate === null ? "Unavailable" : `${(health.api.errorRate * 100).toFixed(2)}%`}
+                sub={health.api.status === "unobserved" ? "No retained API requests in 24h" : health.api.errors24h === null ? "Telemetry query unavailable" : `${health.api.errors24h} server errors / ${health.api.requests24h} observed requests`}
                 accent={health.api.status !== "healthy"}
               />
+              <StatCard
+                label="QUEUE DEPTH"
+                value={health.queue.depth === null ? "Unavailable" : health.queue.depth}
+                sub={`Status: ${health.queue.status}`}
+                accent={health.queue.status !== "healthy"}
+              />
             </>
-          ) : null}
+          ) : (
+            <div className="col-span-full">
+              <PanelNotice title="Platform health is unavailable" error={healthPanel.error} loading={false} onRetry={() => void loadHealth()} />
+            </div>
+          )}
         </div>
       </section>
 
@@ -178,7 +304,9 @@ export default function SystemPage() {
                 <AlertTriangle className="shrink-0 mt-0.5" size={16} />
                 <div>
                   <div className="font-bold">{action.label || "Action required"}</div>
-                  <div>{action.description || action.reason}</div>
+                  {action.description && <div>{action.description}</div>}
+                  {action.evidence && <div className="mt-1 font-mono text-xs opacity-80">{action.evidence}</div>}
+                  {action.observedAt && <div className="mt-1 text-[11px] opacity-70">Observed {new Date(action.observedAt).toLocaleString()}</div>}
                 </div>
               </div>
             ))}
@@ -213,10 +341,24 @@ export default function SystemPage() {
       )}
 
       <section>
-        <h2 className="text-xs font-bold text-muted-foreground tracking-wider mb-3 uppercase">Integrations</h2>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <h2 className="text-xs font-bold text-muted-foreground tracking-wider uppercase">Integrations</h2>
+          {integrationsPanel.lastSuccessAt && (
+            <span className="text-[11px] text-muted-foreground">
+              Last successful refresh {new Date(integrationsPanel.lastSuccessAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+        {integrationsPanel.error && integrationsPanel.data && (
+          <ErrorBanner message={`Integration refresh failed. Showing stale data from ${new Date(integrationsPanel.lastSuccessAt!).toLocaleTimeString()}. ${integrationsPanel.error}`} />
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {loading ? (
+          {integrationsPanel.loading && !integrationsPanel.data ? (
              Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+          ) : !integrationsPanel.data ? (
+             <div className="col-span-full">
+               <PanelNotice title="Integration data is unavailable" error={integrationsPanel.error} loading={false} onRetry={() => void loadIntegrations()} />
+             </div>
           ) : integrations.length === 0 ? (
              <div className="col-span-full p-8 text-center bg-card border border-border rounded-xl text-sm text-muted-foreground">No integrations configured.</div>
           ) : integrations.map((int) => (
@@ -253,7 +395,7 @@ export default function SystemPage() {
                   )}
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Observed calls (7d):</span>
-                    <span>{int.usage?.events7d ?? 0}</span>
+                    <span>{int.usage?.events7d ?? "Unobserved"}</span>
                   </div>
                 </div>
               </div>
@@ -272,9 +414,16 @@ export default function SystemPage() {
         </div>
       </section>
 
-      <section>
+      {canReadJobs && <section>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
-          <h2 className="text-xs font-bold text-muted-foreground tracking-wider uppercase">Background Jobs</h2>
+          <div>
+            <h2 className="text-xs font-bold text-muted-foreground tracking-wider uppercase">Background Jobs</h2>
+            {jobsPanel.lastSuccessAt && (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Last successful refresh {new Date(jobsPanel.lastSuccessAt).toLocaleTimeString()}
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             {canManagePricing && (
               <Link href="/pricing" className="px-3 py-1.5 text-xs font-bold text-primary border border-primary/20 bg-primary/10 rounded-lg">
@@ -293,15 +442,29 @@ export default function SystemPage() {
               <option value="cancelled">Cancelled</option>
             </select>
             <button 
-              onClick={() => loadData(false)}
+              onClick={() => void loadJobs()}
               className="p-1.5 text-muted-foreground hover:text-foreground border border-border rounded-lg bg-card"
-              title="Refresh jobs"
+              title="Refresh background jobs"
+              aria-label="Refresh background jobs"
             >
               <RefreshCw size={14} />
             </button>
           </div>
         </div>
 
+        {jobsPanel.error && jobsPanel.data && (
+          <ErrorBanner message={`Job refresh failed. Showing stale data from ${new Date(jobsPanel.lastSuccessAt!).toLocaleTimeString()}. ${jobsPanel.error}`} />
+        )}
+        {!jobsPanel.data && !jobsPanel.loading && (
+          <PanelNotice
+            title="Background jobs are unavailable"
+            error={jobsPanel.error}
+            loading={false}
+            onRetry={() => void loadJobs()}
+          />
+        )}
+
+        {(jobsPanel.data || jobsPanel.loading) && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           {/* Desktop Table */}
           <div className="hidden md:block overflow-x-auto">
@@ -316,7 +479,7 @@ export default function SystemPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {loading && jobs.jobs.length === 0 ? (
+                {jobsPanel.loading && jobs.jobs.length === 0 ? (
                   <tr><td colSpan={5} className="p-8 text-center text-muted-foreground animate-pulse">Loading jobs...</td></tr>
                 ) : jobs.jobs.length === 0 ? (
                   <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No jobs found.</td></tr>
@@ -377,7 +540,7 @@ export default function SystemPage() {
 
           {/* Mobile Cards */}
           <div className="md:hidden divide-y divide-border">
-            {loading && jobs.jobs.length === 0 ? (
+            {jobsPanel.loading && jobs.jobs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground animate-pulse text-sm">Loading jobs...</div>
             ) : jobs.jobs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground text-sm">No jobs found.</div>
@@ -456,12 +619,18 @@ export default function SystemPage() {
             </div>
           )}
         </div>
-      </section>
+        )}
+      </section>}
 
       {/* Action Dialog */}
       {actionJob && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/70" onClick={() => setActionJob(null)} />
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/70"
+            onClick={() => setActionJob(null)}
+            aria-label="Close job action"
+          />
           <div role="dialog" aria-modal="true" aria-labelledby="job-action-title" className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-background p-6 shadow-2xl">
             <div className="flex justify-between items-center mb-4">
               <h2 id="job-action-title" className="font-display text-xl font-bold capitalize">{actionJob.action} Job</h2>
@@ -481,6 +650,7 @@ export default function SystemPage() {
                   rows={3} 
                   className="mt-1.5 w-full rounded-lg border border-border bg-card p-3 text-sm text-foreground outline-none focus:border-primary"
                   placeholder="Explain why this action is necessary"
+                  autoFocus
                   required
                 />
               </label>

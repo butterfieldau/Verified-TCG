@@ -37,10 +37,16 @@ const REQUIRED_TABLES = ["users", "user_sessions", "collection_items", "password
  * already-migrated database is always safe.
  */
 const COLUMN_MIGRATIONS: string[] = [
+  `ALTER TABLE collection_items ADD COLUMN IF NOT EXISTS ownership_started_at TEXT`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS ownership_started_at TEXT`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ`,
+  `ALTER TABLE sold_archive_items ADD COLUMN IF NOT EXISTS restored_collection_item_id UUID`,
   // Added: subscription tier and founding-member flag for Pro persistence
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN NOT NULL DEFAULT false`,
   // Extended public-profile fields. Defaults preserve existing user visibility.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(2048)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS favourite_tcg VARCHAR(100)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_since VARCHAR(7)`,
@@ -64,6 +70,20 @@ const COLUMN_MIGRATIONS: string[] = [
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_genre TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_upc TEXT`,
   `ALTER TABLE card_provider_mappings ADD COLUMN IF NOT EXISTS provider_epid TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS download_claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_status TEXT NOT NULL DEFAULT 'pending'`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_cursor TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_lease_until TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ`,
+  `ALTER TABLE pricecharting_guide_imports ADD COLUMN IF NOT EXISTS reconciliation_stats JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE pricecharting_guide_download_lease ADD COLUMN IF NOT EXISTS claim_token TEXT`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_number TEXT`,
+  `ALTER TABLE pricecharting_guide_rows ADD COLUMN IF NOT EXISTS normalized_set TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE pricing_providers ADD COLUMN IF NOT EXISTS last_error_kind TEXT`,
   ...GOVERNANCE_COLUMN_MIGRATIONS,
   // user_reports operational workflow columns — queue status uses 'open' convention
   `ALTER TABLE catalogue_cache_leases ADD COLUMN IF NOT EXISTS owner_token TEXT`,
@@ -164,6 +184,25 @@ export function getModerationTableDDL(): readonly string[] {
  * already-migrated database is always safe.
  */
 const TABLE_MIGRATIONS: string[] = [
+  `CREATE TABLE IF NOT EXISTS collection_import_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    content_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'previewed',
+    source_currency TEXT,
+    normalized_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+    preview_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    commit_summary JSONB,
+    commit_results JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    committed_at TIMESTAMPTZ,
+    CONSTRAINT collection_import_jobs_user_hash_uniq UNIQUE (user_id, content_sha256)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_import_jobs_user_created_idx
+     ON collection_import_jobs (user_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS follows (
     follower_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     followee_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -348,6 +387,7 @@ const TABLE_MIGRATIONS: string[] = [
     last_healthy_at TIMESTAMPTZ,
     last_error_at TIMESTAMPTZ,
     last_error_message TEXT,
+    last_error_kind TEXT,
     base_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -400,6 +440,45 @@ const TABLE_MIGRATIONS: string[] = [
     snapshot_date TEXT NOT NULL,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT provider_price_history_dedup_uniq UNIQUE (card_id, provider_key, grade_key, snapshot_date)
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_imports (
+    category TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'ready',
+    fetched_at TIMESTAMPTZ NOT NULL,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    last_error_kind TEXT,
+    last_attempt_at TIMESTAMPTZ,
+    lease_until TIMESTAMPTZ,
+    download_claim_token TEXT,
+    reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+    reconciliation_cursor TEXT,
+    reconciliation_lease_until TIMESTAMPTZ,
+    reconciliation_claim_token TEXT,
+    reconciled_at TIMESTAMPTZ,
+    reconciliation_stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_rows (
+    category TEXT NOT NULL,
+    provider_product_id TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    console_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL DEFAULT '',
+    normalized_number TEXT,
+    normalized_set TEXT NOT NULL DEFAULT '',
+    prices JSONB NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT pricecharting_guide_rows_category_product_uniq
+      UNIQUE (category, provider_product_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS pricecharting_guide_rows_category_product_idx
+    ON pricecharting_guide_rows (category, provider_product_id)`,
+  `CREATE TABLE IF NOT EXISTS pricecharting_guide_download_lease (
+    lease_key TEXT PRIMARY KEY,
+    last_attempt_at TIMESTAMPTZ NOT NULL,
+    lease_until TIMESTAMPTZ NOT NULL,
+    claim_token TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   // Portfolio snapshots (one row per user+date)
   `CREATE TABLE IF NOT EXISTS portfolio_snapshots (
@@ -615,6 +694,29 @@ const TABLE_MIGRATIONS: string[] = [
     finished_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS pricing_scheduler_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    snapshot_bucket TEXT NOT NULL UNIQUE,
+    trigger TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    max_cards INTEGER NOT NULL,
+    selected_cards INTEGER NOT NULL DEFAULT 0,
+    identity_failures INTEGER NOT NULL DEFAULT 0,
+    refresh_succeeded INTEGER NOT NULL DEFAULT 0,
+    refresh_failed INTEGER NOT NULL DEFAULT 0,
+    snapshots_captured INTEGER NOT NULL DEFAULT 0,
+    snapshots_skipped INTEGER NOT NULL DEFAULT 0,
+    snapshots_failed INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    error_message TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS pricing_scheduler_runs_status_started_idx
+    ON pricing_scheduler_runs (status, started_at DESC)`,
+  `ALTER TABLE pricing_scheduler_runs
+    ADD COLUMN IF NOT EXISTS snapshots_failed INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS pricing_overrides (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     card_id TEXT NOT NULL,
@@ -648,6 +750,8 @@ const TABLE_MIGRATIONS: string[] = [
  * created before this migration was added.
  */
 const CONSTRAINT_MIGRATIONS: string[] = [
+  `CREATE INDEX IF NOT EXISTS pricecharting_guide_rows_identity_idx
+    ON pricecharting_guide_rows (category, normalized_name, normalized_number)`,
   `CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows (follower_user_id)`,
   `CREATE INDEX IF NOT EXISTS follows_followee_idx ON follows (followee_user_id)`,
   // Columns added by older ALTER ... ADD COLUMN IF NOT EXISTS statements can
@@ -729,6 +833,19 @@ const CONSTRAINT_MIGRATIONS: string[] = [
   // Index for fast per-user activity reads (newest first)
   `CREATE INDEX IF NOT EXISTS activity_log_user_created_at_idx
      ON activity_log (user_id, created_at DESC)`,
+  // Anonymous aggregate card-detail lookup buckets for the Home Trending feed.
+  // No raw search text, user IDs, IP addresses, or device identifiers are kept.
+  `CREATE TABLE IF NOT EXISTS card_lookup_buckets (
+     card_id TEXT NOT NULL,
+     bucket_start TIMESTAMPTZ NOT NULL,
+     lookup_count INTEGER NOT NULL DEFAULT 0,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT card_lookup_buckets_card_bucket_uniq UNIQUE (card_id, bucket_start),
+     CONSTRAINT card_lookup_buckets_count_nonnegative CHECK (lookup_count >= 0)
+   )`,
+  `CREATE INDEX IF NOT EXISTS card_lookup_buckets_bucket_count_idx
+     ON card_lookup_buckets (bucket_start DESC, lookup_count DESC)`,
   `CREATE INDEX IF NOT EXISTS user_reports_status_created_idx
      ON user_reports (status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS user_reports_assignee_status_idx

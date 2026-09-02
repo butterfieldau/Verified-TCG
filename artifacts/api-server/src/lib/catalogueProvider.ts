@@ -4,7 +4,6 @@ import { db } from "@workspace/db";
 import { recordTelemetry } from "./telemetry.js";
 
 const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
-const JUSTTCG_V2_BASE_URL = "https://api.justtcg.com/v2";
 const PROVIDER_TIMEOUT_MS = 8_000;
 const DEFAULT_DAILY_BUDGET = 1_000;
 const MAX_CACHE_ENTRIES = 5_000;
@@ -286,24 +285,17 @@ async function reserveDailyCall(): Promise<void> {
   if (!result.rows[0]) throw new CatalogueBudgetError();
 }
 
-function operationForResource(resource: CatalogueResource, apiVersion: "v1" | "v2" = "v1"): "games" | "cards" | "cards_v2" | "other" {
-  if (apiVersion === "v2" && resource === "cards") return "cards_v2";
+function operationForResource(resource: CatalogueResource): "games" | "cards" | "other" {
   return resource === "games" ? "games" : resource === "cards" ? "cards" : "other";
 }
 
-async function providerFetch(
-  path: string,
-  resource: CatalogueResource,
-  options: { baseUrl?: string; apiVersion?: "v1" | "v2" } = {},
-): Promise<unknown> {
+async function providerFetch(path: string, resource: CatalogueResource): Promise<unknown> {
   const key = process.env.JUSTTCG_API_KEY;
   if (!key) throw new Error("JUSTTCG_API_KEY is not configured");
   await reserveDailyCall();
   const startedAt = Date.now();
-  const baseUrl = options.baseUrl ?? JUSTTCG_BASE_URL;
-  const apiVersion = options.apiVersion ?? "v1";
   try {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetch(`${JUSTTCG_BASE_URL}${path}`, {
       headers: { "x-api-key": key, accept: "application/json" },
       signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
@@ -314,7 +306,7 @@ async function providerFetch(
       status: response.ok ? "ok" : "failed",
       statusCode: response.status,
       durationMs: Date.now() - startedAt,
-      metadata: { operation: operationForResource(resource, apiVersion), outboundCall: true },
+      metadata: { operation: operationForResource(resource), outboundCall: true },
     });
     if (!response.ok) throw new CatalogueHttpError(response.status, body);
     return body;
@@ -325,7 +317,7 @@ async function providerFetch(
       action: "integration.justtcg.request",
       status: "failed",
       durationMs: Date.now() - startedAt,
-      metadata: { operation: operationForResource(resource, apiVersion), outboundCall: true },
+      metadata: { operation: operationForResource(resource), outboundCall: true },
     });
     throw error;
   }
@@ -451,54 +443,6 @@ export async function justTcg(path: string): Promise<CatalogueRead> {
       cacheKeyFor(canonicalPath),
       resource,
       () => providerFetch(canonicalPath, resource),
-    );
-    return {
-      status: 200,
-      body: result.data,
-      cached: result.cacheStatus !== "miss",
-      cacheStatus: result.cacheStatus,
-      outboundCall: result.outboundCall,
-      revalidationScheduled: result.revalidationScheduled,
-    };
-  } catch (error) {
-    if (error instanceof CatalogueHttpError) {
-      return { status: error.status, body: error.body, cached: false, cacheStatus: "miss", outboundCall: true };
-    }
-    if (error instanceof CatalogueBudgetError) {
-      return {
-        status: 429,
-        body: { error: error.message, code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED" },
-        cached: false,
-        cacheStatus: "miss",
-        outboundCall: false,
-      };
-    }
-    return {
-      status: 503,
-      body: { error: error instanceof Error ? error.message : "Catalog provider unavailable" },
-      cached: false,
-      cacheStatus: "miss",
-      outboundCall: false,
-    };
-  }
-}
-
-/**
- * Server-only access to JustTCG v2 card variants. v2 is beta, so callers must
- * opt in deliberately and keep v1 catalogue reads unchanged. Its cache key is
- * versioned to prevent a v2 response from ever being mistaken for the v1 DTO.
- */
-export async function justTcgV2(path: string): Promise<CatalogueRead> {
-  const canonicalPath = canonicalizeJustTcgPath(path);
-  const resource = resourceForPath(canonicalPath);
-  try {
-    const result = await withCatalogueCache(
-      `justtcg:v2:${canonicalPath}`,
-      resource,
-      () => providerFetch(canonicalPath, resource, {
-        baseUrl: JUSTTCG_V2_BASE_URL,
-        apiVersion: "v2",
-      }),
     );
     return {
       status: 200,

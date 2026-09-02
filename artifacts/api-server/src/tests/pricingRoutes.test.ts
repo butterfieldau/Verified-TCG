@@ -20,12 +20,17 @@ import supertest from "supertest";
 import { db } from "@workspace/db";
 import {
   usersTable,
+  collectionItemsTable,
   soldArchiveItemsTable,
   cardProviderMappingsTable,
   currentQuotesTable,
   cardPriceSnapshotsTable,
+  providerPriceHistoryTable,
+  priceChartingGuideImportsTable,
+  priceChartingGuideRowsTable,
+  priceChartingGuideDownloadLeaseTable,
 } from "@workspace/db";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import app from "../app.js";
 import { createTestUser } from "./helpers.js";
 import { pool } from "@workspace/db";
@@ -271,6 +276,57 @@ describe("GET /pricing/cards/:id/history", () => {
     const res = await request.get("/api/pricing/cards/x/history");
     assert.equal(res.status, 401);
   });
+
+  test("merges retained daily history with a newer timestamped capture", async () => {
+    const cardId = `${TAG}merged-history`;
+    const now = new Date();
+    const earlier = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1_000);
+    const earlierDate = earlier.toISOString().slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
+
+    await db.insert(providerPriceHistoryTable).values({
+      cardId,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 10_000,
+      currency: "USD",
+      snapshotDate: earlierDate,
+      recordedAt: earlier,
+    });
+    await db.insert(cardPriceSnapshotsTable).values({
+      cardId,
+      providerKey: "pricecharting",
+      providerProductId: `${TAG}history-product`,
+      gradeKey: "raw",
+      priceCents: 12_000,
+      currency: "USD",
+      capturedAt: now,
+      snapshotBucket: `${today}:PM`,
+      captureStatus: "success",
+    });
+
+    try {
+      const res = await request
+        .get(`/api/pricing/cards/${encodeURIComponent(cardId)}/history?grade=raw&period=30d&displayCurrency=USD`)
+        .set("Authorization", `Bearer ${token}`);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.historyAvailable, true);
+      assert.equal(res.body.points.length, 2);
+      assert.equal(res.body.points[0]?.priceCents, 10_000);
+      assert.equal(res.body.points[1]?.priceCents, 12_000);
+      assert.equal(res.body.movement?.percent, 20);
+      assert.equal(res.body.source, "pricecharting_retained_history_and_snapshots");
+    } finally {
+      await db.delete(cardPriceSnapshotsTable).where(and(
+        eq(cardPriceSnapshotsTable.cardId, cardId),
+        eq(cardPriceSnapshotsTable.providerKey, "pricecharting"),
+      ));
+      await db.delete(providerPriceHistoryTable).where(and(
+        eq(providerPriceHistoryTable.cardId, cardId),
+        eq(providerPriceHistoryTable.providerKey, "pricecharting"),
+      ));
+    }
+  });
 });
 
 // ── POST /pricing/scheduler/run — admin secret ────────────────────────────────
@@ -298,6 +354,61 @@ describe("POST /pricing/scheduler/run", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(typeof res.body.queued, "number");
     delete process.env.ADMIN_SECRET;
+  });
+});
+
+describe("POST /pricing/guides/import", () => {
+  test("rejects requests without the admin secret", async () => {
+    const res = await request.post("/api/pricing/guides/import").send({ category: "pokemon" });
+    assert.equal(res.status, 403);
+  });
+
+  test("validates the strict official category enum before provider work", async () => {
+    process.env.ADMIN_SECRET = "guide-import-secret";
+    try {
+      const res = await request
+        .post("/api/pricing/guides/import")
+        .set("x-admin-secret", "guide-import-secret")
+        .send({ category: "pokemon-cards" });
+      assert.equal(res.status, 400);
+    } finally {
+      delete process.env.ADMIN_SECRET;
+    }
+  });
+
+  test("uses one global CSV lease across concurrent categories", async () => {
+    const priorToken = process.env.PRICECHARTING_API_TOKEN;
+    const priorAdmin = process.env.ADMIN_SECRET;
+    const priorFetch = globalThis.fetch;
+    process.env.PRICECHARTING_API_TOKEN = "guide-test-token";
+    process.env.ADMIN_SECRET = "guide-import-secret";
+    await db.delete(priceChartingGuideRowsTable);
+    await db.delete(priceChartingGuideImportsTable);
+    await db.delete(priceChartingGuideDownloadLeaseTable);
+    let downloads = 0;
+    globalThis.fetch = (async () => {
+      downloads += 1;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return new Response("id,product-name,console-name,loose-price\n1,Card,Set,1.00\n");
+    }) as typeof fetch;
+    try {
+      const responses = await Promise.all([
+        request.post("/api/pricing/guides/import").set("x-admin-secret", "guide-import-secret").send({ category: "pokemon" }),
+        request.post("/api/pricing/guides/import").set("x-admin-secret", "guide-import-secret").send({ category: "magic" }),
+      ]);
+      assert.deepEqual(responses.map(response => response.status).sort(), [200, 429]);
+      assert.equal(downloads, 1);
+      assert.ok(responses.some(response => response.body.errorCode === "pricecharting_throttled"));
+    } finally {
+      globalThis.fetch = priorFetch;
+      if (priorToken == null) delete process.env.PRICECHARTING_API_TOKEN;
+      else process.env.PRICECHARTING_API_TOKEN = priorToken;
+      if (priorAdmin == null) delete process.env.ADMIN_SECRET;
+      else process.env.ADMIN_SECRET = priorAdmin;
+      await db.delete(priceChartingGuideRowsTable);
+      await db.delete(priceChartingGuideImportsTable);
+      await db.delete(priceChartingGuideDownloadLeaseTable);
+    }
   });
 });
 
@@ -617,6 +728,8 @@ describe("Archive endpoints", () => {
 
 describe("GET /collection/summary — enhanced fields", () => {
   let token: string;
+  const pricedCardId = `${TAG}card-summ-priced`;
+  const unpricedCardId = `${TAG}card-summ-unpriced`;
 
   before(async () => {
     const u = await createTestUser({ email: `${TAG}summ2@example.com` });
@@ -625,10 +738,24 @@ describe("GET /collection/summary — enhanced fields", () => {
     await request
       .post("/api/collection")
       .set("Authorization", `Bearer ${token}`)
-      .send(cardPayload("card-summ-001"));
+      .send(cardPayload(pricedCardId));
+    await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send(cardPayload(unpricedCardId));
+    await db.insert(currentQuotesTable).values({
+      cardId: pricedCardId,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 5_000,
+      currency: "AUD",
+    });
   });
 
-  after(cleanupTaggedUsers);
+  after(async () => {
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, pricedCardId));
+    await cleanupTaggedUsers();
+  });
 
   test("returns all required legacy compatibility fields", async () => {
     const res = await request
@@ -668,6 +795,19 @@ describe("GET /collection/summary — enhanced fields", () => {
       res.body.totalValueCents === null || typeof res.body.totalValueCents === "number",
       "totalValueCents must be null or a number — never fabricated",
     );
+  });
+
+  test("reports a clearly labelled gain subtotal without treating an unpriced holding as zero", async () => {
+    const res = await request
+      .get("/api/collection/summary?displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.coverage.pricedHoldings, 1);
+    assert.equal(res.body.coverage.totalHoldings, 2);
+    assert.equal(res.body.unrealizedGain, null, "the complete gain remains unavailable");
+    assert.equal(res.body.partialUnrealizedGain, 25);
+    assert.equal(res.body.partialUnrealizedGainPercent, 100);
+    assert.deepEqual(res.body.gainCoverage, { pricedHoldings: 1, totalHoldings: 2 });
   });
 
   test("returns completeness string", async () => {
@@ -736,5 +876,565 @@ describe("GET /collection/performance", () => {
       assert.equal(res.status, 200, `Failed for range=${range}: ${JSON.stringify(res.body)}`);
       assert.equal(res.body.range, range);
     }
+  });
+});
+
+describe("GET /collection/value-history", () => {
+  let token: string;
+  let collectionAId: string;
+  const cardA = `${TAG}history-a`;
+  const cardB = `${TAG}history-b`;
+  const dateDaysAgo = (days: number) =>
+    new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+
+  before(async () => {
+    const user = await createTestUser({ email: `${TAG}value-history@example.com` });
+    token = user.accessToken;
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(50)}T00:00:00Z`) })
+      .where(eq(usersTable.id, user.user.id));
+    const createdA = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...cardPayload(cardA), acquiredAt: dateDaysAgo(40), quantity: 2 });
+    collectionAId = createdA.body.id;
+    const createdB = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...cardPayload(cardB), acquiredAt: dateDaysAgo(5), quantity: 1 });
+    await db
+      .update(collectionItemsTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(40)}T00:00:00Z`) })
+      .where(eq(collectionItemsTable.id, collectionAId));
+    await db
+      .update(collectionItemsTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(5)}T00:00:00Z`) })
+      .where(eq(collectionItemsTable.id, createdB.body.id));
+
+    await db.insert(providerPriceHistoryTable).values([
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_000,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_200,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 400,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 500,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+    ]);
+    await db.insert(currentQuotesTable).values([
+      {
+        cardId: cardA,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_300,
+        currency: "AUD",
+      },
+      {
+        cardId: cardB,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 700,
+        currency: "AUD",
+      },
+    ]);
+    const sold = await request
+      .post(`/api/collection/${collectionAId}/sell`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        quantity: 1,
+        salePrice: 13,
+        currency: "AUD",
+        soldAt: dateDaysAgo(1),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+  });
+
+  after(async () => {
+    await db.delete(currentQuotesTable).where(inArray(currentQuotesTable.cardId, [cardA, cardB]));
+    await db.delete(providerPriceHistoryTable).where(inArray(providerPriceHistoryTable.cardId, [cardA, cardB]));
+    await cleanupTaggedUsers();
+  });
+
+  test("shows current profile market value from each card's added date", async () => {
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.historyAvailable, true);
+    const points = new Map(
+      res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
+    );
+    assert.equal(res.body.points.length, 51);
+    assert.deepEqual(res.body.points[0], {
+      date: dateDaysAgo(50),
+      valueCents: 0,
+      value: 0,
+      currency: "AUD",
+      pricedHoldings: 0,
+      totalHoldings: 0,
+      available: true,
+      complete: true,
+      dailyChangeCents: null,
+      dailyChange: null,
+      dailyChangePercent: null,
+      baseline: true,
+    });
+    assert.equal(points.get(dateDaysAgo(40)), null);
+    assert.equal(points.get(dateDaysAgo(10)), 10);
+    assert.equal(points.get(dateDaysAgo(5)), 14);
+    assert.equal(points.get(dateDaysAgo(2)), 17);
+    assert.equal(points.get(dateDaysAgo(1)), 17);
+    assert.equal(points.get(dateDaysAgo(0)), 20);
+  });
+
+  test("populates summary chartData from the same real series", async () => {
+    const res = await request
+      .get("/api/collection/summary?displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.chartData.ALL.length, 51);
+    assert.equal(res.body.chartData.ALL.at(-1)?.value, 20);
+    assert.equal(
+      res.body.chartData.ALL.find((point: { date: string }) => point.date === dateDaysAgo(5))?.value,
+      14,
+    );
+  });
+
+  test("does not present the account-creation baseline as a zero daily movement", async () => {
+    const accountDate = dateDaysAgo(50);
+    const res = await request
+      .get(`/api/collection/value-history/movement?date=${accountDate}&displayCurrency=AUD`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.date, accountDate);
+    assert.equal(res.body.available, true);
+    assert.equal(res.body.previousAvailable, false);
+    assert.equal(res.body.breakdownAvailable, false);
+    assert.equal(res.body.totalChange, null);
+    assert.deepEqual(res.body.contributions, []);
+    assert.match(res.body.unavailableReason, /baseline.*no preceding ownership day/i);
+  });
+
+  test("keeps a current-day breakdown unavailable when preceding market observations are missing", async () => {
+    const res = await request
+      .get(`/api/collection/value-history/movement?date=${dateDaysAgo(0)}&displayCurrency=AUD`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.available, true);
+    assert.equal(res.body.previousAvailable, false);
+    assert.equal(res.body.breakdownAvailable, false);
+    assert.equal(res.body.totalChange, null);
+    assert.ok(
+      res.body.contributions.some(
+        (contribution: { kind: string; available: boolean; amount: number | null }) =>
+          contribution.kind === "market_price"
+          && contribution.available === false
+          && contribution.amount === null,
+      ),
+    );
+  });
+
+  test("starts each current card on its profile-added date and carries only prior retained quotes", async () => {
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${token}`);
+    const points = new Map(
+      res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
+    );
+    assert.equal(points.get(dateDaysAgo(40)), null);
+    assert.equal(points.get(dateDaysAgo(10)), 10);
+    assert.equal(points.get(dateDaysAgo(5)), 14);
+    assert.equal(points.get(dateDaysAgo(2)), 17);
+    assert.equal(points.get(dateDaysAgo(1)), 17);
+    assert.equal(points.get(dateDaysAgo(0)), 20);
+  });
+
+  test("uses the profile-added date rather than an imported acquisition date", async () => {
+    const importedCard = `${TAG}history-imported-before-account`;
+    const importedUser = await createTestUser({ email: `${TAG}history-imported@example.com` });
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(5)}T00:00:00Z`) })
+      .where(eq(usersTable.id, importedUser.user.id));
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${importedUser.accessToken}`)
+      .send({
+        ...cardPayload(importedCard),
+        acquiredAt: dateDaysAgo(10),
+        quantity: 1,
+      });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    await db.insert(providerPriceHistoryTable).values({
+      cardId: importedCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 2_500,
+      currency: "AUD",
+      snapshotDate: dateDaysAgo(5),
+    });
+    await db.insert(currentQuotesTable).values({
+      cardId: importedCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 2_700,
+      currency: "AUD",
+    });
+
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${importedUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.points.length, 6);
+    assert.equal(res.body.points[0]?.baseline, true);
+    assert.equal(res.body.points[0]?.value, 0);
+    assert.equal(res.body.points.at(-1)?.value, 27);
+
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, importedCard));
+    await db
+      .delete(providerPriceHistoryTable)
+      .where(eq(providerPriceHistoryTable.cardId, importedCard));
+  });
+
+  test("keeps account creation and the current valuation as separate same-day endpoints", async () => {
+    const sameDayCard = `${TAG}history-same-day`;
+    const sameDayUser = await createTestUser({ email: `${TAG}history-same-day@example.com` });
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`)
+      .send({ ...cardPayload(sameDayCard), acquiredAt: dateDaysAgo(0), quantity: 1 });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    await db.insert(currentQuotesTable).values({
+      cardId: sameDayCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 4_200,
+      currency: "AUD",
+    });
+
+    const res = await request
+      .get("/api/collection/value-history?range=1D&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.historyAvailable, true);
+    assert.equal(res.body.points.length, 2);
+    assert.equal(res.body.points[0]?.date, dateDaysAgo(0));
+    assert.equal(res.body.points[0]?.value, 0);
+    assert.equal(res.body.points[0]?.baseline, true);
+    assert.equal(res.body.points[1]?.date, dateDaysAgo(0));
+    assert.equal(res.body.points[1]?.value, 42);
+    const available3m = res.body.chartData["3M"].filter(
+      (point: { available: boolean }) => point.available,
+    );
+    const available1y = res.body.chartData["1Y"].filter(
+      (point: { available: boolean }) => point.available,
+    );
+    assert.equal(available3m[0]?.baseline, true);
+    assert.equal(available3m.at(-1)?.value, 42);
+    assert.equal(available1y[0]?.baseline, true);
+    assert.equal(available1y.at(-1)?.value, 42);
+
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, sameDayCard));
+    const unavailable = await request
+      .get("/api/collection/value-history?range=1D&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`);
+    assert.equal(unavailable.status, 200, JSON.stringify(unavailable.body));
+    assert.equal(unavailable.body.historyAvailable, false);
+    assert.equal(unavailable.body.points[0]?.baseline, true);
+    assert.equal(unavailable.body.points.at(-1)?.available, false);
+  });
+
+  test("removes sold cards from the current profile series and starts restored cards when re-added", async () => {
+    const liquidatedCard = `${TAG}history-liquidated`;
+    const user = await createTestUser({ email: `${TAG}liquidated@example.com` });
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(30)}T00:00:00Z`) })
+      .where(eq(usersTable.id, user.user.id));
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        ...cardPayload(liquidatedCard),
+        acquiredAt: dateDaysAgo(20),
+        quantity: 1,
+      });
+    await db.insert(providerPriceHistoryTable).values([
+      {
+        cardId: liquidatedCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 2_500,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(10),
+      },
+      {
+        cardId: liquidatedCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 2_600,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(2),
+      },
+    ]);
+    const sold = await request
+      .post(`/api/collection/${created.body.id}/sell`)
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 25,
+        currency: "AUD",
+        soldAt: dateDaysAgo(3),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+
+    const res = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const liquidatedPoints = new Map(
+      res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
+    );
+    assert.equal(liquidatedPoints.get(dateDaysAgo(30)), 0);
+    assert.equal(liquidatedPoints.get(dateDaysAgo(0)), 0);
+
+    await db.insert(currentQuotesTable).values({
+      cardId: liquidatedCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 2_700,
+      currency: "AUD",
+    });
+    const restored = await request
+      .post(`/api/collection/archive/${sold.body.id}/restore`)
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(restored.status, 201, JSON.stringify(restored.body));
+
+    const restoredHistory = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    const restoredPoints = new Map(
+      restoredHistory.body.points.map(
+        (point: { date: string; value: number }) => [point.date, point.value],
+      ),
+    );
+    assert.equal(restoredHistory.body.points.length, 31);
+    assert.equal(restoredHistory.body.points[0]?.baseline, true);
+    assert.equal(restoredHistory.body.points[0]?.value, 0);
+    assert.equal(restoredPoints.get(dateDaysAgo(0)), 27);
+
+    const resold = await request
+      .post(`/api/collection/${restored.body.id}/sell`)
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 27,
+        currency: "AUD",
+        soldAt: dateDaysAgo(0),
+      });
+    assert.equal(resold.status, 201, JSON.stringify(resold.body));
+    const resoldHistory = await request
+      .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${user.accessToken}`);
+    assert.equal(resoldHistory.body.points.at(-1)?.value, 0);
+
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, liquidatedCard));
+    await db
+      .delete(providerPriceHistoryTable)
+      .where(eq(providerPriceHistoryTable.cardId, liquidatedCard));
+  });
+
+  test("separates exact retained market, acquisition, and sale contributions", async () => {
+    const marketCard = `${TAG}movement-market`;
+    const acquiredCard = `${TAG}movement-acquired`;
+    const soldCard = `${TAG}movement-sold`;
+    const movementUser = await createTestUser({ email: `${TAG}movement@example.com` });
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(12)}T00:00:00Z`) })
+      .where(eq(usersTable.id, movementUser.user.id));
+
+    const marketItem = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${movementUser.accessToken}`)
+      .send({ ...cardPayload(marketCard), acquiredAt: dateDaysAgo(10), quantity: 1 });
+    const soldItem = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${movementUser.accessToken}`)
+      .send({ ...cardPayload(soldCard), acquiredAt: dateDaysAgo(10), quantity: 1 });
+    const acquiredItem = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${movementUser.accessToken}`)
+      .send({ ...cardPayload(acquiredCard), acquiredAt: dateDaysAgo(3), quantity: 1 });
+    assert.equal(marketItem.status, 201, JSON.stringify(marketItem.body));
+    assert.equal(soldItem.status, 201, JSON.stringify(soldItem.body));
+    assert.equal(acquiredItem.status, 201, JSON.stringify(acquiredItem.body));
+    await db.insert(providerPriceHistoryTable).values([
+      {
+        cardId: marketCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_000,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(4),
+      },
+      {
+        cardId: marketCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 1_200,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(3),
+      },
+      {
+        cardId: acquiredCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 500,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(3),
+      },
+      {
+        cardId: soldCard,
+        providerKey: "pricecharting",
+        gradeKey: "raw",
+        priceCents: 700,
+        currency: "AUD",
+        snapshotDate: dateDaysAgo(4),
+      },
+    ]);
+    const sold = await request
+      .post(`/api/collection/${soldItem.body.id}/sell`)
+      .set("Authorization", `Bearer ${movementUser.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 7,
+        currency: "AUD",
+        soldAt: dateDaysAgo(3),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+
+    const res = await request
+      .get(`/api/collection/value-history/movement?date=${dateDaysAgo(3)}&displayCurrency=AUD`)
+      .set("Authorization", `Bearer ${movementUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.available, true);
+    assert.equal(res.body.previousAvailable, true);
+    assert.equal(res.body.totalChange, 0);
+    const byCard = new Map<string, { cardId: string; kind: string; amount: number | null }>(
+      res.body.contributions.map(
+        (contribution: { cardId: string; kind: string; amount: number | null }) =>
+          [contribution.cardId, contribution],
+      ),
+    );
+    assert.equal(byCard.get(marketCard)?.kind, "market_price");
+    assert.equal(byCard.get(marketCard)?.amount, 2);
+    assert.equal(byCard.get(acquiredCard)?.kind, "acquisition");
+    assert.equal(byCard.get(acquiredCard)?.amount, 5);
+    assert.equal(byCard.get(soldCard)?.kind, "sale");
+    assert.equal(byCard.get(soldCard)?.amount, -7);
+
+    await db
+      .delete(providerPriceHistoryTable)
+      .where(inArray(providerPriceHistoryTable.cardId, [marketCard, acquiredCard, soldCard]));
+  });
+
+  test("keeps incomplete holding contributions explicitly unavailable", async () => {
+    const unavailableCard = `${TAG}movement-unavailable`;
+    const unavailableUser = await createTestUser({ email: `${TAG}movement-unavailable@example.com` });
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(5)}T00:00:00Z`) })
+      .where(eq(usersTable.id, unavailableUser.user.id));
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${unavailableUser.accessToken}`)
+      .send({ ...cardPayload(unavailableCard), acquiredAt: dateDaysAgo(1), quantity: 1 });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+
+    const res = await request
+      .get(`/api/collection/value-history/movement?date=${dateDaysAgo(1)}&displayCurrency=AUD`)
+      .set("Authorization", `Bearer ${unavailableUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.available, false);
+    assert.equal(res.body.breakdownAvailable, false);
+    assert.equal(res.body.totalChange, null);
+    assert.equal(res.body.contributions.length, 1);
+    assert.equal(res.body.contributions[0]?.kind, "acquisition");
+    assert.equal(res.body.contributions[0]?.available, false);
+    assert.equal(res.body.contributions[0]?.amount, null);
+    assert.match(res.body.contributions[0]?.unavailableReason, /retained provider observation/i);
+  });
+
+  test("keeps a sale contribution unavailable without the preceding retained observation", async () => {
+    const soldCard = `${TAG}movement-sale-unavailable`;
+    const soldUser = await createTestUser({ email: `${TAG}movement-sale-unavailable@example.com` });
+    await db
+      .update(usersTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(6)}T00:00:00Z`) })
+      .where(eq(usersTable.id, soldUser.user.id));
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${soldUser.accessToken}`)
+      .send({ ...cardPayload(soldCard), acquiredAt: dateDaysAgo(5), quantity: 1 });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const sold = await request
+      .post(`/api/collection/${created.body.id}/sell`)
+      .set("Authorization", `Bearer ${soldUser.accessToken}`)
+      .send({
+        quantity: 1,
+        salePrice: 10,
+        currency: "AUD",
+        soldAt: dateDaysAgo(2),
+      });
+    assert.equal(sold.status, 201, JSON.stringify(sold.body));
+
+    const res = await request
+      .get(`/api/collection/value-history/movement?date=${dateDaysAgo(2)}&displayCurrency=AUD`)
+      .set("Authorization", `Bearer ${soldUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.available, true);
+    assert.equal(res.body.previousAvailable, false);
+    assert.equal(res.body.breakdownAvailable, false);
+    assert.equal(res.body.totalChange, null);
+    assert.equal(res.body.contributions.length, 1);
+    assert.equal(res.body.contributions[0]?.kind, "sale");
+    assert.equal(res.body.contributions[0]?.available, false);
+    assert.equal(res.body.contributions[0]?.amount, null);
+    assert.match(res.body.contributions[0]?.unavailableReason, /retained provider observation/i);
+  });
+
+  test("requires authentication", async () => {
+    const res = await request.get("/api/collection/value-history");
+    assert.equal(res.status, 401);
+    const movement = await request.get(
+      `/api/collection/value-history/movement?date=${dateDaysAgo(1)}`,
+    );
+    assert.equal(movement.status, 401);
   });
 });

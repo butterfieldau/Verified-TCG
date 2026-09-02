@@ -81,6 +81,7 @@ test('catalogCardToAppCard preserves the API snapshot currency', () => {
     name: 'Real Card',
     game: 'Pokemon',
     set_name: 'Real Set',
+    pricing_source: 'PriceCharting',
     variants: [{
       id: 'raw',
       condition: 'Near Mint',

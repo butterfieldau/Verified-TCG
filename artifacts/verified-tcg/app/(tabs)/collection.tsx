@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -15,9 +16,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
-import { CardThumbnail } from '@/components/ui/CardThumbnail';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CollectionListSkeleton } from '@/components/ui/SkeletonLoader';
 import SellModal from '@/components/ui/SellModal';
@@ -26,25 +27,31 @@ import { useNetwork } from '@/context/NetworkContext';
 import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
-import type { TCGId, CollectionItem } from '@/types';
+import type { CollectionItem, WatchlistItem } from '@/types';
 import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
+import { tradingCardHeight, tradingCardRadius } from '@/services/collectionLayout';
+import { createRequestDeduper } from '@/services/requestDeduper';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
+const SUMMARY_STALE_MS = 60_000;
 
-type CollectionTab = 'cards' | 'graded';
+type CollectionFilter = 'all' | 'pokemon' | 'graded' | 'raw' | 'forSale';
+type CollectionSort = 'value' | 'name' | 'recent';
 
-const COLLECTION_TABS: { label: string; value: CollectionTab }[] = [
-  { label: 'Cards', value: 'cards' },
-  { label: 'Graded', value: 'graded' },
-];
-
-const TCG_CHIPS: { label: string; value: TCGId | 'all' }[] = [
+const COLLECTION_FILTERS: { label: string; value: CollectionFilter }[] = [
   { label: 'All', value: 'all' },
   { label: 'Pokémon', value: 'pokemon' },
-  { label: 'MTG', value: 'magic' },
-  { label: 'One Piece', value: 'onepiece' },
+  { label: 'Graded', value: 'graded' },
+  { label: 'Raw', value: 'raw' },
+  { label: 'For Sale', value: 'forSale' },
 ];
+
+const SORT_LABELS: Record<CollectionSort, string> = {
+  value: 'Value',
+  name: 'Name',
+  recent: 'Recent',
+};
 
 
 export default function CollectionScreen() {
@@ -52,58 +59,101 @@ export default function CollectionScreen() {
   const { width: screenWidth } = useWindowDimensions();
   // Use AppContext's collection as the single source of truth.
   // AppContext caches the collection in AsyncStorage so it's available offline.
-  const { collection, collectionLoading, collectionError, refreshCollection } = useApp();
+  const {
+    user,
+    collection,
+    collectionLoading,
+    collectionError,
+    refreshCollection,
+    watchlist,
+    addToWatchlist,
+    removeFromWatchlist,
+  } = useApp();
   const { isConnected } = useNetwork();
   const { currency } = useSettings();
 
-  const [collectionTab, setCollectionTab] = useState<CollectionTab>('cards');
-  const [activeTCG, setActiveTCG] = useState<TCGId | 'all'>('all');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
+  const [activeFilter, setActiveFilter] = useState<CollectionFilter>('all');
+  const [sortBy, setSortBy] = useState<CollectionSort>('value');
+  const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   // Sell modal state
   const [sellItem, setSellItem] = useState<CollectionItem | null>(null);
 
   // Server summary for authoritative totals
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   // Client-side windowing: show first `displayCount` of the fully-filtered list.
   // This is correct for both offline (cache) and online (live) data, and
   // filters work on the complete collection — not just the current page.
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const summaryLoadedAt = useRef(0);
+  const summaryRequest = useRef<Promise<void> | null>(null);
+  const collectionRefreshDeduper = useRef(createRequestDeduper()).current;
+  const summaryCurrency = useRef(currency);
+  const hasFocusedCollection = useRef(false);
 
-  const loadSummary = useCallback(async () => {
-    try {
-      const summary = await fetchCollectionSummary(currency);
-      setServerSummary(summary);
-      setSummaryError(null);
-    } catch (error) {
+  const loadSummary = useCallback(async (force = false) => {
+    if (summaryCurrency.current !== currency) {
+      summaryCurrency.current = currency;
+      summaryLoadedAt.current = 0;
+      summaryRequest.current = null;
       setServerSummary(null);
-      setSummaryError(
-        error instanceof Error
-          ? error.message
-          : 'Portfolio totals are temporarily unavailable.',
-      );
     }
+    if (!force && Date.now() - summaryLoadedAt.current < SUMMARY_STALE_MS) return;
+    if (summaryRequest.current) return summaryRequest.current;
+    summaryRequest.current = (async () => {
+      try {
+        const summary = await fetchCollectionSummary(currency);
+        if (summaryCurrency.current !== currency) return;
+        setServerSummary(summary);
+        summaryLoadedAt.current = Date.now();
+      } catch {
+        // Keep the last successful value stable. A missing first response is
+        // represented by the compact unavailable worth state.
+        if (summaryCurrency.current !== currency) return;
+      } finally {
+        summaryRequest.current = null;
+      }
+    })();
+    return summaryRequest.current;
   }, [currency]);
-
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
 
-  // Apply tab and TCG filters on the full in-memory collection
+  const holdingValue = useCallback((item: CollectionItem): number | null => {
+    return item.valuation ? item.valuation.price * item.quantity : null;
+  }, []);
+
+  // Apply the approved Vault Index filters on the complete cached collection.
   const filteredItems = useMemo<CollectionItem[]>(() => {
-    const isGraded = collectionTab === 'graded';
-    return collection.filter(i => {
-      const tcgMatch = activeTCG === 'all' || i.card.tcg === activeTCG;
-      const gradedMatch = !isGraded || !!i.grading;
-      return tcgMatch && gradedMatch;
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const matching = collection.filter(item => {
+      const matchesQuery =
+        normalizedQuery.length === 0 ||
+        item.card.name.toLocaleLowerCase().includes(normalizedQuery) ||
+        item.card.setName.toLocaleLowerCase().includes(normalizedQuery) ||
+        item.card.number.toLocaleLowerCase().includes(normalizedQuery);
+      const matchesFilter =
+        activeFilter === 'all' ||
+        (activeFilter === 'pokemon' && item.card.tcg === 'pokemon') ||
+        (activeFilter === 'graded' && !!item.grading) ||
+        (activeFilter === 'raw' && !item.grading) ||
+        (activeFilter === 'forSale' && !!item.isForSale);
+      return matchesQuery && matchesFilter;
     });
-  }, [collection, collectionTab, activeTCG]);
+
+    return matching.sort((a, b) => {
+      if (sortBy === 'name') return a.card.name.localeCompare(b.card.name);
+      if (sortBy === 'recent') {
+        return new Date(b.acquiredAt).getTime() - new Date(a.acquiredAt).getTime();
+      }
+      return (holdingValue(b) ?? -1) - (holdingValue(a) ?? -1);
+    });
+  }, [collection, activeFilter, query, sortBy, holdingValue]);
 
   // Windowed slice shown in the list; load-more just extends this window
   const visibleItems = useMemo(
@@ -116,28 +166,62 @@ export default function CollectionScreen() {
   // True only on the very first load when we have no data at all yet
   const initialLoading = collectionLoading && collection.length === 0;
 
-  // Reset window when tab or TCG filter changes
-  const onTabOrFilterChange = useCallback(() => {
+  const resetWindow = useCallback(() => {
     setDisplayCount(PAGE_SIZE);
   }, []);
 
-  // Trigger a server refresh on focus (keeps portfolio in sync, populates cache)
+  // AppContext performs the initial authenticated collection load. Subsequent
+  // focuses represent a real leave/reopen and request one fresh library load.
   useFocusEffect(
     useCallback(() => {
-      void Promise.all([refreshCollection(), loadSummary()]);
-    }, [refreshCollection, loadSummary]),
+      if (hasFocusedCollection.current) {
+        void refreshCollection();
+      } else {
+        hasFocusedCollection.current = true;
+      }
+      void loadSummary(true);
+    }, [loadSummary, refreshCollection]),
   );
 
   const handleRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
-    await Promise.all([refreshCollection(), loadSummary()]);
-    setIsRefreshing(false);
-  }, [refreshCollection, loadSummary]);
+    return collectionRefreshDeduper.run(async () => {
+      setIsRefreshing(true);
+      setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
+      try {
+        await Promise.all([refreshCollection(), loadSummary(true)]);
+      } finally {
+        setIsRefreshing(false);
+      }
+    });
+  }, [collectionRefreshDeduper, refreshCollection, loadSummary]);
 
-  const holdingValue = useCallback((item: CollectionItem): number | null => {
-    return item.valuation ? item.valuation.price * item.quantity : null;
-  }, []);
+  const avatarInitials = useMemo(() => {
+    const source = user?.displayName?.trim() || user?.username?.trim() || 'Collector';
+    return source
+      .split(/\s+/)
+      .slice(0, 2)
+      .map(part => part[0]?.toUpperCase() ?? '')
+      .join('');
+  }, [user]);
+
+  const toggleSaved = useCallback((item: CollectionItem) => {
+    const existing = watchlist.find(entry => entry.cardId === item.card.id);
+    if (existing) {
+      removeFromWatchlist(existing.id);
+      return;
+    }
+    const entry: WatchlistItem = {
+      id: `wl-${Date.now()}-${item.card.id}`,
+      cardId: item.card.id,
+      card: item.card,
+      desiredGrade: item.grading
+        ? `${item.grading.company} ${item.grading.grade}`
+        : 'Raw',
+      addedAt: new Date().toISOString().split('T')[0]!,
+      priceAlertEnabled: false,
+    };
+    addToWatchlist(entry);
+  }, [addToWatchlist, removeFromWatchlist, watchlist]);
 
   const handleLoadMore = useCallback(() => {
     if (!hasMore || collectionLoading) return;
@@ -147,80 +231,70 @@ export default function CollectionScreen() {
   // ── Header (shared across all tabs) ──────────────────────────────────────
 
   function renderHeader() {
+    const portfolioCurrency = serverSummary?.currency ?? currency;
+
     return (
-      <View style={{ paddingHorizontal: 20 }}>
+      <View>
         {/* Offline indicator */}
         {!isConnected && collection.length > 0 && (
-          <View style={[styles.offlineNote, { backgroundColor: `${C.warning}18` }]}>
+          <View style={styles.offlineNote}>
             <Feather name="cloud-off" size={12} color={C.warning} />
-            <Text style={[styles.offlineNoteText, { color: C.warning }]}>
+            <Text style={styles.offlineNoteText}>
               Offline — showing cached collection
             </Text>
           </View>
         )}
 
         {collectionError && (
-          <View style={styles.errorBox} accessibilityRole="alert">
+          <View style={[styles.errorBox, styles.headerAlert]} accessibilityRole="alert">
             <Feather name="alert-circle" size={20} color={C.negative} />
             <View style={{ flex: 1, gap: 6 }}>
-              <Text style={styles.errorText}>{collectionError}</Text>
-              <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
-                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
-              </Pressable>
+              <Text style={styles.errorText}>{collectionError.message}</Text>
+              {collectionError.endpoint && (
+                <Text style={styles.errorDetail}>Failed while refreshing {collectionError.endpoint}</Text>
+              )}
+              {collectionError.recoverable && (
+                <Pressable onPress={() => { void refreshCollection(); }} accessibilityRole="button">
+                  <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         )}
 
-        {summaryError && !collectionError && (
-          <View style={styles.errorBox} accessibilityRole="alert">
-            <Feather name="bar-chart-2" size={20} color={C.negative} />
-            <View style={{ flex: 1, gap: 6 }}>
-              <Text style={styles.errorText}>Portfolio totals are unavailable. Your saved cards are still shown below.</Text>
-              <Pressable onPress={() => { void loadSummary(); }} accessibilityRole="button">
-                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry totals</Text>
-              </Pressable>
+        <Animated.View entering={FadeIn.duration(380)} style={styles.header}>
+          <View style={styles.identity}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{avatarInitials}</Text>
             </View>
-          </View>
-        )}
-
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>Collection</Text>
-            <Text style={styles.sub}>
-              {filteredItems.length} {filteredItems.length === 1 ? 'card' : 'cards'}
-               {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined
-                 ? ` · ${currency} ${serverSummary.totalValue.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`
-                 : ''}
-            </Text>
+            <View>
+              <Text style={styles.kicker}>
+                {(user?.username || 'COLLECTOR').toUpperCase()} / VAULT
+              </Text>
+              <Text style={styles.title}>COLLECTION</Text>
+            </View>
           </View>
           <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => {
+                setSearchOpen(open => !open);
+                if (searchOpen) setQuery('');
+              }}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel={searchOpen ? 'Close collection search' : 'Search collection'}
+              hitSlop={2}
+            >
+              <Feather name={searchOpen ? 'x' : 'search'} size={17} color={C.foreground} />
+            </Pressable>
             <Pressable
               onPress={() => router.push('/collection-archive' as any)}
               style={styles.iconBtn}
               accessibilityRole="button"
-              accessibilityLabel="Collection Archive (sold holdings)"
+              accessibilityLabel="Collection archive"
               hitSlop={2}
             >
-              <Feather name="archive" size={18} color={C.foreground} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/collection-insights' as any)}
-              style={styles.iconBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Collection Insights"
-              hitSlop={2}
-            >
-              <Feather name="bar-chart-2" size={18} color={C.foreground} />
-            </Pressable>
-            <Pressable
-              onPress={() => setViewMode(v => (v === 'grid' ? 'list' : 'grid'))}
-              style={styles.iconBtn}
-              accessibilityRole="button"
-              accessibilityLabel={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-              hitSlop={2}
-            >
-              <Feather name={viewMode === 'grid' ? 'list' : 'grid'} size={18} color={C.foreground} />
+              <Feather name="archive" size={17} color={C.foreground} />
             </Pressable>
             <Pressable
               style={styles.iconBtn}
@@ -229,108 +303,116 @@ export default function CollectionScreen() {
               accessibilityLabel="Add a card"
               hitSlop={2}
             >
-              <Feather name="plus" size={18} color={C.foreground} />
+              <Feather name="plus" size={17} color={C.foreground} />
             </Pressable>
           </View>
-        </View>
+        </Animated.View>
 
-        {/* Portfolio value strip */}
-        <View style={[styles.valueStrip, { backgroundColor: C.card }]}>
-          <View>
-            <Text style={styles.valueLabel}>Total Value</Text>
-            {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
-              <Text style={styles.valueAmount}>
-                {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
-              </Text>
-            ) : (
-              <Text style={[styles.valueAmount, { color: C.mutedForeground, fontSize: 16 }]}>Unavailable</Text>
-            )}
-          </View>
-          {serverSummary?.unrealizedGainPercent !== null && serverSummary?.unrealizedGainPercent !== undefined ? (
-            <View style={[styles.gainBadge, { backgroundColor: `${(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative}22` }]}>
-              <Text style={[styles.gainText, { color: (serverSummary.unrealizedGainPercent ?? 0) >= 0 ? C.positive : C.negative }]}>
-                {(serverSummary.unrealizedGainPercent ?? 0) >= 0 ? '+' : ''}{(serverSummary.unrealizedGainPercent ?? 0).toFixed(1)}%
-              </Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Coverage freshness note */}
-        {serverSummary?.coverage && serverSummary.coverage.ratio < 1 && (
-          <View style={[styles.coverageNote, { backgroundColor: `${C.warning}14` }]}>
-            <Feather name="info" size={11} color={C.warning} />
-            <Text style={[styles.coverageNoteText, { color: C.warning }]}>
-              {serverSummary.completeness}
-            </Text>
-          </View>
+        {searchOpen && (
+          <Animated.View entering={FadeInDown.duration(220)} style={styles.searchBox}>
+            <Feather name="search" size={15} color="#7D7A7D" />
+            <TextInput
+              autoFocus
+              value={query}
+              onChangeText={value => {
+                setQuery(value);
+                resetWindow();
+              }}
+              placeholder="Search card, set or number"
+              placeholderTextColor="#656166"
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            <Text style={styles.searchCount}>{filteredItems.length}</Text>
+          </Animated.View>
         )}
 
-        {/* Collection type tabs */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={[styles.typeTabsRow, { borderBottomColor: C.border }]}
+        <Animated.View
+          entering={FadeInDown.delay(60).duration(420)}
+          style={styles.portfolioSection}
+          testID="collection-profile-worth"
         >
-          {COLLECTION_TABS.map(t => (
-            <Pressable
-              key={t.value}
-              onPress={() => { setCollectionTab(t.value); onTabOrFilterChange(); }}
-              style={[
-                styles.typeTab,
-                collectionTab === t.value && { borderBottomColor: C.primary },
-              ]}
-              accessibilityRole="tab"
-              accessibilityLabel={t.label}
-              accessibilityState={{ selected: collectionTab === t.value }}
-            >
-              <Text
-                style={[
-                  styles.typeTabText,
-                  collectionTab === t.value && { color: C.foreground },
-                ]}
-              >
-                {t.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+          <Text style={styles.portfolioLabel}>Profile worth</Text>
+          {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
+            <Text style={styles.portfolioValue}>
+              {portfolioCurrency} {serverSummary.totalValue.toLocaleString('en-AU', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+            </Text>
+          ) : (
+            <Text style={styles.portfolioUnavailable}>VALUE UNAVAILABLE</Text>
+          )}
+        </Animated.View>
 
-        {/* TCG chips (cards + graded tabs) */}
-        {(collectionTab === 'cards' || collectionTab === 'graded') && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-            {TCG_CHIPS.map(t => (
-              <Pressable
-                key={t.value}
-                onPress={() => { setActiveTCG(t.value); onTabOrFilterChange(); }}
-                style={[
-                  styles.chip,
-                  activeTCG === t.value && { backgroundColor: '#CC1826', borderColor: '#CC1826' },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Filter by ${t.label}`}
-                accessibilityState={{ selected: activeTCG === t.value }}
-                hitSlop={{ top: 6, bottom: 6 }}
-              >
-                <Text
-                  style={[styles.chipText, activeTCG === t.value && { color: '#FFFFFF' }]}
+        <View style={styles.libraryToolbar}>
+          <View style={styles.libraryHeading}>
+            <Text style={styles.libraryTitle}>LIBRARY</Text>
+            <Text style={styles.libraryCount}>{filteredItems.length} OF {collection.length} SHOWING</Text>
+          </View>
+          <View style={styles.toolbarActions}>
+            <Pressable
+              onPress={() => {
+                setSortBy(current => current === 'value' ? 'name' : current === 'name' ? 'recent' : 'value');
+                resetWindow();
+              }}
+              style={styles.sortButton}
+              accessibilityRole="button"
+              accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
+            >
+              <Feather name="shuffle" size={12} color="#DD6974" />
+              <Text style={styles.sortText}>{SORT_LABELS[sortBy]}</Text>
+              <Feather name="chevron-down" size={12} color="#777278" />
+            </Pressable>
+            <View style={styles.viewToggle}>
+              {(['grid', 'list'] as const).map(mode => (
+                <Pressable
+                  key={mode}
+                  onPress={() => setViewMode(mode)}
+                  style={[styles.viewButton, viewMode === mode && styles.viewButtonActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${mode} view`}
+                  accessibilityState={{ selected: viewMode === mode }}
                 >
-                  {t.label}
-                </Text>
+                  <Feather name={mode} size={14} color={viewMode === mode ? '#F5F0E6' : '#656166'} />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {COLLECTION_FILTERS.map(filter => {
+            const selected = activeFilter === filter.value;
+            return (
+              <Pressable
+                key={filter.value}
+                onPress={() => {
+                  setActiveFilter(filter.value);
+                  resetWindow();
+                }}
+                style={[styles.filterChip, selected && styles.filterChipActive]}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter by ${filter.label}`}
+                accessibilityState={{ selected }}
+              >
+                {selected && <Feather name="check" size={11} color="#FF9CA4" />}
+                <Text style={[styles.filterText, selected && styles.filterTextActive]}>{filter.label}</Text>
               </Pressable>
-            ))}
-          </ScrollView>
-        )}
+            );
+          })}
+        </ScrollView>
 
         {/* Skeleton while loading the very first time (no cached data yet) */}
         {initialLoading && (
-          <View style={{ paddingVertical: 8 }}>
+          <View style={{ paddingHorizontal: 20, paddingVertical: 8 }}>
             <CollectionListSkeleton count={6} />
           </View>
         )}
 
         {/* Offline + no cache yet */}
         {!isConnected && collection.length === 0 && !collectionLoading && (
-          <View style={styles.errorBox}>
+          <View style={[styles.errorBox, styles.headerAlert]}>
             <Feather name="wifi-off" size={20} color={C.negative} />
             <Text style={styles.errorText}>
               No cached data available. Connect to the internet to load your collection.
@@ -440,9 +522,11 @@ export default function CollectionScreen() {
 
   // ── Card grid item ────────────────────────────────────────────────────────
 
-  const gridItemWidth = (screenWidth - 40 - 12) / 2; // 20px padding each side + 12px gap
+  const gridItemWidth = Math.min((screenWidth - 52) / 2, 220);
+  const gridCardRadius = tradingCardRadius(gridItemWidth);
 
   function renderCardGrid(item: CollectionItem) {
+    const isSaved = watchlist.some(entry => entry.cardId === item.card.id);
     return (
       <Pressable
         style={[styles.gridItem, { width: gridItemWidth }]}
@@ -453,270 +537,219 @@ export default function CollectionScreen() {
         accessibilityRole="button"
         accessibilityLabel={`${item.card.name}, ${holdingValue(item) == null ? 'market value unavailable' : `${item.valuation?.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`}`}
       >
-        <CardThumbnail card={item.card} grading={item.grading} />
-        <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
-        <Text style={styles.gridPrice}>
-          {holdingValue(item) != null
-            ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`
-            : 'Unavailable'}
-        </Text>
+        <View style={[
+          styles.gridArt,
+          { height: tradingCardHeight(gridItemWidth), borderRadius: gridCardRadius },
+        ]}>
+          <LinearGradient
+            colors={[item.card.gradientStart, item.card.gradientEnd]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <CardImage
+            uri={item.card.imageUrl}
+            style={StyleSheet.absoluteFill}
+            contentFit="contain"
+          />
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.88)']}
+            start={{ x: 0.5, y: 0.42 }}
+            end={{ x: 0.5, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {item.grading && (
+            <View style={styles.gridGrade}>
+              <GradeBadge grade={item.grading.grade} company={item.grading.company} size="sm" />
+            </View>
+          )}
+          <Pressable
+            onPress={event => {
+              event.stopPropagation?.();
+              toggleSaved(item);
+            }}
+            style={[styles.saveButton, isSaved && styles.saveButtonActive]}
+            accessibilityRole="button"
+            accessibilityLabel={`${isSaved ? 'Remove' : 'Save'} ${item.card.name} ${isSaved ? 'from' : 'to'} wishlist`}
+          >
+            <Text style={[styles.saveButtonText, isSaved && styles.saveButtonTextActive]}>
+              {isSaved ? 'SAVED' : 'SAVE'}
+            </Text>
+          </Pressable>
+          <View style={styles.gridOverlay}>
+            <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
+            <Text style={styles.gridMeta} numberOfLines={1}>{item.card.setName} · {item.card.number}</Text>
+            <Text style={styles.gridPrice}>
+              {holdingValue(item) != null
+                ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`
+                : 'VALUE UNAVAILABLE'}
+            </Text>
+          </View>
+        </View>
       </Pressable>
     );
   }
 
-  // ── Cards / Graded tab — FlashList ────────────────────────────────────────
-
-  if (collectionTab === 'cards' || collectionTab === 'graded') {
+  function renderCollectionEmpty() {
+    if (initialLoading || collectionError) return null;
+    const filtered = collection.length > 0 && (activeFilter !== 'all' || query.trim().length > 0);
     return (
-      <View style={[styles.screen, { backgroundColor: C.background }]}>
-        {viewMode === 'grid' ? (
-          <FlashList
-            data={visibleItems}
-            numColumns={2}
-            keyExtractor={item => item.id}
-            renderItem={({ item }) => (
-              <View style={{ paddingLeft: 20, paddingBottom: 12 }}>
-                {renderCardGrid(item)}
-              </View>
-            )}
-            ListHeaderComponent={() => (
-              <>
-                {renderHeader()}
-                <View style={{ height: 8 }} />
-              </>
-            )}
-            ListEmptyComponent={() =>
-              !initialLoading && !collectionError ? (
-                <View style={{ paddingHorizontal: 20 }}>
-                  <EmptyState
-                    icon="layers"
-                    title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
-                    description={
-                      collectionTab === 'graded'
-                        ? 'Add graded cards to see them here'
-                        : 'Scan your first card or search the database to start building your collection'
-                    }
-                    actionLabel="Add Card"
-                    onAction={() => router.push('/add-card')}
-                  />
-                </View>
-              ) : null
+      <View style={styles.emptyWrap}>
+        <EmptyState
+          icon={filtered ? 'sliders' : 'layers'}
+          title={filtered ? 'No cards match this slice' : 'No cards yet'}
+          description={
+            filtered
+              ? 'Try another filter or clear your search.'
+              : 'Scan your first card or search the database to start building your collection.'
+          }
+          actionLabel={filtered ? 'Reset View' : 'Add Card'}
+          onAction={() => {
+            if (filtered) {
+              setActiveFilter('all');
+              setQuery('');
+              resetWindow();
+            } else {
+              router.push('/add-card');
             }
-            ListFooterComponent={() => (
-              <View style={{ paddingBottom: TAB_H + 24, paddingTop: 12, alignItems: 'center' }}>
-                {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
-                {!hasMore && visibleItems.length > 0 && (
-                  <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
-                )}
-              </View>
-            )}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={handleRefresh}
-                tintColor={C.primary}
-                colors={[C.primary]}
-              />
-            }
-            onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.3}
-            contentContainerStyle={{ paddingTop: topPad + 8 }}
-            contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}
-          />
-        ) : (
-          <FlashList
-            data={visibleItems}
-            keyExtractor={item => item.id}
-            renderItem={({ item }) => (
-              <View style={{ marginBottom: 10 }}>
-                {renderCardRow(item)}
-              </View>
-            )}
-            ListHeaderComponent={() => (
-              <>
-                {renderHeader()}
-                <View style={{ height: 8 }} />
-              </>
-            )}
-            ListEmptyComponent={() =>
-              !initialLoading && !collectionError ? (
-                <View style={{ paddingHorizontal: 20 }}>
-                  <EmptyState
-                    icon="layers"
-                    title={collectionTab === 'graded' ? 'No graded cards' : 'No cards yet'}
-                    description={
-                      collectionTab === 'graded'
-                        ? 'Add graded cards to see them here'
-                        : 'Scan your first card or search the database to start building your collection'
-                    }
-                    actionLabel="Add Card"
-                    onAction={() => router.push('/add-card')}
-                  />
-                </View>
-              ) : null
-            }
-            ListFooterComponent={() => (
-              <View style={{ paddingBottom: TAB_H + 24, paddingTop: 12, alignItems: 'center' }}>
-                {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
-                {!hasMore && visibleItems.length > 0 && (
-                  <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
-                )}
-              </View>
-            )}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={handleRefresh}
-                tintColor={C.primary}
-                colors={[C.primary]}
-              />
-            }
-            onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.3}
-            contentContainerStyle={{ paddingTop: topPad + 8 }}
-            contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}
-          />
-        )}
-
-        {/* Sell Modal */}
-        {sellItem && (
-          <SellModal
-            item={sellItem}
-            displayCurrency={currency}
-            onClose={() => setSellItem(null)}
-            onSold={() => {
-              setSellItem(null);
-              void Promise.all([refreshCollection(), loadSummary()]);
-            }}
-          />
-        )}
+          }}
+        />
       </View>
     );
   }
 
-  // ── Sealed / Sets tabs — ScrollView ───────────────────────────────────────
-
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: C.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 8, paddingBottom: TAB_H + 24 }]}
-      showsVerticalScrollIndicator={false}
-      contentInsetAdjustmentBehavior="never"
-      automaticallyAdjustContentInsets={false}
-    >
-      {/* Shared header (without skeleton / error for static tabs) */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Collection</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <Pressable
-            onPress={() => router.push('/collection-archive' as any)}
-            style={styles.iconBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Collection Archive"
-            hitSlop={2}
-          >
-            <Feather name="archive" size={18} color={C.foreground} />
-          </Pressable>
-          <Pressable
-            onPress={() => router.push('/collection-insights' as any)}
-            style={styles.iconBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Collection insights"
-            hitSlop={2}
-          >
-            <Feather name="bar-chart-2" size={18} color={C.foreground} />
-          </Pressable>
-          <Pressable
-            style={styles.iconBtn}
-            onPress={() => router.push('/add-card')}
-            accessibilityRole="button"
-            accessibilityLabel="Add a card"
-            hitSlop={2}
-          >
-            <Feather name="plus" size={18} color={C.foreground} />
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Portfolio value strip */}
-      <View style={[styles.valueStrip, { backgroundColor: C.card }]}>
-        <View>
-          <Text style={styles.valueLabel}>Total Value</Text>
-          {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
-            <Text style={styles.valueAmount}>
-              {serverSummary.totalValue.toLocaleString('en-AU', { minimumFractionDigits: 2 })} {serverSummary.currency ?? currency}
-            </Text>
-          ) : (
-            <Text style={[styles.valueAmount, { color: C.mutedForeground, fontSize: 16 }]}>
-              Unavailable
-            </Text>
-          )}
-        </View>
-        {serverSummary?.unrealizedGainPercent != null ? (
-          <View style={styles.gainBadge}>
-            <Text style={[styles.gainText, { color: serverSummary.unrealizedGainPercent >= 0 ? C.positive : C.negative }]}>
-              {serverSummary.unrealizedGainPercent >= 0 ? '+' : ''}
-              {serverSummary.unrealizedGainPercent.toFixed(1)}%
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      {/* Collection type tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={[styles.typeTabsRow, { borderBottomColor: C.border }]}
-      >
-        {COLLECTION_TABS.map(t => (
-          <Pressable
-            key={t.value}
-            onPress={() => { setCollectionTab(t.value); onTabOrFilterChange(); }}
-            style={[
-              styles.typeTab,
-              collectionTab === t.value && { borderBottomColor: C.primary },
-            ]}
-            accessibilityRole="tab"
-            accessibilityLabel={t.label}
-            accessibilityState={{ selected: collectionTab === t.value }}
-          >
-            <Text
-              style={[
-                styles.typeTabText,
-                collectionTab === t.value && { color: C.foreground },
-              ]}
+    <View style={styles.screen}>
+      {viewMode === 'grid' ? (
+        <FlashList
+          data={visibleItems}
+          numColumns={2}
+          keyExtractor={item => item.id}
+          renderItem={({ item, index }) => (
+            <Animated.View
+              entering={FadeInDown.delay(Math.min(index, 8) * 55).duration(360)}
+              layout={LinearTransition.springify().damping(18)}
+              style={index % 2 === 0 ? styles.gridCellLeft : styles.gridCellRight}
             >
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-    </ScrollView>
+              {renderCardGrid(item)}
+            </Animated.View>
+          )}
+          ListHeaderComponent={() => renderHeader()}
+          ListEmptyComponent={renderCollectionEmpty}
+          ListFooterComponent={() => (
+            <View style={[styles.listFooter, { paddingBottom: TAB_H + 24 }]}>
+              {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
+              {!hasMore && visibleItems.length > 0 && (
+                <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
+              )}
+            </View>
+          )}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} />
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
+          contentContainerStyle={{ paddingTop: topPad + 8 }}
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustContentInsets={false}
+        />
+      ) : (
+        <FlashList
+          data={visibleItems}
+          keyExtractor={item => item.id}
+          renderItem={({ item, index }) => (
+            <Animated.View
+              entering={FadeInDown.delay(Math.min(index, 8) * 45).duration(320)}
+              layout={LinearTransition.springify().damping(18)}
+              style={styles.listCell}
+            >
+              {renderCardRow(item)}
+            </Animated.View>
+          )}
+          ListHeaderComponent={() => renderHeader()}
+          ListEmptyComponent={renderCollectionEmpty}
+          ListFooterComponent={() => (
+            <View style={[styles.listFooter, { paddingBottom: TAB_H + 24 }]}>
+              {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
+              {!hasMore && visibleItems.length > 0 && (
+                <Text style={styles.allLoadedText}>All {filteredItems.length} cards loaded</Text>
+              )}
+            </View>
+          )}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} />
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
+          contentContainerStyle={{ paddingTop: topPad + 8 }}
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustContentInsets={false}
+        />
+      )}
+      {sellItem && (
+        <SellModal
+          item={sellItem}
+          displayCurrency={currency}
+          onClose={() => setSellItem(null)}
+          onSold={() => {
+            setSellItem(null);
+            void Promise.all([refreshCollection(), loadSummary(true)]);
+          }}
+        />
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  content: { paddingHorizontal: 20 },
+  screen: { flex: 1, backgroundColor: '#0D0D0F' },
   header: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    marginBottom: 16,
   },
-  title: { fontSize: 28, fontFamily: 'Rajdhani_700Bold', color: C.foreground, letterSpacing: -0.3 },
-  sub: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
-  headerActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#3E252B',
+    backgroundColor: '#271317',
+  },
+  avatarText: {
+    color: '#FF8F9A',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
+  kicker: {
+    color: '#7D7A7D',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.35,
+  },
+  title: {
+    marginTop: 2,
+    color: '#F4F1E8',
+    fontSize: 34,
+    fontFamily: 'Rajdhani_700Bold',
+    lineHeight: 34,
+    letterSpacing: -0.8,
+  },
+  headerActions: { flexDirection: 'row', gap: 7 },
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.card,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#18181B',
+    borderWidth: 1,
+    borderColor: '#29282B',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -724,72 +757,162 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    borderRadius: 8,
+    borderRadius: 9,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
+    marginHorizontal: 20,
     marginBottom: 12,
+    backgroundColor: `${C.warning}18`,
   },
-  offlineNoteText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
-  valueStrip: {
+  offlineNoteText: { color: C.warning, fontSize: 12, fontFamily: 'Inter_500Medium' },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#3B2A2D',
+    borderRadius: 12,
+    backgroundColor: '#18181B',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#F4F1E8',
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+    padding: 0,
+  },
+  searchCount: {
+    borderRadius: 6,
+    backgroundColor: '#2A2022',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    color: '#FF8F9A',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 10,
+  },
+  portfolioSection: {
+    position: 'relative',
+    marginHorizontal: 20,
+    paddingTop: 2,
+    paddingBottom: 2,
+  },
+  portfolioLabel: {
+    color: '#B2A4A5',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    letterSpacing: 1.45,
+    textTransform: 'uppercase',
+  },
+  portfolioValue: {
+    position: 'relative',
+    marginTop: 5,
+    color: '#FFF8F2',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 30,
+    lineHeight: 34,
+    letterSpacing: -1.5,
+  },
+  portfolioUnavailable: {
+    marginTop: 8,
+    color: '#AA888C',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  libraryToolbar: {
+    marginTop: 20,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
   },
-  valueLabel: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: C.mutedForeground,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  valueAmount: { fontSize: 22, fontFamily: 'Inter_700Bold', color: C.foreground },
-  gainBadge: {
-    backgroundColor: `${C.positive}22`,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  gainText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
-  typeTabsRow: {
-    borderBottomWidth: 1,
-    marginBottom: 4,
-  },
-  typeTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-    marginRight: 4,
-  },
-  typeTabText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-  chipRow: { marginBottom: 16, marginTop: 12 },
-  chip: {
-    paddingHorizontal: 14,
+  libraryHeading: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 },
+  libraryTitle: { color: '#F5F0E6', fontFamily: 'Rajdhani_700Bold', fontSize: 20 },
+  libraryCount: { color: '#6E6B70', fontFamily: 'Inter_700Bold', fontSize: 8, letterSpacing: 0.5 },
+  toolbarActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  sortButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#29282B',
+    borderRadius: 8,
+    backgroundColor: '#18181B',
+    paddingHorizontal: 8,
     paddingVertical: 7,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    marginRight: 8,
   },
-  chipText: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.foreground },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  gridItem: { gap: 6 },
-  gridName: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  gridPrice: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.primary },
+  sortText: { color: '#9E999D', fontFamily: 'Inter_700Bold', fontSize: 10 },
+  viewToggle: { flexDirection: 'row', gap: 2, borderRadius: 8, backgroundColor: '#18181B', padding: 3 },
+  viewButton: { width: 25, height: 24, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  viewButtonActive: { backgroundColor: '#383438' },
+  filterRow: { gap: 7, paddingHorizontal: 20, paddingTop: 13, paddingBottom: 14 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: '#29282B',
+    borderRadius: 999,
+    backgroundColor: '#18181B',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  filterChipActive: { borderColor: '#7D2F39', backgroundColor: '#441C23' },
+  filterText: { color: '#89858A', fontFamily: 'Inter_700Bold', fontSize: 10 },
+  filterTextActive: { color: '#FF9CA4' },
+  gridCellLeft: { paddingLeft: 20, paddingRight: 6, paddingBottom: 12 },
+  gridCellRight: { paddingLeft: 6, paddingRight: 20, paddingBottom: 12 },
+  gridItem: { width: '100%' },
+  gridArt: {
+    width: '100%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#302E31',
+    borderRadius: 14,
+    backgroundColor: '#18181B',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  gridGrade: { position: 'absolute', left: 7, top: 7 },
+  saveButton: {
+    position: 'absolute',
+    right: 7,
+    top: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+  },
+  saveButtonActive: { borderColor: '#AD3B49', backgroundColor: '#5A202A' },
+  saveButtonText: { color: '#FFF', fontFamily: 'Inter_700Bold', fontSize: 8, letterSpacing: 0.4 },
+  saveButtonTextActive: { color: '#FFB3B8' },
+  gridOverlay: { position: 'absolute', left: 10, right: 10, bottom: 9 },
+  gridName: { color: '#F3EEE5', fontFamily: 'Inter_700Bold', fontSize: 13 },
+  gridMeta: { marginTop: 2, color: '#AAA2A6', fontFamily: 'Inter_400Regular', fontSize: 9 },
+  gridPrice: { marginTop: 5, color: '#FF9098', fontFamily: 'Inter_700Bold', fontSize: 12 },
+  listCell: { marginHorizontal: 20, marginBottom: 9 },
   itemRow: {
     flexDirection: 'row',
-    borderRadius: 14,
-    padding: 14,
-    gap: 12,
+    borderWidth: 1,
+    borderColor: '#28272A',
+    borderRadius: 12,
+    padding: 9,
+    gap: 11,
     alignItems: 'center',
+    backgroundColor: '#18181B',
   },
   cardPlaceholder: {
-    width: 52,
-    height: 72,
+    width: 58,
+    height: 80,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -797,16 +920,15 @@ const styles = StyleSheet.create({
   },
   cardGrade: { position: 'absolute', top: 2, right: -8 },
   itemInfo: { flex: 1, gap: 3 },
-  itemName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  itemSet: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  itemNumber: { fontSize: 10, fontFamily: 'Inter_400Regular', color: `${C.mutedForeground}88` },
+  itemName: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#F3EEE5' },
+  itemSet: { fontSize: 10, fontFamily: 'Inter_400Regular', color: '#777278' },
+  itemNumber: { fontSize: 9, fontFamily: 'Inter_400Regular', color: '#666166' },
   itemTags: { flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' },
   tag: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
   tagText: { fontSize: 10, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
   itemPricing: { alignItems: 'flex-end', gap: 2 },
-  itemCurrentValue: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
+  itemCurrentValue: { fontSize: 13, fontFamily: 'Inter_700Bold', color: '#FF9098' },
   itemCost: { fontSize: 10, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
-  itemChange: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
   sellBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderWidth: 1, borderColor: `${C.primary}55`,
@@ -818,69 +940,26 @@ const styles = StyleSheet.create({
     marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
   },
   editBtnText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
-  coverageNote: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
-    marginBottom: 12,
-  },
-  coverageNoteText: { fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1 },
-  sealedRow: {
+  emptyWrap: { paddingHorizontal: 20, paddingTop: 4 },
+  listFooter: { paddingTop: 12, alignItems: 'center', gap: 8 },
+  errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-  },
-  sealedIcon: {
-    width: 52,
-    height: 52,
+    gap: 10,
+    paddingVertical: 14,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#18181B',
   },
-  sealedInfo: { flex: 1 },
-  sealedName: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground },
-  sealedMeta: {
+  headerAlert: { marginHorizontal: 20, marginBottom: 12, paddingHorizontal: 14 },
+  errorText: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: C.mutedForeground,
-    marginTop: 3,
   },
-  sealedValue: { fontSize: 16, fontFamily: 'Inter_700Bold', color: C.foreground },
-  setRow: { borderRadius: 14, padding: 16, marginBottom: 10 },
-  setHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  setName: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground },
-  setMeta: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 3 },
-  setPct: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-  progressBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 3 },
-  errorBox: {
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 32,
-  },
-  errorText: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+  errorDetail: {
     color: C.mutedForeground,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-  },
-  retryBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  retryBtnText: {
-    fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#FFF',
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
   },
   allLoadedText: {
     fontSize: 12,

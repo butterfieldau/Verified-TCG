@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CollectionItem } from '../types';
 import type { CollectionPerformance, CollectionSummary } from '../services/collectionPerformance';
 import {
@@ -5,7 +7,16 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  getHomePortfolioGain,
+  chartXForIndex,
+  getRenderableHomeChartPoints,
 } from '../services/homePortfolio';
+import { createRequestDeduper } from '../services/requestDeduper';
+import {
+  TRADING_CARD_ASPECT_RATIO,
+  tradingCardHeight,
+  tradingCardRadius,
+} from '../services/collectionLayout';
 
 const summary = (overrides: Partial<CollectionSummary> = {}): CollectionSummary => ({
   totalValue: 100,
@@ -32,7 +43,14 @@ const item = (id: string, valuation: number | null, acquiredPrice = 100): Collec
   acquiredPrice,
   currency: 'AUD',
   valuation: valuation == null ? null : {
-    priceCents: valuation * 100, price: valuation, currency: 'AUD', gradeKey: 'raw', updatedAt: '2025-01-01',
+    priceCents: valuation * 100,
+    price: valuation,
+    currency: 'AUD',
+    gradeKey: 'raw',
+    updatedAt: '2025-01-01',
+    costBasis: acquiredPrice > 0 ? acquiredPrice : null,
+    gain: acquiredPrice > 0 ? valuation - acquiredPrice : null,
+    gainPercent: acquiredPrice > 0 ? ((valuation - acquiredPrice) / acquiredPrice) * 100 : null,
   },
   card: {
     id, name: id, setId: 'set', setName: 'Set', tcg: 'pokemon', number: '1',
@@ -82,5 +100,121 @@ describe('home portfolio view models', () => {
       { date: '2025-01-01', value: 100, currency: 'AUD' },
       { date: '2025-01-02', value: 110, currency: 'AUD' },
     ]), '7D')).toMatchObject({ kind: 'chart' });
+  });
+
+  it('does not treat an account baseline as a market-value point', () => {
+    expect(getHomePerformanceView(performance([
+      {
+        date: '2025-01-01',
+        value: 0,
+        currency: 'AUD',
+        baseline: true,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+      },
+      {
+        date: '2025-01-01',
+        value: 125,
+        currency: 'AUD',
+        pricedHoldings: 1,
+        totalHoldings: 1,
+      },
+    ]), '1D')).toMatchObject({ kind: 'initial', point: { value: 125 } });
+  });
+
+  it('does not treat the zero account baseline as provider price history', () => {
+    expect(getHomePerformanceView({
+      ...performance([
+        { date: '2025-01-01', value: 0, currency: 'AUD', baseline: true },
+        { date: '2025-01-01', value: null, currency: 'AUD', available: false },
+      ]),
+      historyAvailable: false,
+      historyUnavailableReason: 'No retained market prices are available',
+    }, '1D')).toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('anchors the first and last points to chart edges', () => {
+    expect(chartXForIndex(0, 3, 320)).toBe(0);
+    expect(chartXForIndex(2, 3, 320)).toBe(320);
+    expect(chartXForIndex(0, 1, 320)).toBe(320);
+  });
+
+  it('removes only leading unavailable samples from the drawable chart', () => {
+    const points = [
+      { date: '2025-01-01', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-02', value: 100, currency: 'AUD' },
+      { date: '2025-01-03', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-04', value: 110, currency: 'AUD' },
+    ];
+    expect(getRenderableHomeChartPoints(points)).toEqual(points.slice(1));
+  });
+
+  it('removes an account baseline and unavailable dates before the first real market observation', () => {
+    const points = [
+      { date: '2025-01-01', value: 0, currency: 'AUD', available: true, baseline: true, pricedHoldings: 0 },
+      { date: '2025-01-02', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-03', value: 100, currency: 'AUD', pricedHoldings: 1 },
+      { date: '2025-01-04', value: 105, currency: 'AUD', pricedHoldings: 1 },
+    ];
+    expect(getRenderableHomeChartPoints(points)).toEqual(points.slice(2));
+  });
+
+  it('labels a price-and-cost-covered subtotal as a partial portfolio gain', () => {
+    expect(getHomePortfolioGain(summary({
+      unrealizedGain: null,
+      unrealizedGainPercent: null,
+      partialUnrealizedGain: 40,
+      partialUnrealizedGainPercent: 25,
+      gainCoverage: { pricedHoldings: 1, totalHoldings: 2 },
+    }))).toEqual({ amount: 40, percent: 25, partial: true, pricedHoldings: 1, totalHoldings: 2 });
+  });
+});
+
+describe('collection refresh cadence', () => {
+  it('shares overlapping refreshes and permits one new load after completion', async () => {
+    const deduper = createRequestDeduper();
+    let release: (() => void) | undefined;
+    let calls = 0;
+    const task = () => {
+      calls += 1;
+      return new Promise<void>(resolve => { release = resolve; });
+    };
+
+    const first = deduper.run(task);
+    const second = deduper.run(task);
+    expect(first).toBe(second);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    release?.();
+    await first;
+    await deduper.run(async () => { calls += 1; });
+    expect(calls).toBe(2);
+  });
+});
+
+describe('collection portfolio presentation', () => {
+  const source = readFileSync(join(__dirname, '../app/(tabs)/collection.tsx'), 'utf8');
+
+  it('keeps only the concise profile-worth block above the library', () => {
+    expect(source).toContain('testID="collection-profile-worth"');
+    expect(source).toContain('Profile worth');
+    for (const removedCopy of [
+      'VAULT PULSE',
+      '30 day movement',
+      'cards tracked',
+      'Sync pending',
+      'History builds as verified prices are recorded',
+    ]) {
+      expect(source).not.toContain(removedCopy);
+    }
+  });
+});
+
+describe('collection card framing', () => {
+  it('uses physical trading-card proportions without an oversized corner radius', () => {
+    expect(TRADING_CARD_ASPECT_RATIO).toBeCloseTo(1.4);
+    expect(tradingCardHeight(150)).toBe(210);
+    expect(tradingCardRadius(150)).toBeCloseTo(6.75);
   });
 });

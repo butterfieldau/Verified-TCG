@@ -1,23 +1,27 @@
 import { useState } from "react";
 import {
   ArrowLeft,
+  ArrowUpRight,
+  BarChart3,
   Camera,
   Check,
   ChevronRight,
-  Grid2X2,
   Heart,
   LockKeyhole,
   MessageCircle,
   MoreHorizontal,
+  Search,
   Send,
   Share2,
   SlidersHorizontal,
   Sparkles,
+  Target,
+  TrendingUp,
   UserPlus,
-  Users,
+  WalletCards,
 } from "lucide-react";
 
-type ProfileTab = "collection" | "posts";
+type ProfileTab = "overview" | "activity";
 
 const shelves = [
   { title: "Japanese promos", count: "38 cards", accent: "#d47359", cards: ["charizard", "pikachu", "umbreon"] },
@@ -64,13 +68,16 @@ function CardArt({ kind, compact = false }: { kind: string; compact?: boolean })
 }
 
 export function CollectorProfile() {
-  const [tab, setTab] = useState<ProfileTab>("collection");
+  const [tab, setTab] = useState<ProfileTab>("overview");
   const [following, setFollowing] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
   const [liked, setLiked] = useState<number[]>([]);
   const [shared, setShared] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   const sendMessage = () => {
     if (!message.trim()) return;
@@ -80,57 +87,74 @@ export function CollectorProfile() {
   };
 
   return (
-    <main className="profile-native min-h-[100dvh] bg-[#0A0A0A] text-white [font-family:ui-sans-serif,system-ui,sans-serif]">
+    <main className="profile-native min-h-[100dvh] bg-[#0D0D0F] text-white [font-family:ui-sans-serif,system-ui,sans-serif]">
       <style>{`
-        .profile-native [class*="bg-[#1b1414]"], .profile-native [class*="bg-[#211817]"], .profile-native [class*="bg-[#241a19]"], .profile-native [class*="bg-[#1f1716]"] { background-color:#1A1A1A !important; }
-        .profile-native [class*="border-[#3"], .profile-native [class*="border-[#4"], .profile-native [class*="border-[#5"], .profile-native [class*="border-[#342422]"] { border-color:#2A2A2A !important; }
-        .profile-native [class*="text-[#f4e7dc]"], .profile-native [class*="text-[#f0dfd4]"], .profile-native [class*="text-[#dfc6ba]"] { color:#FFFFFF !important; }
-        .profile-native [class*="text-[#8"], .profile-native [class*="text-[#9"], .profile-native [class*="text-[#7"] { color:#9A9A9A !important; }
-        .profile-native [class*="bg-[#e9443d]"] { background-color:#FF1E2D !important; }
-        .profile-native .font-serif { font-family:inherit; font-weight:700; }
-        .profile-native .font-mono { font-family:inherit; }
+        .profile-native .portfolio-rise { animation: portfolio-rise .65s cubic-bezier(.2,.75,.25,1) both; }
+        .profile-native .portfolio-delay-1 { animation-delay: 80ms; }
+        .profile-native .portfolio-delay-2 { animation-delay: 150ms; }
+        .profile-native .portfolio-delay-3 { animation-delay: 220ms; }
+        .profile-native .portfolio-bar { transform-origin: bottom; animation: portfolio-bar 1s cubic-bezier(.2,.75,.25,1) both; }
+        @keyframes portfolio-rise { from { opacity:0; transform:translateY(16px) } to { opacity:1; transform:translateY(0) } }
+        @keyframes portfolio-bar { from { transform:scaleY(0) } to { transform:scaleY(1) } }
+        .profile-native .tap { transition: transform .2s ease, background-color .2s ease, border-color .2s ease; }
+        .profile-native .tap:active { transform: scale(.96); }
       `}</style>
-      <div className="mx-auto min-h-[100dvh] w-full max-w-[430px] overflow-hidden border-x border-[#382523] bg-[radial-gradient(circle_at_90%_0%,#3b2421_0%,transparent_35%),#1b1414]">
+      <div className="mx-auto min-h-[100dvh] w-full max-w-[430px] overflow-hidden border-x border-[#2A2224] bg-[radial-gradient(circle_at_90%_0%,#332023_0%,transparent_34%),#0D0D0F]">
         <header className="flex items-center justify-between px-5 pb-3 pt-4">
-          <button aria-label="Go back" className="flex h-10 w-10 items-center justify-center rounded-full text-[#c0aaa0] hover:bg-white/5"><ArrowLeft size={19} /></button>
-          <p className="font-mono text-[10px] uppercase tracking-[.24em] text-[#a88d84]">Collector profile</p>
-          <button aria-label="More profile options" className="flex h-10 w-10 items-center justify-center rounded-full text-[#c0aaa0] hover:bg-white/5"><MoreHorizontal size={20} /></button>
+          <button onClick={() => window.history.back()} aria-label="Go back" className="tap flex h-10 w-10 items-center justify-center rounded-full text-[#A49A9A] hover:bg-white/5"><ArrowLeft size={19} /></button>
+          <p className="font-mono text-[10px] uppercase tracking-[.24em] text-[#847A7D]">Collector profile</p>
+          <div className="relative">
+            <button onClick={() => setMenuOpen(open => !open)} aria-label="More portfolio options" className="tap flex h-10 w-10 items-center justify-center rounded-full text-[#A49A9A] hover:bg-white/5"><MoreHorizontal size={20} /></button>
+            {menuOpen && <div className="absolute right-0 top-11 z-10 w-36 rounded-xl border border-[#383034] bg-[#19181B] p-1.5 text-[11px] shadow-2xl"><button onClick={() => setShared(true)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[#D5CCCD] hover:bg-white/5"><Share2 size={13} /> {shared ? "Link copied" : "Share portfolio"}</button><button onClick={() => setMenuOpen(false)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[#D5CCCD] hover:bg-white/5"><LockKeyhole size={13} /> Privacy</button></div>}
+          </div>
         </header>
 
-        <section className="px-5 pb-5 pt-3">
+        <section className="portfolio-rise px-5 pb-5 pt-3">
           <div className="flex items-start gap-4">
-            <div className="relative"><Avatar initials="MC" /><button aria-label="Change profile photo" className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#1b1414] bg-[#e9443d] text-white"><Camera size={12} /></button></div>
+            <div className="relative"><Avatar initials="MC" /><button onClick={() => setMenuOpen(true)} aria-label="Change profile photo" className="tap absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#0D0D0F] bg-[#FF1E2D] text-white"><Camera size={12} /></button></div>
             <div className="min-w-0 flex-1 pt-1">
               <div className="flex items-center gap-1.5"><h1 className="font-serif text-[25px] leading-none tracking-[-.02em]">Mara Chen</h1><span className="flex h-[17px] w-[17px] items-center justify-center rounded-full bg-[#FF1E2D] text-white"><Check size={11} strokeWidth={3} /></span></div>
-              <p className="mt-1 text-xs text-[#987f77]">@marachens · Tokyo, JP</p>
-              <div className="mt-3 flex gap-2"><button onClick={() => setFollowing(!following)} className={`flex h-9 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-bold transition-transform active:scale-95 ${following ? "border border-[#70413a] bg-transparent text-[#e17b6d]" : "bg-[#e9443d] text-white"}`}>{following ? <Check size={13} /> : <UserPlus size={13} />}{following ? "Following" : "Follow"}</button><button onClick={() => setMessageOpen(true)} className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#58322f] px-4 text-[11px] font-bold text-[#edc2b4] hover:bg-white/5"><MessageCircle size={14} /> Message</button></div>
+              <p className="mt-1 text-xs text-[#8D8285]">@marachens · Tokyo, JP</p>
+              <div className="mt-3 flex gap-2"><button onClick={() => setFollowing(!following)} className={`tap flex h-9 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-bold ${following ? "border border-[#63363D] bg-transparent text-[#FF8F9A]" : "bg-[#FF1E2D] text-white"}`}>{following ? <Check size={13} /> : <UserPlus size={13} />}{following ? "Following" : "Follow"}</button><button onClick={() => setMessageOpen(true)} className="tap flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#383034] px-4 text-[11px] font-bold text-[#D7CBCD] hover:bg-white/5"><MessageCircle size={14} /> Message</button></div>
             </div>
           </div>
-          <p className="mt-5 max-w-[360px] text-[13px] leading-[1.55] text-[#c3aaa0]">Sealed product, Japanese promos, and the stories behind the cardboard. Collecting slowly, looking closely.</p>
-          <div className="mt-5 flex items-center justify-between border-y border-[#342422] py-3.5">
-            <div><p className="font-serif text-[19px]">486</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#806b64]">Cards</p></div>
-            <button onClick={() => alert("Followers list coming from the community roster.")} className="text-left"><p className="font-serif text-[19px]">1.2k</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#806b64]">Followers</p></button>
-            <button onClick={() => alert("Following list coming from the community roster.")} className="text-left"><p className="font-serif text-[19px]">89</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#806b64]">Following</p></button>
-            <div><p className="flex items-center gap-1 font-serif text-[19px]">A+ <Sparkles size={13} className="text-[#e7b36c]" /></p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#806b64]">Trust score</p></div>
+          <p className="mt-5 max-w-[360px] text-[13px] leading-[1.55] text-[#B4AAAC]">Japanese promos, sealed product, and the stories behind the cardboard. A patient vault built one careful acquisition at a time.</p>
+          <div className="mt-5 grid grid-cols-4 border-y border-[#292528] py-3.5">
+            <div><p className="font-serif text-[19px]">486</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#777074]">Cards</p></div>
+            <div><p className="font-serif text-[19px]">89</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#777074]">Graded</p></div>
+            <div><p className="font-serif text-[19px]">2018</p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#777074]">Since</p></div>
+            <div><p className="flex items-center gap-1 font-serif text-[19px]">A+ <Sparkles size={13} className="text-[#E7B36C]" /></p><p className="font-mono text-[8px] uppercase tracking-[.14em] text-[#777074]">Trust</p></div>
           </div>
-          <div className="mt-4 flex items-center gap-2 text-[10px] text-[#b89583]"><LockKeyhole size={13} className="text-[#e7b36c]" /> Identity verified · Collector since 2018 <ChevronRight size={13} className="ml-auto text-[#806b64]" /></div>
+          <div className="mt-4 flex items-center gap-2 text-[10px] text-[#B89583]"><LockKeyhole size={13} className="text-[#E7B36C]" /> Identity verified · Public portfolio <ChevronRight size={13} className="ml-auto text-[#777074]" /></div>
         </section>
 
-        <div className="flex border-y border-[#342422] px-5">
-          <button onClick={() => setTab("collection")} className={`relative flex h-12 flex-1 items-center justify-center gap-2 text-[11px] font-bold ${tab === "collection" ? "text-[#f4e7dc]" : "text-[#806b64]"}`}><Grid2X2 size={15} /> Collection{tab === "collection" && <span className="absolute bottom-0 h-[2px] w-10 rounded-full bg-[#e9443d]" />}</button>
-          <button onClick={() => setTab("posts")} className={`relative flex h-12 flex-1 items-center justify-center gap-2 text-[11px] font-bold ${tab === "posts" ? "text-[#f4e7dc]" : "text-[#806b64]"}`}><MessageCircle size={15} /> Posts{tab === "posts" && <span className="absolute bottom-0 h-[2px] w-10 rounded-full bg-[#e9443d]" />}</button>
+        <div className="flex border-y border-[#292528] px-5">
+          <button onClick={() => setTab("overview")} className={`relative flex h-12 flex-1 items-center justify-center gap-2 text-[11px] font-bold ${tab === "overview" ? "text-[#F4F1E8]" : "text-[#777074]"}`}><WalletCards size={15} /> Overview{tab === "overview" && <span className="absolute bottom-0 h-[2px] w-10 rounded-full bg-[#FF1E2D]" />}</button>
+          <button onClick={() => setTab("activity")} className={`relative flex h-12 flex-1 items-center justify-center gap-2 text-[11px] font-bold ${tab === "activity" ? "text-[#F4F1E8]" : "text-[#777074]"}`}><BarChart3 size={15} /> Activity{tab === "activity" && <span className="absolute bottom-0 h-[2px] w-10 rounded-full bg-[#FF1E2D]" />}</button>
         </div>
 
-        {tab === "collection" ? <section className="px-5 pb-10 pt-5">
-          <div className="mb-4 flex items-end justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#c8776d]">Curated shelves</p><h2 className="mt-1 font-serif text-[22px]">Collection highlights</h2></div><button aria-label="Filter shelves" className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#4b2d29] text-[#c18f82]"><SlidersHorizontal size={16} /></button></div>
-          <div className="space-y-3">{shelves.map((shelf, i) => <button key={shelf.title} onClick={() => alert(`Opening ${shelf.title}`)} className="group flex w-full items-center gap-3 rounded-xl border border-[#3b2825] bg-[#241a19] p-3 text-left transition-colors hover:border-[#70403a]"><div className="flex -space-x-3">{shelf.cards.map((kind, j) => <div key={kind} className="relative rounded-[10px] border-2 border-[#241a19]" style={{ zIndex: 3 - j }}><CardArt kind={kind} compact /></div>)}</div><div className="min-w-0 flex-1 pl-1"><h3 className="text-[13px] font-bold text-[#f0dfd4]">{shelf.title}</h3><p className="mt-1 text-[10px] text-[#90776f]">{shelf.count} · <span style={{ color: shelf.accent }}>View shelf</span></p></div><ChevronRight size={16} className="text-[#735b55] transition-transform group-hover:translate-x-0.5" /></button>)}</div>
-          <div className="mt-7 flex items-center justify-between"><h2 className="font-serif text-[20px]">Recent additions</h2><button onClick={() => alert("Opening the full collection.")} className="text-[10px] font-bold text-[#e47b6e]">View all</button></div>
-          <div className="mt-3 grid grid-cols-3 gap-2">{postCards.map(card => <button key={card.name} onClick={() => alert(`Opening ${card.name}`)} className="text-left"><CardArt kind={card.kind} /><p className="mt-2 truncate text-[10px] font-bold text-[#dfc6ba]">{card.name}</p><p className="mt-0.5 truncate font-mono text-[8px] text-[#806b64]">{card.set}</p></button>)}</div>
-        </section> : <section className="px-5 pb-10 pt-5"><div className="mb-4 flex items-center justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#c8776d]">From the lounge</p><h2 className="mt-1 font-serif text-[22px]">Mara's posts</h2></div><span className="text-[10px] text-[#806b64]">24 posts</span></div><div className="space-y-4">{postCards.map((card, i) => <article key={card.name} className="rounded-xl border border-[#3b2825] bg-[#241a19] p-3.5"><div className="flex items-center gap-2.5"><Avatar initials="MC" size="small" /><div className="flex-1"><p className="text-[11px] font-bold">Mara Chen <span className="font-normal text-[#806b64]">· {i + 1}d</span></p><p className="text-[9px] text-[#806b64]">@marachens</p></div><MoreHorizontal size={16} className="text-[#806b64]" /></div><p className="mt-3 text-[12px] leading-5 text-[#c5ada2]">{i === 0 ? "The texture on this one is unreal in hand. Found it tucked behind a stack of commons at Nakano Broadway." : i === 1 ? "Small mail day, big feeling. The seller included the original receipt and a note from 2001." : "Some cards earn their place by rarity. This one earned it by making me stop and look."}</p><div className="mt-3 flex gap-3 rounded-lg border border-[#49302b] bg-[#1f1716] p-2"><div className="w-[57px] shrink-0"><CardArt kind={card.kind} compact /></div><div className="flex min-w-0 flex-1 flex-col justify-center"><p className="truncate text-[11px] font-bold">{card.name}</p><p className="mt-1 text-[9px] text-[#866f68]">{card.set} · Verified</p></div></div><div className="mt-2 flex items-center gap-1 text-[#8e756d]"><button aria-label="Like post" onClick={() => setLiked(liked.includes(i) ? liked.filter(n => n !== i) : [...liked, i])} className={`flex h-9 items-center gap-1.5 px-1 text-[10px] ${liked.includes(i) ? "text-[#e9443d]" : ""}`}><Heart size={15} fill={liked.includes(i) ? "currentColor" : "none"} />{card.likes + (liked.includes(i) ? 1 : 0)}</button><button aria-label="Comment on post" className="flex h-9 items-center gap-1.5 px-1 text-[10px]"><MessageCircle size={15} />{i + 8}</button><button aria-label="Share post" onClick={() => setShared(true)} className="ml-auto flex h-9 items-center px-1">{shared ? <Check size={15} className="text-[#e7b36c]" /> : <Share2 size={15} />}</button></div></article>)}</div></section>}
+        {tab === "overview" ? <section className="px-5 pb-10 pt-5">
+          <section className="portfolio-rise rounded-2xl border border-[#52252C] bg-[linear-gradient(135deg,#281317_0%,#1B1216_62%,#141316_100%)] p-4 shadow-[0_18px_38px_rgba(0,0,0,.28)]">
+            <div className="flex items-center justify-between"><div className="flex items-center gap-2"><WalletCards size={14} className="text-[#FF8F9A]" /><p className="font-mono text-[9px] font-bold uppercase tracking-[.18em] text-[#B9A6A8]">Portfolio value</p></div><span className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.12em] text-[#FF8F9A]"><i className="h-1.5 w-1.5 rounded-full bg-[#EF3F4D]" /> Live</span></div>
+            <div className="mt-2 flex items-end justify-between"><div><p className="font-serif text-[32px] leading-none tracking-[-.04em]">$24,680</p><p className="mt-2 flex items-center gap-1 text-[11px] font-bold text-[#FF8994]"><ArrowUpRight size={14} /> $3,840 <span className="font-normal text-[#AA888C]">· 12.4% this month</span></p></div><div className="rounded-lg border border-[#79313D] bg-[#4A1B24] px-2 py-1 text-[9px] font-bold text-[#FFB3B8]">AUD</div></div>
+            <div className="mt-5 flex h-[76px] items-end gap-1 border-b border-white/10 bg-[repeating-linear-gradient(0deg,transparent_0_23px,rgba(255,255,255,.045)_24px)]">{[24,32,27,40,37,50,44,58,55,65,61,76].map((height, index) => <span key={index} className="portfolio-bar flex-1 rounded-t-[3px] bg-[linear-gradient(to_top,#A52838,#FF6974)] opacity-90" style={{ height: `${height}%`, animationDelay: `${index * 55}ms` }} />)}</div>
+            <div className="mt-3 flex items-center justify-between"><p className="text-[10px] text-[#AA888C]"><b className="mr-1 text-[12px] text-[#F5DDD8]">486</b> cards tracked</p><p className="text-[10px] text-[#AA888C]"><b className="mr-1 text-[12px] text-[#F5DDD8]">89</b> graded</p><p className="font-mono text-[9px] text-[#79666A]">Synced 09:42</p></div>
+          </section>
+          <div className="portfolio-rise portfolio-delay-1 mt-4 flex items-center justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#D06A6D]">Portfolio mix</p><h2 className="mt-1 font-serif text-[22px]">Where the vault sits</h2></div><button onClick={() => setSearchOpen(!searchOpen)} aria-label="Search portfolio" className="tap flex h-9 w-9 items-center justify-center rounded-lg border border-[#383034] text-[#B99798]">{searchOpen ? <ChevronRight size={16} /> : <Search size={16} />}</button></div>
+          {searchOpen && <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#383034] bg-[#18181B] px-3 py-2"><Search size={13} className="text-[#777074]" /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search portfolio notes" className="w-full bg-transparent text-[11px] text-[#F5F0E6] outline-none placeholder:text-[#625B60]" /></div>}
+          <div className="portfolio-rise portfolio-delay-2 mt-4 space-y-2.5 rounded-xl border border-[#292528] bg-[#18181B] p-3.5">{[["Japanese promos", "63%", "$15,548", "#D47359"], ["Sealed product", "21%", "$5,183", "#688C8A"], ["Graded blue chips", "16%", "$3,949", "#B28B58"]].filter(row => !query.trim() || row[0].toLowerCase().includes(query.trim().toLowerCase())).map(([label, percent, value, accent]) => <div key={label}><div className="mb-1.5 flex items-center justify-between text-[10px]"><span className="font-bold text-[#D5CCCD]">{label}</span><span className="font-mono text-[#8D8285]">{percent} <b className="ml-2 text-[#E7D7D3]">{value}</b></span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#302B2E]"><div className="h-full rounded-full" style={{ width: percent, backgroundColor: accent }} /></div></div>)}</div>
+          <div className="portfolio-rise portfolio-delay-2 mb-4 mt-7 flex items-end justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#D06A6D]">Curated shelves</p><h2 className="mt-1 font-serif text-[22px]">Collection highlights</h2></div><button onClick={() => setSearchOpen(!searchOpen)} aria-label="Filter shelves" className="tap flex h-9 w-9 items-center justify-center rounded-lg border border-[#383034] text-[#B99798]"><SlidersHorizontal size={16} /></button></div>
+          <div className="space-y-3">{shelves.map((shelf) => <button key={shelf.title} onClick={() => setSearchOpen(true)} className="tap group flex w-full items-center gap-3 rounded-xl border border-[#292528] bg-[#18181B] p-3 text-left hover:border-[#63363D]"><div className="flex -space-x-3">{shelf.cards.map((kind, j) => <div key={kind} className="relative rounded-[10px] border-2 border-[#18181B]" style={{ zIndex: 3 - j }}><CardArt kind={kind} compact /></div>)}</div><div className="min-w-0 flex-1 pl-1"><h3 className="text-[13px] font-bold text-[#F0E9E5]">{shelf.title}</h3><p className="mt-1 text-[10px] text-[#82787B]">{shelf.count} · <span style={{ color: shelf.accent }}>View shelf</span></p></div><ChevronRight size={16} className="text-[#6F6569]" /></button>)}</div>
+          <div className="mb-4 mt-7 flex items-end justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#D06A6D]">Recent additions</p><h2 className="mt-1 font-serif text-[22px]">Latest in the vault</h2></div><button onClick={() => setTab("activity")} className="text-[10px] font-bold text-[#FF8994]">View activity <ArrowUpRight size={11} className="inline" /></button></div>
+          <div className="grid grid-cols-3 gap-2">{postCards.map(card => <button key={card.name} onClick={() => setTab("activity")} className="tap text-left"><CardArt kind={card.kind} /><p className="mt-2 truncate text-[10px] font-bold text-[#DFD6D3]">{card.name}</p><p className="mt-0.5 truncate font-mono text-[8px] text-[#777074]">{card.set}</p></button>)}</div>
+        </section> : <section className="px-5 pb-10 pt-5">
+          <div className="mb-4 flex items-center justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#D06A6D]">Performance log</p><h2 className="mt-1 font-serif text-[22px]">Recent movement</h2></div><span className="text-[10px] text-[#777074]">Last 30 days</span></div>
+          <div className="space-y-3">{postCards.map((card, i) => <article key={card.name} className="portfolio-rise rounded-xl border border-[#292528] bg-[#18181B] p-3.5"><div className="flex items-center gap-3"><div className="w-[57px] shrink-0"><CardArt kind={card.kind} compact /></div><div className="min-w-0 flex-1"><p className="truncate text-[12px] font-bold text-[#F3ECE9]">{card.name}</p><p className="mt-1 truncate text-[9px] text-[#81777A]">{card.set}</p><p className="mt-2 flex items-center gap-1 text-[10px] font-bold text-[#FF8994]"><TrendingUp size={12} /> {i === 0 ? "+18.6%" : i === 1 ? "+9.2%" : "+6.4%"} <span className="font-normal text-[#82787B]">this month</span></p></div><Target size={16} className="text-[#E7B36C]" /></div><div className="mt-3 flex items-center justify-between border-t border-[#292528] pt-2.5 text-[10px] text-[#82787B]"><span>Holding value</span><strong className="text-[#F0E9E5]">{i === 0 ? "$4,820" : i === 1 ? "$2,940" : "$1,680"}</strong><button onClick={() => setLiked(liked.includes(i) ? liked.filter(n => n !== i) : [...liked, i])} aria-label="Save movement" className={`tap flex items-center gap-1 ${liked.includes(i) ? "text-[#FF8994]" : "text-[#82787B]"}`}><Heart size={13} fill={liked.includes(i) ? "currentColor" : "none"} /> Track</button></div></article>)}</div>
+        </section>}
       </div>
 
       {messageOpen && <div className="fixed inset-0 z-20 flex items-end justify-center bg-[#100c0c]/75 sm:items-center sm:p-5"><div className="w-full max-w-[430px] rounded-t-2xl border border-[#58322f] bg-[#241a19] p-5 sm:rounded-2xl"><div className="flex items-center justify-between"><div><p className="font-mono text-[9px] uppercase tracking-[.2em] text-[#c8776d]">Private note</p><h2 className="mt-1 font-serif text-[23px]">Message Mara</h2></div><button aria-label="Close message" onClick={() => setMessageOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-full text-[#9c827a]"><MoreHorizontal size={18} /></button></div><div className="mt-5 flex items-start gap-3"><Avatar initials="MC" size="small" /><textarea autoFocus value={message} onChange={e => setMessage(e.target.value)} placeholder="Say hello about a card..." className="min-h-[92px] flex-1 resize-none rounded-lg border border-[#49302b] bg-[#1b1414] p-3 text-[12px] leading-5 outline-none placeholder:text-[#725c56] focus:border-[#a45048]" /></div><button disabled={!message.trim()} onClick={sendMessage} className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#e9443d] text-[11px] font-bold text-white disabled:opacity-35">{sent ? "Message sent" : "Send message"}{sent ? <Check size={14} /> : <Send size={14} />}</button></div></div>}
-      <div className="pointer-events-none fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[#4c2b28] bg-[#241a19]/95 px-4 py-2 text-[9px] text-[#9d8179] shadow-xl"><Users size={12} className="text-[#e7b36c]" /> 12 collectors viewing this profile</div>
+      <div className="pointer-events-none fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[#383034] bg-[#19181B]/95 px-4 py-2 text-[9px] text-[#9D9295] shadow-xl"><WalletCards size={12} className="text-[#E7B36C]" /> Portfolio snapshot · public view</div>
     </main>
   );
 }

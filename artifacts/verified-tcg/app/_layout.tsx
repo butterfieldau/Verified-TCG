@@ -45,10 +45,6 @@ recordStartupPhase('font-load', 'started');
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  useEffect(() => {
-    recordStartupPhase('initial-navigation', 'success');
-  }, []);
-
   return (
     <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
       <Stack.Screen name="index" />
@@ -59,7 +55,15 @@ function RootLayoutNav() {
       <Stack.Screen name="create-account" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="reset-password" options={{ animation: 'slide_from_right' }} />
-      <Stack.Screen name="(tabs)" />
+      {/* The tab shell is the authenticated root. It must never expose a
+          previous tab route through iOS's interactive back gesture. */}
+      <Stack.Screen
+        name="(tabs)"
+        options={{
+          gestureEnabled: false,
+          animation: 'none',
+        }}
+      />
       <Stack.Screen
         name="scan"
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
@@ -73,6 +77,7 @@ function RootLayoutNav() {
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="portfolio" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="import-collection" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collection-insights" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="collection-archive" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="verification-info" options={{ animation: 'slide_from_right' }} />
@@ -114,6 +119,11 @@ export default function RootLayout() {
     if (fontError) recordStartupPhase('font-load', 'failure', fontError, false);
     if (fontsLoaded) recordStartupPhase('font-load', 'success');
     if (!fontsLoaded && !fontError) return;
+
+    if (typeof document !== 'undefined') {
+      document.getElementById('startup-splash')?.remove();
+      document.getElementById('startup-splash-styles')?.remove();
+    }
 
     void SplashScreen.hideAsync().catch((error) => {
       recordStartupPhase('splash-setup', 'failure', error, false);

@@ -41,6 +41,13 @@ export interface CollectionSummary {
   totalCost: number | null;
   unrealizedGain: number | null;
   unrealizedGainPercent: number | null;
+  /** Gain for price-and-cost-covered holdings when the collection is partial. */
+  partialUnrealizedGain?: number | null;
+  partialUnrealizedGainPercent?: number | null;
+  gainCoverage?: {
+    pricedHoldings: number;
+    totalHoldings: number;
+  };
   realisedGain: number | null;
   // Counts
   cardCount: number;
@@ -53,6 +60,7 @@ export interface CollectionSummary {
   movement30d: CollectionMovement | null;
   // Meta
   completeness: string;    // human-readable note e.g. "72% of holdings priced"
+  chartData?: Record<PerformanceRange, PerformancePoint[]>;
 }
 
 /**
@@ -67,14 +75,97 @@ export async function fetchCollectionSummary(
   return apiJson<CollectionSummary>(`/api/collection/summary?${params}`, { accessToken: await accessToken() });
 }
 
+export async function fetchCollectionValueHistory(
+  range: PerformanceRange = 'ALL',
+  displayCurrency = 'AUD',
+): Promise<{
+  points: PerformancePoint[];
+  chartData: Record<PerformanceRange, PerformancePoint[]>;
+  historyAvailable: boolean;
+  historyUnavailableReason?: string | null;
+}> {
+  const params = new URLSearchParams({ range, displayCurrency });
+  const raw = await apiJson<{
+    points?: PerformancePoint[];
+    chartData?: Partial<Record<PerformanceRange, PerformancePoint[]>>;
+    historyAvailable?: boolean;
+    historyUnavailableReason?: string | null;
+  }>(`/api/collection/value-history?${params}`, { accessToken: await accessToken() });
+  const empty: Record<PerformanceRange, PerformancePoint[]> = {
+    '1D': [], '7D': [], '1M': [], '3M': [], '6M': [], '1Y': [], 'ALL': [],
+  };
+  return {
+    points: raw.points ?? [],
+    chartData: { ...empty, ...(raw.chartData ?? {}) },
+    historyAvailable: raw.historyAvailable ?? false,
+    historyUnavailableReason: raw.historyUnavailableReason,
+  };
+}
+
 // ── Performance History ─────────────────────────────────────────────────────────
 
 export type PerformanceRange = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 
 export interface PerformancePoint {
   date: string;
-  value: number;
+  value: number | null;
   currency: string;
+  available?: boolean;
+  complete?: boolean;
+  baseline?: boolean;
+  pricedHoldings?: number;
+  totalHoldings?: number;
+  dailyChange?: number | null;
+  dailyChangePercent?: number | null;
+  dailyChangeCents?: number | null;
+  bucketStart?: string;
+  bucketEnd?: string;
+  sampledFrom?: string;
+}
+
+export type PortfolioMovementKind = 'market_price' | 'acquisition' | 'sale';
+
+export interface PortfolioMovementContribution {
+  id: string;
+  cardId: string;
+  name: string;
+  setName: string | null;
+  imageUrl: string | null;
+  quantity: number;
+  gradeKey: string | null;
+  kind: PortfolioMovementKind;
+  amountCents: number | null;
+  amount: number | null;
+  previousValueCents: number | null;
+  previousValue: number | null;
+  valueCents: number | null;
+  value: number | null;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface PortfolioMovementBreakdown {
+  date: string;
+  previousDate: string | null;
+  currency: string;
+  available: boolean;
+  previousAvailable: boolean;
+  breakdownAvailable: boolean;
+  totalChangeCents: number | null;
+  totalChange: number | null;
+  contributions: PortfolioMovementContribution[];
+  unavailableReason: string | null;
+}
+
+export async function fetchPortfolioMovementBreakdown(
+  date: string,
+  displayCurrency = 'AUD',
+): Promise<PortfolioMovementBreakdown> {
+  const params = new URLSearchParams({ date, displayCurrency });
+  return apiJson<PortfolioMovementBreakdown>(
+    `/api/collection/value-history/movement?${params}`,
+    { accessToken: await accessToken() },
+  );
 }
 
 export interface PerformanceAllocation {

@@ -46,6 +46,9 @@ export const pricingProvidersTable = pgTable("pricing_providers", {
   /** Short human-readable description of the last error */
   lastErrorMessage: text("last_error_message"),
 
+  /** Sanitized typed failure category; never provider payload or credential data */
+  lastErrorKind: text("last_error_kind"),
+
   /** Provider base URL */
   baseUrl: text("base_url"),
 
@@ -186,6 +189,59 @@ export const providerPriceHistoryTable = pgTable(
 
 export type ProviderPriceHistoryRow = typeof providerPriceHistoryTable.$inferSelect;
 
+// ── PriceCharting bulk guide cache ───────────────────────────────────────────
+// The token is deliberately never stored. Rows are normalized provider payloads
+// so a restarted process can reuse the day's downloaded guide without a call.
+export const priceChartingGuideImportsTable = pgTable(
+  "pricecharting_guide_imports",
+  {
+    category: text("category").primaryKey(),
+    status: text("status").notNull().default("ready"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+    rowCount: integer("row_count").notNull().default(0),
+    lastErrorKind: text("last_error_kind"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    downloadClaimToken: text("download_claim_token"),
+    reconciliationStatus: text("reconciliation_status").notNull().default("pending"),
+    reconciliationCursor: text("reconciliation_cursor"),
+    reconciliationLeaseUntil: timestamp("reconciliation_lease_until", { withTimezone: true }),
+    reconciliationClaimToken: text("reconciliation_claim_token"),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    reconciliationStats: jsonb("reconciliation_stats").notNull().default({}),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const priceChartingGuideRowsTable = pgTable(
+  "pricecharting_guide_rows",
+  {
+    category: text("category").notNull(),
+    providerProductId: text("provider_product_id").notNull(),
+    productName: text("product_name").notNull(),
+    consoleName: text("console_name").notNull(),
+    normalizedName: text("normalized_name").notNull().default(""),
+    normalizedNumber: text("normalized_number"),
+    normalizedSet: text("normalized_set").notNull().default(""),
+    prices: jsonb("prices").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("pricecharting_guide_rows_category_product_uniq").on(t.category, t.providerProductId),
+    index("pricecharting_guide_rows_category_product_idx").on(t.category, t.providerProductId),
+    index("pricecharting_guide_rows_identity_idx").on(t.category, t.normalizedName, t.normalizedNumber),
+  ],
+);
+
+/** Singleton cross-category CSV lease; PriceCharting's guide throttle is global. */
+export const priceChartingGuideDownloadLeaseTable = pgTable("pricecharting_guide_download_lease", {
+  leaseKey: text("lease_key").primaryKey(),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  claimToken: text("claim_token"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Timestamped provider snapshots ──────────────────────────────────────────
 // Unlike provider_price_history, this table permits multiple captures per
 // calendar day. snapshotBucket is an application-defined UTC 12-hour bucket
@@ -294,6 +350,8 @@ export const soldArchiveItemsTable = pgTable(
     acquiredCurrency: text("acquired_currency").notNull().default("AUD"),
     /** ISO date string of acquisition */
     acquiredAt: text("acquired_at"),
+    /** Start of the ownership interval that ended with this sale */
+    ownershipStartedAt: text("ownership_started_at"),
 
     // ── Sale details ──────────────────────────────────────────────────────────
     /** Sale price in minor units */
@@ -302,6 +360,10 @@ export const soldArchiveItemsTable = pgTable(
     saleCurrency: text("sale_currency").notNull().default("AUD"),
     /** ISO date string of sale */
     soldAt: text("sold_at").notNull(),
+    /** When this archived quantity was restored to active ownership */
+    restoredAt: timestamp("restored_at", { withTimezone: true }),
+    /** Active collection row created by the restore */
+    restoredCollectionItemId: uuid("restored_collection_item_id"),
 
     /** Optional venue/platform of sale */
     venue: text("venue"),

@@ -1,5 +1,6 @@
 import type { Card, CardRarity } from '@/types';
-import { ApiClientError, apiJson } from './apiClient';
+import { ApiClientError, apiJson, apiRequest } from './apiClient';
+import { getAccessToken } from './auth';
 
 export interface CatalogVariant {
   id: string;
@@ -29,6 +30,17 @@ export interface CatalogCard {
   tcgplayerId?: string | null;
   /** Present on market feeds when the server has a truthful source currency. */
   currency?: string;
+  market_price?: number | null;
+  pricing_source?: string | null;
+  raw_quote?: {
+    provider: string;
+    productId: string | null;
+    priceCents: number;
+    price: number;
+    currency: string;
+    updatedAt: string;
+    isStale: boolean;
+  } | null;
   variants: CatalogVariant[];
 }
 
@@ -36,11 +48,14 @@ export interface CatalogResponse {
   data: CatalogCard[];
   meta?: { total?: number; limit?: number; offset?: number; hasMore?: boolean };
   source?: string;
+  catalogue_source?: string;
+  pricing_source?: string;
   cached?: boolean;
 }
 
 export const MIN_CATALOG_SEARCH_LENGTH = 2;
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const UNPRICED_SEARCH_CACHE_TTL_MS = 15 * 1000;
 const MAX_SEARCH_CACHE_ENTRIES = 100;
 
 interface CachedSearch {
@@ -125,6 +140,16 @@ export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promis
   }
 }
 
+/** Record one explicit card-detail view; failures never block the card screen. */
+export async function recordCatalogCardLookup(id: string): Promise<void> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) return;
+  await apiRequest(`/api/catalog/cards/${encodeURIComponent(id)}/lookup`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
 export async function searchCatalog(query: string, signal?: AbortSignal, page: number = 1): Promise<CatalogResponse> {
   const normalizedQuery = normalizeCatalogQuery(query);
   if (normalizedQuery.length < MIN_CATALOG_SEARCH_LENGTH) {
@@ -146,7 +171,13 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
   const flight = (async () => {
     const params = new URLSearchParams({ q: normalizedQuery, limit: String(limit), offset: String(offset) });
     const result = await apiJson<CatalogResponse>(`/api/catalog/cards?${params.toString()}`);
-    searchCache.set(cacheKey, { response: result, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
+    const hasPendingPriceCoverage = result.data.some(card => !card.raw_quote);
+    searchCache.set(cacheKey, {
+      response: result,
+      expiresAt: Date.now() + (
+        hasPendingPriceCoverage ? UNPRICED_SEARCH_CACHE_TTL_MS : SEARCH_CACHE_TTL_MS
+      ),
+    });
     if (searchCache.size > MAX_SEARCH_CACHE_ENTRIES) {
       const oldest = searchCache.keys().next().value;
       if (oldest) searchCache.delete(oldest);
@@ -160,11 +191,33 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
 export function catalogCardToAppCard(card: CatalogCard): Card {
   // Prefer Near Mint, fall back to first variant
   const variant = card.variants.find(item => item.condition === 'Near Mint') ?? card.variants[0];
-  const price = variant?.price ?? 0;
+  const sourceIsVerified =
+    card.raw_quote?.provider === 'pricecharting'
+    || card.pricing_source?.trim().toLowerCase() === 'pricecharting';
+  const variantPrice =
+    typeof variant?.price === 'number' && Number.isFinite(variant.price) && variant.price > 0
+      ? variant.price
+      : null;
+  const marketPrice =
+    typeof card.market_price === 'number' && Number.isFinite(card.market_price) && card.market_price > 0
+      ? card.market_price
+      : null;
+  const explicitPrice =
+    typeof card.raw_quote?.price === 'number'
+    && Number.isFinite(card.raw_quote.price)
+    && card.raw_quote.price > 0
+      ? card.raw_quote.price
+      : null;
+  const hasVerifiedRawPrice =
+    sourceIsVerified && (explicitPrice !== null || variantPrice !== null || marketPrice !== null);
+  // market_price is populated from the same persisted raw PriceCharting quote
+  // as the enriched variant. Accept it when a feed omits the variant price.
+  const price = hasVerifiedRawPrice ? (explicitPrice ?? variantPrice ?? marketPrice)! : 0;
   // A missing source timestamp is meaningful: do not present the mapping time
   // as if it were a verified quote timestamp.
-  const updatedAt = variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : null;
-  const currency = variant?.markets?.[0]?.currency ?? card.currency ?? 'AUD';
+  const updatedAt = card.raw_quote?.updatedAt
+    ?? (variant?.lastUpdated ? new Date(variant.lastUpdated * 1000).toISOString() : null);
+  const currency = card.raw_quote?.currency ?? variant?.markets?.[0]?.currency ?? card.currency ?? 'AUD';
   const game = card.game.toLowerCase();
   const tcg = game.includes('magic') ? 'magic'
     : game.includes('one piece') ? 'onepiece'
@@ -203,6 +256,7 @@ export function catalogCardToAppCard(card: CatalogCard): Card {
     gradientEnd: '#090909',
     price: {
       raw: price,
+      available: hasVerifiedRawPrice,
       currency,
       updatedAt,
       change24h: variant?.priceChange24hr ?? undefined,

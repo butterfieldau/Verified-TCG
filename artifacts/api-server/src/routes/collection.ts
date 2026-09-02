@@ -1,12 +1,10 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { collectionItemsTable, currentQuotesTable } from "@workspace/db";
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { collectionItemsTable } from "@workspace/db";
+import { eq, and, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity, logActivitySafely } from "./activity.js";
-import { selectPreferredQuote } from "../pricing/justtcg.js";
-import { gradeKeyForHolding } from "../pricing/portfolio.js";
-import { normalizeGradeKey } from "../pricing/grades.js";
+import { calculatePortfolioValuation } from "../pricing/portfolio.js";
 
 const router = Router();
 
@@ -15,7 +13,14 @@ const router = Router();
 /** Convert a DB row back to the CollectionItem shape the mobile app expects. */
 function rowToItem(
   row: typeof collectionItemsTable.$inferSelect,
-  valuation?: { priceCents: number; currency: string; gradeKey: string; fetchedAt: Date } | null,
+  valuation?: {
+    priceCents: number;
+    currency: string;
+    gradeKey: string;
+    fetchedAt: Date;
+    costBasisCents: number | null;
+    gainCents: number | null;
+  } | null,
 ) {
   return {
     id: row.id,
@@ -39,6 +44,12 @@ function rowToItem(
           currency: valuation.currency,
           gradeKey: valuation.gradeKey,
           updatedAt: valuation.fetchedAt.toISOString(),
+           costBasis: valuation.costBasisCents == null ? null : valuation.costBasisCents / 100,
+           gain: valuation.gainCents == null ? null : valuation.gainCents / 100,
+           gainPercent:
+             valuation.gainCents != null && valuation.costBasisCents != null && valuation.costBasisCents > 0
+               ? (valuation.gainCents / valuation.costBasisCents) * 100
+               : null,
         }
       : null,
   };
@@ -52,6 +63,32 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
 
   // Paginated mode when either param is provided
   const isPaginated = pageParam !== undefined || limitParam !== undefined;
+  const displayCurrency =
+    typeof req.query["displayCurrency"] === "string" && /^[A-Za-z]{3}$/.test(req.query["displayCurrency"])
+      ? req.query["displayCurrency"].toUpperCase()
+      : "AUD";
+  const valuationMap = async (rowIds?: string[]) => {
+    const portfolio = await calculatePortfolioValuation(req.userId!, displayCurrency, rowIds);
+    return new Map(portfolio.holdings.map(holding => [
+      holding.row.id,
+      holding.currentValueCents != null && holding.quote && holding.gradeKey
+        ? {
+            priceCents: Math.round(holding.currentValueCents / holding.row.quantity),
+            currency: displayCurrency,
+            gradeKey: holding.gradeKey,
+            fetchedAt: holding.quote.fetchedAt,
+            costBasisCents:
+              holding.costBasisCents == null
+                ? null
+                : Math.round(holding.costBasisCents / holding.row.quantity),
+            gainCents:
+              holding.unrealizedGainCents == null
+                ? null
+                : Math.round(holding.unrealizedGainCents / holding.row.quantity),
+          }
+        : null,
+    ]));
+  };
 
   if (isPaginated) {
     const limit = Math.min(Math.max(parseInt(String(limitParam ?? "20"), 10) || 20, 1), 100);
@@ -74,35 +111,9 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
 
     const total = countResult[0]?.count ?? 0;
 
-    // Fetch valuations for this page
-    const cardIds = rows.map(r => r.cardId);
-    const quotes = cardIds.length > 0
-      ? await db
-          .select()
-          .from(currentQuotesTable)
-          .where(inArray(currentQuotesTable.cardId, cardIds))
-      : [];
-
-    const quoteMap = new Map<string, Array<typeof currentQuotesTable.$inferSelect>>();
-    for (const q of quotes) {
-      const gradeKey = normalizeGradeKey(q.gradeKey);
-      if (gradeKey) {
-        const key = `${q.cardId}:${gradeKey}`;
-        quoteMap.set(key, [
-          ...(quoteMap.get(key) ?? []),
-          { ...q, gradeKey },
-        ]);
-      }
-    }
-
+    const valuationById = await valuationMap(rows.map(row => row.id));
     return res.json({
-      items: rows.map(row => {
-        const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
-        const q = gradeKey
-          ? selectPreferredQuote(quoteMap.get(`${row.cardId}:${gradeKey}`) ?? [], gradeKey)
-          : null;
-        return rowToItem(row, q ?? null);
-      }),
+      items: rows.map(row => rowToItem(row, valuationById.get(row.id) ?? null)),
       total,
       page,
       limit,
@@ -117,34 +128,8 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     .where(eq(collectionItemsTable.userId, req.userId!))
     .orderBy(collectionItemsTable.createdAt);
 
-  // Fetch valuations for all items
-  const cardIds = rows.map(r => r.cardId);
-  const quotes = cardIds.length > 0
-    ? await db
-        .select()
-        .from(currentQuotesTable)
-        .where(inArray(currentQuotesTable.cardId, cardIds))
-    : [];
-
-  const quoteMap = new Map<string, Array<typeof currentQuotesTable.$inferSelect>>();
-  for (const q of quotes) {
-    const gradeKey = normalizeGradeKey(q.gradeKey);
-    if (gradeKey) {
-      const key = `${q.cardId}:${gradeKey}`;
-      quoteMap.set(key, [
-        ...(quoteMap.get(key) ?? []),
-        { ...q, gradeKey },
-      ]);
-    }
-  }
-
-  return res.json(rows.map(row => {
-    const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
-    const q = gradeKey
-      ? selectPreferredQuote(quoteMap.get(`${row.cardId}:${gradeKey}`) ?? [], gradeKey)
-      : null;
-    return rowToItem(row, q ?? null);
-  }));
+  const valuationById = await valuationMap();
+  return res.json(rows.map(row => rowToItem(row, valuationById.get(row.id) ?? null)));
 });
 
 // ── Validation helpers ────────────────────────────────────────────────────────

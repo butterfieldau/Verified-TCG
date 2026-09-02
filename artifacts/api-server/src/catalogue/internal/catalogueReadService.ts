@@ -127,8 +127,7 @@ export function shapeCanonicalCard(
     !row.external_id ||
     !row.name ||
     !row.game ||
-    !row.set_name ||
-    !row.image_url
+    !row.set_name
   )
     return null;
   return {
@@ -163,7 +162,22 @@ const CARD_SELECT = sql`
   SELECT e.external_id, c.id AS card_id, c.name, g.name AS game, s.name AS set_name,
     s.code AS set_code, c.collector_number, c.rarity, c.language, s.region,
     c.release_date,
-    (SELECT i.url FROM catalogue_card_images i WHERE i.card_id = c.id AND i.is_primary = true ORDER BY i.created_at LIMIT 1) AS image_url,
+    COALESCE(
+      (SELECT i.url
+       FROM catalogue_card_images i
+       WHERE i.card_id = c.id AND i.is_primary = true
+       ORDER BY i.created_at
+       LIMIT 1),
+      (SELECT 'https://product-images.tcgplayer.com/fit-in/1000x1000/'
+          || NULLIF(source.raw_payload->>'tcgplayerId', '') || '.jpg'
+       FROM catalogue_source_records source
+       WHERE source.entity_type = 'card'
+         AND source.entity_id = c.id
+         AND source.provider_key = 'justtcg'
+         AND (source.raw_payload->>'tcgplayerId') ~ '^[0-9]+$'
+       ORDER BY source.last_seen_at DESC
+       LIMIT 1)
+    ) AS image_url,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key', v.variant_key, 'name', v.name, 'finish', v.finish, 'edition', v.edition, 'stamp', v.stamp)) FROM catalogue_card_variants v WHERE v.card_id = c.id), '[]'::jsonb) AS variants
   FROM catalogue_external_ids e
   JOIN catalogue_cards c ON c.id = e.entity_id
@@ -176,6 +190,21 @@ export interface CanonicalReadResult<T> {
   value: T;
   outcome: CatalogueReadOutcome;
   durationMs: number;
+  pagination?: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+export function classifyCanonicalPage(
+  rows: Record<string, unknown>[],
+  deliveredCount: number,
+): CatalogueReadOutcome {
+  if (deliveredCount > 0 && deliveredCount === rows.length) return "canonical_hit";
+  if (rows.some(isUnsupportedCanonicalRecord)) return "unsupported_fallback";
+  return rows.length ? "incomplete" : "fallback";
 }
 
 export async function readCanonicalPublicCard(
@@ -225,8 +254,7 @@ export async function readCanonicalPublicCards(input: {
   if (!query) return { value: [], outcome: "fallback", durationMs: 0 };
   const matching = normalizeForMatching(query);
   try {
-    const result = await db.execute<Record<string, unknown>>(sql`
-      ${CARD_SELECT}
+    const searchFilter = sql`
       AND c.is_active = true AND s.is_active = true AND g.is_active = true
       AND (
         c.name ILIKE ${`%${query}%`} OR c.collector_number ILIKE ${`%${query}%`} OR
@@ -234,28 +262,58 @@ export async function readCanonicalPublicCards(input: {
         EXISTS (SELECT 1 FROM catalogue_aliases a WHERE a.entity_type = 'card' AND a.entity_id = c.id AND a.alias_normalized ILIKE ${`%${matching}%`})
       )
       ${input.game ? sql`AND (g.name ILIKE ${`%${input.game}%`} OR g.slug = ${normalizeForMatching(input.game).replace(/\s+/g, "-")})` : sql``}
+      AND NOT (
+        (g.name ILIKE '%pokemon%' OR g.slug = 'pokemon')
+        AND LOWER(COALESCE(c.language, '')) IN ('ja', 'japanese', 'jpn', 'jp')
+      )
+    `;
+    const [result, countResult] = await Promise.all([
+      db.execute<Record<string, unknown>>(sql`
+       ${CARD_SELECT}
+       ${searchFilter}
       ORDER BY c.name, s.name, c.collector_number
       LIMIT ${input.limit} OFFSET ${input.offset}
-    `);
+      `),
+      db.execute<{ total: number }>(sql`
+        SELECT COUNT(*)::int AS total
+        FROM catalogue_external_ids e
+        JOIN catalogue_cards c ON c.id = e.entity_id
+        JOIN catalogue_sets s ON s.id = c.set_id
+        JOIN catalogue_games g ON g.id = c.game_id
+        WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
+        ${searchFilter}
+      `),
+    ]);
     const supportedRows = result.rows.filter(
       (row) => !isUnsupportedCanonicalRecord(row),
     );
     const cards = supportedRows
       .map(shapeCanonicalCard)
       .filter((card): card is PublicCatalogueCard => Boolean(card));
-    const outcome: CatalogueReadOutcome = cards.length
-      ? "canonical_hit"
-      : result.rows.some(isUnsupportedCanonicalRecord)
-        ? "unsupported_fallback"
-        : result.rows.length
-          ? "incomplete"
-          : "fallback";
-    return { value: cards, outcome, durationMs: Date.now() - startedAt };
+    const outcome = classifyCanonicalPage(result.rows, cards.length);
+    const total = Number(countResult.rows[0]?.total ?? cards.length);
+    return {
+      value: cards,
+      outcome,
+      durationMs: Date.now() - startedAt,
+      pagination: {
+        total,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: input.offset + cards.length < total,
+      },
+    };
   } catch {
     return {
       value: [],
       outcome: "canonical_error",
       durationMs: Date.now() - startedAt,
+      pagination: {
+        total: 0,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: false,
+      },
     };
   }
 }
@@ -287,36 +345,9 @@ export function deduplicatePublicCards<T extends Record<string, unknown>>(
   canonical: PublicCatalogueCard[],
   fallback: T[],
 ): Array<PublicCatalogueCard | T> {
-  const fallbackById = new Map<string, T>(
-    fallback.flatMap((card) => {
-      const id = String(card.id ?? "");
-      return id ? ([[id, card]] as const) : [];
-    }),
-  );
-  const canonicalWithProviderFields = canonical.map(card => {
-    const providerCard = fallbackById.get(card.id);
-    if (!providerCard) return card;
-    const canonicalFields = card as Record<string, unknown>;
-    // Canonical identity remains authoritative, while a live JustTCG response
-    // contributes only provider-owned fields such as variants and pricing.
-    // Without this merge, canonical-first search silently discarded the live
-    // price supplied by the same JustTCG card ID.
-    return {
-      ...providerCard,
-      ...card,
-      variants: Array.isArray(providerCard.variants) && providerCard.variants.length
-        ? providerCard.variants
-        : card.variants,
-      currency: providerCard.currency ?? canonicalFields.currency,
-      market_price: providerCard.market_price ?? canonicalFields.market_price,
-      pricing_source: providerCard.pricing_source ?? "JustTCG",
-      raw_quote: providerCard.raw_quote ?? canonicalFields.raw_quote,
-      updated_at: providerCard.updated_at ?? canonicalFields.updated_at,
-    } as PublicCatalogueCard | T;
-  });
   const seen = new Set(canonical.map((card) => card.id));
   return [
-    ...canonicalWithProviderFields,
+    ...canonical,
     ...fallback.filter((card) => !seen.has(String(card.id ?? ""))),
   ];
 }

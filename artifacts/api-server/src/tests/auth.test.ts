@@ -29,6 +29,14 @@ const request = supertest(app);
 
 const TAG = `__auth_${Date.now()}__`;
 
+function signupIdentity(username: string) {
+  return {
+    first_name: "Test",
+    last_name: "Collector",
+    username,
+  };
+}
+
 async function cleanupTaggedUsers() {
   await db.delete(usersTable).where(like(usersTable.email, `%${TAG}%`));
 }
@@ -43,7 +51,7 @@ describe("POST /api/auth/signup", () => {
     const res = await request.post("/api/auth/signup").send({
       email,
       password: "password123",
-      display_name: "Test User",
+      ...signupIdentity(`${TAG}signup_happy`.replace(/[^a-z0-9_]/g, "").slice(-24)),
     });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     assert.ok(res.body.access_token, "should have access_token");
@@ -62,12 +70,12 @@ describe("POST /api/auth/signup", () => {
     await request.post("/api/auth/signup").send({
       email,
       password: "password123",
-      display_name: "First",
+      ...signupIdentity(`${TAG}signup_dup_1`.replace(/[^a-z0-9_]/g, "").slice(-24)),
     });
     const res = await request.post("/api/auth/signup").send({
       email,
       password: "password123",
-      display_name: "Second",
+      ...signupIdentity(`${TAG}signup_dup_2`.replace(/[^a-z0-9_]/g, "").slice(-24)),
     });
     assert.equal(res.status, 422, JSON.stringify(res.body));
     assert.ok(res.body.message, "should have a message field");
@@ -81,7 +89,7 @@ describe("POST /api/auth/signup", () => {
   test("missing email returns 400", async () => {
     const res = await request.post("/api/auth/signup").send({
       password: "password123",
-      display_name: "No Email",
+      ...signupIdentity("no_email_user"),
     });
     assert.equal(res.status, 400, JSON.stringify(res.body));
   });
@@ -89,12 +97,12 @@ describe("POST /api/auth/signup", () => {
   test("missing password returns 400", async () => {
     const res = await request.post("/api/auth/signup").send({
       email: `${TAG}nopass@example.com`,
-      display_name: "No Password",
+      ...signupIdentity("no_password_user"),
     });
     assert.equal(res.status, 400);
   });
 
-  test("missing display_name returns 400", async () => {
+  test("missing required identity fields returns 400", async () => {
     const res = await request.post("/api/auth/signup").send({
       email: `${TAG}noname@example.com`,
       password: "password123",
@@ -106,9 +114,35 @@ describe("POST /api/auth/signup", () => {
     const res = await request.post("/api/auth/signup").send({
       email: `${TAG}shortpw@example.com`,
       password: "short",
-      display_name: "Short PW",
+      ...signupIdentity("short_password_user"),
     });
     assert.equal(res.status, 400);
+  });
+
+  test("rejects a username that is already in use", async () => {
+    const username = `${TAG}taken`.replace(/[^a-z0-9_]/g, "").slice(-24);
+    const first = await request.post("/api/auth/signup").send({
+      email: `${TAG}username_first@example.com`,
+      password: "password123",
+      ...signupIdentity(username),
+    });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+
+    const second = await request.post("/api/auth/signup").send({
+      email: `${TAG}username_second@example.com`,
+      password: "password123",
+      ...signupIdentity(username),
+    });
+    assert.equal(second.status, 409, JSON.stringify(second.body));
+    assert.match(second.body.message, /username/i);
+  });
+
+  test("reports username availability without exposing an account", async () => {
+    const available = await request
+      .get("/api/auth/username-availability")
+      .query({ username: "available_collector" });
+    assert.equal(available.status, 200, JSON.stringify(available.body));
+    assert.equal(available.body.available, true);
   });
 
   test("suspended accounts return the application 403 message", async () => {

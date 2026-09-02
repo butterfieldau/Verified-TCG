@@ -45,13 +45,14 @@ const CATEGORIES: { label: string; value: SearchCategory }[] = [
 function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
   const [imgError, setImgError] = useState(false);
   const showImage = !!card.imageUrl && !imgError;
+  const hasPrice = card.price.available === true;
 
   return (
     <Pressable
       style={[styles.resultRow, { backgroundColor: C.card }]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, $${card.price.raw.toLocaleString()} raw`}
+      accessibilityLabel={`${card.name}, ${card.setName}${card.number ? ` #${card.number}` : ''}, ${hasPrice ? `${card.price.currency} ${card.price.raw.toLocaleString()} raw` : 'price unavailable'}`}
     >
       <View style={[styles.resultThumb, { backgroundColor: card.gradientStart }]}>
         {showImage ? (
@@ -74,9 +75,11 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
         <Text style={styles.resultRarity}>{card.rarity.replace(/_/g, ' ')}</Text>
       </View>
       <View style={styles.resultPricing}>
-        <Text style={styles.resultPrice}>${card.price.raw.toLocaleString()}</Text>
-        <Text style={styles.resultPriceLabel}>Raw</Text>
-        {card.price.change7d !== undefined && (
+        <Text style={[styles.resultPrice, !hasPrice && styles.resultPriceUnavailable]}>
+          {hasPrice ? `${card.price.currency} ${card.price.raw.toLocaleString()}` : 'Unavailable'}
+        </Text>
+        <Text style={styles.resultPriceLabel}>{hasPrice ? 'Raw' : 'Price'}</Text>
+        {hasPrice && card.price.change7d !== undefined && (
           <View style={styles.resultChangeRow}>
             <Feather
               name={card.price.change7d >= 0 ? 'arrow-up' : 'arrow-down'}
@@ -91,7 +94,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
             </Text>
           </View>
         )}
-        {card.price.change30d !== undefined && (
+        {hasPrice && card.price.change30d !== undefined && (
           <View style={styles.resultChangeRow}>
             <Feather
               name={card.price.change30d >= 0 ? 'arrow-up' : 'arrow-down'}
@@ -106,7 +109,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
             </Text>
           </View>
         )}
-        {card.price.psa10 && (
+        {hasPrice && card.price.psa10 && (
           <>
             <Text style={[styles.resultPrice, { marginTop: 4 }]}>${card.price.psa10.toLocaleString()}</Text>
             <Text style={styles.resultPriceLabel}>PSA 10</Text>
@@ -129,7 +132,9 @@ export default function SearchScreen() {
   const [remoteHasMore, setRemoteHasMore] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteLoadingMore, setRemoteLoadingMore] = useState(false);
+  const [remoteLoadMoreError, setRemoteLoadMoreError] = useState('');
   const [remoteError, setRemoteError] = useState('');
+  const [remoteSources, setRemoteSources] = useState<{ catalogue?: string; pricing?: string }>({});
   const [trendingMovers, setTrendingMovers] = useState<MarketMover[]>([]);
 
   // Ref tracking the current search query so stale requests don't overwrite
@@ -160,6 +165,7 @@ export default function SearchScreen() {
       setRemoteHasMore(false);
       setRemotePage(1);
       setRemoteLoading(false);
+      setRemoteLoadMoreError('');
       return;
     }
     // Cancel any in-flight request
@@ -172,12 +178,17 @@ export default function SearchScreen() {
     setRemoteError('');
     setRemotePage(1);
     setRemoteHasMore(false);
+    setRemoteLoadMoreError('');
 
     const timer = setTimeout(() => {
       searchCatalog(trimmed, controller.signal, 1)
         .then(result => {
           if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return; // stale
           setRemoteResults(result.data ?? []);
+          setRemoteSources({
+            catalogue: result.catalogue_source ?? result.source,
+            pricing: result.pricing_source,
+          });
           setRemoteHasMore(result.meta?.hasMore ?? false);
           setRemotePage(1);
         })
@@ -185,6 +196,7 @@ export default function SearchScreen() {
           if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return;
           if (error?.name === 'AbortError') return;
           setRemoteResults([]);
+          setRemoteSources({});
           setRemoteError(handleApiError(error));
         })
         .finally(() => {
@@ -205,15 +217,19 @@ export default function SearchScreen() {
       trimmed.length < MIN_CATALOG_SEARCH_LENGTH
     ) return;
     setRemoteLoadingMore(true);
+    setRemoteLoadMoreError('');
     const nextPage = remotePage + 1;
     try {
       const result = await searchCatalog(trimmed, undefined, nextPage);
       if (activeQueryRef.current !== trimmed) return; // stale
-      setRemoteResults(prev => [...prev, ...(result.data ?? [])]);
+      setRemoteResults(prev => {
+        const seen = new Set(prev.map(card => card.id));
+        return [...prev, ...(result.data ?? []).filter(card => !seen.has(card.id))];
+      });
       setRemoteHasMore(result.meta?.hasMore ?? false);
       setRemotePage(nextPage);
-    } catch {
-      // silently ignore load-more errors
+    } catch (error) {
+      setRemoteLoadMoreError(handleApiError(error));
     } finally {
       setRemoteLoadingMore(false);
     }
@@ -354,7 +370,9 @@ export default function SearchScreen() {
                   </View>
                 ) : null}
                 {!remoteError && remoteResults.length > 0 ? (
-                  <Text style={styles.liveSource}>Live catalogue and pricing · JustTCG</Text>
+                  <Text style={styles.liveSource}>
+                    Catalogue · {remoteSources.catalogue ?? 'Verified TCG'}  •  Market prices · {remoteSources.pricing ?? 'No verified quotes yet'}
+                  </Text>
                 ) : null}
               </View>
             )}
@@ -384,6 +402,19 @@ export default function SearchScreen() {
             <View style={{ padding: 16, alignItems: 'center' }}>
               <ActivityIndicator color={C.primary} size="small" />
             </View>
+          ) : remoteLoadMoreError ? (
+            <View style={styles.loadMoreError}>
+              <Text style={styles.liveError}>{remoteLoadMoreError}</Text>
+              <Pressable
+                onPress={handleLoadMore}
+                style={styles.retryButton}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading more cards"
+              >
+                <Feather name="refresh-cw" size={13} color={C.primary} />
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null
         )}
         ListEmptyComponent={() =>
@@ -402,6 +433,9 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.background },
+  loadMoreError: { padding: 16, alignItems: 'center', gap: 8 },
+  retryButton: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
+  retryButtonText: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -497,6 +531,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: `${C.mutedForeground}99`,
     textTransform: 'capitalize',
+  },
+  resultPriceUnavailable: {
+    color: C.mutedForeground,
+    fontSize: 11,
   },
   resultPricing: { alignItems: 'flex-end' },
   resultPrice: { fontSize: 14, fontFamily: 'Inter_700Bold', color: C.foreground },

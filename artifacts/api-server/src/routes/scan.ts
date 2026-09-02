@@ -39,7 +39,7 @@ import { shapeCanonicalCard } from "../catalogue/internal/catalogueReadService.j
 const router = Router();
 
 const FREE_SCAN_LIMIT = 30;
-const RECOGNITION_MODEL = "gpt-4o-mini";
+const RECOGNITION_MODEL = "gpt-5.4-mini";
 
 /**
  * Maximum base64 image payload: 8 MB encoded ≈ ~6 MB JPEG.

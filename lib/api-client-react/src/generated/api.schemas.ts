@@ -9,6 +9,368 @@ export interface HealthStatus {
   status: string;
 }
 
+export type CatalogVariantMarketsItem = {
+  region?: string;
+  currency?: string;
+  /** @nullable */
+  price?: number | null;
+};
+
+export interface CatalogVariant {
+  condition?: string;
+  /** @nullable */
+  price?: number | null;
+  lastUpdated?: number;
+  markets?: CatalogVariantMarketsItem[];
+}
+
+export interface CatalogCard {
+  id: string;
+  name: string;
+  game: string;
+  set?: string;
+  set_name?: string;
+  number?: string;
+  rarity?: string;
+  image_url?: string;
+  /** @nullable */
+  currency?: string | null;
+  /** @nullable */
+  market_price?: number | null;
+  /** @nullable */
+  pricing_source?: string | null;
+  variants: CatalogVariant[];
+  [key: string]: unknown;
+ }
+
+export type CatalogResponseMeta = { [key: string]: unknown };
+
+export interface CatalogResponse {
+  data: CatalogCard[];
+  source?: string;
+  catalogue_source?: string;
+  pricing_source?: string;
+  cached?: boolean;
+  meta?: CatalogResponseMeta;
+}
+
+export type CollectionMutationCard = { [key: string]: unknown };
+
+export type CollectionMutationCondition = typeof CollectionMutationCondition[keyof typeof CollectionMutationCondition];
+
+
+export const CollectionMutationCondition = {
+  mint: 'mint',
+  near_mint: 'near_mint',
+  excellent: 'excellent',
+  good: 'good',
+  light_played: 'light_played',
+  played: 'played',
+  poor: 'poor',
+} as const;
+
+/**
+ * @nullable
+ */
+export type CollectionMutationGrading = { [key: string]: unknown } | null;
+
+export interface CollectionMutation {
+  cardId?: string;
+  card?: CollectionMutationCard;
+  /**
+     * @minimum 1
+     * @maximum 9999
+     */
+  quantity?: number;
+  condition?: CollectionMutationCondition;
+  /** @nullable */
+  grading?: CollectionMutationGrading;
+  acquiredAt?: string;
+  /** @minimum 0 */
+  acquiredPrice?: number;
+  /**
+     * @minLength 3
+     * @maxLength 3
+     */
+  currency?: string;
+  /** @maxLength 2000 */
+  notes?: string;
+  isForSale?: boolean;
+  isForTrade?: boolean;
+}
+
+/**
+ * @nullable
+ */
+export type CollectionItemValuation = {
+  priceCents?: number;
+  price?: number;
+  currency?: string;
+  gradeKey?: string;
+  updatedAt?: string;
+} | null;
+
+export type CollectionItem = CollectionMutation & {
+  id: string;
+  /** @nullable */
+  valuation?: CollectionItemValuation;
+} & Required<Pick<CollectionMutation & {
+  id: string;
+  /** @nullable */
+  valuation?: CollectionItemValuation;
+}, 'cardId' | 'card' | 'quantity' | 'condition' | 'acquiredAt' | 'acquiredPrice' | 'currency'>>;
+
+export type CollectionImportPreviewRowStatus = typeof CollectionImportPreviewRowStatus[keyof typeof CollectionImportPreviewRowStatus];
+
+
+export const CollectionImportPreviewRowStatus = {
+  matched: 'matched',
+  watchlist_only: 'watchlist_only',
+  ambiguous: 'ambiguous',
+  invalid: 'invalid',
+  unmatched: 'unmatched',
+  duplicate: 'duplicate',
+} as const;
+
+export type CollectionImportPreviewRowCard = { [key: string]: unknown };
+
+export type CollectionImportPreviewRowGrading = { [key: string]: unknown };
+
+export interface CollectionImportPreviewRow {
+  /** @minimum 2 */
+  rowNumber: number;
+  status: CollectionImportPreviewRowStatus;
+  isWatchlistOnly: boolean;
+  cardId?: string;
+  canonicalCardId?: string;
+  card?: CollectionImportPreviewRowCard;
+  /** @minimum 0 */
+  candidateCount?: number;
+  error?: string;
+  /** @minimum 1 */
+  quantity?: number;
+  condition?: string;
+  acquiredAt?: string;
+  /** @minimum 0 */
+  acquiredPrice?: number;
+  currency?: string;
+  notes?: string;
+  finish?: string;
+  variance?: string;
+  grading?: CollectionImportPreviewRowGrading;
+  desiredGrade?: string;
+  supportedGrade?: boolean;
+  pricingAvailable?: boolean;
+}
+
+export type CollectionImportPreviewSource = typeof CollectionImportPreviewSource[keyof typeof CollectionImportPreviewSource];
+
+
+export const CollectionImportPreviewSource = {
+  collectr: 'collectr',
+  verified_tcg: 'verified_tcg',
+} as const;
+
+export type CollectionImportPreviewSchemaVersion = typeof CollectionImportPreviewSchemaVersion[keyof typeof CollectionImportPreviewSchemaVersion];
+
+
+export const CollectionImportPreviewSchemaVersion = {
+  NUMBER_1: 1,
+} as const;
+
+export type CollectionImportPreviewSummary = {
+  total: number;
+  matched: number;
+  watchlistOnly: number;
+  invalid: number;
+  ambiguous: number;
+  unmatched: number;
+  duplicate: number;
+  priced: number;
+};
+
+export interface CollectionImportPreview {
+  jobId: string;
+  source: CollectionImportPreviewSource;
+  schemaVersion: CollectionImportPreviewSchemaVersion;
+  contentSha256: string;
+  status?: string;
+  summary: CollectionImportPreviewSummary;
+  rows: CollectionImportPreviewRow[];
+}
+
+export type CollectionImportCommitStatus = typeof CollectionImportCommitStatus[keyof typeof CollectionImportCommitStatus];
+
+
+export const CollectionImportCommitStatus = {
+  committed: 'committed',
+} as const;
+
+export type CollectionImportCommitSummary = {
+  holdingsAdded: number;
+  wishlistAdded: number;
+  skipped: number;
+  duplicates: number;
+  unsupportedGrades: number;
+};
+
+export type CollectionImportCommitRowsItemStatus = typeof CollectionImportCommitRowsItemStatus[keyof typeof CollectionImportCommitRowsItemStatus];
+
+
+export const CollectionImportCommitRowsItemStatus = {
+  holding_added: 'holding_added',
+  wishlist_added: 'wishlist_added',
+  wishlist_existing: 'wishlist_existing',
+  duplicate: 'duplicate',
+  skipped: 'skipped',
+} as const;
+
+export type CollectionImportCommitRowsItem = {
+  rowNumber: number;
+  status: CollectionImportCommitRowsItemStatus;
+  cardId?: string;
+  reason?: string;
+};
+
+export interface CollectionImportCommit {
+  jobId: string;
+  status: CollectionImportCommitStatus;
+  replayed?: boolean;
+  summary: CollectionImportCommitSummary;
+  rows: CollectionImportCommitRowsItem[];
+}
+
+export type CollectionSummaryCoverage = {
+  pricedHoldings: number;
+  totalHoldings: number;
+  ratio: number;
+  freshHoldings: number;
+  staleHoldings: number;
+};
+
+export interface PortfolioValuePoint {
+  date: string;
+  value: number;
+  currency: string;
+}
+
+export type CollectionSummaryChartData = {[key: string]: PortfolioValuePoint[]};
+
+export interface CollectionSummary {
+  /** @nullable */
+  totalValue: number | null;
+  /** @nullable */
+  totalCost: number | null;
+  /** @nullable */
+  unrealizedGain: number | null;
+  /** @nullable */
+  unrealizedGainPercent?: number | null;
+  /** @nullable */
+  realisedGain?: number | null;
+  cardCount: number;
+  uniqueCardCount: number;
+  currency: string;
+  coverage: CollectionSummaryCoverage;
+  completeness: string;
+  chartData: CollectionSummaryChartData;
+}
+
+export type CollectionValueHistoryRange = typeof CollectionValueHistoryRange[keyof typeof CollectionValueHistoryRange];
+
+
+export const CollectionValueHistoryRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type CollectionValueHistoryChartData = {[key: string]: PortfolioValuePoint[]};
+
+export interface CollectionValueHistory {
+  range: CollectionValueHistoryRange;
+  currency: string;
+  points: PortfolioValuePoint[];
+  chartData: CollectionValueHistoryChartData;
+  historyAvailable: boolean;
+  /** @nullable */
+  historyUnavailableReason?: string | null;
+}
+
+export type PortfolioMovementContributionKind = typeof PortfolioMovementContributionKind[keyof typeof PortfolioMovementContributionKind];
+
+
+export const PortfolioMovementContributionKind = {
+  market_price: 'market_price',
+  acquisition: 'acquisition',
+  sale: 'sale',
+} as const;
+
+export interface PortfolioMovementContribution {
+  id: string;
+  cardId: string;
+  name: string;
+  /** @nullable */
+  setName: string | null;
+  /** @nullable */
+  imageUrl: string | null;
+  quantity: number;
+  /** @nullable */
+  gradeKey: string | null;
+  kind: PortfolioMovementContributionKind;
+  /** @nullable */
+  amountCents: number | null;
+  /** @nullable */
+  amount: number | null;
+  /** @nullable */
+  previousValueCents: number | null;
+  /** @nullable */
+  previousValue: number | null;
+  /** @nullable */
+  valueCents: number | null;
+  /** @nullable */
+  value: number | null;
+  available: boolean;
+  /** @nullable */
+  unavailableReason: string | null;
+}
+
+export interface PortfolioMovementBreakdown {
+  date: string;
+  /** @nullable */
+  previousDate: string | null;
+  currency: string;
+  available: boolean;
+  previousAvailable: boolean;
+  breakdownAvailable: boolean;
+  /** @nullable */
+  totalChangeCents: number | null;
+  /** @nullable */
+  totalChange: number | null;
+  contributions: PortfolioMovementContribution[];
+  /** @nullable */
+  unavailableReason: string | null;
+}
+
+export type CollectionPerformancePointsItem = {
+  date: string;
+  value: number;
+  currency: string;
+};
+
+export interface CollectionPerformance {
+  points: CollectionPerformancePointsItem[];
+  currency: string;
+  historyAvailable: boolean;
+  /** @nullable */
+  historyUnavailableReason?: string | null;
+  completeness: string;
+  [key: string]: unknown;
+ }
+
 export interface EbaySale {
   title: string;
   endedAt: string;
@@ -89,6 +451,99 @@ export interface EbaySoldHistoryResponse {
   returnedAt: string;
 }
 
+export type SearchCatalogCardsParams = {
+/**
+ * @minLength 2
+ */
+q: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetCatalogCard200 = {
+  data: CatalogCard;
+  source?: string;
+  cached?: boolean;
+};
+
+export type GetTrendingCardLookups200 = {
+  data: CatalogCard[];
+  source?: string;
+  /** @nullable */
+  window_start?: string | null;
+  /** @nullable */
+  window_end?: string | null;
+  refresh_hours: 12;
+};
+
+export type PreviewCollectionCsvImportBody = {
+  /** @maxLength 1048576 */
+  content: string;
+  /** @maxLength 255 */
+  filename?: string;
+  /** @pattern ^[A-Za-z]{3}$ */
+  sourceCurrency?: string;
+};
+
+export type CommitCollectionCsvImportBody = {
+  /** @pattern ^[a-f0-9]{64}$ */
+  contentSha256: string;
+  /** @pattern ^[A-Za-z]{3}$ */
+  sourceCurrency?: string;
+};
+
+export type GetCollectionSummaryParams = {
+displayCurrency?: string;
+};
+
+export type GetCollectionPerformanceParams = {
+range?: GetCollectionPerformanceRange;
+displayCurrency?: string;
+};
+
+export type GetCollectionPerformanceRange = typeof GetCollectionPerformanceRange[keyof typeof GetCollectionPerformanceRange];
+
+
+export const GetCollectionPerformanceRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type GetCollectionValueHistoryParams = {
+range?: GetCollectionValueHistoryRange;
+displayCurrency?: string;
+};
+
+export type GetCollectionValueHistoryRange = typeof GetCollectionValueHistoryRange[keyof typeof GetCollectionValueHistoryRange];
+
+
+export const GetCollectionValueHistoryRange = {
+  '1D': '1D',
+  '7D': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type GetCollectionValueHistoryMovementParams = {
+date: string;
+displayCurrency?: string;
+};
+
 export type GetEbaySoldHistoryParams = {
 /**
  * @maxLength 120
@@ -151,3 +606,4 @@ export const GetEbaySoldHistoryDisplayCurrency = {
   CAD: 'CAD',
   NZD: 'NZD',
 } as const;
+

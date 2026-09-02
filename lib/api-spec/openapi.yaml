@@ -62,6 +62,41 @@ paths:
                   cached: { type: boolean }
         "404": { description: Card not found. }
         "503": { description: Catalogue data is unavailable. }
+  /catalog/cards/{id}/lookup:
+    post:
+      operationId: recordCatalogCardLookup
+      tags: [catalog]
+      summary: Record an aggregate card-detail lookup
+      description: Records only an anonymous aggregate count for the current 12-hour window.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Lookup recorded. }
+        "401": { description: Authentication required. }
+        "404": { description: Card not found. }
+        "503": { description: Lookup aggregation is unavailable. }
+  /catalog/trending-lookups:
+    get:
+      operationId: getTrendingCardLookups
+      tags: [catalog]
+      summary: Get cards with the most aggregate lookups in the current 12-hour window
+      responses:
+        "200":
+          description: Real aggregate lookup ranking with catalogue data and persisted quotes when available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, refresh_hours]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogCard" }
+                  source: { type: string }
+                  window_start: { type: [string, "null"], format: date-time }
+                  window_end: { type: [string, "null"], format: date-time }
+                  refresh_hours: { type: integer, const: 12 }
+        "503": { description: Trending data is unavailable. }
   /collection:
     get:
       operationId: listCollection
@@ -93,6 +128,62 @@ paths:
               schema: { $ref: "#/components/schemas/CollectionItem" }
         "400": { description: Invalid acquisition details. }
         "401": { description: Authentication required. }
+  /collection/import/preview:
+    post:
+      operationId: previewCollectionCsvImport
+      tags: [collection]
+      summary: Validate and match a Collectr or Verified TCG CSV without saving holdings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, maxLength: 1048576 }
+                filename: { type: string, maxLength: 255 }
+                sourceCurrency:
+                  type: string
+                  pattern: "^[A-Za-z]{3}$"
+      responses:
+        "200":
+          description: User-scoped preview with explicit row outcomes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionImportPreview" }
+        "401": { description: Authentication required. }
+        "422": { description: "Malformed, oversized, or unsupported CSV." }
+        "503": { description: Canonical catalogue matching is unavailable. }
+  /collection/import/{jobId}/commit:
+    post:
+      operationId: commitCollectionCsvImport
+      tags: [collection]
+      summary: Atomically save confirmed holding and wishlist matches
+      parameters:
+        - { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentSha256]
+              properties:
+                contentSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                sourceCurrency:
+                  type: string
+                  pattern: "^[A-Za-z]{3}$"
+      responses:
+        "200":
+          description: Deterministic commit result; replaying the same file returns the original result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionImportCommit" }
+        "400": { description: Collectr source currency is missing or invalid. }
+        "401": { description: Authentication required. }
+        "404": { description: Preview not found for this collector. }
+        "409": { description: Preview expired or content fingerprint changed. }
   /collection/{id}:
     patch:
       operationId: updateCollectionItem
@@ -152,6 +243,37 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CollectionPerformance" }
+        "401": { description: Authentication required. }
+  /collection/value-history:
+    get:
+      operationId: getCollectionValueHistory
+      tags: [portfolio]
+      summary: Get portfolio value history derived from collection holdings
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: [1D, 7D, 1M, 3M, 6M, 1Y, ALL], default: ALL } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Historical portfolio points from persisted holdings and prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionValueHistory" }
+        "401": { description: Authentication required. }
+  /collection/value-history/movement:
+    get:
+      operationId: getCollectionValueHistoryMovement
+      tags: [portfolio]
+      summary: Explain the per-card movement for one retained portfolio day
+      parameters:
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: displayCurrency, in: query, schema: { type: string, default: AUD } }
+      responses:
+        "200":
+          description: Exact-grade retained per-card contributions, including explicit unavailable rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioMovementBreakdown" }
+        "400": { description: Invalid or future calendar date. }
         "401": { description: Authentication required. }
   /catalog/market-movers:
     get:
@@ -283,6 +405,8 @@ components:
         rarity: { type: string }
         image_url: { type: string }
         currency: { type: [string, "null"] }
+        market_price: { type: [number, "null"] }
+        pricing_source: { type: [string, "null"] }
         variants:
           type: array
           items: { $ref: "#/components/schemas/CatalogVariant" }
@@ -295,6 +419,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/CatalogCard" }
         source: { type: string }
+        catalogue_source: { type: string }
+        pricing_source: { type: string }
         cached: { type: boolean }
         meta:
           type: object
@@ -328,9 +454,87 @@ components:
                 currency: { type: string }
                 gradeKey: { type: string }
                 updatedAt: { type: string, format: date-time }
+    CollectionImportPreviewRow:
+      type: object
+      required: [rowNumber, status, isWatchlistOnly]
+      properties:
+        rowNumber: { type: integer, minimum: 2 }
+        status:
+          type: string
+          enum: [matched, watchlist_only, ambiguous, invalid, unmatched, duplicate]
+        isWatchlistOnly: { type: boolean }
+        cardId: { type: string }
+        canonicalCardId: { type: string }
+        card: { type: object, additionalProperties: true }
+        candidateCount: { type: integer, minimum: 0 }
+        error: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        condition: { type: string }
+        acquiredAt: { type: string, format: date }
+        acquiredPrice: { type: number, minimum: 0 }
+        currency: { type: string }
+        notes: { type: string }
+        finish: { type: string }
+        variance: { type: string }
+        grading: { type: object, additionalProperties: true }
+        desiredGrade: { type: string }
+        supportedGrade: { type: boolean }
+        pricingAvailable: { type: boolean }
+    CollectionImportPreview:
+      type: object
+      required: [jobId, source, schemaVersion, contentSha256, summary, rows]
+      properties:
+        jobId: { type: string, format: uuid }
+        source: { type: string, enum: [collectr, verified_tcg] }
+        schemaVersion: { type: integer, enum: [1] }
+        contentSha256: { type: string }
+        status: { type: string }
+        summary:
+          type: object
+          required: [total, matched, watchlistOnly, invalid, ambiguous, unmatched, duplicate, priced]
+          properties:
+            total: { type: integer }
+            matched: { type: integer }
+            watchlistOnly: { type: integer }
+            invalid: { type: integer }
+            ambiguous: { type: integer }
+            unmatched: { type: integer }
+            duplicate: { type: integer }
+            priced: { type: integer }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/CollectionImportPreviewRow" }
+    CollectionImportCommit:
+      type: object
+      required: [jobId, status, summary, rows]
+      properties:
+        jobId: { type: string, format: uuid }
+        status: { type: string, enum: [committed] }
+        replayed: { type: boolean }
+        summary:
+          type: object
+          required: [holdingsAdded, wishlistAdded, skipped, duplicates, unsupportedGrades]
+          properties:
+            holdingsAdded: { type: integer }
+            wishlistAdded: { type: integer }
+            skipped: { type: integer }
+            duplicates: { type: integer }
+            unsupportedGrades: { type: integer }
+        rows:
+          type: array
+          items:
+            type: object
+            required: [rowNumber, status]
+            properties:
+              rowNumber: { type: integer }
+              status:
+                type: string
+                enum: [holding_added, wishlist_added, wishlist_existing, duplicate, skipped]
+              cardId: { type: string }
+              reason: { type: string }
     CollectionSummary:
       type: object
-      required: [totalValue, totalCost, unrealizedGain, cardCount, uniqueCardCount, currency, coverage, completeness]
+      required: [totalValue, totalCost, unrealizedGain, cardCount, uniqueCardCount, currency, coverage, completeness, chartData]
       properties:
         totalValue: { type: [number, "null"] }
         totalCost: { type: [number, "null"] }
@@ -350,6 +554,101 @@ components:
             freshHoldings: { type: integer }
             staleHoldings: { type: integer }
         completeness: { type: string }
+        chartData:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/PortfolioValuePoint"
+    PortfolioValuePoint:
+      type: object
+      required: [date, value, currency]
+      properties:
+        date: { type: string, format: date }
+        value: { type: number }
+        currency: { type: string }
+    CollectionValueHistory:
+      type: object
+      required: [range, currency, points, chartData, historyAvailable]
+      properties:
+        range:
+          type: string
+          enum: [1D, 7D, 1M, 3M, 6M, 1Y, ALL]
+        currency: { type: string }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioValuePoint" }
+        chartData:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: "#/components/schemas/PortfolioValuePoint" }
+        historyAvailable: { type: boolean }
+        historyUnavailableReason: { type: [string, "null"] }
+    PortfolioMovementContribution:
+      type: object
+      required:
+        - id
+        - cardId
+        - name
+        - setName
+        - imageUrl
+        - quantity
+        - gradeKey
+        - kind
+        - amountCents
+        - amount
+        - previousValueCents
+        - previousValue
+        - valueCents
+        - value
+        - available
+        - unavailableReason
+      properties:
+        id: { type: string }
+        cardId: { type: string }
+        name: { type: string }
+        setName: { type: [string, "null"] }
+        imageUrl: { type: [string, "null"] }
+        quantity: { type: integer }
+        gradeKey: { type: [string, "null"] }
+        kind:
+          type: string
+          enum: [market_price, acquisition, sale]
+        amountCents: { type: [integer, "null"] }
+        amount: { type: [number, "null"] }
+        previousValueCents: { type: [integer, "null"] }
+        previousValue: { type: [number, "null"] }
+        valueCents: { type: [integer, "null"] }
+        value: { type: [number, "null"] }
+        available: { type: boolean }
+        unavailableReason: { type: [string, "null"] }
+    PortfolioMovementBreakdown:
+      type: object
+      required:
+        - date
+        - previousDate
+        - currency
+        - available
+        - previousAvailable
+        - breakdownAvailable
+        - totalChangeCents
+        - totalChange
+        - contributions
+        - unavailableReason
+      properties:
+        date: { type: string, format: date }
+        previousDate: { type: [string, "null"], format: date }
+        currency: { type: string }
+        available: { type: boolean }
+        previousAvailable: { type: boolean }
+        breakdownAvailable: { type: boolean }
+        totalChangeCents: { type: [integer, "null"] }
+        totalChange: { type: [number, "null"] }
+        contributions:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioMovementContribution" }
+        unavailableReason: { type: [string, "null"] }
     CollectionPerformance:
       type: object
       required: [points, currency, historyAvailable, completeness]

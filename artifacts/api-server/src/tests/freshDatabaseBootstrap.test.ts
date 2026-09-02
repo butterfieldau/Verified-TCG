@@ -34,7 +34,11 @@ const REQUIRED_TABLES = [
   "card_provider_mappings",
   "pricing_providers",
   "current_quotes",
+  "pricecharting_guide_imports",
+  "pricecharting_guide_rows",
+  "pricecharting_guide_download_lease",
   "portfolio_snapshots",
+  "pricing_scheduler_runs",
   "telemetry_events",
   "catalogue_cache_entries",
   "catalogue_games",
@@ -47,6 +51,7 @@ const REQUIRED_TABLES = [
   "catalogue_source_records",
   "catalogue_import_jobs",
   "catalogue_import_errors",
+  "card_lookup_buckets",
 ] as const;
 
 let maintenancePool: ReturnType<typeof createDatabasePool>;
@@ -159,15 +164,15 @@ describe("fresh database bootstrap", () => {
     try {
       const beforeSecondBootstrap = await schemaFingerprint(freshPool);
       const presentTables = new Set(beforeSecondBootstrap.tables);
-      assert.equal(beforeSecondBootstrap.tables.length, 72);
+      assert.equal(beforeSecondBootstrap.tables.length, 78);
       for (const tableName of REQUIRED_TABLES) {
         assert.ok(presentTables.has(tableName), `expected ${tableName} after fresh bootstrap`);
       }
 
-      assert.equal(beforeSecondBootstrap.migrations.length, 7);
+      assert.equal(beforeSecondBootstrap.migrations.length, 8);
       assert.equal(
         new Set(beforeSecondBootstrap.migrations).size,
-        7,
+        8,
         "each recorded migration must be present exactly once",
       );
       assert.deepEqual(

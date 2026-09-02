@@ -18,6 +18,652 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Search the persisted card catalogue
+ */
+export const searchCatalogCardsQueryQMin = 2;
+
+export const searchCatalogCardsQueryLimitDefault = 20;
+export const searchCatalogCardsQueryLimitMax = 100;
+
+export const searchCatalogCardsQueryOffsetDefault = 0;
+export const searchCatalogCardsQueryOffsetMin = 0;
+
+
+
+export const SearchCatalogCardsQueryParams = zod.object({
+  "q": zod.coerce.string().min(searchCatalogCardsQueryQMin),
+  "limit": zod.coerce.number().int().min(1).max(searchCatalogCardsQueryLimitMax).default(searchCatalogCardsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(searchCatalogCardsQueryOffsetMin).default(searchCatalogCardsQueryOffsetDefault)
+})
+
+export const SearchCatalogCardsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
+  "cached": zod.boolean().optional(),
+  "meta": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Read one canonical card
+ */
+export const GetCatalogCardParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetCatalogCardResponse = zod.object({
+  "data": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+}),
+  "source": zod.string().optional(),
+  "cached": zod.boolean().optional()
+})
+
+
+/**
+ * Records only an anonymous aggregate count for the current 12-hour window.
+ * @summary Record an aggregate card-detail lookup
+ */
+export const RecordCatalogCardLookupParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RecordCatalogCardLookupResponse = zod.void()
+
+
+/**
+ * @summary Get cards with the most aggregate lookups in the current 12-hour window
+ */
+export const GetTrendingCardLookupsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "window_start": zod.coerce.date().nullish(),
+  "window_end": zod.coerce.date().nullish(),
+  "refresh_hours": zod.literal(12)
+})
+
+
+/**
+ * @summary List the authenticated collector's persisted holdings
+ */
+export const listCollectionResponseOneQuantityMax = 9999;
+
+export const listCollectionResponseOneAcquiredPriceMin = 0;
+
+export const listCollectionResponseOneCurrencyMin = 3;
+export const listCollectionResponseOneCurrencyMax = 3;
+
+export const listCollectionResponseOneNotesMax = 2000;
+
+
+
+export const ListCollectionResponseItem = zod.object({
+  "cardId": zod.string(),
+  "card": zod.record(zod.string(), zod.unknown()),
+  "quantity": zod.number().int().min(1).max(listCollectionResponseOneQuantityMax),
+  "condition": zod.enum(['mint', 'near_mint', 'excellent', 'good', 'light_played', 'played', 'poor']),
+  "grading": zod.record(zod.string(), zod.unknown()).nullish(),
+  "acquiredAt": zod.coerce.date(),
+  "acquiredPrice": zod.number().min(listCollectionResponseOneAcquiredPriceMin),
+  "currency": zod.string().min(listCollectionResponseOneCurrencyMin).max(listCollectionResponseOneCurrencyMax),
+  "notes": zod.string().max(listCollectionResponseOneNotesMax).optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional()
+}).and(zod.object({
+  "id": zod.string(),
+  "valuation": zod.object({
+  "priceCents": zod.number().int().optional(),
+  "price": zod.number().optional(),
+  "currency": zod.string().optional(),
+  "gradeKey": zod.string().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}).nullish()
+}))
+export const ListCollectionResponse = zod.array(ListCollectionResponseItem)
+
+
+/**
+ * @summary Add a holding with collector-entered acquisition details
+ */
+export const createCollectionItemBodyQuantityMax = 9999;
+
+export const createCollectionItemBodyAcquiredPriceMin = 0;
+
+export const createCollectionItemBodyCurrencyMin = 3;
+export const createCollectionItemBodyCurrencyMax = 3;
+
+export const createCollectionItemBodyNotesMax = 2000;
+
+
+
+export const CreateCollectionItemBody = zod.object({
+  "cardId": zod.string().optional(),
+  "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "quantity": zod.number().int().min(1).max(createCollectionItemBodyQuantityMax).optional(),
+  "condition": zod.enum(['mint', 'near_mint', 'excellent', 'good', 'light_played', 'played', 'poor']).optional(),
+  "grading": zod.record(zod.string(), zod.unknown()).nullish(),
+  "acquiredAt": zod.coerce.date().optional(),
+  "acquiredPrice": zod.number().min(createCollectionItemBodyAcquiredPriceMin).optional(),
+  "currency": zod.string().min(createCollectionItemBodyCurrencyMin).max(createCollectionItemBodyCurrencyMax).optional(),
+  "notes": zod.string().max(createCollectionItemBodyNotesMax).optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional()
+})
+
+export const createCollectionItemResponseOneQuantityMax = 9999;
+
+export const createCollectionItemResponseOneAcquiredPriceMin = 0;
+
+export const createCollectionItemResponseOneCurrencyMin = 3;
+export const createCollectionItemResponseOneCurrencyMax = 3;
+
+export const createCollectionItemResponseOneNotesMax = 2000;
+
+
+
+export const CreateCollectionItemResponse = zod.object({
+  "cardId": zod.string(),
+  "card": zod.record(zod.string(), zod.unknown()),
+  "quantity": zod.number().int().min(1).max(createCollectionItemResponseOneQuantityMax),
+  "condition": zod.enum(['mint', 'near_mint', 'excellent', 'good', 'light_played', 'played', 'poor']),
+  "grading": zod.record(zod.string(), zod.unknown()).nullish(),
+  "acquiredAt": zod.coerce.date(),
+  "acquiredPrice": zod.number().min(createCollectionItemResponseOneAcquiredPriceMin),
+  "currency": zod.string().min(createCollectionItemResponseOneCurrencyMin).max(createCollectionItemResponseOneCurrencyMax),
+  "notes": zod.string().max(createCollectionItemResponseOneNotesMax).optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional()
+}).and(zod.object({
+  "id": zod.string(),
+  "valuation": zod.object({
+  "priceCents": zod.number().int().optional(),
+  "price": zod.number().optional(),
+  "currency": zod.string().optional(),
+  "gradeKey": zod.string().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}).nullish()
+}))
+
+
+/**
+ * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ */
+export const previewCollectionCsvImportBodyContentMax = 1048576;
+
+export const previewCollectionCsvImportBodyFilenameMax = 255;
+
+export const previewCollectionCsvImportBodySourceCurrencyRegExp = new RegExp('^[A-Za-z]{3}$');
+
+
+export const PreviewCollectionCsvImportBody = zod.object({
+  "content": zod.string().max(previewCollectionCsvImportBodyContentMax),
+  "filename": zod.string().max(previewCollectionCsvImportBodyFilenameMax).optional(),
+  "sourceCurrency": zod.string().regex(previewCollectionCsvImportBodySourceCurrencyRegExp).optional()
+})
+
+export const previewCollectionCsvImportResponseRowsItemRowNumberMin = 2;
+
+export const previewCollectionCsvImportResponseRowsItemCandidateCountMin = 0;
+
+
+export const previewCollectionCsvImportResponseRowsItemAcquiredPriceMin = 0;
+
+
+
+export const PreviewCollectionCsvImportResponse = zod.object({
+  "jobId": zod.string().uuid(),
+  "source": zod.enum(['collectr', 'verified_tcg']),
+  "schemaVersion": zod.literal(1),
+  "contentSha256": zod.string(),
+  "status": zod.string().optional(),
+  "summary": zod.object({
+  "total": zod.number().int(),
+  "matched": zod.number().int(),
+  "watchlistOnly": zod.number().int(),
+  "invalid": zod.number().int(),
+  "ambiguous": zod.number().int(),
+  "unmatched": zod.number().int(),
+  "duplicate": zod.number().int(),
+  "priced": zod.number().int()
+}),
+  "rows": zod.array(zod.object({
+  "rowNumber": zod.number().int().min(previewCollectionCsvImportResponseRowsItemRowNumberMin),
+  "status": zod.enum(['matched', 'watchlist_only', 'ambiguous', 'invalid', 'unmatched', 'duplicate']),
+  "isWatchlistOnly": zod.boolean(),
+  "cardId": zod.string().optional(),
+  "canonicalCardId": zod.string().optional(),
+  "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "candidateCount": zod.number().int().min(previewCollectionCsvImportResponseRowsItemCandidateCountMin).optional(),
+  "error": zod.string().optional(),
+  "quantity": zod.number().int().min(1).optional(),
+  "condition": zod.string().optional(),
+  "acquiredAt": zod.coerce.date().optional(),
+  "acquiredPrice": zod.number().min(previewCollectionCsvImportResponseRowsItemAcquiredPriceMin).optional(),
+  "currency": zod.string().optional(),
+  "notes": zod.string().optional(),
+  "finish": zod.string().optional(),
+  "variance": zod.string().optional(),
+  "grading": zod.record(zod.string(), zod.unknown()).optional(),
+  "desiredGrade": zod.string().optional(),
+  "supportedGrade": zod.boolean().optional(),
+  "pricingAvailable": zod.boolean().optional()
+}))
+})
+
+
+/**
+ * @summary Atomically save confirmed holding and wishlist matches
+ */
+export const CommitCollectionCsvImportParams = zod.object({
+  "jobId": zod.coerce.string().uuid()
+})
+
+export const commitCollectionCsvImportBodyContentSha256RegExp = new RegExp('^[a-f0-9]{64}$');
+export const commitCollectionCsvImportBodySourceCurrencyRegExp = new RegExp('^[A-Za-z]{3}$');
+
+
+export const CommitCollectionCsvImportBody = zod.object({
+  "contentSha256": zod.string().regex(commitCollectionCsvImportBodyContentSha256RegExp),
+  "sourceCurrency": zod.string().regex(commitCollectionCsvImportBodySourceCurrencyRegExp).optional()
+})
+
+export const CommitCollectionCsvImportResponse = zod.object({
+  "jobId": zod.string().uuid(),
+  "status": zod.enum(['committed']),
+  "replayed": zod.boolean().optional(),
+  "summary": zod.object({
+  "holdingsAdded": zod.number().int(),
+  "wishlistAdded": zod.number().int(),
+  "skipped": zod.number().int(),
+  "duplicates": zod.number().int(),
+  "unsupportedGrades": zod.number().int()
+}),
+  "rows": zod.array(zod.object({
+  "rowNumber": zod.number().int(),
+  "status": zod.enum(['holding_added', 'wishlist_added', 'wishlist_existing', 'duplicate', 'skipped']),
+  "cardId": zod.string().optional(),
+  "reason": zod.string().optional()
+}))
+})
+
+
+/**
+ * @summary Correct quantity, condition, grading, or acquisition cost
+ */
+export const UpdateCollectionItemParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const updateCollectionItemBodyQuantityMax = 9999;
+
+export const updateCollectionItemBodyAcquiredPriceMin = 0;
+
+export const updateCollectionItemBodyCurrencyMin = 3;
+export const updateCollectionItemBodyCurrencyMax = 3;
+
+export const updateCollectionItemBodyNotesMax = 2000;
+
+
+
+export const UpdateCollectionItemBody = zod.object({
+  "cardId": zod.string().optional(),
+  "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "quantity": zod.number().int().min(1).max(updateCollectionItemBodyQuantityMax).optional(),
+  "condition": zod.enum(['mint', 'near_mint', 'excellent', 'good', 'light_played', 'played', 'poor']).optional(),
+  "grading": zod.record(zod.string(), zod.unknown()).nullish(),
+  "acquiredAt": zod.coerce.date().optional(),
+  "acquiredPrice": zod.number().min(updateCollectionItemBodyAcquiredPriceMin).optional(),
+  "currency": zod.string().min(updateCollectionItemBodyCurrencyMin).max(updateCollectionItemBodyCurrencyMax).optional(),
+  "notes": zod.string().max(updateCollectionItemBodyNotesMax).optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional()
+})
+
+export const updateCollectionItemResponseOneQuantityMax = 9999;
+
+export const updateCollectionItemResponseOneAcquiredPriceMin = 0;
+
+export const updateCollectionItemResponseOneCurrencyMin = 3;
+export const updateCollectionItemResponseOneCurrencyMax = 3;
+
+export const updateCollectionItemResponseOneNotesMax = 2000;
+
+
+
+export const UpdateCollectionItemResponse = zod.object({
+  "cardId": zod.string(),
+  "card": zod.record(zod.string(), zod.unknown()),
+  "quantity": zod.number().int().min(1).max(updateCollectionItemResponseOneQuantityMax),
+  "condition": zod.enum(['mint', 'near_mint', 'excellent', 'good', 'light_played', 'played', 'poor']),
+  "grading": zod.record(zod.string(), zod.unknown()).nullish(),
+  "acquiredAt": zod.coerce.date(),
+  "acquiredPrice": zod.number().min(updateCollectionItemResponseOneAcquiredPriceMin),
+  "currency": zod.string().min(updateCollectionItemResponseOneCurrencyMin).max(updateCollectionItemResponseOneCurrencyMax),
+  "notes": zod.string().max(updateCollectionItemResponseOneNotesMax).optional(),
+  "isForSale": zod.boolean().optional(),
+  "isForTrade": zod.boolean().optional()
+}).and(zod.object({
+  "id": zod.string(),
+  "valuation": zod.object({
+  "priceCents": zod.number().int().optional(),
+  "price": zod.number().optional(),
+  "currency": zod.string().optional(),
+  "gradeKey": zod.string().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}).nullish()
+}))
+
+
+/**
+ * @summary Remove a holding
+ */
+export const DeleteCollectionItemParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DeleteCollectionItemResponse = zod.unknown()
+
+
+/**
+ * @summary Get authoritative value, cost basis, gain, and coverage
+ */
+export const getCollectionSummaryQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionSummaryQueryParams = zod.object({
+  "displayCurrency": zod.coerce.string().default(getCollectionSummaryQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionSummaryResponse = zod.object({
+  "totalValue": zod.number().nullable(),
+  "totalCost": zod.number().nullable(),
+  "unrealizedGain": zod.number().nullable(),
+  "unrealizedGainPercent": zod.number().nullish(),
+  "realisedGain": zod.number().nullish(),
+  "cardCount": zod.number().int(),
+  "uniqueCardCount": zod.number().int(),
+  "currency": zod.string(),
+  "coverage": zod.object({
+  "pricedHoldings": zod.number().int(),
+  "totalHoldings": zod.number().int(),
+  "ratio": zod.number(),
+  "freshHoldings": zod.number().int(),
+  "staleHoldings": zod.number().int()
+}),
+  "completeness": zod.string(),
+  "chartData": zod.record(zod.string(), zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "value": zod.number(),
+  "currency": zod.string()
+})))
+})
+
+
+/**
+ * @summary Get retained portfolio history and performance
+ */
+export const getCollectionPerformanceQueryRangeDefault = `1M`;
+export const getCollectionPerformanceQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionPerformanceQueryParams = zod.object({
+  "range": zod.enum(['1D', '7D', '1M', '3M', '6M', '1Y', 'ALL']).default(getCollectionPerformanceQueryRangeDefault),
+  "displayCurrency": zod.coerce.string().default(getCollectionPerformanceQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionPerformanceResponse = zod.object({
+  "points": zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "value": zod.number(),
+  "currency": zod.string()
+})),
+  "currency": zod.string(),
+  "historyAvailable": zod.boolean(),
+  "historyUnavailableReason": zod.string().nullish(),
+  "completeness": zod.string()
+})
+
+
+/**
+ * @summary Get portfolio value history derived from collection holdings
+ */
+export const getCollectionValueHistoryQueryRangeDefault = `ALL`;
+export const getCollectionValueHistoryQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionValueHistoryQueryParams = zod.object({
+  "range": zod.enum(['1D', '7D', '1M', '3M', '6M', '1Y', 'ALL']).default(getCollectionValueHistoryQueryRangeDefault),
+  "displayCurrency": zod.coerce.string().default(getCollectionValueHistoryQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionValueHistoryResponse = zod.object({
+  "range": zod.enum(['1D', '7D', '1M', '3M', '6M', '1Y', 'ALL']),
+  "currency": zod.string(),
+  "points": zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "value": zod.number(),
+  "currency": zod.string()
+})),
+  "chartData": zod.record(zod.string(), zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "value": zod.number(),
+  "currency": zod.string()
+}))),
+  "historyAvailable": zod.boolean(),
+  "historyUnavailableReason": zod.string().nullish()
+})
+
+
+/**
+ * @summary Explain the per-card movement for one retained portfolio day
+ */
+export const getCollectionValueHistoryMovementQueryDisplayCurrencyDefault = `AUD`;
+
+export const GetCollectionValueHistoryMovementQueryParams = zod.object({
+  "date": zod.date(),
+  "displayCurrency": zod.coerce.string().default(getCollectionValueHistoryMovementQueryDisplayCurrencyDefault)
+})
+
+export const GetCollectionValueHistoryMovementResponse = zod.object({
+  "date": zod.coerce.date(),
+  "previousDate": zod.coerce.date().nullable(),
+  "currency": zod.string(),
+  "available": zod.boolean(),
+  "previousAvailable": zod.boolean(),
+  "breakdownAvailable": zod.boolean(),
+  "totalChangeCents": zod.number().int().nullable(),
+  "totalChange": zod.number().nullable(),
+  "contributions": zod.array(zod.object({
+  "id": zod.string(),
+  "cardId": zod.string(),
+  "name": zod.string(),
+  "setName": zod.string().nullable(),
+  "imageUrl": zod.string().nullable(),
+  "quantity": zod.number().int(),
+  "gradeKey": zod.string().nullable(),
+  "kind": zod.enum(['market_price', 'acquisition', 'sale']),
+  "amountCents": zod.number().int().nullable(),
+  "amount": zod.number().nullable(),
+  "previousValueCents": zod.number().int().nullable(),
+  "previousValue": zod.number().nullable(),
+  "valueCents": zod.number().int().nullable(),
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().nullable()
+})),
+  "unavailableReason": zod.string().nullable()
+})
+
+
+/**
+ * @summary Get persisted comparable price movements
+ */
+export const GetMarketMoversResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
+  "cached": zod.boolean().optional(),
+  "meta": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Get deterministic persisted trend rankings
+ */
+export const GetTrendingCardsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
+  "cached": zod.boolean().optional(),
+  "meta": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Get recently persisted canonical catalogue records
+ */
+export const GetRecentlyAddedCardsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "game": zod.string(),
+  "set": zod.string().optional(),
+  "set_name": zod.string().optional(),
+  "number": zod.string().optional(),
+  "rarity": zod.string().optional(),
+  "image_url": zod.string().optional(),
+  "currency": zod.string().nullish(),
+  "market_price": zod.number().nullish(),
+  "pricing_source": zod.string().nullish(),
+  "variants": zod.array(zod.object({
+  "condition": zod.string().optional(),
+  "price": zod.number().nullish(),
+  "lastUpdated": zod.number().int().optional(),
+  "markets": zod.array(zod.object({
+  "region": zod.string().optional(),
+  "currency": zod.string().optional(),
+  "price": zod.number().nullish()
+})).optional()
+}))
+})),
+  "source": zod.string().optional(),
+  "catalogue_source": zod.string().optional(),
+  "pricing_source": zod.string().optional(),
+  "cached": zod.boolean().optional(),
+  "meta": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
  * Returns normalized completed-sale records and a trend calculated from those exact records. Requires a Pro collector session.
  * @summary Get recent completed eBay sales for a card
  */
@@ -74,3 +720,5 @@ export const GetEbaySoldHistoryResponse = zod.object({
 }).nullable(),
   "returnedAt": zod.coerce.date()
 })
+
+

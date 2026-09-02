@@ -8,6 +8,7 @@ import certificationRouter from "./certification";
 import gradedPricesRouter from "./gradedPrices";
 import ebayAccountDeletionRouter from "./ebayAccountDeletion";
 import collectionRouter from "./collection";
+import collectionImportRouter from "./collectionImport";
 import supportRouter from "./support";
 import subscriptionRouter from "./subscription";
 import scanRouter from "./scan";
@@ -23,6 +24,7 @@ import adminRouter from "./admin";
 import adminAuthRouter from "./adminAuth";
 import adminTeamRouter from "./adminTeam";
 import collectionSellRouter from "./collectionSell";
+import collectionValueHistoryRouter from "./collectionValueHistory";
 import pricingRouter from "./pricing";
 import adminGovernanceRouter from "./adminGovernance";
 import collectorAnnouncementsRouter from "./collectorAnnouncements";
@@ -46,6 +48,8 @@ router.use(ebayAccountDeletionRouter);
 // /collection/summary, /collection/archive, /collection/performance
 // are matched before the wildcard /:id handlers
 router.use(collectionSellRouter);
+router.use(collectionValueHistoryRouter);
+router.use(collectionImportRouter);
 router.use(collectionRouter);
 router.use(supportRouter);
 router.use(subscriptionRouter);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -11,8 +11,12 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { CardImage } from '@/components/ui/CardImage';
+import CollectionHoldingsPanel from '@/components/ui/CollectionHoldingsPanel';
 import colors from '@/constants/colors';
 import { getCardPassport } from '@/services/matching';
+import { catalogCardToAppCard, fetchCatalogCard } from '@/services/catalogApi';
+import { useApp } from '@/context/AppContext';
+import type { Card } from '@/types';
 
 const C = colors.dark;
 
@@ -33,22 +37,62 @@ const EVENT_COLOR: Record<string, string> = {
 
 export default function CardPassportScreen() {
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { collection } = useApp();
+  const { id, appCardJson } = useLocalSearchParams<{ id: string; appCardJson?: string }>();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-
   const passport = getCardPassport(id ?? '');
+  const inlineCard = useMemo<Card | null>(() => {
+    if (!appCardJson) return null;
+    try {
+      return JSON.parse(appCardJson) as Card;
+    } catch {
+      return null;
+    }
+  }, [appCardJson]);
+  const collectionCard = useMemo(
+    () => collection.find(item => item.cardId === id)?.card ?? null,
+    [collection, id],
+  );
+  const [remoteCard, setRemoteCard] = useState<Card | null>(null);
+  const [cardLoading, setCardLoading] = useState(!inlineCard && !collectionCard);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const card = collectionCard ?? inlineCard ?? remoteCard;
 
-  if (!passport) {
+  useEffect(() => {
+    if (!id || inlineCard || collectionCard) {
+      setCardLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setCardLoading(true);
+    setCardError(null);
+    fetchCatalogCard(id, controller.signal)
+      .then(result => {
+        if (!result) {
+          setCardError('This card could not be found.');
+          return;
+        }
+        setRemoteCard(catalogCardToAppCard(result));
+      })
+      .catch(error => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setCardError('The live card record could not be loaded.');
+      })
+      .finally(() => setCardLoading(false));
+    return () => controller.abort();
+  }, [id, inlineCard, collectionCard]);
+
+  if (!card) {
     return (
-      <View style={{ flex: 1, backgroundColor: C.background, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-        <Feather name="book-open" size={40} color={C.mutedForeground} />
-        <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', color: C.foreground }}>No Passport Found</Text>
+      <View style={[styles.missingScreen, { paddingTop: topPad }]}>
+        <Feather name={cardLoading ? 'loader' : 'book-open'} size={40} color={C.mutedForeground} />
+        <Text style={styles.missingTitle}>{cardLoading ? 'Loading Card Passport' : 'Card Passport unavailable'}</Text>
         <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: C.mutedForeground, textAlign: 'center', paddingHorizontal: 40 }}>
-          A Card Passport is only available for graded cards that have been registered on Verified TCG.
+          {cardLoading ? 'Connecting to the live card record…' : cardError ?? 'The live card record is unavailable.'}
         </Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: C.card }}>
+        {!cardLoading && <Pressable onPress={() => router.back()} style={{ marginTop: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: C.card }}>
           <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: C.foreground }}>Go Back</Text>
-        </Pressable>
+        </Pressable>}
       </View>
     );
   }
@@ -71,17 +115,17 @@ export default function CardPassportScreen() {
       </View>
 
       {/* Hero card */}
-      <View style={[styles.heroCard, { backgroundColor: passport.color }]}>
+      <View style={[styles.heroCard, { backgroundColor: card.gradientStart }]}>
         <View style={styles.heroInner}>
-          <Text style={styles.heroInitial}>{passport.cardName[0]}</Text>
+          <Text style={styles.heroInitial}>{card.name[0]}</Text>
         </View>
-        {!!passport.imageUrl && (
+        {!!card.imageUrl && (
           <CardImage
-            uri={passport.imageUrl}
+            uri={card.imageUrl}
             resizeWidth={1000}
             style={StyleSheet.absoluteFill}
             contentFit="contain"
-            accessibilityLabel={`${passport.cardName} card image`}
+            accessibilityLabel={`${card.name} card image`}
           />
         )}
         {/* Passport badge */}
@@ -93,9 +137,9 @@ export default function CardPassportScreen() {
 
       {/* Card identity */}
       <View style={[styles.identityCard, { backgroundColor: C.card }]}>
-        <Text style={styles.cardName}>{passport.cardName}</Text>
-        <Text style={styles.cardSet}>{passport.set} · {passport.number}</Text>
-        <View style={styles.identityRow}>
+        <Text style={styles.cardName}>{card.name}</Text>
+        <Text style={styles.cardSet}>{card.setName} · {card.number}</Text>
+        {passport && <View style={styles.identityRow}>
           <View style={[styles.gradePill, { backgroundColor: '#FF1E2D22' }]}>
             <Text style={[styles.gradePillText, { color: '#FF1E2D' }]}>
               {passport.gradingCompany} {passport.grade}
@@ -105,11 +149,13 @@ export default function CardPassportScreen() {
             <Feather name="hash" size={10} color={C.mutedForeground} />
             <Text style={styles.certPillText}>{passport.certNumber}</Text>
           </View>
-        </View>
+        </View>}
       </View>
 
+      <CollectionHoldingsPanel card={card} />
+
       {/* Grading details */}
-      <View style={[styles.section, { backgroundColor: C.card }]}>
+      {passport && <View style={[styles.section, { backgroundColor: C.card }]}>
         <Text style={styles.sectionTitle}>GRADING RECORD</Text>
         <View style={styles.detailRows}>
           <DetailRow label="Grading Company" value={passport.gradingCompany} />
@@ -118,38 +164,10 @@ export default function CardPassportScreen() {
           <DetailRow label="Graded On" value={new Date(passport.gradedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })} />
           <DetailRow label="Population (PSA Pop)" value={`${passport.population.toLocaleString()} graded at this level`} />
         </View>
-      </View>
-
-      {/* Ownership */}
-      <View style={[styles.section, { backgroundColor: C.card }]}>
-        <Text style={styles.sectionTitle}>OWNERSHIP</Text>
-        <View style={[styles.ownerRow, { backgroundColor: C.muted }]}>
-          <View style={[styles.ownerAvatar, { backgroundColor: C.primary }]}>
-            <Text style={styles.ownerAvatarText}>O</Text>
-          </View>
-          <View style={styles.ownerInfo}>
-            <Text style={styles.ownerHandle}>@{passport.currentOwner}</Text>
-            <Text style={styles.ownerSince}>Current owner · Verified on Verified TCG</Text>
-          </View>
-          {passport.ownerVerified && (
-            <View style={[styles.ownerBadge, { backgroundColor: `${C.positive}22` }]}>
-              <Feather name="check-circle" size={12} color={C.positive} />
-              <Text style={[styles.ownerBadgeText, { color: C.positive }]}>Verified</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Disclaimer */}
-        <View style={[styles.disclaimer, { backgroundColor: `${C.warning}18`, borderColor: `${C.warning}44` }]}>
-          <Feather name="info" size={13} color={C.warning} style={{ marginTop: 1 }} />
-          <Text style={styles.disclaimerText}>
-            Verified TCG records ownership as declared by the collector. We do not guarantee card authenticity, condition, or the accuracy of any grading record. Always verify grading certification numbers directly with the grading company before purchase.
-          </Text>
-        </View>
-      </View>
+      </View>}
 
       {/* Purchase / Transaction history */}
-      <View style={[styles.section, { backgroundColor: C.card }]}>
+      {passport && <View style={[styles.section, { backgroundColor: C.card }]}>
         <Text style={styles.sectionTitle}>TRANSACTION HISTORY</Text>
         {passport.purchaseHistory.map(tx => (
           <View key={tx.id} style={[styles.txRow, { borderBottomColor: C.border }]}>
@@ -186,10 +204,10 @@ export default function CardPassportScreen() {
             )}
           </View>
         ))}
-      </View>
+      </View>}
 
       {/* Verified TCG history */}
-      <View style={[styles.section, { backgroundColor: C.card }]}>
+      {passport && <View style={[styles.section, { backgroundColor: C.card }]}>
         <Text style={styles.sectionTitle}>VERIFIED TCG HISTORY</Text>
         {passport.verifiedTCGHistory.map((event, idx) => (
           <View key={event.id} style={styles.timelineRow}>
@@ -215,10 +233,10 @@ export default function CardPassportScreen() {
             </View>
           </View>
         ))}
-      </View>
+      </View>}
 
       {/* Photos placeholder */}
-      <View style={[styles.section, { backgroundColor: C.card }]}>
+      {passport && <View style={[styles.section, { backgroundColor: C.card }]}>
         <Text style={styles.sectionTitle}>PHOTOS</Text>
         <View style={styles.photosRow}>
           {['Front', 'Back', 'Case'].map(label => (
@@ -229,9 +247,9 @@ export default function CardPassportScreen() {
           ))}
         </View>
         <Text style={styles.photoNote}>
-          High-resolution photos stored with this passport record. (Mock — no real photos in prototype.)
+          High-resolution photos stored with this passport record.
         </Text>
-      </View>
+      </View>}
     </ScrollView>
   );
 }
@@ -247,6 +265,8 @@ function DetailRow({ label, value, highlight }: { label: string; value: string; 
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  missingScreen: { flex: 1, backgroundColor: C.background, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  missingTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: C.foreground },
   content: { paddingHorizontal: 20, gap: 14 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   backBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
