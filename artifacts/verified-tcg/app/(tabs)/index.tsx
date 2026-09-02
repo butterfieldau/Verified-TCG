@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   Platform,
   PanResponder,
@@ -97,7 +97,12 @@ function formatLastUpdated(date: Date): string {
   if (diffH < 24) return `${diffH}h ago`;
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
-interface ChartPoint { value: number; date: string; }
+interface ChartPoint {
+  value: number;
+  date: string;
+  changeFromPrevious?: number;
+  changePercentFromPrevious?: number | null;
+}
 
 interface InteractiveChartProps {
   data: ChartPoint[];
@@ -152,8 +157,7 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
     return `${line} L ${last.x} ${last.y} L ${first.x} ${first.y} Z`;
   }
 
-  const panResponder = useRef(
-    PanResponder.create({
+  const panResponder = useMemo(() => PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (e) => {
@@ -170,8 +174,7 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
         setActiveIndex(null);
         onPointSelect(null);
       },
-    })
-  ).current;
+    }), [data, width, onPointSelect]);
 
   function handleTouch(touchX: number) {
     const n = data.length;
@@ -180,7 +183,17 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
     const ratio = Math.max(0, Math.min(1, (touchX - padL) / usableWidth));
     const idx = Math.min(Math.round(ratio * (n - 1)), n - 1);
     setActiveIndex(idx);
-    onPointSelect(data[idx]);
+    const point = data[idx]!;
+    const previous = idx > 0 ? data[idx - 1] : null;
+    const change = previous ? point.value - previous.value : undefined;
+    onPointSelect({
+      ...point,
+      changeFromPrevious: change,
+      changePercentFromPrevious:
+        previous && previous.value !== 0 && change !== undefined
+          ? (change / previous.value) * 100
+          : null,
+    });
   }
 
   const linePath = buildPath();
@@ -264,11 +277,19 @@ function InteractiveChart({ data, isPositive, onPointSelect }: InteractiveChartP
 // ── Tooltip pill shown above chart when touching ───────────────────────────────
 function ChartTooltip({ point, currency }: { point: ChartPoint | null; currency: string }) {
   if (!point) return null;
+  const change = point.changeFromPrevious;
+  const isUp = (change ?? 0) >= 0;
   return (
     <View style={styles.tooltipBox}>
       <Text style={styles.tooltipValue}>
         {currency} {point.value.toLocaleString('en-AU', { minimumFractionDigits: 2 })}
       </Text>
+      {change !== undefined && (
+        <Text style={[styles.tooltipChange, { color: isUp ? C.positive : C.negative }]}>
+          {isUp ? '+' : ''}{change.toLocaleString('en-AU', { minimumFractionDigits: 2 })}{' '}
+          ({isUp ? '+' : ''}{point.changePercentFromPrevious?.toFixed(1) ?? '—'}%)
+        </Text>
+      )}
       {!!point.date && (
         <Text style={styles.tooltipLabel}>{point.date}</Text>
       )}
@@ -689,7 +710,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Your collection value across the dates you actually owned each card
+              Slide across to inspect each real ownership value and movement
             </Text>
           </View>
         ) : performanceView.kind === 'initial' ? (
@@ -700,7 +721,7 @@ export default function HomeScreen() {
               onPointSelect={setActiveChartPoint}
             />
             <Text style={styles.initialSnapshotText}>
-              Your ownership timeline needs another retained market observation
+              Slide across to inspect this retained ownership value
             </Text>
           </View>
         ) : (
@@ -1240,7 +1261,7 @@ const styles = StyleSheet.create({
   changePeriod: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
 
   // Tooltip
-  tooltipContainer: { height: 42, justifyContent: 'flex-end', paddingBottom: 4 },
+  tooltipContainer: { height: 58, justifyContent: 'flex-end', paddingBottom: 4 },
   tooltipBox: {
     alignSelf: 'center',
     backgroundColor: C.card,
@@ -1250,6 +1271,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tooltipValue: { fontSize: 15, fontFamily: 'Inter_700Bold', color: C.foreground, letterSpacing: -0.3 },
+  tooltipChange: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   tooltipLabel: { fontSize: 11, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 1 },
 
   // Chart
