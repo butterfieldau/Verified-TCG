@@ -45,6 +45,8 @@ import {
   JUSTTCG_PRICING_PROVIDER_KEY,
   JUSTTCG_PRICING_PROVIDER_LABEL,
   persistJustTcgRawQuote,
+  refreshJustTcgGradedQuotes as refreshJustTcgV2GradedQuotes,
+  isJustTcgGradedPricingEnabled,
   preferredProviderKeyForGrade,
   selectPreferredQuote,
 } from "./justtcg.js";
@@ -134,6 +136,7 @@ export interface PricingResponse {
 
 const matchInFlight = new Map<string, Promise<void>>();
 const justTcgPricingInFlight = new Map<string, Promise<boolean>>();
+const justTcgGradedPricingInFlight = new Map<string, Promise<number>>();
 
 export function isJustTcgPricingConfigured(): boolean {
   return Boolean(process.env.JUSTTCG_API_KEY?.trim());
@@ -167,6 +170,18 @@ async function refreshJustTcgRawQuote(cardId: string): Promise<boolean> {
   })().finally(() => justTcgPricingInFlight.delete(cardId));
 
   justTcgPricingInFlight.set(cardId, request);
+  return request;
+}
+
+/** Fetch exact v2 slab prices at most once per card across concurrent requests. */
+async function refreshJustTcgGradedQuotes(cardId: string): Promise<number> {
+  if (!isJustTcgGradedPricingEnabled()) return 0;
+  const existing = justTcgGradedPricingInFlight.get(cardId);
+  if (existing) return existing;
+  const request = refreshJustTcgV2GradedQuotes(cardId)
+    .catch(() => 0)
+    .finally(() => justTcgGradedPricingInFlight.delete(cardId));
+  justTcgGradedPricingInFlight.set(cardId, request);
   return request;
 }
 
@@ -571,6 +586,20 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     rawQuote = selectPreferredQuote(storedQuotes, "raw");
   }
 
+  // JustTCG v2 graded variants are deliberately separate from the stable v1
+  // catalogue call. When the server-side beta flag is enabled, fetch exact
+  // company/grade values only; raw or another grader can never substitute.
+  const justTcgGradedQuote = storedQuotes.find(
+    (quote) =>
+      normalizeGradeKey(quote.gradeKey) !== "raw" &&
+      quote.providerKey === JUSTTCG_PRICING_PROVIDER_KEY,
+  );
+  if (!justTcgGradedQuote && isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(cardId);
+    storedQuotes = await getStoredQuotes(cardId);
+    rawQuote = selectPreferredQuote(storedQuotes, "raw");
+  }
+
   // PriceCharting remains a background supplement for exact grade/company
   // quotes. Its mapping state must not make an already-stored JustTCG raw
   // quote unavailable.
@@ -716,6 +745,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
     void runMappedRefresh(cardId, productId);
   }
   if (isStale && justTcgConfigured) void refreshJustTcgRawQuote(cardId);
+  if (isStale && isJustTcgGradedPricingEnabled()) void refreshJustTcgGradedQuotes(cardId);
 
   const quotesByGrade = new Map<string, typeof storedQuotes>();
   for (const quote of storedQuotes) {
@@ -793,7 +823,7 @@ export async function getPricing(opts: GetPricingOptions): Promise<PricingRespon
       .filter(
         (row) =>
           normalizeGradeKey(row.gradeKey) === gradeDef.key &&
-          row.providerKey === preferredProviderKeyForGrade(gradeDef.key),
+          row.providerKey === q.providerKey,
       )
       .map((row) =>
         fxRate != null ? Math.round(row.priceCents * fxRate) : row.priceCents,
@@ -929,6 +959,9 @@ export async function refreshPricing(opts: GetPricingOptions): Promise<PricingRe
   if (justTcgConfigured) {
     await refreshJustTcgRawQuote(cardId);
   }
+  if (isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(cardId);
+  }
 
   if (!priceChartingProvider.isConfigured()) {
     return getPricing(opts);
@@ -973,6 +1006,9 @@ export async function refreshPricingForScheduler(
 ): Promise<void> {
   if (isJustTcgPricingConfigured()) {
     await refreshJustTcgRawQuote(opts.cardId);
+  }
+  if (isJustTcgGradedPricingEnabled()) {
+    await refreshJustTcgGradedQuotes(opts.cardId);
   }
   if (!priceChartingProvider.isConfigured()) return;
 
@@ -1108,12 +1144,10 @@ export async function getPriceHistory(opts: {
     )
     .orderBy(cardPriceSnapshotsTable.capturedAt);
 
-  // PriceCharting remains a secondary raw-history source while the JustTCG
-  // cache is warming. It is never used to overwrite a JustTCG history when
-  // one is available.
+  // PriceCharting remains a secondary history source while a JustTCG cache is
+  // warming. It is never used to overwrite a JustTCG history when one exists.
   if (
     snapshotRows.length === 0 &&
-    canonicalGradeKey === "raw" &&
     preferredProviderKey !== PROVIDER_KEY
   ) {
     historyProviderKey = PROVIDER_KEY;
@@ -1166,7 +1200,6 @@ export async function getPriceHistory(opts: {
   if (
     snapshotRows.length === 0 &&
     legacyRows.length === 0 &&
-    canonicalGradeKey === "raw" &&
     historyProviderKey !== PROVIDER_KEY
   ) {
     historyProviderKey = PROVIDER_KEY;
