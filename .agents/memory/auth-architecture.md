@@ -19,3 +19,10 @@ Auth is entirely on Replit — no Supabase. JWT access tokens (15 min) + rotatin
 - OAuth (Google/Apple) shows a "coming soon" alert — not implemented (requires external OAuth provider)
 - Password reset (`/api/auth/recover`) stubs to 200 — no mail service configured yet
 - Uses `bcryptjs` (pure JS) not `bcrypt` (requires native build approval in Replit)
+
+## Database identity
+The app's primary connection is Replit's runtime-managed `DATABASE_URL`, with separate development and production databases. A production database may report an internal name such as `neondb`; that does not mean it is the creator's separate Neon dashboard project.
+
+**Why:** The production Replit database contained the app's users, collection rows, PriceCharting mappings, and quotes even though the separately inspected Neon account appeared empty.
+
+**How to apply:** Diagnose the app through Replit's development/production database tools and `DATABASE_URL` environment binding. Do not switch to similarly named external connection secrets without comparing row counts and runtime configuration first.

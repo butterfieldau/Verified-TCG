@@ -107,7 +107,7 @@ describe("mobile authentication origin and errors", () => {
     const session = makeSession();
     (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, session));
 
-    await expect(signUp("new@example.com", "password123", "New Collector")).resolves.toEqual(session);
+    await expect(signUp("new@example.com", "password123", "New", "Collector", "new_collector")).resolves.toEqual(session);
     await expect(readPersistedSession()).resolves.toBe(JSON.stringify(session));
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
       SECURE_SESSION_KEY,
@@ -117,10 +117,10 @@ describe("mobile authentication origin and errors", () => {
 
   it("keeps API validation and duplicate-account messages", async () => {
     (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(400, { message: "Password must be at least 8 characters" }));
-    await expect(signUp("new@example.com", "short", "New Collector")).rejects.toThrow("Password must be at least 8 characters");
+    await expect(signUp("new@example.com", "short", "New", "Collector", "new_collector")).rejects.toThrow("Password must be at least 8 characters");
 
     (fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(422, { message: "An account with that email already exists" }));
-    await expect(signUp("new@example.com", "password123", "New Collector")).rejects.toThrow("An account with that email already exists");
+    await expect(signUp("new@example.com", "password123", "New", "Collector", "new_collector")).rejects.toThrow("An account with that email already exists");
   });
 
   it("uses a friendly message for bad credentials", async () => {
