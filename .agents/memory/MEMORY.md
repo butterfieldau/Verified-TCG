@@ -16,7 +16,7 @@
 - [Expo architecture compatibility](expo-legacy-architecture-animations.md) — architecture switches must reconcile FlashList, Reanimated, Worklets, and native-only modules as one release decision.
 - [Mobile API origins](mobile-api-origins.md) — development web previews use the first-party Replit proxy; release builds use the public production origin.
 - [Catalogue images are optional](catalogue-images-optional.md) — canonical cards remain readable without provider images; UI fallbacks must prevent missing artwork from blanking data.
-- [Portfolio history semantics](portfolio-history-ownership.md) — distinguish current-holdings market backcasts from ownership-period P&L; never label one as the other.
+- [Profile market-value history](portfolio-history-ownership.md) — Home charts current-profile market value from each card's added date; movement breakdowns stay out of the chart.
 - [Expo preview ownership](expo-preview-ownership.md) — multiple running Expo artifacts can contend for one workspace Expo domain; keep Verified TCG as the active mobile preview.
 - [Collection CSV migrations](collection-csv-migrations.md) — imports use strict versioned contracts, hash-bound previews, and per-collector atomic commit serialization.
 - [Community artifact boundary](community-artifact-boundary.md) — Community exists only inside Verified TCG; never create or restore a standalone Community artifact, package, workflow, or URL.

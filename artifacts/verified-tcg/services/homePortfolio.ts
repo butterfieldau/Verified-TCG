@@ -44,7 +44,7 @@ export function getHomePerformanceView(
     return {
       kind: 'unavailable',
       message: performance.historyUnavailableReason
-        ?? `No complete retained history is available for ${range}`,
+        ?? `No retained market value is available for ${range}`,
     };
   }
   if (performance.points.length === 1) return { kind: 'initial', point: performance.points[0]! };

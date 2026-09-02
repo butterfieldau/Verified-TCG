@@ -20,6 +20,7 @@ import supertest from "supertest";
 import { db } from "@workspace/db";
 import {
   usersTable,
+  collectionItemsTable,
   soldArchiveItemsTable,
   cardProviderMappingsTable,
   currentQuotesTable,
@@ -869,10 +870,18 @@ describe("GET /collection/value-history", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ ...cardPayload(cardA), acquiredAt: dateDaysAgo(40), quantity: 2 });
     collectionAId = createdA.body.id;
-    await request
+    const createdB = await request
       .post("/api/collection")
       .set("Authorization", `Bearer ${token}`)
       .send({ ...cardPayload(cardB), acquiredAt: dateDaysAgo(5), quantity: 1 });
+    await db
+      .update(collectionItemsTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(40)}T00:00:00Z`) })
+      .where(eq(collectionItemsTable.id, collectionAId));
+    await db
+      .update(collectionItemsTable)
+      .set({ createdAt: new Date(`${dateDaysAgo(5)}T00:00:00Z`) })
+      .where(eq(collectionItemsTable.id, createdB.body.id));
 
     await db.insert(providerPriceHistoryTable).values([
       {
@@ -942,7 +951,7 @@ describe("GET /collection/value-history", () => {
     await cleanupTaggedUsers();
   });
 
-  test("starts at account creation and applies acquisition, sale, and price changes on their dates", async () => {
+  test("shows current profile market value from each card's added date", async () => {
     const res = await request
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
@@ -951,12 +960,12 @@ describe("GET /collection/value-history", () => {
     const points = new Map(
       res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
     );
-    assert.equal(res.body.points.length, 51);
-    assert.equal(points.get(dateDaysAgo(50)), 0);
-    assert.equal(points.get(dateDaysAgo(10)), 20);
-    assert.equal(points.get(dateDaysAgo(5)), null);
-    assert.equal(points.get(dateDaysAgo(2)), 29);
-    assert.equal(points.get(dateDaysAgo(1)), null);
+    assert.equal(res.body.points.length, 41);
+    assert.equal(points.get(dateDaysAgo(40)), null);
+    assert.equal(points.get(dateDaysAgo(10)), 10);
+    assert.equal(points.get(dateDaysAgo(5)), 14);
+    assert.equal(points.get(dateDaysAgo(2)), 17);
+    assert.equal(points.get(dateDaysAgo(1)), 17);
     assert.equal(points.get(dateDaysAgo(0)), 20);
   });
 
@@ -965,11 +974,11 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/summary?displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.chartData.ALL.length, 51);
+    assert.equal(res.body.chartData.ALL.length, 41);
     assert.equal(res.body.chartData.ALL.at(-1)?.value, 20);
     assert.equal(
       res.body.chartData.ALL.find((point: { date: string }) => point.date === dateDaysAgo(5))?.value,
-      null,
+      14,
     );
   });
 
@@ -1007,22 +1016,22 @@ describe("GET /collection/value-history", () => {
     );
   });
 
-  test("does not apply later acquisitions or quantity reductions retroactively", async () => {
+  test("starts each current card on its profile-added date and carries only prior retained quotes", async () => {
     const res = await request
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
     const points = new Map(
       res.body.points.map((point: { date: string; value: number }) => [point.date, point.value]),
     );
-    assert.equal(points.get(dateDaysAgo(50)), 0);
-    assert.equal(points.get(dateDaysAgo(10)), 20);
-    assert.equal(points.get(dateDaysAgo(5)), null);
-    assert.equal(points.get(dateDaysAgo(2)), 29);
-    assert.equal(points.get(dateDaysAgo(1)), null);
+    assert.equal(points.get(dateDaysAgo(40)), null);
+    assert.equal(points.get(dateDaysAgo(10)), 10);
+    assert.equal(points.get(dateDaysAgo(5)), 14);
+    assert.equal(points.get(dateDaysAgo(2)), 17);
+    assert.equal(points.get(dateDaysAgo(1)), 17);
     assert.equal(points.get(dateDaysAgo(0)), 20);
   });
 
-  test("keeps account creation at zero when an imported acquisition predates the account", async () => {
+  test("uses the profile-added date rather than an imported acquisition date", async () => {
     const importedCard = `${TAG}history-imported-before-account`;
     const importedUser = await createTestUser({ email: `${TAG}history-imported@example.com` });
     await db
@@ -1058,9 +1067,7 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${importedUser.accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.points.length, 6);
-    assert.equal(res.body.points[0]?.value, 0);
-    assert.equal(res.body.points[1]?.value, null);
+    assert.equal(res.body.points.length, 1);
     assert.equal(res.body.points.at(-1)?.value, 27);
 
     await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, importedCard));
@@ -1069,7 +1076,7 @@ describe("GET /collection/value-history", () => {
       .where(eq(providerPriceHistoryTable.cardId, importedCard));
   });
 
-  test("shows zero after liquidation and begins a new ownership interval after restore", async () => {
+  test("removes sold cards from the current profile series and starts restored cards when re-added", async () => {
     const liquidatedCard = `${TAG}history-liquidated`;
     const user = await createTestUser({ email: `${TAG}liquidated@example.com` });
     await db
@@ -1120,12 +1127,7 @@ describe("GET /collection/value-history", () => {
     const liquidatedPoints = new Map(
       res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
     );
-    assert.equal(res.body.points.length, 31);
     assert.equal(liquidatedPoints.get(dateDaysAgo(30)), 0);
-    assert.equal(liquidatedPoints.get(dateDaysAgo(10)), 25);
-    assert.equal(liquidatedPoints.get(dateDaysAgo(9)), null);
-    assert.equal(liquidatedPoints.get(dateDaysAgo(3)), 0);
-    assert.equal(liquidatedPoints.get(dateDaysAgo(2)), 0);
     assert.equal(liquidatedPoints.get(dateDaysAgo(0)), 0);
 
     await db.insert(currentQuotesTable).values({
@@ -1148,10 +1150,7 @@ describe("GET /collection/value-history", () => {
         (point: { date: string; value: number }) => [point.date, point.value],
       ),
     );
-    assert.equal(restoredPoints.get(dateDaysAgo(30)), 0);
-    assert.equal(restoredPoints.get(dateDaysAgo(10)), 25);
-    assert.equal(restoredPoints.get(dateDaysAgo(3)), 0);
-    assert.equal(restoredPoints.get(dateDaysAgo(2)), 0);
+    assert.equal(restoredHistory.body.points.length, 1);
     assert.equal(restoredPoints.get(dateDaysAgo(0)), 27);
 
     const resold = await request

@@ -121,6 +121,7 @@ type OwnershipInterval = {
   isGraded: boolean;
   gradingData: unknown;
   cardData: unknown;
+  addedDate: string;
   startDate: string;
   endDate: string | null;
 };
@@ -172,7 +173,8 @@ async function loadOwnershipIntervals(userId: string): Promise<{
   const intervals: OwnershipInterval[] = [
     ...rows.flatMap(row => {
       const startDate = rowDate(row.ownershipStartedAt ?? row.acquiredAt);
-      return startDate
+      const addedDate = rowDate(row.createdAt.toISOString());
+      return startDate && addedDate
         ? [{
             id: row.id,
             cardId: row.cardId,
@@ -180,6 +182,7 @@ async function loadOwnershipIntervals(userId: string): Promise<{
             isGraded: row.isGraded,
             gradingData: row.gradingData,
             cardData: row.cardData,
+            addedDate,
             startDate,
             endDate: null,
           }]
@@ -188,7 +191,8 @@ async function loadOwnershipIntervals(userId: string): Promise<{
     ...archivedRows.flatMap(row => {
       const startDate = rowDate(row.ownershipStartedAt ?? row.acquiredAt);
       const endDate = rowDate(row.soldAt);
-      return startDate && endDate && startDate <= endDate
+      const addedDate = rowDate(row.createdAt.toISOString());
+      return startDate && endDate && addedDate && startDate <= endDate
         ? [{
             id: row.id,
             cardId: row.cardId,
@@ -196,6 +200,7 @@ async function loadOwnershipIntervals(userId: string): Promise<{
             isGraded: row.isGraded,
             gradingData: row.gradingData,
             cardData: row.cardData,
+            addedDate,
             startDate,
             endDate,
           }]
@@ -319,15 +324,14 @@ function retainedPriceForDate(
 }
 
 /**
- * Build the collector's ownership-value timeline. Active rows and immutable
- * sold-archive rows form ownership intervals, so quantities appear on their
- * acquisition/restore date and disappear on their sale date. The account
- * creation date supplies the truthful zero baseline.
+ * Build the current profile's retained market-value timeline. Only cards that
+ * are currently in the collection are included, and each starts contributing
+ * on the date it was added to this profile.
  *
- * A non-zero point is available only when every owned holding has an exact,
- * retained price for that date. Daily provider history is preferred;
- * timestamped snapshots fill the same calendar date. The current quote is used
- * only for today. We never carry a price across an unobserved date.
+ * Historical dates use the most recent real provider observation retained on
+ * or before that date. This is an as-of market value, not interpolation. When
+ * some cards have never had an observation, the known priced subtotal remains
+ * drawable and the point is explicitly marked incomplete.
  */
 export async function calculatePortfolioValueHistory(
   userId: string,
@@ -337,7 +341,8 @@ export async function calculatePortfolioValueHistory(
   const currency = displayCurrency.trim().toUpperCase();
   const now = new Date();
   const ownership = await loadOwnershipIntervals(userId);
-  const { intervals, accountDate, today } = ownership;
+  const { accountDate, today } = ownership;
+  const profileRows = ownership.intervals.filter(interval => interval.endDate === null);
   if (!ownership.accountFound) {
     return {
       points: [],
@@ -347,7 +352,7 @@ export async function calculatePortfolioValueHistory(
     };
   }
 
-  const cardIds = [...new Set(intervals.map(row => row.cardId))];
+  const cardIds = [...new Set(profileRows.map(row => row.cardId))];
   if (cardIds.length === 0) {
     const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
     const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
@@ -386,9 +391,13 @@ export async function calculatePortfolioValueHistory(
   // implementation treated 7D as "seven days ago through today", producing
   // eight calendar points and making range boundaries ambiguous.
   const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
+  const profileStart = profileRows.reduce(
+    (earliest, row) => row.addedDate < earliest ? row.addedDate : earliest,
+    profileRows[0]!.addedDate,
+  );
   const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
-    ? accountDate
-    : accountDate > requestedStart ? accountDate : requestedStart;
+    ? profileStart
+    : profileStart > requestedStart ? profileStart : requestedStart;
   const dates: string[] = [];
   for (
     let cursor = new Date(`${startDate}T00:00:00Z`);
@@ -401,30 +410,8 @@ export async function calculatePortfolioValueHistory(
   const points: PortfolioValueHistoryPoint[] = [];
   const conversionCache = new Map<string, number | null>();
   for (const date of dates) {
-    // Account creation is the product timeline's zero baseline even when a
-    // collector imports a card with an earlier real-world acquisition date.
-    // Daily data cannot represent a second, later event on the same date, so
-    // imported ownership first appears at the next retained observation.
-    if (date === accountDate) {
-      points.push({
-        date,
-        valueCents: 0,
-        value: 0,
-        currency,
-        pricedHoldings: 0,
-        totalHoldings: 0,
-        available: true,
-        complete: true,
-        dailyChangeCents: null,
-        dailyChange: null,
-        dailyChangePercent: null,
-      });
-      continue;
-    }
-    const owned = intervals.filter(interval =>
-      interval.startDate <= date && (interval.endDate === null || date < interval.endDate)
-    );
-    const totalHoldings = owned.reduce((sum, interval) => sum + interval.quantity, 0);
+    const profileAtDate = profileRows.filter(row => row.addedDate <= date);
+    const totalHoldings = profileAtDate.reduce((sum, row) => sum + row.quantity, 0);
     if (totalHoldings === 0) {
       points.push({
         date,
@@ -443,24 +430,18 @@ export async function calculatePortfolioValueHistory(
     }
 
     let valueCents = 0;
-    let complete = true;
     let pricedHoldings = 0;
-    for (const row of owned) {
+    for (const row of profileAtDate) {
       const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
       if (!gradeKey) {
-        complete = false;
         continue;
       }
 
-      const price = retainedPriceForDate(
-        { quoteMap, historyByKey },
-        row.cardId,
-        gradeKey,
-        date,
-        today,
-      );
+      const history = historyByKey.get(`${row.cardId}:${gradeKey}`) ?? [];
+      const price = date === today && quoteMap.get(`${row.cardId}:${gradeKey}`)
+        ? retainedPriceForDate({ quoteMap, historyByKey }, row.cardId, gradeKey, date, today)
+        : [...history].reverse().find(candidate => candidate.date <= date) ?? null;
       if (!price) {
-        complete = false;
         continue;
       }
 
@@ -471,14 +452,14 @@ export async function calculatePortfolioValueHistory(
         conversionCache.set(conversionKey, converted);
       }
       if (converted == null) {
-        complete = false;
         continue;
       }
       valueCents += converted * row.quantity;
       pricedHoldings += row.quantity;
     }
 
-    if (complete) {
+    const complete = pricedHoldings === totalHoldings;
+    if (pricedHoldings > 0) {
       points.push({
         date,
         valueCents,
@@ -487,7 +468,7 @@ export async function calculatePortfolioValueHistory(
         pricedHoldings,
         totalHoldings,
         available: true,
-        complete: true,
+        complete,
         dailyChangeCents: null,
         dailyChange: null,
         dailyChangePercent: null,
@@ -532,7 +513,7 @@ export async function calculatePortfolioValueHistory(
     historyUnavailableReason: points.length > 0
       && points.some(point => point.available)
       ? null
-      : "No complete retained price observations are available during ownership",
+      : "No retained market prices are available for cards in this profile",
   };
 }
 

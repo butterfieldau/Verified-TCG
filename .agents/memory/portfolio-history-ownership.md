@@ -1,10 +1,10 @@
 ---
-name: Portfolio history semantics
-description: Home charts actual ownership value from account creation, separately from profit and loss.
+name: Profile market-value history
+description: Home charts the retained market value of cards currently on the profile from each card's added date.
 ---
 
-Verified TCG Home uses an ownership-value timeline: zero at account creation, active and archived quantities only during their actual ownership intervals, and real retained provider observations. Cards do not appear before acquisition; sold quantities disappear on sale and restored quantities begin a new interval. Profit and loss remains a separate calculation.
+Verified TCG Home uses a current-profile market-value timeline. A current collection card first appears on the date it was added to the profile, regardless of an imported real-world acquisition date. Sold cards are not part of the current profile series; restored cards begin again when they are re-added. The chart is an aggregate value line, not a card-by-card ownership or movement inspector.
 
-**Why:** The collector explicitly chose an account-to-present ownership timeline over a current-holdings market backcast. Showing pre-acquisition value or treating acquisition jumps as gains would misrepresent the account’s history.
+**Why:** The collector explicitly rejected the ownership-value and movement-audit model. Home should answer “what was the market value of the cards on this profile?” without requiring every card to have an exact observation on every calendar day.
 
-**How to apply:** Use account creation and acquisition/sale/restore boundaries as timeline events. Omit non-zero dates lacking complete real prices or FX; never interpolate. For daily per-card explanations, only intervals owned on both adjacent dates produce market deltas; label entering and leaving intervals as acquisition and sale contributions. Any missing exact-grade observation or FX keeps that contribution and the aggregate unavailable. Keep acquisition cost, realised gain, and unrealised gain separate from value-chart movement.
+**How to apply:** Include current cards only from their profile-added date. Use the latest real retained provider observation available on or before each date—an as-of quote, never a fabricated future value. If only some cards have prices, draw the known subtotal and mark the point incomplete. Keep acquisition cost, realised gain, and unrealised gain separate, and do not expose per-card movement inspection from the Home chart.

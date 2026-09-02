@@ -50,7 +50,7 @@ router.get("/collection/value-history", requireActiveUser, async (req: AuthReque
     historyAvailable: points.some(point => point.available),
     historyUnavailableReason: points.some(point => point.available)
       ? null
-      : "No complete retained price observations are available during ownership",
+      : "No retained market prices are available for cards in this profile",
   });
 });
 
