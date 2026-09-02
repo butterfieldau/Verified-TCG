@@ -28,14 +28,14 @@ const C = colors.dark;
 export default function ExportCollectionScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const { collection } = useApp();
+  const { collection, collectionLists } = useApp();
   const [loading, setLoading] = useState(false);
 
   const handleExport = async () => {
     setLoading(true);
     try {
       const token = await getAccessToken();
-      const res = await apiRequest('/api/me/export/collection.csv', { accessToken: token });
+      const res = await apiRequest('/api/me/export/collection.csv?version=2', { accessToken: token });
 
       const csv = await res.text();
 
@@ -45,14 +45,14 @@ export default function ExportCollectionScreen() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'collection.csv';
+        a.download = 'collection-with-lists.csv';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } else {
         // Native: write to a temp file then open the system share sheet
-        const file = new File(Paths.cache, 'collection.csv');
+        const file = new File(Paths.cache, 'collection-with-lists.csv');
         file.write(csv);
 
         const available = await Sharing.isAvailableAsync();
@@ -102,7 +102,7 @@ export default function ExportCollectionScreen() {
         <Text style={styles.infoTitle}>Collection CSV Export</Text>
         <Text style={styles.infoBody}>
           Export your entire collection as a CSV file. The file includes card name, set,
-          condition, grade, purchase price, and current market value for all{' '}
+          condition, grade, purchase price, custom lists, and list memberships for all{' '}
           <Text style={{ color: C.primary, fontFamily: 'Inter_600SemiBold' }}>
             {collection.length}
           </Text>{' '}
@@ -116,6 +116,7 @@ export default function ExportCollectionScreen() {
             'Purchase price and current value',
             'For-sale and for-trade flags',
             'Acquisition date and notes',
+            'Custom lists and holding memberships',
           ].map(f => (
             <View key={f} style={styles.featureRow}>
               <Feather name="check" size={14} color={C.primary} />
@@ -127,12 +128,16 @@ export default function ExportCollectionScreen() {
 
       <Pressable
         onPress={handleExport}
-        disabled={loading || collection.length === 0}
+        disabled={loading || (collection.length === 0 && collectionLists.length === 0)}
         style={({ pressed }) => [
           styles.exportBtn,
           {
             backgroundColor:
-              collection.length === 0 ? C.muted : pressed ? `${C.primary}cc` : C.primary,
+              collection.length === 0 && collectionLists.length === 0
+                ? C.muted
+                : pressed
+                  ? `${C.primary}cc`
+                  : C.primary,
           },
         ]}
       >
@@ -142,7 +147,9 @@ export default function ExportCollectionScreen() {
           <>
             <Feather name="download" size={18} color="#FFF" />
             <Text style={styles.exportBtnText}>
-              {collection.length === 0 ? 'No cards to export' : 'Export as CSV'}
+              {collection.length === 0 && collectionLists.length === 0
+                ? 'Nothing to export'
+                : 'Export as CSV'}
             </Text>
           </>
         )}

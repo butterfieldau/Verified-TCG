@@ -9,7 +9,10 @@ export interface ImportPreviewRequest {
 
 export interface ImportPreviewRow {
   rowNumber: number;
-  status: 'matched' | 'watchlist_only' | 'ambiguous' | 'unmatched' | 'invalid' | 'duplicate';
+  recordType?: 'holding' | 'list';
+  status: 'matched' | 'watchlist_only' | 'ambiguous' | 'unmatched' | 'invalid' | 'duplicate' | 'valid';
+  name?: string;
+  position?: number;
   cardId?: string;
   card?: any;
   normalized?: any;
@@ -18,6 +21,8 @@ export interface ImportPreviewRow {
   isWatchlistOnly?: boolean;
   supportedGrade?: boolean;
   pricingAvailable?: boolean;
+  holdingId?: string;
+  listNames?: string[];
 }
 
 export interface ImportPreviewResponse {
@@ -34,6 +39,10 @@ export interface ImportPreviewResponse {
     unmatched: number;
     duplicate: number;
     priced: number;
+    listCount?: number;
+    membershipCount?: number;
+    listsToCreate?: string[];
+    listsToMerge?: string[];
   };
   rows: ImportPreviewRow[];
 }
@@ -52,11 +61,16 @@ export interface ImportCommitResponse {
     skipped: number;
     duplicates: number;
     unsupportedGrades: number;
+    listsCreated?: number;
+    listsMerged?: number;
+    membershipsAdded?: number;
+    membershipDuplicates?: number;
   };
   rows: Array<{
     rowNumber: number;
-    status: 'holding_added' | 'wishlist_added' | 'wishlist_existing' | 'duplicate' | 'skipped';
+    status: 'holding_added' | 'wishlist_added' | 'wishlist_existing' | 'list_created' | 'list_merged' | 'duplicate' | 'skipped';
     cardId?: string;
+    listName?: string;
     reason?: string;
   }>;
   replayed?: boolean;

@@ -4,6 +4,8 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   collectionImportJobsTable,
   collectionItemsTable,
+  collectionListItemsTable,
+  collectionListsTable,
   db,
   wishlistItemsTable,
 } from "@workspace/db";
@@ -25,9 +27,11 @@ import { clearUserWishlists } from "./wishlist.js";
 const router = Router();
 
 export const COLLECTION_IMPORT_SCHEMA_VERSION = 1;
+export const COLLECTION_ORGANIZATION_SCHEMA_VERSION = 2;
 export const COLLECTION_IMPORT_MAX_BYTES = 1024 * 1024;
 export const COLLECTION_IMPORT_MAX_ROWS = 1_000;
 const PREVIEW_TTL_MS = 24 * 60 * 60 * 1_000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type CollectionImportSource = "collectr" | "verified_tcg";
 export type CollectionImportRowStatus =
@@ -38,7 +42,17 @@ export type CollectionImportRowStatus =
   | "unmatched"
   | "duplicate";
 
+export const VERIFIED_TCG_V2_HEADERS = [
+  "Verified TCG CSV Version", "Source", "Record Type", "Holding ID", "Card ID",
+  "Card Name", "TCG", "Set", "Set Code", "Card Number", "Rarity", "Finish",
+  "Condition", "Graded", "Grade Company", "Grade", "Grade Designation",
+  "Grade Original", "Certificate Number", "Graded Date", "Quantity",
+  "Acquired Date", "Acquisition Currency", "Acquisition Unit Price", "For Sale",
+  "For Trade", "Notes", "List Name", "List Names", "List Position",
+] as const;
+
 interface NormalizedImportRow {
+  recordType?: "holding";
   rowNumber: number;
   status: CollectionImportRowStatus;
   source: CollectionImportSource;
@@ -63,7 +77,20 @@ interface NormalizedImportRow {
   isForTrade?: boolean;
   pricingAvailable?: boolean;
   supportedGrade?: boolean;
+  holdingId?: string;
+  listNames?: string[];
 }
+
+interface NormalizedImportList {
+  recordType: "list";
+  rowNumber: number;
+  status: "valid" | "invalid" | "duplicate";
+  name?: string;
+  position?: number;
+  error?: string;
+}
+
+type NormalizedImportRecord = NormalizedImportRow | NormalizedImportList;
 
 export interface CollectionImportPreviewSummary {
   total: number;
@@ -74,6 +101,10 @@ export interface CollectionImportPreviewSummary {
   unmatched: number;
   duplicate: number;
   priced: number;
+  listCount?: number;
+  membershipCount?: number;
+  listsToCreate?: string[];
+  listsToMerge?: string[];
 }
 
 function sha256(value: string): string {
@@ -187,6 +218,12 @@ export function detectCollectionCsvSource(headers: string[]): CollectionImportSo
   ) {
     return "collectr";
   }
+  if (
+    headers.length === VERIFIED_TCG_V2_HEADERS.length &&
+    headers.every((header, index) => header === VERIFIED_TCG_V2_HEADERS[index])
+  ) {
+    return "verified_tcg";
+  }
   const verifiedHeaders = [
     "Verified TCG CSV Version", "Source", "Card ID", "Card Name", "TCG", "Set",
     "Set Code", "Card Number", "Rarity", "Finish", "Condition", "Graded",
@@ -203,6 +240,17 @@ export function detectCollectionCsvSource(headers: string[]): CollectionImportSo
   throw new Error(
     "CSV headers do not match a supported Collectr or Verified TCG export.",
   );
+}
+
+export function detectCollectionCsvVersion(headers: string[]): number {
+  if (
+    headers.length === VERIFIED_TCG_V2_HEADERS.length &&
+    headers.every((header, index) => header === VERIFIED_TCG_V2_HEADERS[index])
+  ) {
+    return COLLECTION_ORGANIZATION_SCHEMA_VERSION;
+  }
+  detectCollectionCsvSource(headers);
+  return COLLECTION_IMPORT_SCHEMA_VERSION;
 }
 
 function field(row: Record<string, string>, ...names: string[]): string {
@@ -234,6 +282,25 @@ function isoDate(value: string): string | null {
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+function parseListNames(value: string): string[] | null {
+  if (!value.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const names: string[] = [];
+  for (const item of parsed) {
+    if (typeof item !== "string") return null;
+    const name = item.trim();
+    if (!name || name.length > 100 || names.includes(name)) return null;
+    names.push(name);
+  }
+  return names.length <= 100 ? names : null;
 }
 
 const CONDITION_ALIASES: Record<string, string> = {
@@ -499,17 +566,134 @@ function previewSummary(rows: NormalizedImportRow[]): CollectionImportPreviewSum
   };
 }
 
+async function addOrganizationPreview(
+  rows: NormalizedImportRecord[],
+  summary: CollectionImportPreviewSummary,
+  userId: string,
+): Promise<CollectionImportPreviewSummary> {
+  const definitions = rows.filter(
+    (row): row is NormalizedImportList =>
+      row.recordType === "list" && row.status === "valid" && Boolean(row.name),
+  );
+  const names: string[] = [];
+  for (const definition of definitions) {
+    if (!names.includes(definition.name!)) names.push(definition.name!);
+  }
+  const existing = await db
+    .select({ name: collectionListsTable.name })
+    .from(collectionListsTable)
+    .where(eq(collectionListsTable.userId, userId));
+  const existingNames = new Set(existing.map((list) => list.name));
+  const listsToCreate = names.filter((name) => !existingNames.has(name));
+  const listsToMerge = names.filter((name) => existingNames.has(name));
+  if (existing.length + listsToCreate.length > 100) {
+    throw new Error("This CSV would exceed the 100 custom-list limit.");
+  }
+  const membershipCount = rows
+    .filter((row): row is NormalizedImportRow =>
+      row.recordType === "holding" && row.status === "matched",
+    )
+    .reduce((count, row) => count + (row.listNames?.length ?? 0), 0);
+
+  return {
+    ...summary,
+    total: rows.length,
+    invalid: summary.invalid +
+      rows.filter((row) => row.recordType === "list" && row.status === "invalid").length,
+    duplicate: summary.duplicate +
+      rows.filter((row) => row.recordType === "list" && row.status === "duplicate").length,
+    listCount: names.length,
+    membershipCount,
+    listsToCreate,
+    listsToMerge,
+  };
+}
+
 async function normalizeRows(
   source: CollectionImportSource,
   sourceRows: Array<Record<string, string>>,
-): Promise<NormalizedImportRow[]> {
-  const normalized: NormalizedImportRow[] = [];
+  schemaVersion = COLLECTION_IMPORT_SCHEMA_VERSION,
+): Promise<NormalizedImportRecord[]> {
+  const normalized: NormalizedImportRecord[] = [];
   const seen = new Set<string>();
+  const seenListNames = new Set<string>();
   const candidateCache = new Map<string, Promise<PublicCatalogueCard[]>>();
 
   for (let index = 0; index < sourceRows.length; index += 1) {
     const sourceRow = sourceRows[index]!;
     const rowNumber = index + 2;
+    if (schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION) {
+      const recordType = field(sourceRow, "Record Type").toLowerCase();
+      if (
+        rawField(sourceRow, "Verified TCG CSV Version") !==
+          String(COLLECTION_ORGANIZATION_SCHEMA_VERSION) ||
+        rawField(sourceRow, "Source") !== "Verified TCG"
+      ) {
+        if (recordType === "list") {
+          normalized.push({
+            recordType: "list",
+            rowNumber,
+            status: "invalid",
+            error: "Verified TCG rows must declare version 2 and source Verified TCG.",
+          });
+        } else {
+          normalized.push({
+            recordType: "holding",
+            rowNumber,
+            status: "invalid",
+            source,
+            rowFingerprint: sha256(JSON.stringify(sourceRow)),
+            isWatchlistOnly: false,
+            error: "Verified TCG rows must declare version 2 and source Verified TCG.",
+          });
+        }
+        continue;
+      }
+      if (recordType === "list") {
+        const name = field(sourceRow, "List Name");
+        const positionText = field(sourceRow, "List Position");
+        const position = Number(positionText);
+        if (
+          !name ||
+          name.length > 100 ||
+          !Number.isInteger(position) ||
+          position < 0 ||
+          position > 999
+        ) {
+          normalized.push({
+            recordType: "list",
+            rowNumber,
+            status: "invalid",
+            error: "List rows require a name (up to 100 characters) and a whole-number position.",
+          });
+        } else if (seenListNames.has(name)) {
+          normalized.push({
+            recordType: "list",
+            rowNumber,
+            status: "duplicate",
+            name,
+            position,
+            error: "Duplicate list definition in this CSV.",
+          });
+        } else {
+          seenListNames.add(name);
+          normalized.push({ recordType: "list", rowNumber, status: "valid", name, position });
+        }
+        continue;
+      }
+      if (recordType !== "holding") {
+        normalized.push({
+          recordType: "holding",
+          rowNumber,
+          status: "invalid",
+          source,
+          rowFingerprint: sha256(JSON.stringify(sourceRow)),
+          isWatchlistOnly: false,
+          error: "Record Type must be holding or list.",
+        });
+        continue;
+      }
+    }
     const isWatchlistOnly =
       source === "collectr" && truthy(field(sourceRow, "Watchlist"));
     const game = field(sourceRow, source === "collectr" ? "Category" : "TCG");
@@ -532,9 +716,16 @@ async function normalizeRows(
     );
     const notes = field(sourceRow, "Notes");
     const cardId = field(sourceRow, "Card ID");
+    const holdingId = schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+      ? field(sourceRow, "Holding ID")
+      : "";
+    const listNames = schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+      ? parseListNames(rawField(sourceRow, "List Names"))
+      : [];
     const rowFingerprint = sha256(JSON.stringify(sourceRow));
 
     const base: NormalizedImportRow = {
+      recordType: "holding",
       rowNumber,
       status: "invalid",
       source,
@@ -545,13 +736,13 @@ async function normalizeRows(
     if (
       source === "verified_tcg" &&
       (
-        rawField(sourceRow, "Verified TCG CSV Version") !== "1" ||
+        rawField(sourceRow, "Verified TCG CSV Version") !== String(schemaVersion) ||
         rawField(sourceRow, "Source") !== "Verified TCG"
       )
     ) {
       normalized.push({
         ...base,
-        error: "Verified TCG rows must declare version 1 and source Verified TCG.",
+        error: `Verified TCG rows must declare version ${schemaVersion} and source Verified TCG.`,
       });
       continue;
     }
@@ -559,6 +750,23 @@ async function normalizeRows(
       normalized.push({
         ...base,
         error: "Verified TCG rows require a Card ID.",
+      });
+      continue;
+    }
+    if (
+      schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION &&
+      (!holdingId || !UUID_RE.test(holdingId))
+    ) {
+      normalized.push({
+        ...base,
+        error: "Holding rows require a valid Holding ID.",
+      });
+      continue;
+    }
+    if (schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION && listNames === null) {
+      normalized.push({
+        ...base,
+        error: "List Names must be a JSON array of unique names.",
       });
       continue;
     }
@@ -681,7 +889,57 @@ async function normalizeRows(
       isForTrade: truthy(field(sourceRow, "For Trade")),
       pricingAvailable: false,
       supportedGrade: parsedGrade.supported,
+      ...(holdingId ? { holdingId } : {}),
+      ...(listNames ? { listNames } : {}),
     });
+  }
+  if (schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION) {
+    const definitionsByName = new Map<string, NormalizedImportList[]>();
+    for (const record of normalized) {
+      if (record.recordType !== "list" || !record.name) continue;
+      const definitions = definitionsByName.get(record.name) ?? [];
+      definitions.push(record);
+      definitionsByName.set(record.name, definitions);
+    }
+    const validNames = new Set<string>();
+    const duplicateNames = new Set<string>();
+    for (const [name, definitions] of definitionsByName) {
+      if (definitions.length === 1 && definitions[0]!.status === "valid") {
+        validNames.add(name);
+      } else {
+        duplicateNames.add(name);
+        for (const definition of definitions) {
+          definition.status = "duplicate";
+          definition.error = "List names must be defined exactly once in a version 2 CSV.";
+        }
+      }
+    }
+    const holdingsById = new Map<string, NormalizedImportRow[]>();
+    for (const record of normalized) {
+      if (record.recordType !== "holding" || !record.holdingId) continue;
+      const matching = holdingsById.get(record.holdingId) ?? [];
+      matching.push(record);
+      holdingsById.set(record.holdingId, matching);
+    }
+    for (const duplicates of holdingsById.values()) {
+      if (duplicates.length < 2) continue;
+      for (const duplicate of duplicates) {
+        duplicate.status = "invalid";
+        duplicate.error = "Holding IDs must appear exactly once in a version 2 CSV.";
+      }
+    }
+    for (const record of normalized) {
+      if (record.recordType !== "holding" || !record.listNames?.length) continue;
+      const invalidName = record.listNames.find(
+        (name) => !validNames.has(name) || duplicateNames.has(name),
+      );
+      if (invalidName) {
+        record.status = "invalid";
+        record.error = duplicateNames.has(invalidName)
+          ? `List "${invalidName}" is defined more than once.`
+          : `List "${invalidName}" does not have a list-definition row.`;
+      }
+    }
   }
   return normalized;
 }
@@ -698,6 +956,7 @@ router.post(
       }
       const parsed = parseCollectionCsv(content);
       const source = detectCollectionCsvSource(parsed.headers);
+      const schemaVersion = detectCollectionCsvVersion(parsed.headers);
       const requestedCurrency =
         typeof req.body?.sourceCurrency === "string"
           ? req.body.sourceCurrency.trim().toUpperCase()
@@ -734,11 +993,17 @@ router.post(
         return;
       }
 
-      const rows = await normalizeRows(source, parsed.rows);
-      const summary = previewSummary(rows);
+      const rows = await normalizeRows(source, parsed.rows, schemaVersion);
+      const holdingRows = rows.filter(
+        (row): row is NormalizedImportRow => row.recordType !== "list",
+      );
+      const baseSummary = previewSummary(holdingRows);
+      const summary = schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+        ? await addOrganizationPreview(rows, baseSummary, req.userId!)
+        : baseSummary;
       const values = {
         source,
-        schemaVersion: COLLECTION_IMPORT_SCHEMA_VERSION,
+        schemaVersion,
         status: "previewed",
         sourceCurrency: requestedCurrency,
         normalizedRows: rows,
@@ -764,7 +1029,7 @@ router.post(
       res.json({
         jobId: job!.id,
         source,
-        schemaVersion: COLLECTION_IMPORT_SCHEMA_VERSION,
+        schemaVersion,
         contentSha256,
         summary,
         rows,
@@ -827,7 +1092,13 @@ router.post(
       return;
     }
 
-    const rows = job.normalizedRows as NormalizedImportRow[];
+    const records = job.normalizedRows as NormalizedImportRecord[];
+    const rows = records.filter(
+      (row): row is NormalizedImportRow => row.recordType !== "list",
+    );
+    const listRows = records.filter(
+      (row): row is NormalizedImportList => row.recordType === "list",
+    );
     const holdings = rows.filter((row) => row.status === "matched");
     const wishlist = rows.filter((row) => row.status === "watchlist_only");
     const currency =
@@ -875,11 +1146,24 @@ router.post(
             eq(wishlistItemsTable.userId, req.userId!),
             isNull(wishlistItemsTable.deletedAt),
           ));
+        const existingLists = job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+          ? await tx
+              .select()
+              .from(collectionListsTable)
+              .where(eq(collectionListsTable.userId, req.userId!))
+          : [];
 
         let holdingsAdded = 0;
         let wishlistAdded = 0;
-        let duplicates = rows.filter((row) => row.status === "duplicate").length;
+        let duplicates = rows.filter((row) => row.status === "duplicate").length +
+          listRows.filter((row) => row.status === "duplicate").length;
         let unsupportedGrades = 0;
+        let listsCreated = 0;
+        let listsMerged = 0;
+        let membershipsAdded = 0;
+        let membershipDuplicates = 0;
+        const holdingIdsByRowNumber = new Map<number, string>();
+        const claimedExistingHoldingIds = new Set<string>();
         const results: Array<Record<string, unknown>> = rows
           .filter((row) => !["matched", "watchlist_only"].includes(row.status))
           .map((row) => ({
@@ -887,12 +1171,26 @@ router.post(
             status: "skipped",
             reason: row.error ?? row.status,
           }));
+        for (const row of listRows.filter((candidate) => candidate.status !== "valid")) {
+          results.push({
+            rowNumber: row.rowNumber,
+            status: row.status === "duplicate" ? "duplicate" : "skipped",
+            reason: row.error ?? row.status,
+          });
+        }
 
         for (const row of holdings) {
           const rowCurrency =
             job.source === "collectr" ? currency : (row.currency ?? "AUD");
           const gradingJson = JSON.stringify(row.grading ?? null);
-          const duplicate = existingHoldings.some((existing) =>
+          const sameAccountHolding = job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+            ? existingHoldings.find((existing) => existing.id === row.holdingId)
+            : undefined;
+          const duplicate = sameAccountHolding ?? existingHoldings.find((existing) =>
+            (
+              job.schemaVersion !== COLLECTION_ORGANIZATION_SCHEMA_VERSION ||
+              !claimedExistingHoldingIds.has(existing.id)
+            ) &&
             existing.cardId === row.cardId &&
             existing.quantity === row.quantity &&
             existing.condition === row.condition &&
@@ -903,6 +1201,10 @@ router.post(
             JSON.stringify(existing.gradingData ?? null) === gradingJson
           );
           if (duplicate) {
+            if (job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION) {
+              claimedExistingHoldingIds.add(duplicate.id);
+            }
+            holdingIdsByRowNumber.set(row.rowNumber, duplicate.id);
             duplicates += 1;
             results.push({
               rowNumber: row.rowNumber,
@@ -932,6 +1234,7 @@ router.post(
             })
             .returning({ id: collectionItemsTable.id });
           holdingsAdded += 1;
+          holdingIdsByRowNumber.set(row.rowNumber, inserted!.id);
           if (row.grading && !row.supportedGrade) unsupportedGrades += 1;
           results.push({
             rowNumber: row.rowNumber,
@@ -1007,6 +1310,93 @@ router.post(
           });
         }
 
+        if (job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION) {
+          const orderedNames: string[] = [];
+          const validDefinitions = listRows
+            .filter((row) => row.status === "valid" && row.name)
+            .sort((left, right) =>
+              (left.position ?? Number.MAX_SAFE_INTEGER) -
+              (right.position ?? Number.MAX_SAFE_INTEGER)
+            );
+          for (const row of validDefinitions) {
+            if (!orderedNames.includes(row.name!)) orderedNames.push(row.name!);
+          }
+          const existingByName = new Map(existingLists.map((list) => [list.name, list]));
+          const missingNames = orderedNames.filter((name) => !existingByName.has(name));
+          if (existingLists.length + missingNames.length > 100) {
+            throw new Error("LIST_LIMIT_EXCEEDED");
+          }
+          const definitionByName = new Map(
+            validDefinitions.map((definition) => [definition.name!, definition]),
+          );
+          for (const name of orderedNames) {
+            const definition = definitionByName.get(name)!;
+            const existing = existingByName.get(name);
+            if (existing) {
+              if (existing.position !== definition.position) {
+                await tx
+                  .update(collectionListsTable)
+                  .set({ position: definition.position!, updatedAt: new Date() })
+                  .where(and(
+                    eq(collectionListsTable.id, existing.id),
+                    eq(collectionListsTable.userId, req.userId!),
+                  ));
+                existing.position = definition.position!;
+              }
+              listsMerged += 1;
+              continue;
+            }
+            const [created] = await tx
+              .insert(collectionListsTable)
+              .values({
+                userId: req.userId!,
+                name,
+                position: definition.position!,
+              })
+              .returning();
+            existingByName.set(name, created!);
+            listsCreated += 1;
+          }
+
+          for (const row of validDefinitions) {
+            results.push({
+              rowNumber: row.rowNumber,
+              status: existingLists.some((list) => list.name === row.name)
+                ? "list_merged"
+                : "list_created",
+              listName: row.name,
+            });
+          }
+
+          const membershipValues: Array<{
+            userId: string;
+            listId: string;
+            collectionItemId: string;
+          }> = [];
+          const seenMemberships = new Set<string>();
+          for (const row of holdings) {
+            const collectionItemId = holdingIdsByRowNumber.get(row.rowNumber);
+            if (!collectionItemId) continue;
+            for (const name of row.listNames ?? []) {
+              const listId = existingByName.get(name)?.id;
+              if (!listId) continue;
+              const key = `${listId}:${collectionItemId}`;
+              if (seenMemberships.has(key)) continue;
+              seenMemberships.add(key);
+              membershipValues.push({ userId: req.userId!, listId, collectionItemId });
+            }
+          }
+          for (const membership of membershipValues) {
+            const inserted = await tx
+              .insert(collectionListItemsTable)
+              .values(membership)
+              .onConflictDoNothing()
+              .returning({ listId: collectionListItemsTable.listId });
+            if (inserted.length > 0) membershipsAdded += 1;
+            else membershipDuplicates += 1;
+          }
+        }
+
         const skipped = results.filter((row) => row.status === "skipped").length;
         const summary = {
           holdingsAdded,
@@ -1014,6 +1404,9 @@ router.post(
           skipped,
           duplicates,
           unsupportedGrades,
+          ...(job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+            ? { listsCreated, listsMerged, membershipsAdded, membershipDuplicates }
+            : {}),
         };
         await tx
           .update(collectionImportJobsTable)
@@ -1067,6 +1460,12 @@ router.post(
         replayed: result.replayed,
       });
     } catch (error) {
+      if (error instanceof Error && error.message === "LIST_LIMIT_EXCEEDED") {
+        res.status(409).json({
+          message: "This import would exceed the 100 custom-list limit. Nothing was saved.",
+        });
+        return;
+      }
       req.log?.error({ err: error, jobId }, "Collection CSV commit failed");
       res.status(500).json({
         message: "Import failed before it could be completed. No partial import was saved.",

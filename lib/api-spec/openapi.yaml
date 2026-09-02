@@ -132,7 +132,7 @@ paths:
     post:
       operationId: previewCollectionCsvImport
       tags: [collection]
-      summary: Validate and match a Collectr or Verified TCG CSV without saving holdings
+      summary: Validate and match a Collectr or versioned Verified TCG CSV without saving holdings or lists
       requestBody:
         required: true
         content:
@@ -159,7 +159,7 @@ paths:
     post:
       operationId: commitCollectionCsvImport
       tags: [collection]
-      summary: Atomically save confirmed holding and wishlist matches
+      summary: Atomically save confirmed holdings, wishlist matches, custom lists, and memberships
       parameters:
         - { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -690,13 +690,20 @@ components:
                 updatedAt: { type: string, format: date-time }
     CollectionImportPreviewRow:
       type: object
-      required: [rowNumber, status, isWatchlistOnly]
+      required: [rowNumber, status]
       properties:
+        recordType: { type: string, enum: [holding, list] }
         rowNumber: { type: integer, minimum: 2 }
         status:
           type: string
-          enum: [matched, watchlist_only, ambiguous, invalid, unmatched, duplicate]
+          enum: [matched, watchlist_only, ambiguous, invalid, unmatched, duplicate, valid]
         isWatchlistOnly: { type: boolean }
+        name: { type: string }
+        position: { type: integer, minimum: 0 }
+        holdingId: { type: string, format: uuid }
+        listNames:
+          type: array
+          items: { type: string }
         cardId: { type: string }
         canonicalCardId: { type: string }
         card: { type: object, additionalProperties: true }
@@ -720,7 +727,7 @@ components:
       properties:
         jobId: { type: string, format: uuid }
         source: { type: string, enum: [collectr, verified_tcg] }
-        schemaVersion: { type: integer, enum: [1] }
+        schemaVersion: { type: integer, enum: [1, 2] }
         contentSha256: { type: string }
         status: { type: string }
         summary:
@@ -735,6 +742,14 @@ components:
             unmatched: { type: integer }
             duplicate: { type: integer }
             priced: { type: integer }
+            listCount: { type: integer }
+            membershipCount: { type: integer }
+            listsToCreate:
+              type: array
+              items: { type: string }
+            listsToMerge:
+              type: array
+              items: { type: string }
         rows:
           type: array
           items: { $ref: "#/components/schemas/CollectionImportPreviewRow" }
@@ -754,6 +769,10 @@ components:
             skipped: { type: integer }
             duplicates: { type: integer }
             unsupportedGrades: { type: integer }
+            listsCreated: { type: integer }
+            listsMerged: { type: integer }
+            membershipsAdded: { type: integer }
+            membershipDuplicates: { type: integer }
         rows:
           type: array
           items:
@@ -763,8 +782,9 @@ components:
               rowNumber: { type: integer }
               status:
                 type: string
-                enum: [holding_added, wishlist_added, wishlist_existing, duplicate, skipped]
+                enum: [holding_added, wishlist_added, wishlist_existing, list_created, list_merged, duplicate, skipped]
               cardId: { type: string }
+              listName: { type: string }
               reason: { type: string }
     CollectionSummary:
       type: object

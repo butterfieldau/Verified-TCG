@@ -262,6 +262,14 @@ export type CollectionItem = CollectionMutation & {
   valuation?: CollectionItemValuation;
 }, 'cardId' | 'card' | 'quantity' | 'condition' | 'acquiredAt' | 'acquiredPrice' | 'currency'>>;
 
+export type CollectionImportPreviewRowRecordType = typeof CollectionImportPreviewRowRecordType[keyof typeof CollectionImportPreviewRowRecordType];
+
+
+export const CollectionImportPreviewRowRecordType = {
+  holding: 'holding',
+  list: 'list',
+} as const;
+
 export type CollectionImportPreviewRowStatus = typeof CollectionImportPreviewRowStatus[keyof typeof CollectionImportPreviewRowStatus];
 
 
@@ -272,6 +280,7 @@ export const CollectionImportPreviewRowStatus = {
   invalid: 'invalid',
   unmatched: 'unmatched',
   duplicate: 'duplicate',
+  valid: 'valid',
 } as const;
 
 export type CollectionImportPreviewRowCard = { [key: string]: unknown };
@@ -279,10 +288,16 @@ export type CollectionImportPreviewRowCard = { [key: string]: unknown };
 export type CollectionImportPreviewRowGrading = { [key: string]: unknown };
 
 export interface CollectionImportPreviewRow {
+  recordType?: CollectionImportPreviewRowRecordType;
   /** @minimum 2 */
   rowNumber: number;
   status: CollectionImportPreviewRowStatus;
-  isWatchlistOnly: boolean;
+  isWatchlistOnly?: boolean;
+  name?: string;
+  /** @minimum 0 */
+  position?: number;
+  holdingId?: string;
+  listNames?: string[];
   cardId?: string;
   canonicalCardId?: string;
   card?: CollectionImportPreviewRowCard;
@@ -318,6 +333,7 @@ export type CollectionImportPreviewSchemaVersion = typeof CollectionImportPrevie
 
 export const CollectionImportPreviewSchemaVersion = {
   NUMBER_1: 1,
+  NUMBER_2: 2,
 } as const;
 
 export type CollectionImportPreviewSummary = {
@@ -329,6 +345,10 @@ export type CollectionImportPreviewSummary = {
   unmatched: number;
   duplicate: number;
   priced: number;
+  listCount?: number;
+  membershipCount?: number;
+  listsToCreate?: string[];
+  listsToMerge?: string[];
 };
 
 export interface CollectionImportPreview {
@@ -354,6 +374,10 @@ export type CollectionImportCommitSummary = {
   skipped: number;
   duplicates: number;
   unsupportedGrades: number;
+  listsCreated?: number;
+  listsMerged?: number;
+  membershipsAdded?: number;
+  membershipDuplicates?: number;
 };
 
 export type CollectionImportCommitRowsItemStatus = typeof CollectionImportCommitRowsItemStatus[keyof typeof CollectionImportCommitRowsItemStatus];
@@ -363,6 +387,8 @@ export const CollectionImportCommitRowsItemStatus = {
   holding_added: 'holding_added',
   wishlist_added: 'wishlist_added',
   wishlist_existing: 'wishlist_existing',
+  list_created: 'list_created',
+  list_merged: 'list_merged',
   duplicate: 'duplicate',
   skipped: 'skipped',
 } as const;
@@ -371,6 +397,7 @@ export type CollectionImportCommitRowsItem = {
   rowNumber: number;
   status: CollectionImportCommitRowsItemStatus;
   cardId?: string;
+  listName?: string;
   reason?: string;
 };
 

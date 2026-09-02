@@ -9,6 +9,8 @@ import {
   catalogueSetsTable,
   collectionImportJobsTable,
   collectionItemsTable,
+  collectionListItemsTable,
+  collectionListsTable,
   db,
   pool,
   wishlistItemsTable,
@@ -377,5 +379,107 @@ describe("collection CSV migration routes", () => {
     assert.equal(missingId.status, 200);
     assert.equal(missingId.body.summary.invalid, 1);
     assert.equal(fields.headers.length, 25);
+  });
+
+  test("round-trips v2 custom lists and memberships without duplicating holdings", async () => {
+    const [sourceHolding] = await db
+      .select()
+      .from(collectionItemsTable)
+      .where(eq(collectionItemsTable.userId, userId))
+      .limit(1);
+    assert.ok(sourceHolding);
+
+    const listName = `Trade box ${suffix}`;
+    const emptyListName = `Empty shelf ${suffix}`;
+    const [sourceList] = await db
+      .insert(collectionListsTable)
+      .values({ userId, name: listName, position: 0 })
+      .returning();
+    await db.insert(collectionListsTable).values({
+      userId,
+      name: emptyListName,
+      position: 5,
+    });
+    await db.insert(collectionListItemsTable).values({
+      userId,
+      listId: sourceList!.id,
+      collectionItemId: sourceHolding.id,
+    });
+    await db.insert(collectionListsTable).values({
+      userId: roundTripUserId,
+      name: listName,
+      position: 0,
+    });
+
+    const holdingsBefore = await db
+      .select()
+      .from(collectionItemsTable)
+      .where(eq(collectionItemsTable.userId, roundTripUserId));
+    const exported = await request
+      .get("/api/me/export/collection.csv?version=2")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(exported.status, 200, exported.text);
+    const parsed = parseCollectionCsv(exported.text);
+    assert.equal(parsed.headers[2], "Record Type");
+    assert.equal(parsed.rows.filter((row) => row.recordtype === "list").length, 2);
+    assert.equal(parsed.rows.filter((row) => row.recordtype === "holding").length, 2);
+
+    const orphanedMembershipCsv = exported.text
+      .split(/\r?\n/)
+      .filter((line) => !(line.includes(",list,") && line.includes(listName)))
+      .join("\r\n");
+    const orphanedPreview = await request
+      .post("/api/collection/import/preview")
+      .set("Authorization", `Bearer ${roundTripToken}`)
+      .send({ content: orphanedMembershipCsv, filename: "missing-list-definition.csv" });
+    assert.equal(orphanedPreview.status, 200, JSON.stringify(orphanedPreview.body));
+    assert.equal(orphanedPreview.body.summary.invalid, 1);
+    assert.match(
+      orphanedPreview.body.rows.find((row: { error?: string }) => row.error)?.error ?? "",
+      /does not have a list-definition row/i,
+    );
+
+    const preview = await request
+      .post("/api/collection/import/preview")
+      .set("Authorization", `Bearer ${roundTripToken}`)
+      .send({ content: exported.text, filename: "collection-with-lists.csv" });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.schemaVersion, 2);
+    assert.deepEqual(preview.body.summary.listsToMerge, [listName]);
+    assert.deepEqual(preview.body.summary.listsToCreate, [emptyListName]);
+    assert.equal(preview.body.summary.membershipCount, 1);
+
+    const commit = await request
+      .post(`/api/collection/import/${preview.body.jobId}/commit`)
+      .set("Authorization", `Bearer ${roundTripToken}`)
+      .send({ contentSha256: preview.body.contentSha256 });
+    assert.equal(commit.status, 200, JSON.stringify(commit.body));
+    assert.equal(commit.body.summary.holdingsAdded, 0);
+    assert.equal(commit.body.summary.listsCreated, 1);
+    assert.equal(commit.body.summary.listsMerged, 1);
+    assert.equal(commit.body.summary.membershipsAdded, 1);
+
+    const holdingsAfter = await db
+      .select()
+      .from(collectionItemsTable)
+      .where(eq(collectionItemsTable.userId, roundTripUserId));
+    assert.equal(holdingsAfter.length, holdingsBefore.length);
+    const importedLists = await db
+      .select()
+      .from(collectionListsTable)
+      .where(eq(collectionListsTable.userId, roundTripUserId));
+    assert.deepEqual(
+      importedLists.map((list) => list.name).sort(),
+      [emptyListName, listName].sort(),
+    );
+    assert.equal(
+      importedLists.find((list) => list.name === emptyListName)?.position,
+      5,
+    );
+    const importedMemberships = await db
+      .select()
+      .from(collectionListItemsTable)
+      .where(eq(collectionListItemsTable.userId, roundTripUserId));
+    assert.equal(importedMemberships.length, 1);
   });
 });

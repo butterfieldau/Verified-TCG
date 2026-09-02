@@ -625,7 +625,7 @@ export const getPreviewCollectionCsvImportUrl = () => {
 }
 
 /**
- * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ * @summary Validate and match a Collectr or versioned Verified TCG CSV without saving holdings or lists
  */
 export const previewCollectionCsvImport = async (previewCollectionCsvImportBody: PreviewCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportPreview> => {
 
@@ -674,7 +674,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type PreviewCollectionCsvImportMutationError = ErrorType<void>
 
     /**
- * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ * @summary Validate and match a Collectr or versioned Verified TCG CSV without saving holdings or lists
  */
 export const usePreviewCollectionCsvImport = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewCollectionCsvImport>>, TError,{data: BodyType<PreviewCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -696,7 +696,7 @@ export const getCommitCollectionCsvImportUrl = (jobId: string,) => {
 }
 
 /**
- * @summary Atomically save confirmed holding and wishlist matches
+ * @summary Atomically save confirmed holdings, wishlist matches, custom lists, and memberships
  */
 export const commitCollectionCsvImport = async (jobId: string,
     commitCollectionCsvImportBody: CommitCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportCommit> => {
@@ -746,7 +746,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CommitCollectionCsvImportMutationError = ErrorType<void>
 
     /**
- * @summary Atomically save confirmed holding and wishlist matches
+ * @summary Atomically save confirmed holdings, wishlist matches, custom lists, and memberships
  */
 export const useCommitCollectionCsvImport = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitCollectionCsvImport>>, TError,{jobId: string;data: BodyType<CommitCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}

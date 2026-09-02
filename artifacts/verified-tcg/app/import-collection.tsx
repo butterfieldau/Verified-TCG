@@ -52,7 +52,7 @@ function utf8ByteLength(value: string): number {
 export default function ImportCollectionScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const { refreshCollection, refreshWishlist } = useApp();
+  const { refreshCollection, refreshWishlist, refreshCollectionOrganization } = useApp();
 
   const [screenState, setScreenState] = useState<ScreenState>('select');
   const [selectedFile, setSelectedFile] = useState<{ name: string; content: string } | null>(null);
@@ -120,7 +120,11 @@ export default function ImportCollectionScreen() {
       });
       setCommitRes(res);
       setScreenState('success');
-      await Promise.all([refreshCollection(), refreshWishlist()]);
+      await Promise.all([
+        refreshCollection(),
+        refreshWishlist(),
+        refreshCollectionOrganization(),
+      ]);
     } catch (err: any) {
       setError(err.message || 'Failed to commit the import.');
     } finally {
@@ -280,6 +284,32 @@ export default function ImportCollectionScreen() {
             <Text style={styles.statLabel}>Wishlist Only</Text>
             <Text style={[styles.statValue, { color: C.positive }]}>{summary.watchlistOnly}</Text>
           </View>
+          {previewRes.schemaVersion >= 2 && (
+            <>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>List Memberships</Text>
+                <Text style={[styles.statValue, { color: C.positive }]}>
+                  {summary.membershipCount ?? 0}
+                </Text>
+              </View>
+              <Text style={[styles.statsTitle, { marginTop: 16 }]}>Custom Lists</Text>
+              {(summary.listsToCreate ?? []).map(name => (
+                <View key={`create-${name}`} style={styles.statRow}>
+                  <Text style={styles.statLabel}>{name}</Text>
+                  <Text style={[styles.listAction, { color: C.positive }]}>CREATE</Text>
+                </View>
+              ))}
+              {(summary.listsToMerge ?? []).map(name => (
+                <View key={`merge-${name}`} style={styles.statRow}>
+                  <Text style={styles.statLabel}>{name}</Text>
+                  <Text style={[styles.listAction, { color: C.warning }]}>MERGE</Text>
+                </View>
+              ))}
+              {(summary.listCount ?? 0) === 0 && (
+                <Text style={styles.emptyListText}>No custom lists are included in this file.</Text>
+              )}
+            </>
+          )}
 
           <Text style={[styles.statsTitle, { marginTop: 16 }]}>To Be Skipped</Text>
           <View style={styles.statRow}>
@@ -301,14 +331,19 @@ export default function ImportCollectionScreen() {
         </View>
 
         <Text style={styles.reviewHeading}>Row review</Text>
-        {previewRes.rows.map((row) => (
+        {previewRes.rows.filter(row => row.recordType !== 'list' || row.status !== 'valid').map((row) => (
           <View key={row.rowNumber} style={styles.reviewRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.reviewTitle}>
-                Row {row.rowNumber}: {String(row.card?.name || 'No canonical match')}
+                Row {row.rowNumber}:{' '}
+                {row.recordType === 'list'
+                  ? String(row.name || 'Invalid list')
+                  : String(row.card?.name || 'No canonical match')}
               </Text>
               <Text style={styles.reviewDetail}>
-                {row.status === 'matched'
+                {row.recordType === 'list'
+                  ? row.error || 'Custom list definition'
+                  : row.status === 'matched'
                   ? 'Collection holding'
                   : row.status === 'watchlist_only'
                     ? 'Wishlist addition'
@@ -359,6 +394,11 @@ export default function ImportCollectionScreen() {
     if (!commitRes) return null;
     const { summary } = commitRes;
     const hasSkipped = summary.skipped > 0 || summary.duplicates > 0;
+    const totalChanges =
+      summary.holdingsAdded +
+      summary.wishlistAdded +
+      (summary.listsCreated ?? 0) +
+      (summary.membershipsAdded ?? 0);
 
     return (
       <View style={styles.stateContainer}>
@@ -367,14 +407,14 @@ export default function ImportCollectionScreen() {
             <Feather name="check-circle" size={32} color={C.positive} />
           </View>
           <Text style={styles.infoTitle}>
-            {summary.holdingsAdded + summary.wishlistAdded > 0
+            {totalChanges > 0
               ? 'Import Complete'
               : 'No New Items Added'}
           </Text>
           <Text style={styles.infoBody}>
-            {summary.holdingsAdded + summary.wishlistAdded > 0
-              ? `${summary.holdingsAdded} holding${summary.holdingsAdded === 1 ? '' : 's'} and ${summary.wishlistAdded} wishlist item${summary.wishlistAdded === 1 ? '' : 's'} were added.`
-              : 'Every row was skipped or already existed. Your collection and wishlist were not changed.'}
+            {totalChanges > 0
+              ? `${summary.holdingsAdded} holding${summary.holdingsAdded === 1 ? '' : 's'}, ${summary.wishlistAdded} wishlist item${summary.wishlistAdded === 1 ? '' : 's'}, and ${summary.listsCreated ?? 0} custom list${summary.listsCreated === 1 ? '' : 's'} were added.`
+              : 'Every row was skipped or already existed. Your collection, wishlist, and custom lists were not changed.'}
           </Text>
         </View>
 
@@ -399,6 +439,22 @@ export default function ImportCollectionScreen() {
             <Text style={styles.statLabel}>Unsupported Grades</Text>
             <Text style={styles.statValue}>{summary.unsupportedGrades}</Text>
           </View>
+          {(summary.listsCreated !== undefined || summary.listsMerged !== undefined) && (
+            <>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Lists Created</Text>
+                <Text style={[styles.statValue, { color: C.positive }]}>{summary.listsCreated ?? 0}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Lists Merged</Text>
+                <Text style={styles.statValue}>{summary.listsMerged ?? 0}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Memberships Added</Text>
+                <Text style={[styles.statValue, { color: C.positive }]}>{summary.membershipsAdded ?? 0}</Text>
+              </View>
+            </>
+          )}
         </View>
 
         {hasSkipped && (
@@ -651,6 +707,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'Inter_700Bold',
     color: C.foreground,
+  },
+  listAction: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.8,
+  },
+  emptyListText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
   },
 
   downloadBtn: {

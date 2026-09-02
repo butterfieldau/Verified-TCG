@@ -168,6 +168,7 @@ interface AppState {
   collectionOrganizerPreferences: CollectionOrganizerPreferences;
   collectionLists: CollectionList[];
   collectionListMemberships: Record<string, string[]>;
+  refreshCollectionOrganization: () => Promise<void>;
 }
 
 interface AppActions {
@@ -1341,6 +1342,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCollectionLists(organization.lists.map(list => ({ ...list, itemCount: list.holdingIds.length })));
     setCollectionListMemberships(Object.fromEntries(organization.lists.map(list => [list.id, list.holdingIds])));
   }, []);
+  const refreshCollectionOrganization = useCallback(async () => {
+    applyOrganizationLists(await fetchCollectionOrganization());
+  }, [applyOrganizationLists]);
   const renameCollectionList = useCallback(async (id: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) throw new Error('Give this list a name.');
@@ -1673,6 +1677,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         claimFoundingMember: () => setFoundingMemberClaimed(true),
         currentEventId, setCurrentEventId,
         collectionOrganizerPreferences, collectionLists, collectionListMemberships,
+        refreshCollectionOrganization,
         setCollectionOrganizerPreferences, createCollectionList, deleteCollectionList,
         renameCollectionList, reorderCollectionLists,
         updateCollectionListMembership, bulkUpdateCollectionHoldings,

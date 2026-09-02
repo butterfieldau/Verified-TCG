@@ -252,7 +252,7 @@ export const CreateCollectionItemResponse = zod.object({
 
 
 /**
- * @summary Validate and match a Collectr or Verified TCG CSV without saving holdings
+ * @summary Validate and match a Collectr or versioned Verified TCG CSV without saving holdings or lists
  */
 export const previewCollectionCsvImportBodyContentMax = 1048576;
 
@@ -269,6 +269,8 @@ export const PreviewCollectionCsvImportBody = zod.object({
 
 export const previewCollectionCsvImportResponseRowsItemRowNumberMin = 2;
 
+export const previewCollectionCsvImportResponseRowsItemPositionMin = 0;
+
 export const previewCollectionCsvImportResponseRowsItemCandidateCountMin = 0;
 
 
@@ -279,7 +281,7 @@ export const previewCollectionCsvImportResponseRowsItemAcquiredPriceMin = 0;
 export const PreviewCollectionCsvImportResponse = zod.object({
   "jobId": zod.string().uuid(),
   "source": zod.enum(['collectr', 'verified_tcg']),
-  "schemaVersion": zod.literal(1),
+  "schemaVersion": zod.union([zod.literal(1),zod.literal(2)]),
   "contentSha256": zod.string(),
   "status": zod.string().optional(),
   "summary": zod.object({
@@ -290,12 +292,21 @@ export const PreviewCollectionCsvImportResponse = zod.object({
   "ambiguous": zod.number().int(),
   "unmatched": zod.number().int(),
   "duplicate": zod.number().int(),
-  "priced": zod.number().int()
+  "priced": zod.number().int(),
+  "listCount": zod.number().int().optional(),
+  "membershipCount": zod.number().int().optional(),
+  "listsToCreate": zod.array(zod.string()).optional(),
+  "listsToMerge": zod.array(zod.string()).optional()
 }),
   "rows": zod.array(zod.object({
+  "recordType": zod.enum(['holding', 'list']).optional(),
   "rowNumber": zod.number().int().min(previewCollectionCsvImportResponseRowsItemRowNumberMin),
-  "status": zod.enum(['matched', 'watchlist_only', 'ambiguous', 'invalid', 'unmatched', 'duplicate']),
-  "isWatchlistOnly": zod.boolean(),
+  "status": zod.enum(['matched', 'watchlist_only', 'ambiguous', 'invalid', 'unmatched', 'duplicate', 'valid']),
+  "isWatchlistOnly": zod.boolean().optional(),
+  "name": zod.string().optional(),
+  "position": zod.number().int().min(previewCollectionCsvImportResponseRowsItemPositionMin).optional(),
+  "holdingId": zod.string().uuid().optional(),
+  "listNames": zod.array(zod.string()).optional(),
   "cardId": zod.string().optional(),
   "canonicalCardId": zod.string().optional(),
   "card": zod.record(zod.string(), zod.unknown()).optional(),
@@ -318,7 +329,7 @@ export const PreviewCollectionCsvImportResponse = zod.object({
 
 
 /**
- * @summary Atomically save confirmed holding and wishlist matches
+ * @summary Atomically save confirmed holdings, wishlist matches, custom lists, and memberships
  */
 export const CommitCollectionCsvImportParams = zod.object({
   "jobId": zod.coerce.string().uuid()
@@ -342,12 +353,17 @@ export const CommitCollectionCsvImportResponse = zod.object({
   "wishlistAdded": zod.number().int(),
   "skipped": zod.number().int(),
   "duplicates": zod.number().int(),
-  "unsupportedGrades": zod.number().int()
+  "unsupportedGrades": zod.number().int(),
+  "listsCreated": zod.number().int().optional(),
+  "listsMerged": zod.number().int().optional(),
+  "membershipsAdded": zod.number().int().optional(),
+  "membershipDuplicates": zod.number().int().optional()
 }),
   "rows": zod.array(zod.object({
   "rowNumber": zod.number().int(),
-  "status": zod.enum(['holding_added', 'wishlist_added', 'wishlist_existing', 'duplicate', 'skipped']),
+  "status": zod.enum(['holding_added', 'wishlist_added', 'wishlist_existing', 'list_created', 'list_merged', 'duplicate', 'skipped']),
   "cardId": zod.string().optional(),
+  "listName": zod.string().optional(),
   "reason": zod.string().optional()
 }))
 })
