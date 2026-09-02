@@ -412,6 +412,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
   const [isPriceRefreshing, setIsPriceRefreshing] = useState(false);
   const priceRefreshRequest = useRef<Promise<void> | null>(null);
+  const collectionRef = useRef<CollectionItem[]>([]);
+  const collectionLoadedAt = useRef(0);
+  const pricingRecoveryAttempted = useRef<Set<string>>(new Set());
   const historyRequestGeneration = useRef(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [serverUnreadCount, setServerUnreadCount] = useState(0);
@@ -662,13 +665,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Load collection from server ────────────────────────────────────────────
 
-  const loadCollection = useCallback(async (ownerIdOverride?: string) => {
+  useEffect(() => {
+    collectionRef.current = collection;
+  }, [collection]);
+
+  const loadCollection = useCallback(async (ownerIdOverride?: string, force = false) => {
     const ownerId = ownerIdOverride ?? currentUserIdRef.current;
     if (!ownerId) {
       setCollectionLoading(false);
       return;
     }
     const loadKey = `${ownerId}:${currency}`;
+    if (!force && Date.now() - collectionLoadedAt.current < 60_000) return;
     if (activeCollectionLoadKey.current === loadKey) return;
     activeCollectionLoadKey.current = loadKey;
     const gen = ++loadGeneration.current; // capture before first await
@@ -719,7 +727,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         return [...filteredServer, ...stillPending];
       });
+      collectionLoadedAt.current = Date.now();
       setCollectionError(null);
+
+      // Recover missing PriceCharting values once per card/currency/session.
+      // This is bounded and never polls: cards that still cannot be matched
+      // remain explicitly unpriced.
+      const unpriced = serverItems.filter(item => !item.valuation);
+      const recoveryCards = unpriced.filter(item => {
+        const key = `${item.cardId}:${currency}`;
+        if (pricingRecoveryAttempted.current.has(key)) return false;
+        pricingRecoveryAttempted.current.add(key);
+        return true;
+      });
+      if (recoveryCards.length > 0) {
+        void Promise.allSettled(recoveryCards.map(item =>
+          refreshVerifiedPricing(item.cardId, {
+            name: item.card.name,
+            set: item.card.setName,
+            number: item.card.number,
+            game: item.card.tcg,
+            displayCurrency: currency,
+          })
+        )).then(() => {
+          void loadCollectionRef.current(undefined, true);
+          void refreshPortfolioHistory();
+        });
+      }
     } catch (error) {
       // Retain a usable offline cache, but surface the failed refresh so it is
       // never mistaken for a genuinely empty, up-to-date collection.
@@ -1255,9 +1289,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const request = (async () => {
       setIsPriceRefreshing(true);
       try {
-        // Pricing is server-owned. Pull-to-refresh reads the latest persisted
-        // collection and ownership history without manufacturing movement.
-        await Promise.all([loadCollection(), refreshPortfolioHistory()]);
+        // Explicit refresh asks PriceCharting for every unique collected card,
+        // then reloads the canonical server valuations and retained history.
+        const uniqueCards = [
+          ...new Map(collectionRef.current.map(item => [item.cardId, item])).values(),
+        ];
+        await Promise.allSettled(uniqueCards.map(item =>
+          refreshVerifiedPricing(item.cardId, {
+            name: item.card.name,
+            set: item.card.setName,
+            number: item.card.number,
+            game: item.card.tcg,
+            displayCurrency: currency,
+          })
+        ));
+        await Promise.all([loadCollection(undefined, true), refreshPortfolioHistory()]);
         setPricesLastUpdated(new Date());
       } finally {
         setIsPriceRefreshing(false);
@@ -1266,7 +1312,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })();
     priceRefreshRequest.current = request;
     return request;
-  }, [loadCollection, refreshPortfolioHistory]);
+  }, [currency, loadCollection, refreshPortfolioHistory]);
 
   // Track which watchlist item IDs have already generated a price-alert notification
   // so we don't create duplicates on every re-render.

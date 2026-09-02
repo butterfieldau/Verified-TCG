@@ -58,7 +58,7 @@ function MiniLineChart({ points, width, height, loading }: MiniChartProps) {
       </View>
     );
   }
-  if (points.length < 2) {
+  if (points.length === 0) {
     return (
       <View style={{ width, height, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <Feather name="bar-chart-2" size={22} color="rgba(255,255,255,0.18)" />
@@ -77,7 +77,8 @@ function MiniLineChart({ points, width, height, loading }: MiniChartProps) {
   const maxP = Math.max(...prices);
   const rangeP = maxP - minP || 1;
 
-  const toX = (i: number) => PAD.left + (i / (points.length - 1)) * chartW;
+  const toX = (i: number) =>
+    points.length === 1 ? PAD.left + chartW / 2 : PAD.left + (i / (points.length - 1)) * chartW;
   const toY = (p: number) => PAD.top + ((maxP - p) / rangeP) * chartH;
   const coords = points.map((pt, i) => ({ x: toX(i), y: toY(pt.price) }));
 
@@ -93,7 +94,9 @@ function MiniLineChart({ points, width, height, loading }: MiniChartProps) {
     return d;
   }
 
-  const linePath = makePath(coords);
+  const linePath = points.length === 1
+    ? `M ${PAD.left} ${coords[0]!.y} L ${PAD.left + chartW} ${coords[0]!.y}`
+    : makePath(coords);
   const bottom = PAD.top + chartH;
   const firstX = coords[0]!.x;
   const lastX = coords[coords.length - 1]!.x;

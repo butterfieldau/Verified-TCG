@@ -132,13 +132,20 @@ function formatLastUpdated(date: Date): string {
 
 export default function PortfolioScreen() {
   const insets = useSafeAreaInsets();
-  const { portfolio, collection, refreshPrices, isPriceRefreshing, pricesLastUpdated } = useApp();
+  const { portfolio, collection, refreshPrices, pricesLastUpdated } = useApp();
   const { currency } = useSettings();
   const [allocTab, setAllocTab] = useState<AllocTab>('tcg');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
-    await refreshPrices();
-  }, [refreshPrices]);
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshPrices();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, refreshPrices]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const isPositive = portfolio.totalGain >= 0;
@@ -244,7 +251,7 @@ export default function PortfolioScreen() {
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
-          refreshing={isPriceRefreshing}
+          refreshing={isRefreshing}
           onRefresh={onRefresh}
           tintColor={C.primary}
           colors={[C.primary]}
