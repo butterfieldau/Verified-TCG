@@ -105,6 +105,7 @@ export interface PerformancePoint {
   currency: string;
   available?: boolean;
   complete?: boolean;
+  baseline?: boolean;
   pricedHoldings?: number;
   totalHoldings?: number;
   dailyChange?: number | null;

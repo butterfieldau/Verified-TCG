@@ -19,6 +19,7 @@ import {
   calculatePortfolioValueHistory,
   capturePortfolioSnapshot,
   gradeKeyForHolding,
+  hasPortfolioHistoryValue,
   portfolioChartData,
 } from "../pricing/portfolio.js";
 
@@ -657,7 +658,7 @@ router.get("/collection/performance", requireActiveUser, async (req: AuthRequest
     }))
     .sort((a, b) => b.value - a.value);
 
-  const historyAvailable = points.some(point => point.available);
+  const historyAvailable = hasPortfolioHistoryValue(points);
   res.json({
     range,
     currency: displayCurrency,

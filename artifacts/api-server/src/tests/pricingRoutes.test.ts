@@ -960,7 +960,21 @@ describe("GET /collection/value-history", () => {
     const points = new Map(
       res.body.points.map((point: { date: string; value: number | null }) => [point.date, point.value]),
     );
-    assert.equal(res.body.points.length, 41);
+    assert.equal(res.body.points.length, 51);
+    assert.deepEqual(res.body.points[0], {
+      date: dateDaysAgo(50),
+      valueCents: 0,
+      value: 0,
+      currency: "AUD",
+      pricedHoldings: 0,
+      totalHoldings: 0,
+      available: true,
+      complete: true,
+      dailyChangeCents: null,
+      dailyChange: null,
+      dailyChangePercent: null,
+      baseline: true,
+    });
     assert.equal(points.get(dateDaysAgo(40)), null);
     assert.equal(points.get(dateDaysAgo(10)), 10);
     assert.equal(points.get(dateDaysAgo(5)), 14);
@@ -974,7 +988,7 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/summary?displayCurrency=AUD")
       .set("Authorization", `Bearer ${token}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.chartData.ALL.length, 41);
+    assert.equal(res.body.chartData.ALL.length, 51);
     assert.equal(res.body.chartData.ALL.at(-1)?.value, 20);
     assert.equal(
       res.body.chartData.ALL.find((point: { date: string }) => point.date === dateDaysAgo(5))?.value,
@@ -1067,13 +1081,63 @@ describe("GET /collection/value-history", () => {
       .get("/api/collection/value-history?range=ALL&displayCurrency=AUD")
       .set("Authorization", `Bearer ${importedUser.accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.points.length, 1);
+    assert.equal(res.body.points.length, 6);
+    assert.equal(res.body.points[0]?.baseline, true);
+    assert.equal(res.body.points[0]?.value, 0);
     assert.equal(res.body.points.at(-1)?.value, 27);
 
     await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, importedCard));
     await db
       .delete(providerPriceHistoryTable)
       .where(eq(providerPriceHistoryTable.cardId, importedCard));
+  });
+
+  test("keeps account creation and the current valuation as separate same-day endpoints", async () => {
+    const sameDayCard = `${TAG}history-same-day`;
+    const sameDayUser = await createTestUser({ email: `${TAG}history-same-day@example.com` });
+    const created = await request
+      .post("/api/collection")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`)
+      .send({ ...cardPayload(sameDayCard), acquiredAt: dateDaysAgo(0), quantity: 1 });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    await db.insert(currentQuotesTable).values({
+      cardId: sameDayCard,
+      providerKey: "pricecharting",
+      gradeKey: "raw",
+      priceCents: 4_200,
+      currency: "AUD",
+    });
+
+    const res = await request
+      .get("/api/collection/value-history?range=1D&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.historyAvailable, true);
+    assert.equal(res.body.points.length, 2);
+    assert.equal(res.body.points[0]?.date, dateDaysAgo(0));
+    assert.equal(res.body.points[0]?.value, 0);
+    assert.equal(res.body.points[0]?.baseline, true);
+    assert.equal(res.body.points[1]?.date, dateDaysAgo(0));
+    assert.equal(res.body.points[1]?.value, 42);
+    const available3m = res.body.chartData["3M"].filter(
+      (point: { available: boolean }) => point.available,
+    );
+    const available1y = res.body.chartData["1Y"].filter(
+      (point: { available: boolean }) => point.available,
+    );
+    assert.equal(available3m[0]?.baseline, true);
+    assert.equal(available3m.at(-1)?.value, 42);
+    assert.equal(available1y[0]?.baseline, true);
+    assert.equal(available1y.at(-1)?.value, 42);
+
+    await db.delete(currentQuotesTable).where(eq(currentQuotesTable.cardId, sameDayCard));
+    const unavailable = await request
+      .get("/api/collection/value-history?range=1D&displayCurrency=AUD")
+      .set("Authorization", `Bearer ${sameDayUser.accessToken}`);
+    assert.equal(unavailable.status, 200, JSON.stringify(unavailable.body));
+    assert.equal(unavailable.body.historyAvailable, false);
+    assert.equal(unavailable.body.points[0]?.baseline, true);
+    assert.equal(unavailable.body.points.at(-1)?.available, false);
   });
 
   test("removes sold cards from the current profile series and starts restored cards when re-added", async () => {
@@ -1150,7 +1214,9 @@ describe("GET /collection/value-history", () => {
         (point: { date: string; value: number }) => [point.date, point.value],
       ),
     );
-    assert.equal(restoredHistory.body.points.length, 1);
+    assert.equal(restoredHistory.body.points.length, 31);
+    assert.equal(restoredHistory.body.points[0]?.baseline, true);
+    assert.equal(restoredHistory.body.points[0]?.value, 0);
     assert.equal(restoredPoints.get(dateDaysAgo(0)), 27);
 
     const resold = await request

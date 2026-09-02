@@ -56,6 +56,7 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  chartXForIndex,
 } from '@/services/homePortfolio';
 import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
 import { CardImage } from '@/components/ui/CardImage';
@@ -150,9 +151,7 @@ function InteractiveChart({
   const gradId = isPositive ? 'chartGreen' : 'chartRed';
 
   // Map data index → pixel x
-  const xOf = (i: number) => data.length === 1
-    ? width / 2
-    : padL + (i / Math.max(data.length - 1, 1)) * (width - padL - padR);
+  const xOf = (i: number) => chartXForIndex(i, data.length, width, padL, padR);
   // Map value → pixel y
   const yOf = (v: number) => data.length === 1
     ? (padT + (height - padB)) / 2
@@ -273,20 +272,10 @@ function InteractiveChart({
           strokeLinejoin="round"
         />
 
-        {/* One persisted observation is a real starting point, not a missing
-            chart or a synthetic historical curve. */}
+        {/* One persisted observation is the latest known point. It is anchored
+            to the right edge and is not extended into a synthetic trend. */}
         {data.length === 1 && data[0]!.value != null && (
           <>
-            <SvgLine
-              x1={padL + 18}
-              y1={yOf(data[0]!.value!)}
-              x2={width - padR - 18}
-              y2={yOf(data[0]!.value!)}
-              stroke={chartColor}
-              strokeWidth={2}
-              strokeDasharray="5,7"
-              opacity={0.45}
-            />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
             <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
@@ -781,7 +770,7 @@ export default function HomeScreen() {
               onInteractionEnd={() => setChartGestureActive(false)}
             />
             <Text style={styles.initialSnapshotText}>
-              Profile market value from the date this card was added
+              Latest retained profile value · earlier history is unavailable
             </Text>
           </View>
         ) : (

@@ -3,6 +3,7 @@ import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import {
   calculatePortfolioMovementBreakdown,
   calculatePortfolioValueHistory,
+  hasPortfolioHistoryValue,
   portfolioChartData,
 } from "../pricing/portfolio.js";
 
@@ -41,14 +42,15 @@ router.get("/collection/value-history", requireActiveUser, async (req: AuthReque
   );
   const chartData = portfolioChartData(history.points);
   const points = chartData[range as keyof typeof chartData] ?? [];
+  const rangeHasValue = hasPortfolioHistoryValue(points);
   res.json({
     range,
     currency: history.currency,
     points,
     history: points,
     chartData,
-    historyAvailable: points.some(point => point.available),
-    historyUnavailableReason: points.some(point => point.available)
+    historyAvailable: rangeHasValue,
+    historyUnavailableReason: rangeHasValue
       ? null
       : "No retained market prices are available for cards in this profile",
   });

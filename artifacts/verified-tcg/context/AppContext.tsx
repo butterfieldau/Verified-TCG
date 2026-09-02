@@ -674,6 +674,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // entry so a stale response cannot overwrite a newer one.
   const loadGeneration = useRef(0);
   const activeCollectionLoadKey = useRef<string | null>(null);
+  const activeCollectionRequest = useRef<Promise<void> | null>(null);
 
   // ── Load collection from server ────────────────────────────────────────────
 
@@ -681,42 +682,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     collectionRef.current = collection;
   }, [collection]);
 
-  const loadCollection = useCallback(async (ownerIdOverride?: string, force = false) => {
+  const loadCollection = useCallback((ownerIdOverride?: string, force = false): Promise<void> => {
     const ownerId = ownerIdOverride ?? currentUserIdRef.current;
     if (!ownerId) {
       setCollectionLoading(false);
-      return;
+      return Promise.resolve();
     }
     const loadKey = `${ownerId}:${currency}`;
-    if (!force && Date.now() - collectionLoadedAt.current < 60_000) return;
-    if (activeCollectionLoadKey.current === loadKey) return;
+    if (!force && Date.now() - collectionLoadedAt.current < 60_000) return Promise.resolve();
+    if (activeCollectionLoadKey.current === loadKey && activeCollectionRequest.current) {
+      return activeCollectionRequest.current;
+    }
     activeCollectionLoadKey.current = loadKey;
     const gen = ++loadGeneration.current; // capture before first await
-    setCollectionLoading(true);
+    const request = (async () => {
+      setCollectionLoading(true);
 
-    // Show cached collection immediately so the screen isn't blank while fetching
-    try {
-      const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
-      if (cached && gen === loadGeneration.current) {
-        const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
-        if (cachedOwnerId === ownerId && Array.isArray(items)) {
-          setCollection(items);
+      // Show cached collection immediately so the screen isn't blank while fetching
+      try {
+        const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
+        if (cached && gen === loadGeneration.current) {
+          const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
+          if (cachedOwnerId === ownerId && Array.isArray(items)) {
+            setCollection(items);
+          }
         }
-      }
-    } catch { /* ignore cache read errors */ }
+      } catch { /* ignore cache read errors */ }
 
-    try {
-      const serverItems = await fetchCollection(currency);
-      // If a newer loadCollection started after this one, discard this result.
-      if (gen !== loadGeneration.current) return;
+      try {
+        const serverItems = await fetchCollection(currency);
+        // If a newer loadCollection started after this one, discard this result.
+        if (gen !== loadGeneration.current) return;
 
-      // Persist the fresh list so the next cold launch has it immediately
-      AsyncStorage.setItem(
-        collectionCacheKey(ownerId),
-        JSON.stringify({ ownerId, items: serverItems, timestamp: new Date().toISOString() }),
-      ).catch(() => {});
+        // Persist the fresh list so the next cold launch has it immediately
+        AsyncStorage.setItem(
+          collectionCacheKey(ownerId),
+          JSON.stringify({ ownerId, items: serverItems, timestamp: new Date().toISOString() }),
+        ).catch(() => {});
 
-      setCollection(prev => {
+        setCollection(prev => {
         // 1. Exclude server items that have been optimistically deleted but
         //    whose DELETE hasn't landed on the server yet.
         const deletedIds = pendingDeleteIds.current;
@@ -737,55 +741,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return fp !== undefined && !serverFingerprints.has(fp);
         });
 
-        return [...filteredServer, ...stillPending];
-      });
-      collectionLoadedAt.current = Date.now();
-      setCollectionError(null);
+          return [...filteredServer, ...stillPending];
+        });
+        collectionLoadedAt.current = Date.now();
+        setCollectionError(null);
 
       // Recover missing PriceCharting values once per card/currency/session.
       // This is bounded and never polls: cards that still cannot be matched
       // remain explicitly unpriced.
-      const unpriced = serverItems.filter(item => !item.valuation);
-      const recoveryCards = unpriced.filter(item => {
-        const key = `${item.cardId}:${currency}`;
-        if (pricingRecoveryAttempted.current.has(key)) return false;
-        pricingRecoveryAttempted.current.add(key);
-        return true;
-      });
-      if (recoveryCards.length > 0) {
-        void Promise.allSettled(recoveryCards.map(item =>
-          refreshVerifiedPricing(item.cardId, {
-            name: item.card.name,
-            set: item.card.setName,
-            number: item.card.number,
-            game: item.card.tcg,
-            displayCurrency: currency,
-          })
-        )).then(() => {
-          void loadCollectionRef.current(undefined, true);
-          void refreshPortfolioHistory();
+        const unpriced = serverItems.filter(item => !item.valuation);
+        const recoveryCards = unpriced.filter(item => {
+          const key = `${item.cardId}:${currency}`;
+          if (pricingRecoveryAttempted.current.has(key)) return false;
+          pricingRecoveryAttempted.current.add(key);
+          return true;
         });
-      }
-    } catch (error) {
+        if (recoveryCards.length > 0) {
+          void Promise.allSettled(recoveryCards.map(item =>
+            refreshVerifiedPricing(item.cardId, {
+              name: item.card.name,
+              set: item.card.setName,
+              number: item.card.number,
+              game: item.card.tcg,
+              displayCurrency: currency,
+            })
+          )).then(() => {
+            void loadCollectionRef.current(undefined, true);
+            void refreshPortfolioHistory();
+          });
+        }
+      } catch (error) {
       // Retain a usable offline cache, but surface the failed refresh so it is
       // never mistaken for a genuinely empty, up-to-date collection.
-      if (gen === loadGeneration.current) {
-        const issue = collectionRefreshIssue(error);
-        setCollectionError(issue);
-        if (issue.kind === 'unauthorized') {
-          authSignOut().catch(() => {});
-          setUser(null);
-          setIsAuthenticated(false);
+        if (gen === loadGeneration.current) {
+          const issue = collectionRefreshIssue(error);
+          setCollectionError(issue);
+          if (issue.kind === 'unauthorized') {
+            authSignOut().catch(() => {});
+            setUser(null);
+            setIsAuthenticated(false);
+          }
         }
+      } finally {
+        if (activeCollectionLoadKey.current === loadKey) {
+          activeCollectionLoadKey.current = null;
+        }
+        // Only the latest generation clears the loading flag.
+        if (gen === loadGeneration.current) setCollectionLoading(false);
       }
-    } finally {
-      if (activeCollectionLoadKey.current === loadKey) {
-        activeCollectionLoadKey.current = null;
-      }
-      // Only the latest generation clears the loading flag.
-      if (gen === loadGeneration.current) setCollectionLoading(false);
-    }
+    })();
+    activeCollectionRequest.current = request;
+    void request.then(
+      () => {
+        if (activeCollectionRequest.current === request) activeCollectionRequest.current = null;
+      },
+      () => {
+        if (activeCollectionRequest.current === request) activeCollectionRequest.current = null;
+      },
+    );
+    return request;
   }, [currency]);
+  const refreshCollection = useCallback(
+    () => loadCollection(undefined, true),
+    [loadCollection],
+  );
   const loadCollectionRef = useRef(loadCollection);
   useEffect(() => {
     loadCollectionRef.current = loadCollection;
@@ -1444,7 +1463,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         user, isAuthenticated,
-        collection, collectionLoading, collectionError, refreshCollection: loadCollection, portfolio, collectionFilters,
+        collection, collectionLoading, collectionError, refreshCollection, portfolio, collectionFilters,
         watchlist, portfolioRange, marketFilters, activeTCG,
         pricesLastUpdated, isPriceRefreshing,
         notifications, unreadNotificationCount, notificationsHasMore, activeAlertCount,

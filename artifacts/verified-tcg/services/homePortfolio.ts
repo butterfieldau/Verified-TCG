@@ -40,7 +40,7 @@ export function getHomePerformanceView(
 ): HomePerformanceView {
   if (!performance) return { kind: 'unavailable', message: 'Price history is not available yet' };
   const available = performance.points.filter(point => point.available !== false && point.value != null);
-  if (available.length === 0) {
+  if (!performance.historyAvailable || available.length === 0) {
     return {
       kind: 'unavailable',
       message: performance.historyUnavailableReason
@@ -54,6 +54,22 @@ export function getHomePerformanceView(
     message: performance.historyUnavailableReason
       ?? `No retained history is available for ${range}`,
   };
+}
+
+/**
+ * Keep the first and last timeline observations on the chart edges. A single
+ * retained observation is the latest known value, so it is right-anchored
+ * rather than presented as a misleading centered trend.
+ */
+export function chartXForIndex(
+  index: number,
+  count: number,
+  width: number,
+  padLeft = 0,
+  padRight = 0,
+): number {
+  if (count <= 1) return width - padRight;
+  return padLeft + (index / (count - 1)) * Math.max(width - padLeft - padRight, 0);
 }
 
 export interface HomeCollectionCard {

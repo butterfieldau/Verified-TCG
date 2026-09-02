@@ -30,6 +30,7 @@ import { CONDITION_LABELS } from '@/types';
 import type { CollectionItem, WatchlistItem } from '@/types';
 import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
 import { tradingCardHeight, tradingCardRadius } from '@/services/collectionLayout';
+import { createRequestDeduper } from '@/services/requestDeduper';
 
 const C = colors.dark;
 const PAGE_SIZE = 20;
@@ -67,7 +68,6 @@ export default function CollectionScreen() {
     watchlist,
     addToWatchlist,
     removeFromWatchlist,
-    pricesLastUpdated,
   } = useApp();
   const { isConnected } = useNetwork();
   const { currency } = useSettings();
@@ -83,7 +83,6 @@ export default function CollectionScreen() {
 
   // Server summary for authoritative totals
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   // Client-side windowing: show first `displayCount` of the fully-filtered list.
   // This is correct for both offline (cache) and online (live) data, and
@@ -92,7 +91,9 @@ export default function CollectionScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const summaryLoadedAt = useRef(0);
   const summaryRequest = useRef<Promise<void> | null>(null);
+  const collectionRefreshDeduper = useRef(createRequestDeduper()).current;
   const summaryCurrency = useRef(currency);
+  const hasFocusedCollection = useRef(false);
 
   const loadSummary = useCallback(async (force = false) => {
     if (summaryCurrency.current !== currency) {
@@ -109,15 +110,10 @@ export default function CollectionScreen() {
         if (summaryCurrency.current !== currency) return;
         setServerSummary(summary);
         summaryLoadedAt.current = Date.now();
-        setSummaryError(null);
-      } catch (error) {
-        // Keep the last successful value visible while surfacing the refresh error.
+      } catch {
+        // Keep the last successful value stable. A missing first response is
+        // represented by the compact unavailable worth state.
         if (summaryCurrency.current !== currency) return;
-        setSummaryError(
-          error instanceof Error
-            ? error.message
-            : 'Portfolio totals are temporarily unavailable.',
-        );
       } finally {
         summaryRequest.current = null;
       }
@@ -174,52 +170,30 @@ export default function CollectionScreen() {
     setDisplayCount(PAGE_SIZE);
   }, []);
 
-  // Refresh once on entry only when the retained summary is stale. AppContext
-  // owns collection refreshes after sign-in, mutation, foregrounding and pull.
+  // AppContext performs the initial authenticated collection load. Subsequent
+  // focuses represent a real leave/reopen and request one fresh library load.
   useFocusEffect(
     useCallback(() => {
-      void loadSummary();
-    }, [loadSummary]),
+      if (hasFocusedCollection.current) {
+        void refreshCollection();
+      } else {
+        hasFocusedCollection.current = true;
+      }
+      void loadSummary(true);
+    }, [loadSummary, refreshCollection]),
   );
 
   const handleRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
-    try {
-      await Promise.all([refreshCollection(), loadSummary(true)]);
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [refreshCollection, loadSummary]);
-
-  const gradedCount = useMemo(
-    () => collection.filter(item => !!item.grading).length,
-    [collection],
-  );
-
-  const topHolding = useMemo(
-    () => collection.reduce<CollectionItem | null>((top, item) => {
-      if (holdingValue(item) === null) return top;
-      if (!top || (holdingValue(item) ?? 0) > (holdingValue(top) ?? 0)) return item;
-      return top;
-    }, null),
-    [collection, holdingValue],
-  );
-
-  const chartBars = useMemo(() => {
-    const points = (serverSummary?.chartData?.['1M'] ?? []).filter(
-      (point): point is typeof point & { value: number } => point.value != null,
-    );
-    if (points.length === 0) return [];
-    const sampled = points.length <= 12
-      ? points
-      : Array.from({ length: 12 }, (_, index) => points[Math.round(index * (points.length - 1) / 11)]!);
-    const values = sampled.map(point => point.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = Math.max(1, max - min);
-    return values.map(value => 24 + ((value - min) / span) * 70);
-  }, [serverSummary]);
+    return collectionRefreshDeduper.run(async () => {
+      setIsRefreshing(true);
+      setDisplayCount(PAGE_SIZE); // reset window so user sees top of the list
+      try {
+        await Promise.all([refreshCollection(), loadSummary(true)]);
+      } finally {
+        setIsRefreshing(false);
+      }
+    });
+  }, [collectionRefreshDeduper, refreshCollection, loadSummary]);
 
   const avatarInitials = useMemo(() => {
     const source = user?.displayName?.trim() || user?.username?.trim() || 'Collector';
@@ -257,8 +231,6 @@ export default function CollectionScreen() {
   // ── Header (shared across all tabs) ──────────────────────────────────────
 
   function renderHeader() {
-    const movement = serverSummary?.movement30d;
-    const movementColor = movement?.direction === 'down' ? C.negative : '#FF8994';
     const portfolioCurrency = serverSummary?.currency ?? currency;
 
     return (
@@ -286,18 +258,6 @@ export default function CollectionScreen() {
                   <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry</Text>
                 </Pressable>
               )}
-            </View>
-          </View>
-        )}
-
-        {summaryError && !collectionError && (
-          <View style={[styles.errorBox, styles.headerAlert]} accessibilityRole="alert">
-            <Feather name="bar-chart-2" size={20} color={C.negative} />
-            <View style={{ flex: 1, gap: 6 }}>
-              <Text style={styles.errorText}>Portfolio totals are unavailable. Your saved cards are still shown below.</Text>
-              <Pressable onPress={() => { void loadSummary(); }} accessibilityRole="button">
-                <Text style={[styles.errorText, { color: C.primary, fontFamily: 'Inter_600SemiBold' }]}>Retry totals</Text>
-              </Pressable>
             </View>
           </View>
         )}
@@ -367,14 +327,12 @@ export default function CollectionScreen() {
           </Animated.View>
         )}
 
-        <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioSection}>
-          <View style={styles.portfolioHeading}>
-            <Text style={styles.portfolioLabel}>Portfolio value</Text>
-            <View style={styles.liveLabel}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>{isConnected ? 'LIVE' : 'CACHED'}</Text>
-            </View>
-          </View>
+        <Animated.View
+          entering={FadeInDown.delay(60).duration(420)}
+          style={styles.portfolioSection}
+          testID="collection-profile-worth"
+        >
+          <Text style={styles.portfolioLabel}>Profile worth</Text>
           {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
             <Text style={styles.portfolioValue}>
               {portfolioCurrency} {serverSummary.totalValue.toLocaleString('en-AU', {
@@ -385,94 +343,7 @@ export default function CollectionScreen() {
           ) : (
             <Text style={styles.portfolioUnavailable}>VALUE UNAVAILABLE</Text>
           )}
-          {movement ? (
-            <View style={styles.portfolioMovement}>
-              <Feather
-                name={movement.direction === 'down' ? 'arrow-down-right' : movement.direction === 'flat' ? 'minus' : 'arrow-up-right'}
-                size={15}
-                color={movementColor}
-              />
-              <Text style={[styles.portfolioMovementValue, { color: movementColor }]}>
-                {movement.absolute >= 0 ? '+' : '-'}
-                {portfolioCurrency} {Math.abs(movement.absolute).toLocaleString('en-AU', { maximumFractionDigits: 0 })}
-              </Text>
-              <Text style={styles.portfolioMovementMeta}>
-                {movement.percent !== null
-                  ? `· ${movement.percent >= 0 ? '+' : ''}${movement.percent.toFixed(1)}% this month`
-                  : '· 30 day movement'}
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.portfolioMovementMeta}>30 day movement unavailable</Text>
-          )}
-
-          {chartBars.length > 0 ? (
-            <View style={styles.portfolioChart} accessibilityLabel="Portfolio value history for the last month">
-              {chartBars.map((height, index) => (
-                <View
-                  key={`${height}-${index}`}
-                  style={[styles.portfolioBar, { height: `${height}%`, opacity: index % 2 === 0 ? 0.95 : 0.68 }]}
-                />
-              ))}
-            </View>
-          ) : (
-            <View style={[styles.portfolioChart, styles.portfolioChartEmpty]}>
-              <Text style={styles.portfolioChartEmptyText}>History builds as verified prices are recorded</Text>
-            </View>
-          )}
-          <View style={styles.portfolioFooter}>
-            <Text style={styles.portfolioStat}><Text style={styles.portfolioStatValue}>{serverSummary?.cardCount ?? collection.length}</Text> cards tracked</Text>
-            <Text style={styles.portfolioStat}><Text style={styles.portfolioStatValue}>{gradedCount}</Text> graded</Text>
-            <Text style={styles.syncText}>
-              {pricesLastUpdated
-                ? `Synced ${pricesLastUpdated.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`
-                : 'Sync pending'}
-            </Text>
-          </View>
         </Animated.View>
-
-        {topHolding && (
-          <Animated.View entering={FadeInDown.delay(120).duration(420)} style={styles.pulseCard}>
-            <View style={styles.pulseLabelRow}>
-              <Feather name="zap" size={13} color="#EF3F4D" />
-              <Text style={styles.pulseLabel}>VAULT PULSE</Text>
-              <Text style={styles.pulseIndex}>01 / {Math.max(1, collection.length).toString().padStart(2, '0')}</Text>
-            </View>
-            <View style={styles.pulseBody}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pulseTitle}>{topHolding.card.name} anchors the vault.</Text>
-                <Text style={styles.pulseCopy}>
-                  Your largest priced holding is{' '}
-                  <Text style={styles.pulseStrong}>
-                    {topHolding.valuation?.currency ?? currency} {(holdingValue(topHolding) ?? 0).toLocaleString('en-AU')}
-                  </Text>.
-                </Text>
-              </View>
-              <View style={styles.pulseTrend}>
-                <Feather name="trending-up" size={17} color="#FF7781" />
-              </View>
-            </View>
-            <Pressable
-              onPress={() => router.push(`/card/${topHolding.card.id}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`View ${topHolding.card.name}`}
-              style={styles.pulseLink}
-            >
-              <Text style={styles.pulseLinkText}>View card</Text>
-              <Feather name="arrow-up-right" size={14} color="#E7A2A7" />
-            </Pressable>
-          </Animated.View>
-        )}
-
-        {/* Coverage freshness note */}
-        {serverSummary?.coverage && serverSummary.coverage.ratio < 1 && (
-          <View style={styles.coverageNote}>
-            <Feather name="info" size={11} color={C.warning} />
-            <Text style={styles.coverageNoteText}>
-              {serverSummary.completeness}
-            </Text>
-          </View>
-        )}
 
         <View style={styles.libraryToolbar}>
           <View style={styles.libraryHeading}>
@@ -822,7 +693,7 @@ export default function CollectionScreen() {
           onClose={() => setSellItem(null)}
           onSold={() => {
             setSellItem(null);
-            void Promise.all([refreshCollection(), loadSummary()]);
+            void Promise.all([refreshCollection(), loadSummary(true)]);
           }}
         />
       )}
@@ -926,10 +797,9 @@ const styles = StyleSheet.create({
   portfolioSection: {
     position: 'relative',
     marginHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 6,
+    paddingTop: 2,
+    paddingBottom: 2,
   },
-  portfolioHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   portfolioLabel: {
     color: '#B2A4A5',
     fontFamily: 'Inter_700Bold',
@@ -937,109 +807,24 @@ const styles = StyleSheet.create({
     letterSpacing: 1.45,
     textTransform: 'uppercase',
   },
-  liveLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#EF3F4D' },
-  liveText: {
-    color: '#FF8F9A',
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.1,
-  },
   portfolioValue: {
     position: 'relative',
-    marginTop: 7,
+    marginTop: 5,
     color: '#FFF8F2',
     fontFamily: 'Inter_800ExtraBold',
-    fontSize: 32,
-    lineHeight: 36,
-    letterSpacing: -1.8,
+    fontSize: 30,
+    lineHeight: 34,
+    letterSpacing: -1.5,
   },
   portfolioUnavailable: {
-    marginTop: 12,
+    marginTop: 8,
     color: '#AA888C',
     fontFamily: 'Inter_700Bold',
-    fontSize: 15,
+    fontSize: 14,
     letterSpacing: 0.5,
   },
-  portfolioMovement: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  portfolioMovementValue: { fontFamily: 'Inter_700Bold', fontSize: 11 },
-  portfolioMovementMeta: { color: '#AA888C', fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2 },
-  portfolioChart: {
-    height: 58,
-    marginTop: 15,
-    marginBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.11)',
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  portfolioBar: {
-    flex: 1,
-    minWidth: 5,
-    maxWidth: 24,
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-    backgroundColor: '#EF3F4D',
-  },
-  portfolioChartEmpty: { alignItems: 'center', justifyContent: 'center' },
-  portfolioChartEmptyText: {
-    color: '#79666A',
-    fontFamily: 'Inter_500Medium',
-    fontSize: 10,
-    textAlign: 'center',
-  },
-  portfolioFooter: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  portfolioStat: { color: '#AA888C', fontFamily: 'Inter_400Regular', fontSize: 10 },
-  portfolioStatValue: { color: '#F5DDD8', fontFamily: 'Inter_700Bold', fontSize: 12 },
-  syncText: { marginLeft: 'auto', color: '#79666A', fontFamily: 'Inter_500Medium', fontSize: 9 },
-  pulseCard: {
-    marginHorizontal: 20,
-    marginTop: 12,
-    borderBottomWidth: 1,
-    borderWidth: 1,
-    borderColor: '#2C2A2D',
-    borderRadius: 8,
-    backgroundColor: '#18181B',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-  },
-  pulseLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pulseLabel: {
-    color: '#8B8688',
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.35,
-  },
-  pulseIndex: { marginLeft: 'auto', color: '#5F5B60', fontFamily: 'Inter_700Bold', fontSize: 9 },
-  pulseBody: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 9 },
-  pulseTitle: { color: '#F7F1E8', fontFamily: 'Inter_700Bold', fontSize: 14 },
-  pulseCopy: { marginTop: 4, color: '#878286', fontFamily: 'Inter_400Regular', fontSize: 11 },
-  pulseStrong: { color: '#FF7781', fontFamily: 'Inter_700Bold' },
-  pulseTrend: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2A1A1E',
-  },
-  pulseLink: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', marginTop: 10 },
-  pulseLinkText: { color: '#E7A2A7', fontFamily: 'Inter_700Bold', fontSize: 10 },
-  coverageNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginHorizontal: 20,
-    marginTop: 10,
-    backgroundColor: `${C.warning}14`,
-  },
-  coverageNoteText: { color: C.warning, fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1 },
   libraryToolbar: {
-    marginTop: 24,
+    marginTop: 20,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',

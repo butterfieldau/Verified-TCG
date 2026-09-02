@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CollectionItem } from '../types';
 import type { CollectionPerformance, CollectionSummary } from '../services/collectionPerformance';
 import {
@@ -5,7 +7,9 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  chartXForIndex,
 } from '../services/homePortfolio';
+import { createRequestDeduper } from '../services/requestDeduper';
 import {
   TRADING_CARD_ASPECT_RATIO,
   tradingCardHeight,
@@ -94,6 +98,90 @@ describe('home portfolio view models', () => {
       { date: '2025-01-01', value: 100, currency: 'AUD' },
       { date: '2025-01-02', value: 110, currency: 'AUD' },
     ]), '7D')).toMatchObject({ kind: 'chart' });
+  });
+
+  it('keeps a same-day account baseline and current value as two chart points', () => {
+    expect(getHomePerformanceView(performance([
+      {
+        date: '2025-01-01',
+        value: 0,
+        currency: 'AUD',
+        baseline: true,
+        pricedHoldings: 0,
+        totalHoldings: 0,
+      },
+      {
+        date: '2025-01-01',
+        value: 125,
+        currency: 'AUD',
+        pricedHoldings: 1,
+        totalHoldings: 1,
+      },
+    ]), '1D')).toMatchObject({
+      kind: 'chart',
+      points: [
+        { value: 0, baseline: true },
+        { value: 125 },
+      ],
+    });
+  });
+
+  it('does not treat the zero account baseline as provider price history', () => {
+    expect(getHomePerformanceView({
+      ...performance([
+        { date: '2025-01-01', value: 0, currency: 'AUD', baseline: true },
+        { date: '2025-01-01', value: null, currency: 'AUD', available: false },
+      ]),
+      historyAvailable: false,
+      historyUnavailableReason: 'No retained market prices are available',
+    }, '1D')).toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('anchors the first and last points to chart edges', () => {
+    expect(chartXForIndex(0, 3, 320)).toBe(0);
+    expect(chartXForIndex(2, 3, 320)).toBe(320);
+    expect(chartXForIndex(0, 1, 320)).toBe(320);
+  });
+});
+
+describe('collection refresh cadence', () => {
+  it('shares overlapping refreshes and permits one new load after completion', async () => {
+    const deduper = createRequestDeduper();
+    let release: (() => void) | undefined;
+    let calls = 0;
+    const task = () => {
+      calls += 1;
+      return new Promise<void>(resolve => { release = resolve; });
+    };
+
+    const first = deduper.run(task);
+    const second = deduper.run(task);
+    expect(first).toBe(second);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    release?.();
+    await first;
+    await deduper.run(async () => { calls += 1; });
+    expect(calls).toBe(2);
+  });
+});
+
+describe('collection portfolio presentation', () => {
+  const source = readFileSync(join(__dirname, '../app/(tabs)/collection.tsx'), 'utf8');
+
+  it('keeps only the concise profile-worth block above the library', () => {
+    expect(source).toContain('testID="collection-profile-worth"');
+    expect(source).toContain('Profile worth');
+    for (const removedCopy of [
+      'VAULT PULSE',
+      '30 day movement',
+      'cards tracked',
+      'Sync pending',
+      'History builds as verified prices are recorded',
+    ]) {
+      expect(source).not.toContain(removedCopy);
+    }
   });
 });
 

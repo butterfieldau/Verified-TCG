@@ -60,6 +60,8 @@ export interface PortfolioValueHistoryPoint {
   dailyChangeCents: number | null;
   dailyChange: number | null;
   dailyChangePercent: number | null;
+  /** True only for the explicit zero point at account creation. */
+  baseline?: boolean;
   bucketStart?: string;
   bucketEnd?: string;
   sampledFrom?: string;
@@ -70,6 +72,17 @@ export interface PortfolioValueHistory {
   currency: string;
   historyAvailable: boolean;
   historyUnavailableReason: string | null;
+}
+
+export function hasPortfolioHistoryValue(
+  points: PortfolioValueHistoryPoint[],
+): boolean {
+  const hasOwnedHolding = points.some(point => point.totalHoldings > 0);
+  return points.some(point =>
+    point.available
+    && point.value != null
+    && (hasOwnedHolding ? point.pricedHoldings > 0 : point.totalHoldings === 0),
+  );
 }
 
 export type PortfolioMovementKind = "market_price" | "acquisition" | "sale";
@@ -376,6 +389,7 @@ export async function calculatePortfolioValueHistory(
         dailyChangeCents: points.length > 0 ? 0 : null,
         dailyChange: points.length > 0 ? 0 : null,
         dailyChangePercent: null,
+        baseline: points.length === 0,
       });
     }
     return {
@@ -391,13 +405,9 @@ export async function calculatePortfolioValueHistory(
   // implementation treated 7D as "seven days ago through today", producing
   // eight calendar points and making range boundaries ambiguous.
   const requestedStart = isoDateDaysAgo(Math.max(1, periodDays) - 1, now);
-  const profileStart = profileRows.reduce(
-    (earliest, row) => row.addedDate < earliest ? row.addedDate : earliest,
-    profileRows[0]!.addedDate,
-  );
   const startDate = periodDays >= PORTFOLIO_HISTORY_RANGES.ALL!
-    ? profileStart
-    : profileStart > requestedStart ? profileStart : requestedStart;
+    ? accountDate
+    : accountDate > requestedStart ? accountDate : requestedStart;
   const dates: string[] = [];
   for (
     let cursor = new Date(`${startDate}T00:00:00Z`);
@@ -408,11 +418,33 @@ export async function calculatePortfolioValueHistory(
   }
 
   const points: PortfolioValueHistoryPoint[] = [];
+  // The account baseline is a real portfolio event even when the first card
+  // was added later. Keep it as a separate point so an account and its first
+  // valuation on the same day still render as a left-to-right journey.
+  if (accountDate <= today && startDate <= accountDate) {
+    points.push({
+      date: accountDate,
+      valueCents: 0,
+      value: 0,
+      currency,
+      pricedHoldings: 0,
+      totalHoldings: 0,
+      available: true,
+      complete: true,
+      dailyChangeCents: null,
+      dailyChange: null,
+      dailyChangePercent: null,
+      baseline: true,
+    });
+  }
   const conversionCache = new Map<string, number | null>();
   for (const date of dates) {
     const profileAtDate = profileRows.filter(row => row.addedDate <= date);
     const totalHoldings = profileAtDate.reduce((sum, row) => sum + row.quantity, 0);
     if (totalHoldings === 0) {
+      if (date === accountDate && points.some(point => point.baseline === true)) {
+        continue;
+      }
       points.push({
         date,
         valueCents: 0,
@@ -506,12 +538,13 @@ export async function calculatePortfolioValueHistory(
       previous.valueCents > 0 ? (changeCents / previous.valueCents) * 100 : null;
   }
 
+  const hasValuedPoint = hasPortfolioHistoryValue(points);
+
   return {
     points,
     currency,
-    historyAvailable: points.some(point => point.available),
-    historyUnavailableReason: points.length > 0
-      && points.some(point => point.available)
+    historyAvailable: hasValuedPoint,
+    historyUnavailableReason: hasValuedPoint
       ? null
       : "No retained market prices are available for cards in this profile",
   };
@@ -772,6 +805,24 @@ function copyUnavailablePoint(
   };
 }
 
+function preserveBaselinePoint(
+  sampled: PortfolioValueHistoryPoint[],
+  points: PortfolioValueHistoryPoint[],
+  start: string,
+  end: string,
+): PortfolioValueHistoryPoint[] {
+  const baseline = points.find(point =>
+    point.baseline === true && point.date >= start && point.date <= end,
+  );
+  if (!baseline || sampled.some(point => point.baseline === true)) return sampled;
+  return [...sampled, baseline].sort((left, right) => {
+    const dateOrder = left.date.localeCompare(right.date);
+    if (dateOrder !== 0) return dateOrder;
+    if (left.baseline === right.baseline) return 0;
+    return left.baseline ? -1 : 1;
+  });
+}
+
 function sampledWeeklyPoints(
   points: PortfolioValueHistoryPoint[],
   days: number,
@@ -799,7 +850,7 @@ function sampledWeeklyPoints(
       result.push(copyUnavailablePoint(bucketEnd, points[0]?.currency ?? "AUD", bucketStart, bucketEnd));
     }
   }
-  return result;
+  return preserveBaselinePoint(result, points, start, today);
 }
 
 function sampledMonthlyPoints(points: PortfolioValueHistoryPoint[]): PortfolioValueHistoryPoint[] {
@@ -839,7 +890,12 @@ function sampledMonthlyPoints(points: PortfolioValueHistoryPoint[]): PortfolioVa
       ));
     }
   }
-  return result;
+  return preserveBaselinePoint(
+    result,
+    points,
+    firstMonth.toISOString().slice(0, 10),
+    today.toISOString().slice(0, 10),
+  );
 }
 
 export function portfolioChartData(
