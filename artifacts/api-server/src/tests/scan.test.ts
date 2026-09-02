@@ -249,19 +249,34 @@ describe("POST /api/scan/recognize — free user quota", () => {
 
   test("a completed unreadable recognition consumes its reserved quota", async () => {
     await setScanCount(freeUserId, 0);
-    const res = await request
-      .post("/api/scan/recognize")
-      .set("Authorization", `Bearer ${freeToken}`)
-      .send(MINIMAL_SCAN_BODY);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.recognitionStatus, "unreadable");
-    assert.equal(res.body.countsTowardLimit, true);
-    assert.equal(res.body.scansUsed, 1);
-    assert.equal(res.body.scanLimit, 30);
-    const usage = await request
-      .get("/api/scan/usage")
-      .set("Authorization", `Bearer ${freeToken}`);
-    assert.equal(usage.body.scansUsed, 1);
+    // This exercises a completed recognition, not the production
+    // missing-credential path. Keep the provider response local and scoped so
+    // CI never needs an OpenAI key or makes a live vision request.
+    const previousKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    const originalFetch = globalThis.fetch;
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-recognition-key";
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ game: "", name: "", setName: "", number: "" }) } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    try {
+      const res = await request
+        .post("/api/scan/recognize")
+        .set("Authorization", `Bearer ${freeToken}`)
+        .send(MINIMAL_SCAN_BODY);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.recognitionStatus, "unreadable");
+      assert.equal(res.body.countsTowardLimit, true);
+      assert.equal(res.body.scansUsed, 1);
+      assert.equal(res.body.scanLimit, 30);
+      const usage = await request
+        .get("/api/scan/usage")
+        .set("Authorization", `Bearer ${freeToken}`);
+      assert.equal(usage.body.scansUsed, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+      else process.env.AI_INTEGRATIONS_OPENAI_API_KEY = previousKey;
+    }
   });
 });
 
