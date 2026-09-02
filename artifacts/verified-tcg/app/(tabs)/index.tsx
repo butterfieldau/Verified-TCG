@@ -56,6 +56,7 @@ import {
   hasHomeCollectionHoldings,
   getHomePerformanceView,
   getHomePortfolioValueState,
+  getRenderableHomeChartPoints,
   chartXForIndex,
 } from '@/services/homePortfolio';
 import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
@@ -562,7 +563,8 @@ export default function HomeScreen() {
 
   const valueState = getHomePortfolioValueState(serverSummary, summaryLoading, summaryError, currency);
   const performanceView = getHomePerformanceView(serverPerformance, portfolioRange);
-  const chartData = performanceView.kind === 'chart' ? performanceView.points : [];
+  const allChartData = performanceView.kind === 'chart' ? performanceView.points : [];
+  const chartData = getRenderableHomeChartPoints(allChartData);
   const displayValue = activeChartPoint
     ? activeChartPoint.value
     : valueState.kind === 'empty' || valueState.kind === 'priced'
@@ -571,7 +573,7 @@ export default function HomeScreen() {
   // First-to-last portfolio value can include acquisitions and sales, so it is
   // not a market gain signal. Colour follows only the authoritative daily move.
   const isPositive = (serverSummary?.todayMovement?.absolute ?? 0) >= 0;
-  const unavailableChartPoints = chartData.filter(
+  const unavailableChartPoints = allChartData.filter(
     point => point.available === false || point.value == null,
   ).length;
 

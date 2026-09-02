@@ -8,6 +8,7 @@ import {
   getHomePerformanceView,
   getHomePortfolioValueState,
   chartXForIndex,
+  getRenderableHomeChartPoints,
 } from '../services/homePortfolio';
 import { createRequestDeduper } from '../services/requestDeduper';
 import {
@@ -141,6 +142,16 @@ describe('home portfolio view models', () => {
     expect(chartXForIndex(0, 3, 320)).toBe(0);
     expect(chartXForIndex(2, 3, 320)).toBe(320);
     expect(chartXForIndex(0, 1, 320)).toBe(320);
+  });
+
+  it('removes only leading unavailable samples from the drawable chart', () => {
+    const points = [
+      { date: '2025-01-01', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-02', value: 100, currency: 'AUD' },
+      { date: '2025-01-03', value: null, currency: 'AUD', available: false },
+      { date: '2025-01-04', value: 110, currency: 'AUD' },
+    ];
+    expect(getRenderableHomeChartPoints(points)).toEqual(points.slice(1));
   });
 });
 

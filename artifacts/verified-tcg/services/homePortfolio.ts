@@ -72,6 +72,18 @@ export function chartXForIndex(
   return padLeft + (index / (count - 1)) * Math.max(width - padLeft - padRight, 0);
 }
 
+/**
+ * Do not let unavailable samples create an empty leading span before the first
+ * real observation. The missing samples are still retained by the caller for
+ * completeness messaging; this helper only controls the drawable series.
+ */
+export function getRenderableHomeChartPoints(points: PerformancePoint[]): PerformancePoint[] {
+  const firstAvailableIndex = points.findIndex(
+    point => point.available !== false && point.value != null,
+  );
+  return firstAvailableIndex > 0 ? points.slice(firstAvailableIndex) : points;
+}
+
 export interface HomeCollectionCard {
   item: CollectionItem;
   currentValue: number | null;
