@@ -301,11 +301,10 @@ export default function CollectionHoldingsPanel({ card, compact = false }: Colle
             </Text>
           </View>
 
-          <View style={styles.slabsCard}>
+          <View style={styles.gradedSection}>
             <View style={styles.slabsHeader}>
               <View>
-                <Text style={styles.slabsKicker}>GRADED COPIES</Text>
-                <Text style={styles.slabsTitle}>Your slabs</Text>
+                <Text style={styles.slabsTitle}>Graded copies</Text>
               </View>
               <Text style={styles.slabsOwned}>{slabQuantity} owned</Text>
             </View>
@@ -651,30 +650,22 @@ const styles = StyleSheet.create({
   disabledButton: { opacity: 0.45 },
   quantityText: { minWidth: 22, textAlign: 'center', fontSize: 13, fontFamily: 'Inter_700Bold', color: C.foreground },
   rawValue: { minWidth: 55, color: C.foreground, fontSize: 14, fontFamily: 'Inter_700Bold', textAlign: 'right' },
-  slabsCard: {
-    borderWidth: 1,
-    borderColor: `${C.primary}55`,
-    borderRadius: 12,
-    backgroundColor: `${C.primary}05`,
-    padding: 16,
+  gradedSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: C.border,
+    paddingTop: 16,
   },
   slabsHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-  },
-  slabsKicker: {
-    color: C.mutedForeground,
-    fontSize: 9,
-    fontFamily: 'Inter_500Medium',
-    letterSpacing: 1.2,
+    marginBottom: 4,
   },
   slabsTitle: {
-    marginTop: 8,
     color: C.foreground,
-    fontSize: 20,
-    lineHeight: 25,
-    fontFamily: 'Rajdhani_700Bold',
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: 'Inter_700Bold',
   },
   slabsOwned: { color: C.primary, fontSize: 11, fontFamily: 'Inter_700Bold' },
   slabsColumnLabels: {
