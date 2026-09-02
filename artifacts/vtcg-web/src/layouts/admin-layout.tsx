@@ -34,8 +34,9 @@ import {
 } from "lucide-react";
 import { Command } from "cmdk";
 import { useAuth } from "@/contexts/auth";
-import { apiFetch, apiPost } from "@/lib/api";
+import { apiFetch, apiPost, apiProbe } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { isLatestPanelRequest } from "@/lib/polling";
 
 const NAV_ITEMS = [
   { path: "/overview", label: "Overview", icon: LayoutDashboard, permission: "dashboard:read" },
@@ -278,16 +279,47 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [healthy, setHealthy] = useState<boolean | null>(null);
+  type GlobalHealthState = "checking" | "healthy" | "degraded" | "unavailable" | "stale";
+  const [healthState, setHealthState] = useState<GlobalHealthState>("checking");
+  const healthRequestId = useRef(0);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [reauthPassword, setReauthPassword] = useState("");
   const [reauthError, setReauthError] = useState<string | null>(null);
   const [reauthLoading, setReauthLoading] = useState(false);
 
   useEffect(() => {
-    apiFetch("/healthz")
-      .then(() => setHealthy(true))
-      .catch(() => setHealthy(false));
+    let active = true;
+    let lastObservedAt: number | null = null;
+
+    const probe = async () => {
+      const requestId = ++healthRequestId.current;
+      try {
+        const { status, data } = await apiProbe<{ status?: string }>("/healthz?deep=1");
+        if (!["ok", "degraded"].includes(data.status ?? "") || ![200, 503].includes(status)) {
+          throw new Error("Health probe unavailable");
+        }
+        if (!active || !isLatestPanelRequest(requestId, healthRequestId.current)) return;
+        lastObservedAt = Date.now();
+        setHealthState(data.status === "ok" ? "healthy" : "degraded");
+      } catch {
+        if (!active || !isLatestPanelRequest(requestId, healthRequestId.current)) return;
+        setHealthState(lastObservedAt === null ? "unavailable" : "stale");
+      }
+    };
+
+    void probe();
+    const interval = window.setInterval(() => void probe(), 15_000);
+    const staleTimer = window.setInterval(() => {
+      if (active && lastObservedAt !== null && Date.now() - lastObservedAt > 45_000) {
+        setHealthState("stale");
+      }
+    }, 5_000);
+    return () => {
+      active = false;
+      healthRequestId.current += 1;
+      window.clearInterval(interval);
+      window.clearInterval(staleTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -439,16 +471,25 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               {import.meta.env.PROD ? "Production" : "Development"}
             </span>
             <Link
-              href="/overview"
+              href="/system"
               className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold ${
-                healthy === false
-                  ? "border-negative/30 bg-negative/10 text-negative"
-                  : "border-positive/30 bg-positive/10 text-positive"
+                healthState === "healthy"
+                  ? "border-positive/30 bg-positive/10 text-positive"
+                  : healthState === "checking"
+                    ? "border-border bg-card text-muted-foreground"
+                    : healthState === "degraded" || healthState === "stale"
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-500"
+                      : "border-negative/30 bg-negative/10 text-negative"
               }`}
-              aria-label="Open platform health overview"
+              aria-label="Open System Health"
             >
-              {healthy === false ? <Activity size={14} /> : <HeartPulse size={14} />}
-              <span className="hidden sm:inline">{healthy === false ? "Needs attention" : "Platform healthy"}</span>
+              {healthState === "healthy" ? <HeartPulse size={14} /> : <Activity size={14} />}
+              <span className="hidden sm:inline">
+                {healthState === "checking" ? "Checking health" :
+                  healthState === "healthy" ? "Platform healthy" :
+                    healthState === "degraded" ? "Platform degraded" :
+                      healthState === "stale" ? "Health stale" : "Health unavailable"}
+              </span>
             </Link>
           </div>
         </header>
