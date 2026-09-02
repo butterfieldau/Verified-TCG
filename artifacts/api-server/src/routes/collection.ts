@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { collectionItemsTable, currentQuotesTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { requireActiveUser, type AuthRequest } from "../lib/authMiddleware.js";
 import { logActivity, logActivitySafely } from "./activity.js";
-import { PROVIDER_KEY } from "../pricing/pricecharting.js";
+import { selectPreferredQuote } from "../pricing/justtcg.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { normalizeGradeKey } from "../pricing/grades.js";
 
@@ -80,20 +80,27 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
       ? await db
           .select()
           .from(currentQuotesTable)
-          .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+          .where(inArray(currentQuotesTable.cardId, cardIds))
       : [];
 
-    const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
+    const quoteMap = new Map<string, Array<typeof currentQuotesTable.$inferSelect>>();
     for (const q of quotes) {
-      if (!cardIds.includes(q.cardId)) continue;
       const gradeKey = normalizeGradeKey(q.gradeKey);
-      if (gradeKey) quoteMap.set(`${q.cardId}:${gradeKey}`, q);
+      if (gradeKey) {
+        const key = `${q.cardId}:${gradeKey}`;
+        quoteMap.set(key, [
+          ...(quoteMap.get(key) ?? []),
+          { ...q, gradeKey },
+        ]);
+      }
     }
 
     return res.json({
       items: rows.map(row => {
         const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
-        const q = gradeKey ? quoteMap.get(`${row.cardId}:${gradeKey}`) : null;
+        const q = gradeKey
+          ? selectPreferredQuote(quoteMap.get(`${row.cardId}:${gradeKey}`) ?? [], gradeKey)
+          : null;
         return rowToItem(row, q ?? null);
       }),
       total,
@@ -116,19 +123,26 @@ router.get("/collection", requireActiveUser, async (req: AuthRequest, res) => {
     ? await db
         .select()
         .from(currentQuotesTable)
-        .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+        .where(inArray(currentQuotesTable.cardId, cardIds))
     : [];
 
-  const quoteMap = new Map<string, typeof currentQuotesTable.$inferSelect>();
+  const quoteMap = new Map<string, Array<typeof currentQuotesTable.$inferSelect>>();
   for (const q of quotes) {
-    if (!cardIds.includes(q.cardId)) continue;
     const gradeKey = normalizeGradeKey(q.gradeKey);
-    if (gradeKey) quoteMap.set(`${q.cardId}:${gradeKey}`, q);
+    if (gradeKey) {
+      const key = `${q.cardId}:${gradeKey}`;
+      quoteMap.set(key, [
+        ...(quoteMap.get(key) ?? []),
+        { ...q, gradeKey },
+      ]);
+    }
   }
 
   return res.json(rows.map(row => {
     const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
-    const q = gradeKey ? quoteMap.get(`${row.cardId}:${gradeKey}`) : null;
+    const q = gradeKey
+      ? selectPreferredQuote(quoteMap.get(`${row.cardId}:${gradeKey}`) ?? [], gradeKey)
+      : null;
     return rowToItem(row, q ?? null);
   }));
 });

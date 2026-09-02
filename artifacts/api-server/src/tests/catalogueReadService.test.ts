@@ -96,6 +96,27 @@ describe("Stage 3C canonical/fallback joining and telemetry", () => {
     assert.equal(joined[0]?.name, "Pikachu");
   });
 
+  test("keeps canonical identity while retaining a live JustTCG raw quote", () => {
+    const canonical = shapeCanonicalCard(completeRow);
+    assert.ok(canonical);
+    const [joined] = deduplicatePublicCards([canonical], [
+      {
+        id: completeRow.external_id,
+        name: "Provider duplicate",
+        currency: "USD",
+        market_price: 12.34,
+        pricing_source: "JustTCG",
+        raw_quote: { provider: "justtcg", priceCents: 1234 },
+        variants: [{ condition: "Near Mint", price: 12.34 }],
+      },
+    ]);
+    assert.equal(joined?.id, completeRow.external_id);
+    assert.equal(joined?.name, "Pikachu");
+    assert.equal(joined?.pricing_source, "JustTCG");
+    assert.equal(joined?.market_price, 12.34);
+    assert.deepEqual(joined?.variants, [{ condition: "Near Mint", price: 12.34 }]);
+  });
+
   test("reports hit, fallback, error, unsupported and latency metrics", () => {
     recordCatalogueReadMetric("card_lookup", "canonical_hit", 8);
     recordCatalogueReadMetric("search", "fallback", 20);

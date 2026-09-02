@@ -4,11 +4,11 @@ import {
   currentQuotesTable,
   portfolioSnapshotsTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { convertCents } from "./fx.js";
 import { normalizeGradeKey } from "./grades.js";
 import type { GradeKey } from "./grades.js";
-import { PROVIDER_KEY } from "./pricecharting.js";
+import { selectPreferredQuote } from "./justtcg.js";
 
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
@@ -93,6 +93,7 @@ export function gradeKeyForHolding(
   // slab. They can only be selected when the holding explicitly identifies
   // itself as a generic grade.
   if (company === "GENERIC" || company === "UNSPECIFIED") {
+    if (grade === 7 || grade === 7.5) return normalizeGradeKey("graded_7_75");
     if (grade === 9) return normalizeGradeKey("graded_9");
     if (grade === 8 || grade === 8.5) return normalizeGradeKey("graded_8_85");
     if (grade === 9.5) return normalizeGradeKey("graded_95");
@@ -115,14 +116,18 @@ export async function calculatePortfolioValuation(
     ? await db
         .select()
         .from(currentQuotesTable)
-        .where(eq(currentQuotesTable.providerKey, PROVIDER_KEY))
+        .where(inArray(currentQuotesTable.cardId, [...cardIds]))
     : [];
 
-  const quoteMap = new Map<string, QuoteRow>();
+  const quoteMap = new Map<string, QuoteRow[]>();
   for (const quote of quotes) {
     if (cardIds.has(quote.cardId)) {
       const canonicalGrade = normalizeGradeKey(quote.gradeKey);
-      if (canonicalGrade) quoteMap.set(`${quote.cardId}:${canonicalGrade}`, quote);
+      if (canonicalGrade) {
+        const key = `${quote.cardId}:${canonicalGrade}`;
+        const normalizedQuote = { ...quote, gradeKey: canonicalGrade };
+        quoteMap.set(key, [...(quoteMap.get(key) ?? []), normalizedQuote]);
+      }
     }
   }
 
@@ -137,7 +142,9 @@ export async function calculatePortfolioValuation(
 
   for (const row of rows) {
     const gradeKey = gradeKeyForHolding(row.isGraded, row.gradingData);
-    const quote = gradeKey ? quoteMap.get(`${row.cardId}:${gradeKey}`) ?? null : null;
+    const quote = gradeKey
+      ? selectPreferredQuote(quoteMap.get(`${row.cardId}:${gradeKey}`) ?? [], gradeKey)
+      : null;
     const acquiredCurrency = (row.acquiredCurrency ?? "AUD").toUpperCase();
     const originalCostCents = row.acquiredPriceCents * row.quantity;
     const convertedCost = await convertCents(originalCostCents, acquiredCurrency, currency);
@@ -209,16 +216,18 @@ export async function calculatePortfolioValuation(
 }
 
 /**
- * Capture one canonical USD point per user/day. Partial valuations are not
- * snapshotted because improved pricing coverage must not look like performance.
+ * Capture one canonical USD point per user/day. The row keeps priced/total
+ * coverage, so a truthful priced subtotal can be charted without pretending
+ * unpriced holdings have a value. This avoids leaving a collector with no
+ * history just because one legitimate card lacks a quote.
  */
 export async function capturePortfolioSnapshot(userId: string): Promise<boolean> {
   const valuation = await calculatePortfolioValuation(userId, "USD");
   if (
-    !valuation.valuationComplete ||
     !valuation.costBasisComplete ||
     valuation.totalValueCents == null ||
-    valuation.totalCostCents == null
+    valuation.totalCostCents == null ||
+    valuation.pricedHoldings === 0
   ) {
     return false;
   }

@@ -287,9 +287,36 @@ export function deduplicatePublicCards<T extends Record<string, unknown>>(
   canonical: PublicCatalogueCard[],
   fallback: T[],
 ): Array<PublicCatalogueCard | T> {
+  const fallbackById = new Map<string, T>(
+    fallback.flatMap((card) => {
+      const id = String(card.id ?? "");
+      return id ? ([[id, card]] as const) : [];
+    }),
+  );
+  const canonicalWithProviderFields = canonical.map(card => {
+    const providerCard = fallbackById.get(card.id);
+    if (!providerCard) return card;
+    const canonicalFields = card as Record<string, unknown>;
+    // Canonical identity remains authoritative, while a live JustTCG response
+    // contributes only provider-owned fields such as variants and pricing.
+    // Without this merge, canonical-first search silently discarded the live
+    // price supplied by the same JustTCG card ID.
+    return {
+      ...providerCard,
+      ...card,
+      variants: Array.isArray(providerCard.variants) && providerCard.variants.length
+        ? providerCard.variants
+        : card.variants,
+      currency: providerCard.currency ?? canonicalFields.currency,
+      market_price: providerCard.market_price ?? canonicalFields.market_price,
+      pricing_source: providerCard.pricing_source ?? "JustTCG",
+      raw_quote: providerCard.raw_quote ?? canonicalFields.raw_quote,
+      updated_at: providerCard.updated_at ?? canonicalFields.updated_at,
+    } as PublicCatalogueCard | T;
+  });
   const seen = new Set(canonical.map((card) => card.id));
   return [
-    ...canonical,
+    ...canonicalWithProviderFields,
     ...fallback.filter((card) => !seen.has(String(card.id ?? ""))),
   ];
 }
