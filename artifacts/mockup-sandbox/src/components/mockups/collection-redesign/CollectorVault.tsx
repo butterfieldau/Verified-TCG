@@ -2,11 +2,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  BarChart3,
   Check,
   ChevronDown,
   ChevronRight,
-  Download,
   Edit3,
   ExternalLink,
   Eye,
@@ -18,7 +16,6 @@ import {
   Layers3,
   List,
   MoreHorizontal,
-  Package,
   Plus,
   Search,
   SlidersHorizontal,
@@ -28,7 +25,6 @@ import {
   Users,
   Wallet,
   X,
-  Zap,
 } from "lucide-react";
 import "./_group.css";
 
@@ -135,15 +131,6 @@ export function CollectorVault() {
           <button onClick={() => setSummary("worth")} className={`rounded-full px-3 py-1 text-[10px] font-bold ${summary === "worth" ? "bg-[#3d2429] text-[#fff8f2]" : "text-[#8d888b]"}`}>Worth</button>
           <button onClick={() => setSummary("performance")} className={`rounded-full px-3 py-1 text-[10px] font-bold ${summary === "performance" ? "bg-[#193326] text-[#6ee7a2]" : "text-[#8d888b]"}`}>Performance</button>
         </div>
-      </section>
-
-      <section className="grid grid-cols-4 gap-2 px-5 pb-5">
-        {[
-          { label: "Market Movers", icon: BarChart3, action: "Market movers opened" },
-          { label: "Trade Analyzer", icon: Zap, action: "Trade analyzer opened" },
-          { label: "Bulk Actions", icon: Package, action: "Select cards to use bulk actions" },
-          { label: "Export", icon: Download, action: "Export queued" },
-        ].map(({ label, icon: Icon, action }) => <button key={label} onClick={() => { if (label === "Bulk Actions") setSelecting(true); flash(action); }} className="flex min-w-0 flex-col items-center gap-1.5 text-center text-[9px] font-medium leading-3 text-[#bcb4b4]"><span className="grid h-12 w-12 place-items-center rounded-full border border-[#353338] bg-[#111113] text-[#ff5967] transition hover:border-[#a24953] hover:bg-[#251b1e]"><Icon size={18} /></span>{label}</button>)}
       </section>
 
       {summary === "performance" && <section className="mx-5 mb-5 rounded-2xl border border-[#2b4637] bg-[#14231b] p-4">
