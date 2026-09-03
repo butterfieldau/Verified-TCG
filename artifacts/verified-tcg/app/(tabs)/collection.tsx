@@ -17,7 +17,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -227,6 +233,16 @@ export default function CollectionScreen() {
   const activePortfolioName = collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name
     ?? collectionLists.find(list => list.name.toLowerCase() === 'main')?.name
     ?? 'All Collection';
+  const summarySwitchWidth = Math.min(Math.max(screenWidth - 40, 240), 302);
+  const summaryThumbWidth = (summarySwitchWidth - 8) / 2;
+  const summaryThumbTravel = summaryThumbWidth + 2;
+  const summaryThumbProgress = useSharedValue(portfolioSummaryMode === 'performance' ? 1 : 0);
+  useEffect(() => {
+    summaryThumbProgress.value = withTiming(portfolioSummaryMode === 'performance' ? 1 : 0, { duration: 280 });
+  }, [portfolioSummaryMode, summaryThumbProgress]);
+  const summaryThumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: summaryThumbProgress.value * summaryThumbTravel }],
+  }), [summaryThumbProgress, summaryThumbTravel]);
 
   // True only on the very first load when we have no data at all yet
   const initialLoading = collectionLoading && collection.length === 0;
@@ -397,7 +413,16 @@ export default function CollectionScreen() {
                       : 'Add recorded acquisition costs to establish performance.'}
                   </Text>
                 )}
-                <View style={styles.summarySwitch} accessibilityRole="tablist" accessibilityLabel="Portfolio summary">
+                <View style={[styles.summarySwitch, { width: summarySwitchWidth }]} accessibilityRole="tablist" accessibilityLabel="Portfolio summary">
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.summaryThumb,
+                      { width: summaryThumbWidth },
+                      portfolioSummaryMode === 'performance' && styles.summaryThumbPerformance,
+                      summaryThumbStyle,
+                    ]}
+                  />
                   {([
                     { value: 'worth' as const, label: 'Worth', accessibilityLabel: 'Portfolio worth' },
                     { value: 'performance' as const, label: 'Performance', accessibilityLabel: 'Performance' },
@@ -429,7 +454,7 @@ export default function CollectionScreen() {
               </View>
 
               {portfolioSummaryMode === 'performance' && (
-                <Animated.View entering={FadeInDown.duration(280)} style={styles.performanceSection}>
+                <Animated.View entering={FadeInDown.duration(360)} layout={LinearTransition.duration(360)} style={styles.performanceSection}>
                   <View style={styles.performanceHeader}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.performanceKicker}>PERFORMANCE · {performanceRange}</Text>
@@ -1202,6 +1227,7 @@ const styles = StyleSheet.create({
   valueVisibilityButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#2A2A2C', alignItems: 'center', justifyContent: 'center' },
   portfolioUnavailableNote: { marginTop: 2, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
   summarySwitch: {
+    position: 'relative',
     flexDirection: 'row',
     width: 302,
     maxWidth: '100%',
@@ -1213,6 +1239,17 @@ const styles = StyleSheet.create({
     borderColor: '#383238',
     backgroundColor: '#19191C',
   },
+  summaryThumb: {
+    position: 'absolute',
+    left: 3,
+    top: 3,
+    bottom: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#71323A',
+    backgroundColor: '#3D2429',
+  },
+  summaryThumbPerformance: { borderColor: '#2B6045', backgroundColor: '#193326' },
   summaryTab: { flex: 1, borderRadius: 999, alignItems: 'center', paddingVertical: 9 },
   summaryTabActive: { backgroundColor: '#3D2429', borderWidth: 1, borderColor: '#71323A' },
   summaryTabPerformanceActive: { backgroundColor: '#193326', borderColor: '#2B6045' },
