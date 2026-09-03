@@ -396,6 +396,16 @@ export default function HomeScreen() {
   const portfolioRequestGeneration = useRef(0);
 
   const performanceRange: PerformanceRange = portfolioRange;
+  const collectionValuationRevision = React.useMemo(
+    () => collection.map(item => [
+      item.id,
+      item.quantity,
+      item.valuation?.price ?? null,
+      item.valuation?.currency ?? null,
+      item.valuation?.updatedAt ?? null,
+    ].join(':')).join('|'),
+    [collection],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -417,7 +427,7 @@ export default function HomeScreen() {
         if (generation === portfolioRequestGeneration.current) setServerPerformance(performance);
       })
       .catch(() => {});
-  }, [isAuthenticated, currency, performanceRange]);
+  }, [isAuthenticated, currency, performanceRange, collectionValuationRevision]);
 
   // Chart tooltip state
   const [activeChartPoint, setActiveChartPoint] = useState<ChartPoint | null>(null);

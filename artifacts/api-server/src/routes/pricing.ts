@@ -13,6 +13,7 @@ import {
   getPricing,
   getPricingMappingState,
   refreshPricing,
+  refreshJustTcgRawHistory,
   getPriceHistory,
   importPriceChartingBulkGuide,
 } from "../pricing/service.js";
@@ -171,6 +172,11 @@ router.post("/pricing/cards/:id/refresh", requireActiveUser, pricingRefreshLimit
     : "AUD";
 
   try {
+    // Raw pricing uses the card's exact JustTCG public id and must not wait for
+    // PriceCharting identity resolution. Persist it first so Collection/Home
+    // can recover their valuations even if the graded provider is unavailable.
+    await refreshJustTcgRawHistory(cardId);
+
     const mapping = await getPricingMappingState(cardId);
     if (!mapping && !name) {
       res.status(400).json({ message: "name is required for first-time matching (body or query)" });
