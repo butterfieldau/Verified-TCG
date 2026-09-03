@@ -17,7 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { GradeBadge } from '@/components/ui/Badge';
 import { CardImage } from '@/components/ui/CardImage';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -124,6 +124,7 @@ export default function CollectionScreen() {
   // Server summary for authoritative totals
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
   const [portfolioSummaryMode, setPortfolioSummaryMode] = useState<PortfolioSummaryMode>('worth');
+  const [valuesVisible, setValuesVisible] = useState(true);
   const [performanceRange, setPerformanceRange] = useState<PerformanceRange>('7D');
   const [historyPoints, setHistoryPoints] = useState<PerformancePoint[]>([]);
   const [historyAvailable, setHistoryAvailable] = useState(false);
@@ -215,6 +216,9 @@ export default function CollectionScreen() {
   );
 
   const hasMore = displayCount < filteredItems.length;
+  const activePortfolioName = collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name
+    ?? collectionLists.find(list => list.name.toLowerCase() === 'main')?.name
+    ?? 'All Collection';
 
   // True only on the very first load when we have no data at all yet
   const initialLoading = collectionLoading && collection.length === 0;
@@ -271,6 +275,15 @@ export default function CollectionScreen() {
     if (!hasMore || collectionLoading) return;
     setDisplayCount(prev => prev + PAGE_SIZE);
   }, [hasMore, collectionLoading]);
+  const openListSheet = useCallback(() => {
+    setListSheetOpen(true);
+    collectionLists.forEach(list => {
+      setListSubtotals(current => ({ ...current, [list.id]: current[list.id] === undefined ? null : current[list.id] }));
+      void fetchCollectionListSubtotal(list.id, currency)
+        .then(value => setListSubtotals(current => ({ ...current, [list.id]: value })))
+        .catch(() => setListSubtotals(current => ({ ...current, [list.id]: null })));
+    });
+  }, [collectionLists, currency]);
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds(current => {
       const next = new Set(current);
@@ -328,7 +341,6 @@ export default function CollectionScreen() {
 
         {(() => {
           const totalValue = serverSummary?.totalValue ?? null;
-          const totalCost = serverSummary?.totalCost ?? null;
           const fullGain = serverSummary?.unrealizedGain ?? null;
           const partialGain = serverSummary?.partialUnrealizedGain ?? null;
           const gain = fullGain ?? partialGain;
@@ -337,7 +349,6 @@ export default function CollectionScreen() {
             : serverSummary?.partialUnrealizedGainPercent ?? null;
           const gainIsPartial = fullGain === null && partialGain !== null;
           const gainColor = (gain ?? 0) >= 0 ? C.positive : C.negative;
-          const ownedCount = serverSummary?.cardCount ?? collection.reduce((total, item) => total + item.quantity, 0);
           const chartPoints = historyPoints.filter(point => point.value !== null && point.available !== false);
           const chartMax = Math.max(...chartPoints.map(point => point.value ?? 0), 1);
           const latestPoint = chartPoints[chartPoints.length - 1];
@@ -347,11 +358,45 @@ export default function CollectionScreen() {
 
           return (
             <>
-              <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioCard}>
+              <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioSummary}>
+                <Pressable onPress={openListSheet} style={styles.portfolioNameRow} accessibilityRole="button" accessibilityLabel={`Change portfolio, current portfolio ${activePortfolioName}`}>
+                  <Text style={styles.portfolioName}>
+                    Portfolio: <Text style={styles.portfolioNameActive}>{activePortfolioName}</Text>
+                  </Text>
+                  <Feather name="chevron-down" size={14} color={C.mutedForeground} />
+                </Pressable>
+                <View style={styles.portfolioAmountRow}>
+                  <Text style={[
+                    styles.portfolioAmount,
+                    portfolioSummaryMode === 'performance' && gain !== null && { color: gainColor },
+                  ]}>
+                    {!valuesVisible
+                      ? '••••••'
+                      : portfolioSummaryMode === 'worth'
+                        ? totalValue === null ? 'VALUE UNAVAILABLE' : money(totalValue)
+                        : gain === null ? 'PERFORMANCE UNAVAILABLE' : signedMoney(gain)}
+                  </Text>
+                  <Text style={styles.portfolioCurrency}>{portfolioCurrency}</Text>
+                  <Pressable
+                    onPress={() => setValuesVisible(current => !current)}
+                    style={styles.valueVisibilityButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={valuesVisible ? 'Hide portfolio value' : 'Show portfolio value'}
+                  >
+                    <Feather name={valuesVisible ? 'eye' : 'eye-off'} size={14} color={C.mutedForeground} />
+                  </Pressable>
+                </View>
+                {valuesVisible && ((portfolioSummaryMode === 'worth' && totalValue === null) || (portfolioSummaryMode === 'performance' && gain === null)) && (
+                  <Text style={styles.portfolioUnavailableNote}>
+                    {portfolioSummaryMode === 'worth'
+                      ? 'Collection valuation unavailable'
+                      : 'Add recorded acquisition costs to establish performance.'}
+                  </Text>
+                )}
                 <View style={styles.summarySwitch} accessibilityRole="tablist" accessibilityLabel="Portfolio summary">
                   {([
-                    { value: 'worth' as const, label: 'Portfolio worth' },
-                    { value: 'performance' as const, label: 'Performance' },
+                    { value: 'worth' as const, label: 'Worth', accessibilityLabel: 'Portfolio worth' },
+                    { value: 'performance' as const, label: 'Performance', accessibilityLabel: 'Performance' },
                   ]).map(option => {
                     const selected = portfolioSummaryMode === option.value;
                     return (
@@ -359,76 +404,37 @@ export default function CollectionScreen() {
                         key={option.value}
                         testID={`collection-summary-${option.value}`}
                         onPress={() => setPortfolioSummaryMode(option.value)}
-                        style={[styles.summaryTab, selected && styles.summaryTabActive]}
+                        style={[
+                          styles.summaryTab,
+                          selected && styles.summaryTabActive,
+                          selected && option.value === 'performance' && styles.summaryTabPerformanceActive,
+                        ]}
                         accessibilityRole="tab"
-                        accessibilityLabel={option.label}
+                        accessibilityLabel={option.accessibilityLabel}
                         accessibilityState={{ selected }}
                       >
-                        <Text style={[styles.summaryTabText, selected && styles.summaryTabTextActive]}>{option.label}</Text>
+                        <Text style={[
+                          styles.summaryTabText,
+                          selected && styles.summaryTabTextActive,
+                          selected && option.value === 'performance' && styles.summaryTabTextPerformanceActive,
+                        ]}>{option.label}</Text>
                       </Pressable>
                     );
                   })}
                 </View>
-                <View style={styles.portfolioHero}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.portfolioLabel}>
-                      {portfolioSummaryMode === 'worth' ? 'Collection value' : 'Gain against purchase cost'}
-                    </Text>
-                    {portfolioSummaryMode === 'worth' && totalValue !== null ? (
-                      <Text style={styles.portfolioValue}>{money(totalValue)}</Text>
-                    ) : portfolioSummaryMode === 'performance' && gain !== null ? (
-                      <Text style={[styles.portfolioValue, { color: gainColor }]}>{signedMoney(gain)}</Text>
-                    ) : (
-                      <Text style={styles.portfolioUnavailable}>VALUE UNAVAILABLE</Text>
-                    )}
-                    <Text style={styles.portfolioContext}>
-                      {portfolioSummaryMode === 'worth'
-                        ? serverSummary?.completeness ?? 'Collection valuation unavailable'
-                        : gain === null
-                          ? 'Add recorded acquisition costs to establish performance.'
-                          : `${gainIsPartial ? 'Partial coverage · ' : ''}${gainPercent === null ? 'Return unavailable' : `${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}% return`}`}
-                    </Text>
-                  </View>
-                  <View style={[styles.portfolioIcon, { backgroundColor: `${portfolioSummaryMode === 'performance' ? gainColor : C.primary}22` }]}>
-                    <Feather name={portfolioSummaryMode === 'worth' ? 'briefcase' : gain !== null && gain >= 0 ? 'trending-up' : 'trending-down'} size={18} color={portfolioSummaryMode === 'performance' ? gainColor : C.primary} />
-                  </View>
-                </View>
-                <Text style={styles.portfolioCoverage}>
-                  {serverSummary ? `${serverSummary.coverage.pricedHoldings} of ${serverSummary.coverage.totalHoldings} holdings priced` : 'Server portfolio summary unavailable'}
-                </Text>
               </Animated.View>
-
-              <View style={styles.metricGrid}>
-                <View style={styles.metricCard}>
-                  <View style={styles.metricHeading}>
-                    <Text style={styles.metricLabel}>{portfolioSummaryMode === 'worth' ? 'Net performance' : 'Cost basis'}</Text>
-                    <Feather name={portfolioSummaryMode === 'worth' ? 'trending-up' : 'dollar-sign'} size={15} color={portfolioSummaryMode === 'worth' ? gainColor : C.bgsBadge} />
-                  </View>
-                  <Text style={[styles.metricValue, portfolioSummaryMode === 'worth' && gain !== null && { color: gainColor }]}>
-                    {portfolioSummaryMode === 'worth'
-                      ? gain === null ? 'Unavailable' : signedMoney(gain)
-                      : totalCost === null ? 'Unavailable' : money(totalCost)}
-                  </Text>
-                  <Text style={styles.metricSubtext}>
-                    {portfolioSummaryMode === 'worth'
-                      ? gainIsPartial ? 'Price and cost coverage is partial' : gainPercent === null ? 'Return unavailable' : `${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}% since purchase`
-                      : totalCost === null ? 'Recorded costs unavailable' : 'Recorded acquisition cost'}
-                  </Text>
-                </View>
-                <View style={styles.metricCard}>
-                  <View style={styles.metricHeading}>
-                    <Text style={styles.metricLabel}>Cards owned</Text>
-                    <Feather name="layers" size={15} color={C.warning} />
-                  </View>
-                  <Text style={styles.metricValue}>{ownedCount}</Text>
-                  <Text style={styles.metricSubtext}>{serverSummary?.uniqueCardCount ?? 0} unique holdings</Text>
-                </View>
-              </View>
 
               {portfolioSummaryMode === 'performance' && (
                 <Animated.View entering={FadeInDown.duration(280)} style={styles.performanceSection}>
-                  <Text style={styles.performanceKicker}>PERFORMANCE</Text>
-                  <Text style={styles.performanceTitle}>PORTFOLIO HISTORY</Text>
+                  <View style={styles.performanceHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.performanceKicker}>PERFORMANCE · {performanceRange}</Text>
+                      <Text style={[styles.performanceValue, gain !== null && { color: gainColor }]}>
+                        {gain === null ? 'Unavailable' : `${signedMoney(gain)}${gainPercent === null ? '' : ` (${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}%)`}`}
+                      </Text>
+                    </View>
+                    <Feather name={gain !== null && gain < 0 ? 'trending-down' : 'trending-up'} size={20} color={gainColor} />
+                  </View>
                   <View style={styles.rangeControl}>
                     {PERFORMANCE_RANGES.map(range => {
                       const selected = performanceRange === range;
@@ -448,7 +454,7 @@ export default function CollectionScreen() {
                       </View>
                       <View style={styles.historyMeta}>
                         <Text style={styles.historyValue}>{latestPoint?.value === null || latestPoint?.value === undefined ? 'Unavailable' : money(latestPoint.value)}</Text>
-                        <Text style={styles.historySync}>{historyLabel ? `Latest server sample · ${historyLabel}` : 'Latest server sample'}</Text>
+                        <Text style={styles.historySync}>{historyLabel ? `Latest server sample · ${historyLabel}` : 'Latest server sample'}{gainIsPartial ? ' · partial coverage' : ''}</Text>
                       </View>
                     </View>
                   ) : (
@@ -468,18 +474,10 @@ export default function CollectionScreen() {
             <Text style={styles.libraryKicker}>THE VAULT</Text>
             <View style={styles.libraryTitleRow}>
               <Text style={styles.libraryTitle}>YOUR CARDS</Text>
-              <Text style={styles.libraryCount}>· {collection.length}</Text>
+              <Text style={styles.libraryCount}>· {filteredItems.length}</Text>
             </View>
           </View>
           <View style={styles.toolbarActions}>
-            <Pressable
-              style={styles.addCardButton}
-              onPress={() => router.push('/add-card')}
-              accessibilityRole="button"
-              accessibilityLabel="Add a card"
-            >
-              <Feather name="plus" size={17} color="#F5F0E6" />
-            </Pressable>
             <View style={styles.viewToggle}>
               {(['grid', 'list'] as const).map(mode => (
                 <Pressable
@@ -494,6 +492,14 @@ export default function CollectionScreen() {
                 </Pressable>
               ))}
             </View>
+            <Pressable
+              style={styles.addCardButton}
+              onPress={() => router.push('/add-card')}
+              accessibilityRole="button"
+              accessibilityLabel="Add a card"
+            >
+              <Feather name="plus" size={18} color={C.foreground} />
+            </Pressable>
           </View>
         </View>
         <View style={styles.collectionControls}>
@@ -505,7 +511,7 @@ export default function CollectionScreen() {
                 setQuery(value);
                 resetWindow();
               }}
-              placeholder="Search card, set or number"
+              placeholder="Search your collection"
               placeholderTextColor="#656166"
               style={styles.searchInput}
               returnKeyType="search"
@@ -527,7 +533,7 @@ export default function CollectionScreen() {
         </View>
         <View style={styles.organizerSummary}>
           <Text style={styles.sheetMeta}>
-            {filteredItems.length} results · {SORT_LABELS[sortBy]} · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+            {filteredItems.length} results · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'} · values are partial where noted
           </Text>
           {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all' || collectionOrganizerPreferences.selectedListId) && (
             <Pressable onPress={() => { setActiveFilter('all'); setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); }}>
@@ -665,6 +671,8 @@ export default function CollectionScreen() {
 
   function renderCardGrid(item: CollectionItem) {
     const isSaved = watchlist.some(entry => entry.cardId === item.card.id);
+    const gain = item.valuation?.gain == null ? null : item.valuation.gain * item.quantity;
+    const gainCurrency = item.valuation?.currency ?? item.currency;
     return (
       <Pressable
         style={[styles.gridItem, { width: gridItemWidth }, selectedIds.has(item.id) && { borderColor: C.primary, borderWidth: 2, borderRadius: gridCardRadius }]}
@@ -716,19 +724,34 @@ export default function CollectionScreen() {
             accessibilityRole="button"
             accessibilityLabel={`${isSaved ? 'Remove' : 'Save'} ${item.card.name} ${isSaved ? 'from' : 'to'} wishlist`}
           >
-            <Text style={[styles.saveButtonText, isSaved && styles.saveButtonTextActive]}>
-              {isSaved ? 'SAVED' : 'SAVE'}
-            </Text>
+            <Feather name="heart" size={14} color={C.foreground} />
           </Pressable>
           <View style={styles.gridOverlay}>
             <Text style={styles.gridName} numberOfLines={1}>{item.card.name}</Text>
             <Text style={styles.gridMeta} numberOfLines={1}>{item.card.setName} · {item.card.number}</Text>
+          </View>
+        </View>
+        <View style={styles.gridValueRow}>
+          <View style={{ flex: 1 }}>
             <Text style={styles.gridPrice}>
               {holdingValue(item) != null
-                ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU')}`
+                ? `${item.valuation!.currency} ${holdingValue(item)!.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                 : 'VALUE UNAVAILABLE'}
             </Text>
+            <Text style={[styles.gridGain, gain !== null && { color: gain >= 0 ? C.positive : C.negative }]}>
+              {gain === null
+                ? 'Gain unavailable'
+                : `${gain >= 0 ? '+' : '-'}${gainCurrency} ${Math.abs(gain).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            </Text>
           </View>
+          <View style={styles.gridStatusColumn}>
+            {item.isForSale && <Text style={[styles.gridStatus, styles.gridStatusSale]}>FOR SALE</Text>}
+            {item.isForTrade && <Text style={[styles.gridStatus, styles.gridStatusTrade]}>FOR TRADE</Text>}
+          </View>
+        </View>
+        <View style={styles.passportLink}>
+          <Text style={styles.passportLinkText}>View passport</Text>
+          <Feather name="external-link" size={11} color={C.mutedForeground} />
         </View>
       </Pressable>
     );
@@ -1140,7 +1163,8 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 0,
     marginBottom: 0,
-    minHeight: 42,
+    minHeight: 48,
+    borderRadius: 999,
   },
   searchInput: {
     flex: 1,
@@ -1158,66 +1182,38 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     fontSize: 10,
   },
-  portfolioCard: {
-    marginHorizontal: 20,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#3B2A2D',
-    backgroundColor: C.surfaceRaised,
-    padding: 14,
-    shadowColor: '#000000',
-    shadowOpacity: 0.28,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
+  portfolioSummary: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 2, paddingBottom: 16 },
+  portfolioNameRow: { flexDirection: 'row', alignItems: 'center', gap: 3, minHeight: 25 },
+  portfolioName: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  portfolioNameActive: { color: C.primary },
+  portfolioAmountRow: { marginTop: 2, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  portfolioAmount: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 37, lineHeight: 41, letterSpacing: -1 },
+  portfolioCurrency: { color: C.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  valueVisibilityButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#2A2A2C', alignItems: 'center', justifyContent: 'center' },
+  portfolioUnavailableNote: { marginTop: 2, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
   summarySwitch: {
     flexDirection: 'row',
-    gap: 3,
+    width: 302,
+    maxWidth: '100%',
+    gap: 2,
     padding: 3,
-    borderRadius: 10,
+    marginTop: 9,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#3B2A2D',
-    backgroundColor: '#0D0D0F',
+    borderColor: '#383238',
+    backgroundColor: '#19191C',
   },
-  summaryTab: { flex: 1, borderRadius: 7, alignItems: 'center', paddingVertical: 9 },
-  summaryTabActive: { backgroundColor: '#3A2225', borderWidth: 1, borderColor: '#7D2F39' },
-  summaryTabText: { color: '#8D8588', fontFamily: 'Inter_700Bold', fontSize: 10 },
+  summaryTab: { flex: 1, borderRadius: 999, alignItems: 'center', paddingVertical: 9 },
+  summaryTabActive: { backgroundColor: '#3D2429', borderWidth: 1, borderColor: '#71323A' },
+  summaryTabPerformanceActive: { backgroundColor: '#193326', borderColor: '#2B6045' },
+  summaryTabText: { color: '#8D8588', fontFamily: 'Inter_500Medium', fontSize: 17 },
   summaryTabTextActive: { color: '#FFF8F2' },
-  portfolioHero: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 17, gap: 12 },
-  portfolioLabel: {
-    color: '#B2A4A5',
-    fontFamily: 'Inter_500Medium',
-    fontSize: 11,
-  },
-  portfolioValue: {
-    marginTop: 4,
-    color: '#FFF8F2',
-    fontFamily: 'Inter_700Bold',
-    fontSize: 29,
-    lineHeight: 34,
-    letterSpacing: -1.5,
-  },
-  portfolioUnavailable: {
-    marginTop: 8,
-    color: '#AA888C',
-    fontFamily: 'Inter_700Bold',
-    fontSize: 14,
-    letterSpacing: 0.5,
-  },
-  portfolioContext: { marginTop: 4, color: '#B2A4A5', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16 },
-  portfolioIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  portfolioCoverage: { marginTop: 14, paddingTop: 11, borderTopWidth: 1, borderTopColor: '#3B2A2D', color: '#7D7A7D', fontFamily: 'Inter_400Regular', fontSize: 10 },
-  metricGrid: { flexDirection: 'row', gap: 10, marginTop: 12, marginHorizontal: 20 },
-  metricCard: { flex: 1, minHeight: 116, borderWidth: 1, borderColor: '#29282B', borderRadius: 16, backgroundColor: C.surfaceRaised, padding: 13 },
-  metricHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
-  metricLabel: { flex: 1, color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 0.75, textTransform: 'uppercase' },
-  metricValue: { marginTop: 11, color: '#F4F1E8', fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4 },
-  metricSubtext: { marginTop: 4, color: '#7D7A7D', fontFamily: 'Inter_400Regular', fontSize: 10, lineHeight: 14 },
-  performanceSection: { marginTop: 24, marginHorizontal: 20 },
-  performanceKicker: { color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.3 },
-  performanceTitle: { marginTop: 2, color: '#F4F1E8', fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: 0.2 },
-  rangeControl: { flexDirection: 'row', marginTop: 10, padding: 3, gap: 2, borderRadius: 9, backgroundColor: C.surfaceRaised },
+  summaryTabTextPerformanceActive: { color: C.positive },
+  performanceSection: { marginHorizontal: 20, marginBottom: 4, borderWidth: 1, borderColor: '#2B4637', borderRadius: 16, backgroundColor: '#14231B', padding: 14 },
+  performanceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  performanceKicker: { color: '#86A892', fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.3 },
+  performanceValue: { marginTop: 4, color: C.positive, fontFamily: 'Inter_700Bold', fontSize: 17 },
+  rangeControl: { flexDirection: 'row', marginTop: 10, padding: 3, gap: 2, borderRadius: 9, backgroundColor: '#0E1712' },
   rangeButton: { flex: 1, alignItems: 'center', borderRadius: 6, paddingVertical: 7 },
   rangeButtonActive: { backgroundColor: C.primary },
   rangeText: { color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 10 },
@@ -1231,23 +1227,25 @@ const styles = StyleSheet.create({
   historyUnavailable: { minHeight: 74, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#29282B', borderRadius: 13, backgroundColor: C.surfaceRaised, paddingHorizontal: 14 },
   historyUnavailableText: { flex: 1, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16 },
   libraryToolbar: {
-    marginTop: 26,
-    paddingHorizontal: 20,
+    marginTop: 16,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   libraryHeadingBlock: { flexShrink: 1 },
-  libraryKicker: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.4 },
+  libraryKicker: { color: C.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.6 },
   libraryTitleRow: { marginTop: 2, flexDirection: 'row', alignItems: 'baseline', gap: 6 },
-  libraryTitle: { color: '#F5F0E6', fontFamily: 'Rajdhani_700Bold', fontSize: 25, letterSpacing: -0.25 },
-  libraryCount: { color: '#777278', fontFamily: 'Inter_700Bold', fontSize: 12 },
+  libraryTitle: { color: '#F5F0E6', fontFamily: 'Rajdhani_700Bold', fontSize: 28, letterSpacing: -0.25 },
+  libraryCount: { color: '#777278', fontFamily: 'Inter_400Regular', fontSize: 13 },
   toolbarActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   addCardButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: C.primary,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1,
+    borderColor: '#303035',
+    backgroundColor: '#151517',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1255,13 +1253,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginHorizontal: 20,
+    marginHorizontal: 16,
     marginTop: 13,
   },
   controlIconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: '#29282B',
     backgroundColor: '#18181B',
@@ -1280,8 +1278,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   sortText: { color: '#9E999D', fontFamily: 'Inter_700Bold', fontSize: 10 },
-  viewToggle: { flexDirection: 'row', gap: 2, borderRadius: 8, backgroundColor: '#18181B', padding: 3 },
-  viewButton: { width: 25, height: 24, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  viewToggle: { flexDirection: 'row', gap: 2, borderWidth: 1, borderColor: '#303035', borderRadius: 7, backgroundColor: '#151517', padding: 3 },
+  viewButton: { width: 32, height: 32, borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
   viewButtonActive: { backgroundColor: '#383438' },
   filterRow: { gap: 7, paddingHorizontal: 20, paddingTop: 13, paddingBottom: 14 },
   filterChip: {
@@ -1298,8 +1296,8 @@ const styles = StyleSheet.create({
   filterChipActive: { borderColor: '#7D2F39', backgroundColor: '#441C23' },
   filterText: { color: '#89858A', fontFamily: 'Inter_700Bold', fontSize: 10 },
   filterTextActive: { color: '#FF9CA4' },
-  gridCellLeft: { paddingLeft: 20, paddingRight: 6, paddingBottom: 12 },
-  gridCellRight: { paddingLeft: 6, paddingRight: 20, paddingBottom: 12 },
+  gridCellLeft: { paddingLeft: 16, paddingRight: 6, paddingBottom: 24 },
+  gridCellRight: { paddingLeft: 6, paddingRight: 16, paddingBottom: 24 },
   gridItem: { width: '100%' },
   gridArt: {
     width: '100%',
@@ -1326,13 +1324,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 5,
   },
-  saveButtonActive: { borderColor: '#AD3B49', backgroundColor: '#5A202A' },
-  saveButtonText: { color: '#FFF', fontFamily: 'Inter_700Bold', fontSize: 8, letterSpacing: 0.4 },
-  saveButtonTextActive: { color: '#FFB3B8' },
+  saveButtonActive: { borderColor: C.primary, backgroundColor: C.primary },
   gridOverlay: { position: 'absolute', left: 10, right: 10, bottom: 9 },
   gridName: { color: '#F3EEE5', fontFamily: 'Inter_700Bold', fontSize: 13 },
   gridMeta: { marginTop: 2, color: '#AAA2A6', fontFamily: 'Inter_400Regular', fontSize: 9 },
-  gridPrice: { marginTop: 5, color: '#FF9098', fontFamily: 'Inter_700Bold', fontSize: 12 },
+  gridValueRow: { marginTop: 9, minHeight: 34, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 4 },
+  gridPrice: { color: C.foreground, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  gridGain: { marginTop: 2, color: C.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10 },
+  gridStatusColumn: { alignItems: 'flex-end', gap: 3 },
+  gridStatus: { overflow: 'hidden', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 4, fontFamily: 'Inter_700Bold', fontSize: 8 },
+  gridStatusSale: { color: '#FF9CA4', backgroundColor: `${C.primary}1F` },
+  gridStatusTrade: { color: C.warning, backgroundColor: `${C.warning}1F` },
+  passportLink: { marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  passportLinkText: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
   listCell: { marginHorizontal: 20, marginBottom: 9 },
   itemRow: {
     flexDirection: 'row',
