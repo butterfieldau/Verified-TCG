@@ -74,6 +74,16 @@ export function chartXForIndex(
 }
 
 /**
+ * SVG paths need at least two coordinates. When the portfolio has one real
+ * retained value, display that value across the selected range as a flat
+ * baseline. This is presentation-only: it does not add a historic observation
+ * or claim that the price was unchanged before it was retained.
+ */
+export function getHomeChartRenderPoints<T>(points: T[]): T[] {
+  return points.length === 1 ? [points[0]!, points[0]!] : points;
+}
+
+/**
  * Do not let an account-creation zero or unavailable samples create an empty
  * leading span before the first real market observation. The baseline is an
  * ownership event, not a price, so including it would manufacture a portfolio

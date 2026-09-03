@@ -9,6 +9,7 @@ import {
   getHomePortfolioValueState,
   getHomePortfolioGain,
   chartXForIndex,
+  getHomeChartRenderPoints,
   getRenderableHomeChartPoints,
 } from '../services/homePortfolio';
 import { createRequestDeduper } from '../services/requestDeduper';
@@ -142,6 +143,13 @@ describe('home portfolio view models', () => {
     expect(chartXForIndex(0, 3, 320)).toBe(0);
     expect(chartXForIndex(2, 3, 320)).toBe(320);
     expect(chartXForIndex(0, 1, 320)).toBe(0);
+  });
+
+  it('renders a single verified baseline across the chart without inventing another observation', () => {
+    const point = { date: '2025-01-01', value: 100, currency: 'AUD' };
+    expect(getHomeChartRenderPoints([point])).toEqual([point, point]);
+    expect(getHomeChartRenderPoints([point, { ...point, date: '2025-01-02', value: 110 }]))
+      .toHaveLength(2);
   });
 
   it('removes only leading unavailable samples from the drawable chart', () => {

@@ -58,6 +58,7 @@ import {
   getHomePortfolioValueState,
   getHomePortfolioGain,
   chartXForIndex,
+  getHomeChartRenderPoints,
 } from '@/services/homePortfolio';
 import { getMarketFeed, type MarketTab } from '@/services/marketFeed';
 import { CardImage } from '@/components/ui/CardImage';
@@ -140,8 +141,12 @@ function InteractiveChart({
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const gestureActive = useRef(false);
+  // A single verified observation is rendered as a full-width flat baseline,
+  // rather than a centre/edge dot. It remains labelled as a baseline below;
+  // this adds no synthetic historical price data.
+  const renderData = getHomeChartRenderPoints(data);
 
-  const vals = data.flatMap(d => d.value == null ? [] : [d.value]);
+  const vals = renderData.flatMap(d => d.value == null ? [] : [d.value]);
   const minV = vals.length > 0 ? Math.min(...vals) : 0;
   const maxV = vals.length > 0 ? Math.max(...vals) : 1;
   const rangeV = maxV - minV;
@@ -152,9 +157,9 @@ function InteractiveChart({
   const gradId = 'chartGreen';
 
   // Map data index → pixel x
-  const xOf = (i: number) => chartXForIndex(i, data.length, width, padL, padR);
+  const xOf = (i: number) => chartXForIndex(i, renderData.length, width, padL, padR);
   // Map value → pixel y
-  const yOf = (v: number) => data.length === 1 || rangeV === 0
+  const yOf = (v: number) => renderData.length === 1 || rangeV === 0
     ? (padT + (height - padB)) / 2
     : padT + (1 - (v - minV) / rangeV) * (height - padT - padB);
 
@@ -162,7 +167,7 @@ function InteractiveChart({
   function buildPath() {
     let path = '';
     let previousAvailable = false;
-    data.forEach((point, index) => {
+    renderData.forEach((point, index) => {
       if (point.value == null || point.available === false) {
         previousAvailable = false;
         return;
@@ -187,7 +192,7 @@ function InteractiveChart({
       }
       segment = [];
     };
-    data.forEach((point, index) => {
+    renderData.forEach((point, index) => {
       if (point.value == null || point.available === false) {
         flush();
       } else {
@@ -199,13 +204,13 @@ function InteractiveChart({
   }
 
   function handleTouch(touchX: number) {
-    const n = data.length;
+    const n = renderData.length;
     if (n === 0) return;
     const usableWidth = Math.max(width - padL - padR, 1);
     const ratio = Math.max(0, Math.min(1, (touchX - padL) / usableWidth));
     const idx = Math.min(Math.round(ratio * (n - 1)), n - 1);
     setActiveIndex(idx);
-    onPointSelect(data[idx]!);
+    onPointSelect(renderData[idx]!);
   }
 
   const finishGesture = useCallback(() => {
@@ -236,13 +241,13 @@ function InteractiveChart({
     // page midway through a drag.
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
-  }), [data, width, finishGesture, onInteractionStart]);
+  }), [renderData, width, finishGesture, onInteractionStart]);
 
   useEffect(() => finishGesture, [finishGesture]);
 
   const linePath = buildPath();
   const areaPath = buildArea();
-  const activePoint = activeIndex !== null ? data[activeIndex] : null;
+  const activePoint = activeIndex !== null ? renderData[activeIndex] : null;
   const activeX = activeIndex !== null ? xOf(activeIndex) : null;
   const activeY = activePoint?.value != null ? yOf(activePoint.value) : null;
 
@@ -272,25 +277,6 @@ function InteractiveChart({
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-
-        {/* One provider observation is a baseline, not a historical trend. */}
-        {data.length === 1 && data[0]!.value != null && (
-          <>
-            <SvgLine
-              x1={padL + 18}
-              y1={yOf(data[0]!.value!)}
-              x2={width - padR - 18}
-              y2={yOf(data[0]!.value!)}
-              stroke={chartColor}
-              strokeWidth={2}
-              strokeDasharray="5,7"
-              opacity={0.45}
-            />
-            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
-            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
-            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
-          </>
-        )}
 
         {/* Crosshair */}
         {activeX !== null && activeY !== null && (
