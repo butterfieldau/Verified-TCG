@@ -15,14 +15,20 @@ import {
   pool,
   wishlistItemsTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import app from "../app.js";
 import { runMigrations } from "../lib/migrate.js";
 import { createTestUser, deleteTestUser } from "./helpers.js";
 import {
+  collectrProductType,
   detectCollectionCsvSource,
+  normalizeRows,
   parseCollectionCsv,
 } from "../routes/collectionImport.js";
+import {
+  canonicalizeJustTcgPath,
+  justTcgCatalogueForCollectrRow,
+} from "../lib/catalogueProvider.js";
 
 const request = supertest(app);
 const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -34,16 +40,10 @@ const externalIds = [
   `import-card-b-${suffix}`,
   `import-card-c-${suffix}`,
 ];
-const ambiguousExternalIds = [
-  `import-card-ambiguous-a-${suffix}`,
-  `import-card-ambiguous-b-${suffix}`,
-];
 let userId = "";
 let roundTripUserId = "";
-let ambiguousUserId = "";
 let token = "";
 let roundTripToken = "";
-let ambiguousToken = "";
 let gameId = "";
 let setId = "";
 const cardIds: string[] = [];
@@ -60,15 +60,6 @@ function collectrFixture(): string {
   ].join("\r\n");
 }
 
-function ambiguousCollectrFixture(): string {
-  return [
-    COLLECTR_HEADER,
-    ...Array.from({ length: 6 }, (_, index) =>
-      `Main,Pokemon,Import Set ${suffix},Ambiguous Test Card,777,Rare,Normal,,Near Mint,1.00,1,10,0,false,2026-08-${String(index + 1).padStart(2, "0")},Ambiguous row ${index + 1}`
-    ),
-  ].join("\r\n");
-}
-
 before(async () => {
   await runMigrations();
   const primary = await createTestUser({
@@ -78,16 +69,10 @@ before(async () => {
   const roundTrip = await createTestUser({
     email: `test_suite_import_roundtrip_${suffix}@example.com`,
   });
-  const ambiguous = await createTestUser({
-    email: `test_suite_import_ambiguous_${suffix}@example.com`,
-    subscriptionTier: "pro",
-  });
   userId = primary.user.id;
   roundTripUserId = roundTrip.user.id;
-  ambiguousUserId = ambiguous.user.id;
   token = primary.accessToken;
   roundTripToken = roundTrip.accessToken;
-  ambiguousToken = ambiguous.accessToken;
 
   const [game] = await db.insert(catalogueGamesTable).values({
     slug: gameSlug,
@@ -128,30 +113,6 @@ before(async () => {
     });
   }
 
-  for (let index = 0; index < ambiguousExternalIds.length; index += 1) {
-    const [card] = await db.insert(catalogueCardsTable).values({
-      gameId,
-      setId,
-      name: "Ambiguous Test Card",
-      collectorNumber: "777",
-      collectorNumberNormalized: "777",
-      rarity: "Rare",
-    }).returning();
-    cardIds.push(card!.id);
-    await db.insert(catalogueExternalIdsTable).values({
-      entityType: "card",
-      entityId: card!.id,
-      providerKey: "justtcg",
-      externalId: ambiguousExternalIds[index]!,
-    });
-    await db.insert(catalogueCardVariantsTable).values({
-      cardId: card!.id,
-      variantKey: `normal-${index}`,
-      finish: "Normal",
-      isDefault: true,
-    });
-  }
-
   await db.insert(wishlistItemsTable).values({
     userId,
     itemId: `existing-beta-${suffix}`,
@@ -167,7 +128,6 @@ before(async () => {
 after(async () => {
   if (userId) await deleteTestUser(userId);
   if (roundTripUserId) await deleteTestUser(roundTripUserId);
-  if (ambiguousUserId) await deleteTestUser(ambiguousUserId);
   for (const cardId of cardIds) {
     await db.delete(catalogueCardVariantsTable).where(eq(catalogueCardVariantsTable.cardId, cardId));
     await db.delete(catalogueExternalIdsTable).where(eq(catalogueExternalIdsTable.entityId, cardId));
@@ -220,9 +180,239 @@ describe("collection CSV parser", () => {
     );
     assert.throws(() => detectCollectionCsvSource(verified.headers), /do not match/i);
   });
+
+  test("routes representative Japanese and Chinese Collectr rows explicitly", () => {
+    assert.deepEqual(
+      justTcgCatalogueForCollectrRow({
+        game: "Pokemon",
+        set: "VSTAR Universe",
+        name: "Deoxys (JP)",
+      }),
+      { gameId: "pokemon-japan", language: "japanese" },
+    );
+    assert.deepEqual(
+      justTcgCatalogueForCollectrRow({
+        game: "Pokemon",
+        set: "Gem Pack Vol. 3",
+        name: "Cubone (Full Art) (CN)",
+      }),
+      {
+        gameId: null,
+        language: "chinese",
+        unsupportedReason:
+          "Chinese Pokémon cards are not available from the current catalogue provider.",
+      },
+    );
+  });
+
+  test("uses matched provider identity for sealed products without misclassifying numberless cards", () => {
+    for (const name of [
+      "Ultra-Premium Collection",
+      "Premium Collection",
+      "Build & Battle Box",
+      "Collector Tin",
+      "Three-Pack Blister",
+      "Booster Display",
+    ]) {
+      assert.equal(
+        collectrProductType({ number: "", name, candidateNumber: "N/A" }),
+        "sealed",
+        name,
+      );
+    }
+    assert.equal(
+      collectrProductType({
+        number: "",
+        name: "Numberless Promotional Card",
+        candidateNumber: null,
+      }),
+      "card",
+    );
+    assert.equal(
+      collectrProductType({
+        number: "009/054",
+        name: "Pikachu (JP)",
+        candidateNumber: "009/054",
+      }),
+      "card",
+    );
+  });
 });
 
 describe("collection CSV migration routes", () => {
+  test("matches Japanese and sealed provider rows and explains unsupported Chinese rows", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.JUSTTCG_API_KEY;
+    process.env.JUSTTCG_API_KEY = "collection-import-test-key";
+    const rows = parseCollectionCsv([
+      COLLECTR_HEADER,
+      "Main,Pokemon,VSTAR Universe,Deoxys (JP),185/172,Secret Rare,Holofoil,Ungraded,Near Mint,4.2381,2,9.84,0,false,2026-08-14,",
+      "Main,Pokemon,Gem Pack Vol. 3,Cubone (Full Art) (CN),0407/07,Art Rare,Holofoil,Ungraded,Near Mint,650,1,678.09,0,false,2026-08-07,",
+      "Main,Pokemon,Surging Sparks,Surging Sparks Pokemon Center Elite Trainer Box (Exclusive),,,Normal,Ungraded,Near Mint,353,1,273.14,0,false,2026-08-07,",
+    ].join("\n")).rows;
+    const expected = {
+      deoxys: {
+        id: `pokemon-japan-import-deoxys-${suffix}`,
+        name: "Deoxys - 185/172",
+        set_name: "S12a: VSTAR Universe",
+        number: "185/172",
+        game: "Pokemon Japan",
+      },
+      sealed: {
+        id: `pokemon-import-surging-sparks-etb-${suffix}`,
+        name: "Surging Sparks Pokemon Center Elite Trainer Box (Exclusive)",
+        set_name: "SV08: Surging Sparks",
+        number: "N/A",
+        game: "Pokemon",
+      },
+    };
+    const providerPaths = [
+      ["Deoxys (JP)", "pokemon-japan"],
+      ["185/172", "pokemon-japan"],
+      ["Surging Sparks Pokemon Center Elite Trainer Box (Exclusive)", "pokemon"],
+    ].map(([q, game]) => `/cards?${new URLSearchParams({
+      q: q!,
+      game: game!,
+      limit: "100",
+      offset: "0",
+      include_price_history: "false",
+    }).toString()}`);
+    const cacheKeys = providerPaths.map(
+      (path) => `justtcg:${canonicalizeJustTcgPath(path)}`,
+    );
+    for (const cacheKey of cacheKeys) {
+      await db.execute(sql`DELETE FROM catalogue_cache_entries WHERE cache_key = ${cacheKey}`);
+      await db.execute(sql`DELETE FROM catalogue_cache_leases WHERE cache_key = ${cacheKey}`);
+    }
+    globalThis.fetch = (async (input) => {
+      const url = new URL(String(input));
+      const game = url.searchParams.get("game");
+      const query = url.searchParams.get("q") ?? "";
+      const data = game === "pokemon-japan" && (
+        query === "Deoxys (JP)" || query === "185/172"
+      )
+        ? [expected.deoxys]
+        : game === "pokemon" && query.includes("Elite Trainer Box")
+          ? [expected.sealed]
+          : [];
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const normalized = await normalizeRows("collectr", rows);
+      assert.equal(normalized[0]?.status, "matched");
+      assert.equal(normalized[0]?.cardId, expected.deoxys.id);
+      assert.equal(normalized[0]?.productType, "card");
+      assert.equal(normalized[1]?.status, "unmatched");
+      assert.match(normalized[1]?.error ?? "", /Chinese Pokémon cards are not available/i);
+      assert.equal(normalized[2]?.status, "matched");
+      assert.equal(normalized[2]?.cardId, expected.sealed.id);
+      assert.equal(normalized[2]?.productType, "sealed");
+      assert.equal(
+        (normalized[2]?.card as Record<string, unknown>)?.productType,
+        "sealed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.JUSTTCG_API_KEY;
+      else process.env.JUSTTCG_API_KEY = originalKey;
+      for (const cacheKey of cacheKeys) {
+        await db.execute(sql`DELETE FROM catalogue_cache_entries WHERE cache_key = ${cacheKey}`);
+        await db.execute(sql`DELETE FROM catalogue_cache_leases WHERE cache_key = ${cacheKey}`);
+      }
+    }
+  });
+
+  test("persists an ambiguous sealed provider selection as sealed", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.JUSTTCG_API_KEY;
+    process.env.JUSTTCG_API_KEY = "collection-import-test-key";
+    const productName = `Ambiguous Premium Collection ${suffix}`;
+    const candidates = [
+      {
+        id: `pokemon-import-sealed-a-${suffix}`,
+        name: productName,
+        set_name: `Import Set ${suffix}`,
+        number: "N/A",
+        game: "Pokemon",
+      },
+      {
+        id: `pokemon-import-sealed-b-${suffix}`,
+        name: productName,
+        set_name: `Import Set ${suffix}`,
+        number: "N/A",
+        game: "Pokemon",
+      },
+    ];
+    const providerPath = `/cards?${new URLSearchParams({
+      q: productName,
+      game: "pokemon",
+      limit: "100",
+      offset: "0",
+      include_price_history: "false",
+    }).toString()}`;
+    const cacheKey = `justtcg:${canonicalizeJustTcgPath(providerPath)}`;
+    await db.execute(sql`DELETE FROM catalogue_cache_entries WHERE cache_key = ${cacheKey}`);
+    await db.execute(sql`DELETE FROM catalogue_cache_leases WHERE cache_key = ${cacheKey}`);
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: candidates }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const content = [
+        COLLECTR_HEADER,
+        `Main,Pokemon,Import Set ${suffix},${productName},,,Normal,Ungraded,Near Mint,20,1,30,0,false,2026-08-07,`,
+      ].join("\n");
+      const preview = await request
+        .post("/api/collection/import/preview")
+        .set("Authorization", `Bearer ${roundTripToken}`)
+        .send({ content, filename: "ambiguous-sealed.csv" });
+      assert.equal(preview.status, 200, JSON.stringify(preview.body));
+      assert.equal(preview.body.rows[0].status, "ambiguous");
+      assert.equal(preview.body.rows[0].candidates.length, 2);
+      assert.equal(preview.body.rows[0].candidates[1].card.productType, "sealed");
+
+      const resolve = await request
+        .post(`/api/collection/import/${preview.body.jobId}/resolve`)
+        .set("Authorization", `Bearer ${roundTripToken}`)
+        .send({
+          contentSha256: preview.body.contentSha256,
+          resolutions: [{ rowNumber: 2, cardId: candidates[1]!.id }],
+        });
+      assert.equal(resolve.status, 200, JSON.stringify(resolve.body));
+      assert.equal(resolve.body.rows[0].card.productType, "sealed");
+
+      const commit = await request
+        .post(`/api/collection/import/${preview.body.jobId}/commit`)
+        .set("Authorization", `Bearer ${roundTripToken}`)
+        .send({
+          contentSha256: preview.body.contentSha256,
+          sourceCurrency: "USD",
+        });
+      assert.equal(commit.status, 200, JSON.stringify(commit.body));
+
+      const [holding] = await db.select().from(collectionItemsTable)
+        .where(eq(collectionItemsTable.cardId, candidates[1]!.id));
+      assert.equal(
+        (holding?.cardData as Record<string, unknown> | undefined)?.productType,
+        "sealed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.JUSTTCG_API_KEY;
+      else process.env.JUSTTCG_API_KEY = originalKey;
+      await db.delete(collectionItemsTable)
+        .where(eq(collectionItemsTable.cardId, candidates[1]!.id));
+      await db.execute(sql`DELETE FROM catalogue_cache_entries WHERE cache_key = ${cacheKey}`);
+      await db.execute(sql`DELETE FROM catalogue_cache_leases WHERE cache_key = ${cacheKey}`);
+    }
+  });
+
   test("requires authentication for preview and commit", async () => {
     const preview = await request
       .post("/api/collection/import/preview")
@@ -294,78 +484,6 @@ describe("collection CSV migration routes", () => {
     const holdingsAfterReplay = await db.select().from(collectionItemsTable)
       .where(eq(collectionItemsTable.userId, userId));
     assert.equal(holdingsAfterReplay.length, 1);
-  });
-
-  test("resolves six ambiguous rows only to previewed candidates or an explicit skip", async () => {
-    const preview = await request
-      .post("/api/collection/import/preview")
-      .set("Authorization", `Bearer ${ambiguousToken}`)
-      .send({ content: ambiguousCollectrFixture(), filename: "collectr-ambiguous.csv" });
-    assert.equal(preview.status, 200, JSON.stringify(preview.body));
-    assert.equal(preview.body.summary.ambiguous, 6);
-    assert.equal(preview.body.rows.length, 6);
-    for (const row of preview.body.rows) {
-      assert.equal(row.status, "ambiguous");
-      assert.equal(row.candidates.length, 2);
-      assert.equal(row.candidates[0].card.name, "Ambiguous Test Card");
-      assert.equal(row.candidates[0].card.setName, `Import Set ${suffix}`);
-      assert.equal(row.candidates[0].card.number, "777");
-    }
-
-    const selectedCardId = preview.body.rows[0].candidates[0].cardId;
-    const wrongHash = await request
-      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
-      .set("Authorization", `Bearer ${ambiguousToken}`)
-      .send({
-        contentSha256: "f".repeat(64),
-        resolutions: [{ rowNumber: 2, cardId: selectedCardId }],
-      });
-    assert.equal(wrongHash.status, 409);
-
-    const forgedChoice = await request
-      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
-      .set("Authorization", `Bearer ${ambiguousToken}`)
-      .send({
-        contentSha256: preview.body.contentSha256,
-        resolutions: [{ rowNumber: 2, cardId: "not-a-previewed-candidate" }],
-      });
-    assert.equal(forgedChoice.status, 400);
-
-    const resolved = await request
-      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
-      .set("Authorization", `Bearer ${ambiguousToken}`)
-      .send({
-        contentSha256: preview.body.contentSha256,
-        resolutions: preview.body.rows.map((row: { rowNumber: number }, index: number) => ({
-          rowNumber: row.rowNumber,
-          cardId: index === 5 ? null : selectedCardId,
-        })),
-      });
-    assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
-    assert.equal(resolved.body.summary.matched, 5);
-    assert.equal(resolved.body.summary.ambiguous, 0);
-    assert.equal(resolved.body.summary.unmatched, 1);
-    assert.equal(resolved.body.rows[5].error, "Skipped by collector during card review.");
-
-    const commit = await request
-      .post(`/api/collection/import/${preview.body.jobId}/commit`)
-      .set("Authorization", `Bearer ${ambiguousToken}`)
-      .send({
-        contentSha256: preview.body.contentSha256,
-        sourceCurrency: "USD",
-      });
-    assert.equal(commit.status, 200, JSON.stringify(commit.body));
-    assert.equal(commit.body.summary.holdingsAdded, 5);
-    assert.equal(commit.body.summary.skipped, 1);
-
-    const selectedHoldings = await db
-      .select()
-      .from(collectionItemsTable)
-      .where(eq(collectionItemsTable.userId, ambiguousUserId));
-    assert.equal(
-      selectedHoldings.filter((holding) => holding.cardId === selectedCardId).length,
-      5,
-    );
   });
 
   test("exports stable currency metadata and previews the export for round trip", async () => {

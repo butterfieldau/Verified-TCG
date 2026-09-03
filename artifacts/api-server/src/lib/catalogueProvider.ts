@@ -1,6 +1,10 @@
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@workspace/db";
+import {
+  normalizeForMatching,
+  normalizeGameSlug,
+} from "../catalogue/internal/catalogueNormalisation.js";
 import { recordTelemetry } from "./telemetry.js";
 
 const JUSTTCG_BASE_URL = "https://api.justtcg.com/v1";
@@ -21,6 +25,46 @@ export interface CatalogueRead<T = unknown> {
   cacheStatus: CacheStatus;
   outboundCall: boolean;
   revalidationScheduled?: boolean;
+}
+
+export interface JustTcgCatalogueRoute {
+  gameId: string | null;
+  language: "japanese" | "chinese" | null;
+  unsupportedReason?: string;
+}
+
+/**
+ * Collectr keeps language/region evidence in display labels rather than a
+ * dedicated column. Route those rows before querying JustTCG so Japanese
+ * Pokémon cards do not incorrectly search the English catalogue.
+ */
+export function justTcgCatalogueForCollectrRow(input: {
+  game: string;
+  set: string;
+  name: string;
+}): JustTcgCatalogueRoute {
+  const game = normalizeGameSlug(input.game);
+  if (!game) return { gameId: null, language: null };
+
+  const evidence = normalizeForMatching(`${input.set} ${input.name}`);
+  const japanese = /\b(?:jp|japanese)\b/.test(evidence);
+  const chinese = /\b(?:cn|chinese|simplified chinese|traditional chinese)\b/.test(evidence);
+
+  if (game === "pokemon" && chinese) {
+    return {
+      gameId: null,
+      language: "chinese",
+      unsupportedReason:
+        "Chinese Pokémon cards are not available from the current catalogue provider.",
+    };
+  }
+  if (game === "pokemon" && japanese) {
+    return { gameId: "pokemon-japan", language: "japanese" };
+  }
+  if (game === "one-piece") {
+    return { gameId: "one-piece-card-game", language: null };
+  }
+  return { gameId: game, language: null };
 }
 
 interface CacheWindow {

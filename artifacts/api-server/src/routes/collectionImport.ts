@@ -20,7 +20,10 @@ import {
   readCanonicalPublicCards,
   type PublicCatalogueCard,
 } from "../catalogue/internal/catalogueReadService.js";
-import { justTcg } from "../lib/catalogueProvider.js";
+import {
+  justTcg,
+  justTcgCatalogueForCollectrRow,
+} from "../lib/catalogueProvider.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { logActivitySafely } from "./activity.js";
 import { clearUserWishlists } from "./wishlist.js";
@@ -84,6 +87,7 @@ interface NormalizedImportRow {
   supportedGrade?: boolean;
   holdingId?: string;
   listNames?: string[];
+  productType?: "card" | "sealed";
 }
 
 interface NormalizedImportList {
@@ -460,6 +464,7 @@ function appCard(
   card: PublicCatalogueCard,
   finish: string,
   variance: string,
+  productType: "card" | "sealed" = "card",
 ): Record<string, unknown> {
   const foilEvidence = normalizeForMatching(`${finish} ${variance}`);
   return {
@@ -478,6 +483,7 @@ function appCard(
     isFoil: /\b(foil|holo|reverse)\b/.test(foilEvidence),
     finish: finish || undefined,
     variance: variance || undefined,
+    productType,
     price: {
       raw: 0,
       available: false,
@@ -509,6 +515,7 @@ function exactCandidate(
     }
     return normalized
       .replace(/\b(?:borderless|extended art|manga|jp|secret)\b/g, "")
+      .replace(/\bsakuras\b/g, "cherry blossom")
       .replace(/\b0*\d{1,4}\b/g, "")
       .replace(/\s+/g, " ")
       .trim();
@@ -522,7 +529,7 @@ function exactCandidate(
   const set = normalizeForMatching(evidence.set);
   const candidateSet = normalizeForMatching(candidate.set_name);
   const comparableSet = (value: string) => value
-    .replace(/^(?:sv|sm|xy)\s+/, "")
+    .replace(/^(?:(?:sv|sm|xy|swsh)\d*[a-z]?|s\d+[a-z]?)\s*:?\s+/, "")
     .replace(/\b(?:pokemon|cards|card|promos|promo)\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -555,18 +562,6 @@ function exactCandidate(
   }
   return true;
 }
-
-async function providerGameId(game: string, set: string, name: string): Promise<string | null> {
-  const normalized = normalizeGameSlug(game);
-  if (!normalized) return null;
-  if (
-    normalized === "pokemon"
-    && /\b(?:jp|japanese)\b/i.test(`${set} ${name}`)
-  ) return "pokemon-japan";
-  if (normalized === "one-piece") return "one-piece-card-game";
-  return normalized;
-}
-
 function providerCard(
   raw: Record<string, unknown>,
 ): PublicCatalogueCard | null {
@@ -628,7 +623,11 @@ async function candidatesForRow(input: {
   const canonical = result.value.filter((candidate) => exactCandidate(candidate, input));
   if (canonical.length || input.source !== "collectr") return canonical;
 
-  const game = await providerGameId(input.game, input.set, input.name);
+  const game = justTcgCatalogueForCollectrRow({
+    game: input.game,
+    set: input.set,
+    name: input.name,
+  }).gameId;
   if (!game) return [];
   const rows: Record<string, unknown>[] = [];
   for (const query of [...new Set([input.name, input.number].filter(Boolean))]) {
@@ -656,6 +655,23 @@ async function candidatesForRow(input: {
   return [...new Map(matches.map((candidate) => [candidate.id, candidate])).values()];
 }
 
+export function collectrProductType(input: {
+  number: string;
+  name: string;
+  candidateNumber?: string | null;
+}): "card" | "sealed" {
+  if ("candidateNumber" in input) {
+    return /^(?:n\s*\/?\s*a|not applicable)$/i.test(input.candidateNumber?.trim() ?? "")
+      ? "sealed"
+      : "card";
+  }
+  if (input.number.trim()) return "card";
+  const name = normalizeForMatching(input.name);
+  return /\b(?:elite trainer box|gift bundle|booster (?:box|pack|bundle|display)|collection|build battle box|starter deck|theme deck|tin|blister|case)\b/
+    .test(name)
+    ? "sealed"
+    : "card";
+}
 function previewSummary(rows: NormalizedImportRow[]): CollectionImportPreviewSummary {
   return {
     total: rows.length,
@@ -929,6 +945,21 @@ export async function normalizeRows(
     const parsedGrade = source === "verified_tcg"
       ? parseVerifiedGrade(sourceRow, effectiveDate)
       : parseGrade(gradeValue, effectiveDate);
+    const productType = source === "collectr"
+      ? collectrProductType({ number, name })
+      : "card";
+    const providerRoute = source === "collectr"
+      ? justTcgCatalogueForCollectrRow({ game, set, name })
+      : null;
+    if (providerRoute?.unsupportedReason) {
+      normalized.push({
+        ...base,
+        status: "unmatched",
+        productType,
+        error: providerRoute.unsupportedReason,
+      });
+      continue;
+    }
     const cacheKey = JSON.stringify([
       source, cardId, normalizeForMatching(game), normalizeForMatching(set),
       normalizeCollectorNumber(number), normalizeForMatching(name),
@@ -956,7 +987,10 @@ export async function normalizeRows(
       normalized.push({
         ...base,
         status: "unmatched",
-        error: "No exact Verified TCG catalogue match.",
+        productType,
+        error: productType === "sealed"
+          ? "No exact sealed-product catalogue match. This product was not imported."
+          : "No exact Verified TCG catalogue match.",
       });
       continue;
     }
@@ -985,7 +1019,18 @@ export async function normalizeRows(
         candidateCount: candidates.length,
         candidates: candidates.map((candidate) => ({
           cardId: candidate.id,
-          card: appCard(candidate, finish, variance),
+          card: appCard(
+            candidate,
+            finish,
+            variance,
+            source === "collectr"
+              ? collectrProductType({
+                  number,
+                  name,
+                  candidateNumber: candidate.number,
+                })
+              : productType,
+          ),
         })),
         ...importDetails,
         error: `${candidates.length} exact catalogue matches need review.`,
@@ -994,12 +1039,19 @@ export async function normalizeRows(
     }
 
     const matched = candidates[0]!;
+    const matchedProductType = source === "collectr"
+      ? collectrProductType({
+          number,
+          name,
+          candidateNumber: matched.number,
+        })
+      : productType;
     normalized.push({
       ...base,
       status: isWatchlistOnly ? "watchlist_only" : "matched",
       cardId: matched.id,
       canonicalCardId: matched.id,
-      card: appCard(matched, finish, variance),
+      card: appCard(matched, finish, variance, matchedProductType),
       candidateCount: 1,
       quantity: isWatchlistOnly ? undefined : quantity,
       condition: normalizedCondition,
@@ -1015,6 +1067,7 @@ export async function normalizeRows(
       isForTrade: truthy(field(sourceRow, "For Trade")),
       pricingAvailable: false,
       supportedGrade: parsedGrade.supported,
+      productType: matchedProductType,
       ...(holdingId ? { holdingId } : {}),
       ...(listNames ? { listNames } : {}),
     });
@@ -1210,7 +1263,13 @@ router.post(
       return;
     }
     if (job.status === "committed") {
-      res.status(409).json({ message: "This import has already been committed." });
+      res.json({
+        jobId: job.id,
+        status: "committed",
+        summary: job.commitSummary,
+        rows: job.commitResults,
+        replayed: true,
+      });
       return;
     }
     if (job.expiresAt.getTime() <= Date.now()) {
