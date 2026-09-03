@@ -1027,12 +1027,12 @@ async function resolveJustTcgCatalogCardById(
   const parts = cardId.split("-");
   const gameWord = (parts[0] ?? "").toLowerCase();
   const GAME_MAP: Record<string, string> = {
-    pokemon: "Pokemon",
-    magic: "Magic: The Gathering",
-    yugioh: "Yu-Gi-Oh!",
-    lorcana: "Disney Lorcana",
-    onepiece: "One Piece",
-    dragonball: "Dragon Ball Super",
+    pokemon: "pokemon",
+    magic: "magic-the-gathering",
+    yugioh: "yugioh",
+    lorcana: "disney-lorcana",
+    onepiece: "one-piece-card-game",
+    dragonball: "dragon-ball-super-masters",
   };
   const game = GAME_MAP[gameWord];
   const RARITY_TAIL = new Set([
@@ -1062,7 +1062,6 @@ async function resolveJustTcgCatalogCardById(
   const params = new URLSearchParams({
     q: searchQuery,
     limit: "20",
-    include_price_history: "false",
   });
   if (game) params.set("game", game);
 

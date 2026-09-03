@@ -157,7 +157,7 @@ export interface PricingResponse {
 const matchInFlight = new Map<string, Promise<void>>();
 const justTcgRawPricingInFlight = new Map<string, Promise<boolean>>();
 
-function isJustTcgPricingConfigured(): boolean {
+export function isJustTcgPricingConfigured(): boolean {
   return Boolean(process.env.JUSTTCG_API_KEY?.trim());
 }
 
@@ -165,7 +165,7 @@ function isJustTcgPricingConfigured(): boolean {
  * The public card id is a JustTCG id. Resolve it directly and persist only
  * genuine positive raw observations plus the provider's returned history.
  */
-async function refreshJustTcgRawHistory(cardId: string): Promise<boolean> {
+export async function refreshJustTcgRawHistory(cardId: string): Promise<boolean> {
   if (!isJustTcgPricingConfigured()) return false;
   const existing = justTcgRawPricingInFlight.get(cardId);
   if (existing) return existing;

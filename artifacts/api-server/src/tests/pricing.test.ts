@@ -190,6 +190,32 @@ describe("JustTCG raw history parsing", () => {
     assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: 0 }] }), null);
     assert.equal(extractJustTcgRawQuote({ id: "card", variants: [{ price: "unknown" }] }), null);
   });
+
+  test("accepts real Pokemon and One Piece Near Mint foil variants", () => {
+    for (const [id, printing, price, expectedCents] of [
+      ["pokemon-card", "Holofoil", 257.89, 25_789],
+      ["one-piece-card", "Foil", 5_000, 500_000],
+    ] as const) {
+      const quote = extractJustTcgRawQuote({
+        id,
+        game: id.startsWith("pokemon") ? "Pokemon" : "One Piece Card Game",
+        variants: [
+          { condition: "Lightly Played", printing, price: price / 2 },
+          {
+            condition: "Near Mint",
+            printing,
+            language: "English",
+            price,
+            lastUpdated: 1_788_386_592,
+            priceHistory: [{ t: 1_788_300_000, p: price - 1 }],
+          },
+        ],
+      });
+      assert.ok(quote);
+      assert.equal(quote.priceCents, expectedCents);
+      assert.equal(quote.history.length, 1);
+    }
+  });
 });
 
 describe("Portfolio history source and sampling", () => {

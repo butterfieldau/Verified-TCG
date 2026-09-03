@@ -5,7 +5,9 @@ import { logger } from "../lib/logger.js";
 import { resolveCatalogCardById } from "../routes/catalog.js";
 import {
   getPricingMappingState,
+  isJustTcgPricingConfigured,
   recordSchedulerIdentityFailure,
+  refreshJustTcgRawHistory,
   refreshPricingForScheduler,
   runScheduledGuideReconciliation,
   snapshotBucketFor,
@@ -167,7 +169,9 @@ export async function runScheduledPricingBatch(input: {
     snapshotsSkipped: 0,
     snapshotsFailed: 0,
   };
-  if (!isPCConfigured()) {
+  const priceChartingConfigured = isPCConfigured();
+  const justTcgConfigured = isJustTcgPricingConfigured();
+  if (!priceChartingConfigured && !justTcgConfigured) {
     return { ...empty, configured: false, status: "unconfigured" };
   }
 
@@ -179,25 +183,39 @@ export async function runScheduledPricingBatch(input: {
     const eligible = await selectCardsForScheduledRefresh(maxCards);
     const verified: Array<{ cardId: string } & PricingIdentity> = [];
     let identityFailures = 0;
-    for (const row of eligible) {
-      const mapping = await getPricingMappingState(row.cardId);
-      const canUsePersistedMapping =
-        mapping?.status === "matched" && Boolean(mapping.providerProductId);
-      const resolved = canUsePersistedMapping
-        ? mapping.identity
-        : identityFromCatalogCard(
-            (await resolveCatalogCardById(row.cardId).catch(() => null))?.card ?? {},
-          );
-      if (!resolved) {
-        identityFailures += 1;
-        await recordSchedulerIdentityFailure(row.cardId);
-        continue;
+    if (priceChartingConfigured) {
+      for (const row of eligible) {
+        const mapping = await getPricingMappingState(row.cardId);
+        const canUsePersistedMapping =
+          mapping?.status === "matched" && Boolean(mapping.providerProductId);
+        const resolved = canUsePersistedMapping
+          ? mapping.identity
+          : identityFromCatalogCard(
+              Object.keys(row.cardData).length > 0
+                ? row.cardData
+                : (await resolveCatalogCardById(row.cardId).catch(() => null))?.card ?? {},
+            );
+        if (!resolved) {
+          identityFailures += 1;
+          await recordSchedulerIdentityFailure(row.cardId);
+          continue;
+        }
+        verified.push({ cardId: row.cardId, ...resolved });
       }
-      verified.push({ cardId: row.cardId, ...resolved });
     }
 
+    const justTcgRefreshes = justTcgConfigured
+      ? eligible.map(async ({ cardId }) => {
+          if (!await refreshJustTcgRawHistory(cardId)) {
+            throw new Error("JustTCG returned no usable raw quote");
+          }
+        })
+      : [];
+    const priceChartingRefreshes = priceChartingConfigured
+      ? verified.map(card => refreshPricingForScheduler(card))
+      : [];
     const refreshes = await Promise.allSettled(
-      verified.map(card => refreshPricingForScheduler(card)),
+      [...justTcgRefreshes, ...priceChartingRefreshes],
     );
     const snapshots = await captureAllPortfolioSnapshotsDetailed();
     const {
