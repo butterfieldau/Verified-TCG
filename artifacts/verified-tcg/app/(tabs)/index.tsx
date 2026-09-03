@@ -441,15 +441,15 @@ export default function HomeScreen() {
           }));
         });
     };
-    loadFeed('movers', callback => getMarketMoversCached(callback, { cacheScope: marketCacheScope }), setMovers);
-    loadFeed('gainers', callback => getMarketGainersCached(callback, { cacheScope: marketCacheScope }), setGainers);
-    loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope }), setLosers);
-    loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope }), setTrending);
-    loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope }), setRecentCards);
+    loadFeed('movers', callback => getMarketMoversCached(callback, { cacheScope: marketCacheScope, displayCurrency: currency }), setMovers);
+    loadFeed('gainers', callback => getMarketGainersCached(callback, { cacheScope: marketCacheScope, displayCurrency: currency }), setGainers);
+    loadFeed('losers', callback => getMarketLosersCached(callback, { cacheScope: marketCacheScope, displayCurrency: currency }), setLosers);
+    loadFeed('trending', callback => getTrendingCardsCached(callback, { cacheScope: marketCacheScope, displayCurrency: currency }), setTrending);
+    loadFeed('recent', callback => getRecentlyAddedCardsCached(callback, { cacheScope: marketCacheScope, displayCurrency: currency }), setRecentCards);
     setLookupTrendingStatus({ loading: true, error: null });
     getLookupTrendingCardsCached(
       fresh => { if (!cancelled) setLookupTrending(fresh); },
-      { cacheScope: marketCacheScope },
+      { cacheScope: marketCacheScope, displayCurrency: currency },
     )
       .then(data => { if (!cancelled) setLookupTrending(data); })
       .catch(error => {
@@ -468,19 +468,19 @@ export default function HomeScreen() {
       .finally(() => { if (!cancelled) setActivityLoading(false); });
 
     return () => { cancelled = true; };
-  }, [marketCacheScope]);
+  }, [marketCacheScope, currency]);
 
   const onRefresh = useCallback(async () => {
     const generation = ++portfolioRequestGeneration.current;
     await refreshPrices();
     const [moversResult, gainersResult, losersResult, trendingResult, lookupTrendingResult, recentResult, activityResult, summaryResult, performanceResult] =
       await Promise.allSettled([
-      getMarketMovers({ cacheScope: marketCacheScope }),
-       getMarketGainers({ cacheScope: marketCacheScope }),
-       getMarketLosers({ cacheScope: marketCacheScope }),
-      getTrendingCards({ cacheScope: marketCacheScope }),
-      getLookupTrendingCards({ cacheScope: marketCacheScope }),
-      getRecentlyAddedCards({ cacheScope: marketCacheScope }),
+      getMarketMovers({ cacheScope: marketCacheScope, displayCurrency: currency }),
+       getMarketGainers({ cacheScope: marketCacheScope, displayCurrency: currency }),
+       getMarketLosers({ cacheScope: marketCacheScope, displayCurrency: currency }),
+      getTrendingCards({ cacheScope: marketCacheScope, displayCurrency: currency }),
+      getLookupTrendingCards({ cacheScope: marketCacheScope, displayCurrency: currency }),
+      getRecentlyAddedCards({ cacheScope: marketCacheScope, displayCurrency: currency }),
       fetchRecentActivity(10),
       fetchCollectionSummary(currency),
       fetchCollectionPerformance(performanceRange, currency),
@@ -599,18 +599,18 @@ export default function HomeScreen() {
   const retryMarketFeed = useCallback(() => {
     setMarketFeedStatus(previous => ({ ...previous, [activeFeedKey]: { loading: true, error: null } }));
     const request = activeFeedKey === 'gainers'
-      ? getMarketGainers({ cacheScope: marketCacheScope }).then(setGainers)
+      ? getMarketGainers({ cacheScope: marketCacheScope, displayCurrency: currency }).then(setGainers)
       : activeFeedKey === 'losers'
-        ? getMarketLosers({ cacheScope: marketCacheScope }).then(setLosers)
+        ? getMarketLosers({ cacheScope: marketCacheScope, displayCurrency: currency }).then(setLosers)
       : activeFeedKey === 'trending'
-        ? getTrendingCards({ cacheScope: marketCacheScope }).then(setTrending)
-        : getRecentlyAddedCards({ cacheScope: marketCacheScope }).then(setRecentCards);
+        ? getTrendingCards({ cacheScope: marketCacheScope, displayCurrency: currency }).then(setTrending)
+        : getRecentlyAddedCards({ cacheScope: marketCacheScope, displayCurrency: currency }).then(setRecentCards);
     request.catch(error => setMarketFeedStatus(previous => ({
       ...previous, [activeFeedKey]: { loading: false, error: error instanceof Error ? error.message : 'Market data is unavailable.' },
     }))).finally(() => setMarketFeedStatus(previous => ({
       ...previous, [activeFeedKey]: { ...previous[activeFeedKey], loading: false },
     })));
-  }, [activeFeedKey, marketCacheScope]);
+  }, [activeFeedKey, marketCacheScope, currency]);
 
   function handleQuickAction(action: string) {
     if (action === 'scan') router.push('/scan');

@@ -24,6 +24,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import {
   catalogCardToAppCard,
   MIN_CATALOG_SEARCH_LENGTH,
@@ -54,6 +55,7 @@ function AddPanel({
   onAdd: (item: WatchlistItem) => void;
   existingCardIds: Set<string>;
 }) {
+  const { currency: displayCurrency } = useSettings();
   const [query, setQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [grade, setGrade] = useState<string>('Raw');
@@ -74,7 +76,7 @@ function AddPanel({
     const timer = setTimeout(() => {
       setSearchLoading(true);
       setSearchError(null);
-      searchCatalog(trimmed)
+      searchCatalog(trimmed, undefined, 1, displayCurrency)
         .then((result) => {
           if (!cancelled) setSearchResults(result.data.map(catalogCardToAppCard));
         })
@@ -87,7 +89,7 @@ function AddPanel({
         .finally(() => { if (!cancelled) setSearchLoading(false); });
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [query]);
+  }, [query, displayCurrency]);
 
   function handleConfirm() {
     if (!selectedCard) return;

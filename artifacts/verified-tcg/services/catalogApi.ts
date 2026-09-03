@@ -127,10 +127,16 @@ function mapRarity(rarity: string | undefined): CardRarity {
  * authentication and provider failures remain errors so UI never presents them
  * as an honest missing card.
  */
-export async function fetchCatalogCard(id: string, signal?: AbortSignal): Promise<CatalogCard | null> {
+export async function fetchCatalogCard(
+  id: string,
+  signal?: AbortSignal,
+  displayCurrency?: string,
+): Promise<CatalogCard | null> {
   try {
+    const params = new URLSearchParams();
+    if (displayCurrency) params.set('displayCurrency', displayCurrency);
     const body = await apiJson<{ data?: CatalogCard | null }>(
-      `/api/catalog/cards/${encodeURIComponent(id)}`,
+      `/api/catalog/cards/${encodeURIComponent(id)}${params.size ? `?${params.toString()}` : ''}`,
       { signal },
     );
     return body.data ?? null;
@@ -150,7 +156,12 @@ export async function recordCatalogCardLookup(id: string): Promise<void> {
   });
 }
 
-export async function searchCatalog(query: string, signal?: AbortSignal, page: number = 1): Promise<CatalogResponse> {
+export async function searchCatalog(
+  query: string,
+  signal?: AbortSignal,
+  page: number = 1,
+  displayCurrency?: string,
+): Promise<CatalogResponse> {
   const normalizedQuery = normalizeCatalogQuery(query);
   if (normalizedQuery.length < MIN_CATALOG_SEARCH_LENGTH) {
     return { data: [], meta: { total: 0, limit: 20, offset: 0, hasMore: false }, cached: true };
@@ -158,7 +169,8 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
   if (signal?.aborted) throw new DOMException('Search was cancelled', 'AbortError');
   const limit = 20;
   const offset = (page - 1) * limit;
-  const cacheKey = `${normalizedQuery}:${page}`;
+  const normalizedCurrency = displayCurrency?.trim().toUpperCase() || 'source';
+  const cacheKey = `${normalizedQuery}:${page}:${normalizedCurrency}`;
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.response;
 
@@ -170,6 +182,7 @@ export async function searchCatalog(query: string, signal?: AbortSignal, page: n
   // needed by another consumer; callers still ignore obsolete results.
   const flight = (async () => {
     const params = new URLSearchParams({ q: normalizedQuery, limit: String(limit), offset: String(offset) });
+    if (displayCurrency) params.set('displayCurrency', normalizedCurrency);
     const result = await apiJson<CatalogResponse>(`/api/catalog/cards?${params.toString()}`);
     const hasPendingPriceCoverage = result.data.some(card => !card.raw_quote);
     searchCache.set(cacheKey, {

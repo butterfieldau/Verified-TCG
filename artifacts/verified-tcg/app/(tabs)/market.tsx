@@ -18,6 +18,7 @@ import { MarketMoverSkeleton } from '@/components/ui/SkeletonLoader';
 import { getMarketMoversCached, getTrendingCardsCached } from '@/services/market';
 import { filterByTcg, prioritizeTcgs } from '@/services/marketFeed';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import { supportsLiquidGlassTabs } from '@/utils/liquidGlass';
 import colors from '@/constants/colors';
 import type { Card, MarketMover, TCGId } from '@/types';
@@ -46,6 +47,7 @@ function formatDatasetUpdatedAt(date: string | undefined): string {
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
   const { user, activeTCG: savedActiveTCG } = useApp();
+  const { currency } = useSettings();
   const marketCacheScope = `${user?.id ?? 'anonymous'}:${(user?.tcgPreferences ?? []).join(',')}`;
   const [movers, setMovers] = useState<MarketMover[]>([]);
   const [trending, setTrending] = useState<Card[]>([]);
@@ -70,7 +72,7 @@ export default function MarketScreen() {
   // refresh (when stale) pushes fresh data in via the onUpdate callback.
   const loadMovers = useCallback(async () => {
     try {
-      const data = await getMarketMoversCached(fresh => setMovers(fresh), { cacheScope: marketCacheScope });
+      const data = await getMarketMoversCached(fresh => setMovers(fresh), { cacheScope: marketCacheScope, displayCurrency: currency });
       setMovers(data);
       setMoversError(null);
     } catch (error) {
@@ -78,11 +80,11 @@ export default function MarketScreen() {
     } finally {
       setMoversLoading(false);
     }
-  }, [marketCacheScope]);
+  }, [marketCacheScope, currency]);
 
   const loadTrending = useCallback(async () => {
     try {
-      const data = await getTrendingCardsCached(fresh => setTrending(fresh), { cacheScope: marketCacheScope });
+      const data = await getTrendingCardsCached(fresh => setTrending(fresh), { cacheScope: marketCacheScope, displayCurrency: currency });
       setTrending(data);
       setTrendingError(null);
     } catch (error) {
@@ -90,7 +92,7 @@ export default function MarketScreen() {
     } finally {
       setTrendingLoading(false);
     }
-  }, [marketCacheScope]);
+  }, [marketCacheScope, currency]);
 
   useEffect(() => {
     loadMovers();
@@ -102,8 +104,8 @@ export default function MarketScreen() {
     setIsRefreshing(true);
     try {
       const [moverResult, trendingResult] = await Promise.allSettled([
-        getMarketMoversCached(undefined, { force: true, cacheScope: marketCacheScope }),
-        getTrendingCardsCached(undefined, { force: true, cacheScope: marketCacheScope }),
+        getMarketMoversCached(undefined, { force: true, cacheScope: marketCacheScope, displayCurrency: currency }),
+        getTrendingCardsCached(undefined, { force: true, cacheScope: marketCacheScope, displayCurrency: currency }),
       ]);
       if (moverResult.status === 'fulfilled') {
         setMovers(moverResult.value);
@@ -120,7 +122,7 @@ export default function MarketScreen() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [marketCacheScope]);
+  }, [marketCacheScope, currency]);
 
   const filteredMovers = filterByTcg(prioritizeTcgs(movers, user?.tcgPreferences ?? []), activeTCG);
   const filteredTrending = filterByTcg(prioritizeTcgs(trending.map(card => ({ card })), user?.tcgPreferences ?? []), activeTCG)

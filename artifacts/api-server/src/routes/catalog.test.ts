@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   calculateSnapshotMovement,
   capByGameFromSorted,
+  convertCatalogueCardsForDisplay,
   enrichCardsWithLiveRawQuotes,
   extractData,
   enrichCardsWithQuoteRows,
@@ -20,6 +21,42 @@ import {
   normalizeCataloguePagination,
   normalizeTcgName,
 } from "./catalog.js";
+
+test("catalogue display conversion keeps list and card-detail quote values aligned", async () => {
+  const [converted] = await convertCatalogueCardsForDisplay([{
+    id: "card-1",
+    currency: "USD",
+    market_price: 10,
+    previous_price: 8,
+    absolute_change: 2,
+    raw_quote: { price: 10, priceCents: 1000, currency: "USD" },
+    variants: [{
+      condition: "Near Mint",
+      price: 10,
+      markets: [{ region: "source", currency: "USD", price: 10 }],
+    }],
+  }], "AUD", async cents => cents * 2);
+
+  assert.equal(converted!.currency, "AUD");
+  assert.equal(converted!.market_price, 20);
+  assert.equal(converted!.previous_price, 16);
+  assert.equal(converted!.absolute_change, 4);
+  assert.deepEqual(converted!.raw_quote, { price: 20, priceCents: 2000, currency: "AUD" });
+  assert.equal((converted!.variants as Array<{ price: number }>)[0]!.price, 20);
+});
+
+test("catalogue display conversion preserves the provider value when FX is unavailable", async () => {
+  const [card] = await convertCatalogueCardsForDisplay([{
+    id: "card-1",
+    currency: "USD",
+    market_price: 10,
+    raw_quote: { price: 10, priceCents: 1000, currency: "USD" },
+  }], "AUD", async () => null);
+
+  assert.equal(card!.currency, "USD");
+  assert.equal(card!.market_price, 10);
+  assert.deepEqual(card!.raw_quote, { price: 10, priceCents: 1000, currency: "USD" });
+});
 
 test("search quote enrichment joins PriceCharting quotes to exact external IDs", () => {
   const cards = [

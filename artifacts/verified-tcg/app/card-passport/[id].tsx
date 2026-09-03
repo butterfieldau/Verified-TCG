@@ -16,6 +16,7 @@ import colors from '@/constants/colors';
 import { getCardPassport } from '@/services/matching';
 import { catalogCardToAppCard, fetchCatalogCard } from '@/services/catalogApi';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import type { Card } from '@/types';
 
 const C = colors.dark;
@@ -38,6 +39,7 @@ const EVENT_COLOR: Record<string, string> = {
 export default function CardPassportScreen() {
   const insets = useSafeAreaInsets();
   const { collection } = useApp();
+  const { currency: displayCurrency } = useSettings();
   const { id, appCardJson } = useLocalSearchParams<{ id: string; appCardJson?: string }>();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const passport = getCardPassport(id ?? '');
@@ -66,7 +68,7 @@ export default function CardPassportScreen() {
     const controller = new AbortController();
     setCardLoading(true);
     setCardError(null);
-    fetchCatalogCard(id, controller.signal)
+    fetchCatalogCard(id, controller.signal, displayCurrency)
       .then(result => {
         if (!result) {
           setCardError('This card could not be found.');
@@ -80,7 +82,7 @@ export default function CardPassportScreen() {
       })
       .finally(() => setCardLoading(false));
     return () => controller.abort();
-  }, [id, inlineCard, collectionCard]);
+  }, [id, inlineCard, collectionCard, displayCurrency]);
 
   if (!card) {
     return (

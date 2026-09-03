@@ -30,6 +30,7 @@ import {
   type CatalogCard,
 } from '@/services/catalogApi';
 import { CardImage } from '@/components/ui/CardImage';
+import { useSettings } from '@/context/SettingsContext';
 
 const C = colors.dark;
 const SEARCH_PAGE_SIZE = 20;
@@ -121,6 +122,7 @@ function CardResultRow({ card, onPress }: { card: Card; onPress: () => void }) {
 }
 
 export default function SearchScreen() {
+  const { currency } = useSettings();
   const insets = useSafeAreaInsets();
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState('');
@@ -181,7 +183,7 @@ export default function SearchScreen() {
     setRemoteLoadMoreError('');
 
     const timer = setTimeout(() => {
-      searchCatalog(trimmed, controller.signal, 1)
+      searchCatalog(trimmed, controller.signal, 1, currency)
         .then(result => {
           if (!requestGateRef.current.isCurrent(requestId) || activeQueryRef.current !== trimmed) return; // stale
           setRemoteResults(result.data ?? []);
@@ -206,7 +208,7 @@ export default function SearchScreen() {
         });
     }, 450);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, category]);
+  }, [query, category, currency]);
 
   const handleLoadMore = useCallback(async () => {
     const trimmed = normalizeCatalogQuery(query);
@@ -220,7 +222,7 @@ export default function SearchScreen() {
     setRemoteLoadMoreError('');
     const nextPage = remotePage + 1;
     try {
-      const result = await searchCatalog(trimmed, undefined, nextPage);
+      const result = await searchCatalog(trimmed, undefined, nextPage, currency);
       if (activeQueryRef.current !== trimmed) return; // stale
       setRemoteResults(prev => {
         const seen = new Set(prev.map(card => card.id));
@@ -233,7 +235,7 @@ export default function SearchScreen() {
     } finally {
       setRemoteLoadingMore(false);
     }
-  }, [remoteHasMore, remoteLoadingMore, remoteLoading, remotePage, query]);
+  }, [remoteHasMore, remoteLoadingMore, remoteLoading, remotePage, query, currency]);
 
   // Flatten into list items for FlashList
   const listData: Card[] = !isEmpty && category === 'cards' ? cardResults : [];

@@ -3,6 +3,7 @@ import { db, usersTable } from "@workspace/db";
 import { eq, sql, type SQL } from "drizzle-orm";
 import jwt from "jsonwebtoken";
 import { isValidGradeKey, normalizeGradeKey } from "../pricing/grades.js";
+import { convertCents } from "../pricing/fx.js";
 import {
   JUSTTCG_PRICING_PROVIDER_KEY,
   JUSTTCG_PRICING_PROVIDER_LABEL,
@@ -91,6 +92,99 @@ function getNmVariant(variants: unknown): Record<string, unknown> | null {
 }
 
 type QuoteEnrichableCard = Record<string, unknown> & { id?: unknown; variants?: unknown };
+
+function requestedDisplayCurrency(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const currency = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : undefined;
+}
+
+type CurrencyConverter = (amountCents: number, from: string, to: string) => Promise<number | null>;
+
+/**
+ * Convert catalogue response values for display without changing their stored
+ * provider values. List, search and detail screens use this same response
+ * shape, so a selected display currency cannot disagree between surfaces.
+ * When FX is unavailable the original provider currency/value is preserved.
+ */
+export async function convertCatalogueCardsForDisplay<T extends Record<string, unknown>>(
+  cards: T[],
+  displayCurrency: string | undefined,
+  converter: CurrencyConverter = convertCents,
+): Promise<T[]> {
+  if (!displayCurrency) return cards;
+
+  const convertAmount = async (value: unknown, from: string): Promise<number | null> => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    const converted = await converter(Math.round(value * 100), from, displayCurrency);
+    return converted == null ? null : converted / 100;
+  };
+
+  return Promise.all(cards.map(async card => {
+    const rawQuote = card.raw_quote && typeof card.raw_quote === "object"
+      ? card.raw_quote as Record<string, unknown>
+      : null;
+    const sourceCurrency = typeof rawQuote?.currency === "string"
+      ? rawQuote.currency.toUpperCase()
+      : typeof card.currency === "string"
+        ? card.currency.toUpperCase()
+        : null;
+    if (!sourceCurrency) return card;
+
+    const primaryValues = await Promise.all([
+      convertAmount(card.market_price, sourceCurrency),
+      convertAmount(card.previous_price, sourceCurrency),
+      convertAmount(card.absolute_change, sourceCurrency),
+      rawQuote ? convertAmount(rawQuote.price, sourceCurrency) : Promise.resolve(null),
+    ]);
+    const [marketPrice, previousPrice, absoluteChange, rawQuotePrice] = primaryValues;
+    const didConvert = sourceCurrency === displayCurrency || primaryValues.some(value => value !== null);
+    if (!didConvert) return card;
+
+    const variants = Array.isArray(card.variants)
+      ? await Promise.all(card.variants.map(async item => {
+          if (!item || typeof item !== "object") return item;
+          const variant = item as Record<string, unknown>;
+          const markets = Array.isArray(variant.markets) ? variant.markets : [];
+          const variantCurrency = typeof (markets[0] as Record<string, unknown> | undefined)?.currency === "string"
+            ? String((markets[0] as Record<string, unknown>).currency).toUpperCase()
+            : sourceCurrency;
+          const price = await convertAmount(variant.price, variantCurrency);
+          const convertedMarkets = await Promise.all(markets.map(async market => {
+            if (!market || typeof market !== "object") return market;
+            const record = market as Record<string, unknown>;
+            const currency = typeof record.currency === "string" ? record.currency.toUpperCase() : variantCurrency;
+            const convertedPrice = await convertAmount(record.price, currency);
+            return convertedPrice === null && currency !== displayCurrency
+              ? record
+              : { ...record, ...(convertedPrice !== null ? { price: convertedPrice } : {}), currency: displayCurrency };
+          }));
+          return price === null && variantCurrency !== displayCurrency
+            ? variant
+            : { ...variant, ...(price !== null ? { price } : {}), markets: convertedMarkets };
+        }))
+      : card.variants;
+
+    return {
+      ...card,
+      currency: displayCurrency,
+      ...(marketPrice !== null ? { market_price: marketPrice } : {}),
+      ...(previousPrice !== null ? { previous_price: previousPrice } : {}),
+      ...(absoluteChange !== null ? { absolute_change: absoluteChange } : {}),
+      ...(rawQuote ? {
+        raw_quote: {
+          ...rawQuote,
+          ...(rawQuotePrice !== null ? {
+            price: rawQuotePrice,
+            priceCents: Math.round(rawQuotePrice * 100),
+          } : {}),
+          currency: displayCurrency,
+        },
+      } : {}),
+      ...(variants !== undefined ? { variants } : {}),
+    } as T;
+  }));
+}
 
 /**
  * Attach only persisted, provider-backed raw quotes to catalogue cards.
@@ -295,6 +389,7 @@ router.get("/catalog/games", async (_req, res) => {
 
 router.get("/catalog/cards", async (req, res) => {
   try {
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
     const game =
       typeof req.query.game === "string" ? req.query.game.trim() : "";
@@ -321,7 +416,9 @@ router.get("/catalog/cards", async (req, res) => {
           canonicalRead.durationMs,
           "canonical",
         );
-        const data = await enrichCardsWithCurrentRawQuotes(canonical);
+        const data = await convertCatalogueCardsForDisplay(
+          await enrichCardsWithCurrentRawQuotes(canonical), displayCurrency,
+        );
         return res.json({
           data,
           meta: canonicalRead.pagination,
@@ -362,7 +459,9 @@ router.get("/catalog/cards", async (req, res) => {
             canonicalRead.durationMs,
             "canonical",
           );
-          const data = await enrichCardsWithCurrentRawQuotes(canonical);
+          const data = await convertCatalogueCardsForDisplay(
+            await enrichCardsWithCurrentRawQuotes(canonical), displayCurrency,
+          );
           return res.json({
             data,
             meta: canonicalRead.pagination,
@@ -380,7 +479,9 @@ router.get("/catalog/cards", async (req, res) => {
             canonicalRead.durationMs,
             "canonical",
           );
-          const data = await enrichCardsWithCurrentRawQuotes(canonical);
+          const data = await convertCatalogueCardsForDisplay(
+            await enrichCardsWithCurrentRawQuotes(canonical), displayCurrency,
+          );
           return res.json({
             data,
             meta: canonicalRead.pagination,
@@ -391,8 +492,11 @@ router.get("/catalog/cards", async (req, res) => {
             cached: fallbackResult.cached ?? false,
           });
         }
-        const data = await enrichCardsWithCurrentRawQuotes(
-          deduplicatePublicCards(canonical, fallbackCards).slice(0, limit),
+        const data = await convertCatalogueCardsForDisplay(
+          await enrichCardsWithCurrentRawQuotes(
+            deduplicatePublicCards(canonical, fallbackCards).slice(0, limit),
+          ),
+          displayCurrency,
         );
         const fallbackPagination = normalizeCataloguePagination(
           fallbackResult.body,
@@ -466,7 +570,9 @@ router.get("/catalog/cards", async (req, res) => {
           } | null) ?? {}),
         };
         if (Array.isArray(body.data))
-          body.data = await enrichCardsWithCurrentRawQuotes(body.data.map(enrichCard));
+          body.data = await convertCatalogueCardsForDisplay(
+            await enrichCardsWithCurrentRawQuotes(body.data.map(enrichCard)), displayCurrency,
+          );
         const data = Array.isArray(body.data) ? body.data : [];
         return res.json({
           ...body,
@@ -510,10 +616,9 @@ router.get("/catalog/cards", async (req, res) => {
         {}),
     };
     if (body && Array.isArray(body.data)) {
-      body.data = await enrichCardsWithCurrentRawQuotes(body.data.map((card) => {
-        const enriched = enrichCard(card);
-        return enriched;
-      }));
+      body.data = await convertCatalogueCardsForDisplay(
+        await enrichCardsWithCurrentRawQuotes(body.data.map(enrichCard)), displayCurrency,
+      );
     }
     const data = Array.isArray(body.data) ? body.data : [];
 
@@ -848,8 +953,12 @@ router.get("/catalog/market-movers", async (req, res) => {
     const normalizedGrade = normalizeGradeKey(requestedGrade);
     const grade = normalizedGrade && isValidGradeKey(normalizedGrade) ? normalizedGrade : "raw";
     const currency = typeof req.query.currency === "string" ? req.query.currency.trim() : undefined;
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     return res.json({
-      data: await persistedMarketCards(8, marketMode(req.query.mode), grade, currency, preferences),
+      data: await convertCatalogueCardsForDisplay(
+        await persistedMarketCards(8, marketMode(req.query.mode), grade, currency, preferences),
+        displayCurrency,
+      ),
       source: "VerifiedTCG snapshots",
     });
   } catch {
@@ -865,6 +974,7 @@ router.get("/catalog/market-movers", async (req, res) => {
  */
 router.get("/catalog/trending", async (req, res) => {
   try {
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     const preferences = await optionalPreferredGames(req.headers.authorization);
     const activity = await db.execute<{ card_id: string }>(sql`
       SELECT recent_activity.entity_id AS card_id
@@ -892,7 +1002,7 @@ router.get("/catalog/trending", async (req, res) => {
       all.findIndex((other) => other.id === card.id) === index,
     ).slice(0, 8);
     return res.json({
-      data: cards,
+      data: await convertCatalogueCardsForDisplay(cards, displayCurrency),
       source: activityCards.length >= 8 ? "VerifiedTCG activity" : "VerifiedTCG activity and catalogue",
     });
   } catch {
@@ -907,6 +1017,7 @@ router.get("/catalog/trending", async (req, res) => {
  */
 router.get("/catalog/trending-lookups", async (req, res) => {
   try {
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     const preferences = await optionalPreferredGames(req.headers.authorization);
     const lookups = await getTrendingLookups(40);
     const ranked = await Promise.all(lookups.map(async lookup => {
@@ -925,7 +1036,7 @@ router.get("/catalog/trending-lookups", async (req, res) => {
         })),
     );
     return res.json({
-      data: cards,
+      data: await convertCatalogueCardsForDisplay(cards, displayCurrency),
       source: "VerifiedTCG aggregate card lookups",
       window_start: lookups[0]?.bucketStart ?? null,
       window_end: lookups[0]?.bucketEnd ?? null,
@@ -944,8 +1055,12 @@ router.get("/catalog/trending-lookups", async (req, res) => {
  */
 router.get("/catalog/recently-added", async (req, res) => {
   try {
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     return res.json({
-      data: await persistedRecentlyAddedCards(8, await optionalPreferredGames(req.headers.authorization)),
+      data: await convertCatalogueCardsForDisplay(
+        await persistedRecentlyAddedCards(8, await optionalPreferredGames(req.headers.authorization)),
+        displayCurrency,
+      ),
       source: "VerifiedTCG catalogue",
     });
   } catch {
@@ -1087,6 +1202,7 @@ async function resolveJustTcgCatalogCardById(
 
 router.get("/catalog/cards/:id", async (req, res) => {
   try {
+    const displayCurrency = requestedDisplayCurrency(req.query.displayCurrency);
     const resolved = await resolveCatalogCardById(String(req.params.id));
     if (!resolved) return res.status(404).json({ error: "Card not found" });
     if (resolved.status === 429) {
@@ -1095,7 +1211,9 @@ router.get("/catalog/cards/:id", async (req, res) => {
         code: "CATALOGUE_DAILY_BUDGET_EXHAUSTED",
       });
     }
-    const [pricedCard] = await enrichCardsWithCurrentRawQuotes([resolved.card]);
+    const [pricedCard] = await convertCatalogueCardsForDisplay(
+      await enrichCardsWithCurrentRawQuotes([resolved.card]), displayCurrency,
+    );
     return res.json({
       data: pricedCard ?? resolved.card,
       source: resolved.source,

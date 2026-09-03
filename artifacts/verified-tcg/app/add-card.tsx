@@ -12,6 +12,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
+import { useSettings } from '@/context/SettingsContext';
 import { catalogCardToAppCard, MIN_CATALOG_SEARCH_LENGTH, searchCatalog } from '@/services/catalogApi';
 import colors from '@/constants/colors';
 import type { Card, CollectionItem, GradingCompany, CardCondition } from '@/types';
@@ -41,6 +42,7 @@ export default function AddCardScreen() {
   const insets = useSafeAreaInsets();
   const { editId, cardJson } = useLocalSearchParams<{ editId?: string; cardJson?: string }>();
   const { addToCollection, collection, updateCollectionHolding } = useApp();
+  const { currency: displayCurrency } = useSettings();
   const [step, setStep] = useState<Step>('search');
   const [query, setQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
@@ -105,13 +107,13 @@ export default function AddCardScreen() {
     setResults([]);
     let cancelled = false;
     const timer = setTimeout(() => {
-      searchCatalog(trimmed)
+      searchCatalog(trimmed, undefined, 1, displayCurrency)
         .then(response => { if (!cancelled) setResults(response.data.map(catalogCardToAppCard)); })
         .catch(() => { if (!cancelled) setSearchError('Card search is unavailable. Please try again.'); })
         .finally(() => { if (!cancelled) setSearchLoading(false); });
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [query]);
+  }, [query, displayCurrency]);
 
   function selectCard(card: Card) {
     setSelectedCard(card);

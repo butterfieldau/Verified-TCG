@@ -668,7 +668,7 @@ export default function CardDetailScreen() {
     let cancelled = false;
     setCatalogCard(null);
     setCatalogLoading(true);
-    fetchCatalogCard(id, controller.signal)
+    fetchCatalogCard(id, controller.signal, displayCurrency)
       .then((data) => {
         if (cancelled) return;
         if (data) setCatalogCard(catalogCardToAppCard(data));
@@ -679,7 +679,7 @@ export default function CardDetailScreen() {
       })
       .finally(() => { if (!cancelled) setCatalogLoading(false); });
     return () => { cancelled = true; controller.abort(); };
-  }, [id, catalogJson, appCardJson]);
+  }, [id, catalogJson, appCardJson, displayCurrency]);
 
   useEffect(() => {
     if (!id) return;
