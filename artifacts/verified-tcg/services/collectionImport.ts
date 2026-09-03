@@ -15,6 +15,10 @@ export interface ImportPreviewRow {
   position?: number;
   cardId?: string;
   card?: any;
+  candidates?: Array<{
+    cardId: string;
+    card: any;
+  }>;
   normalized?: any;
   candidateCount?: number;
   error?: string;
@@ -50,6 +54,11 @@ export interface ImportPreviewResponse {
 export interface ImportCommitRequest {
   contentSha256: string;
   sourceCurrency?: string;
+}
+
+export interface ImportResolution {
+  rowNumber: number;
+  cardId: string | null;
 }
 
 export interface ImportCommitResponse {
@@ -95,5 +104,17 @@ export async function commitImport(jobId: string, req: ImportCommitRequest): Pro
     method: 'POST',
     accessToken: await accessToken(),
     body: JSON.stringify(req),
+  });
+}
+
+export async function resolveImport(
+  jobId: string,
+  contentSha256: string,
+  resolutions: ImportResolution[],
+): Promise<ImportPreviewResponse> {
+  return apiJson<ImportPreviewResponse>(`/api/collection/import/${encodeURIComponent(jobId)}/resolve`, {
+    method: 'POST',
+    accessToken: await accessToken(),
+    body: JSON.stringify({ contentSha256, resolutions }),
   });
 }

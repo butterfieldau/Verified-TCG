@@ -34,10 +34,16 @@ const externalIds = [
   `import-card-b-${suffix}`,
   `import-card-c-${suffix}`,
 ];
+const ambiguousExternalIds = [
+  `import-card-ambiguous-a-${suffix}`,
+  `import-card-ambiguous-b-${suffix}`,
+];
 let userId = "";
 let roundTripUserId = "";
+let ambiguousUserId = "";
 let token = "";
 let roundTripToken = "";
+let ambiguousToken = "";
 let gameId = "";
 let setId = "";
 const cardIds: string[] = [];
@@ -54,6 +60,15 @@ function collectrFixture(): string {
   ].join("\r\n");
 }
 
+function ambiguousCollectrFixture(): string {
+  return [
+    COLLECTR_HEADER,
+    ...Array.from({ length: 6 }, (_, index) =>
+      `Main,Pokemon,Import Set ${suffix},Ambiguous Test Card,777,Rare,Normal,,Near Mint,1.00,1,10,0,false,2026-08-${String(index + 1).padStart(2, "0")},Ambiguous row ${index + 1}`
+    ),
+  ].join("\r\n");
+}
+
 before(async () => {
   await runMigrations();
   const primary = await createTestUser({
@@ -63,10 +78,16 @@ before(async () => {
   const roundTrip = await createTestUser({
     email: `test_suite_import_roundtrip_${suffix}@example.com`,
   });
+  const ambiguous = await createTestUser({
+    email: `test_suite_import_ambiguous_${suffix}@example.com`,
+    subscriptionTier: "pro",
+  });
   userId = primary.user.id;
   roundTripUserId = roundTrip.user.id;
+  ambiguousUserId = ambiguous.user.id;
   token = primary.accessToken;
   roundTripToken = roundTrip.accessToken;
+  ambiguousToken = ambiguous.accessToken;
 
   const [game] = await db.insert(catalogueGamesTable).values({
     slug: gameSlug,
@@ -107,6 +128,30 @@ before(async () => {
     });
   }
 
+  for (let index = 0; index < ambiguousExternalIds.length; index += 1) {
+    const [card] = await db.insert(catalogueCardsTable).values({
+      gameId,
+      setId,
+      name: "Ambiguous Test Card",
+      collectorNumber: "777",
+      collectorNumberNormalized: "777",
+      rarity: "Rare",
+    }).returning();
+    cardIds.push(card!.id);
+    await db.insert(catalogueExternalIdsTable).values({
+      entityType: "card",
+      entityId: card!.id,
+      providerKey: "justtcg",
+      externalId: ambiguousExternalIds[index]!,
+    });
+    await db.insert(catalogueCardVariantsTable).values({
+      cardId: card!.id,
+      variantKey: `normal-${index}`,
+      finish: "Normal",
+      isDefault: true,
+    });
+  }
+
   await db.insert(wishlistItemsTable).values({
     userId,
     itemId: `existing-beta-${suffix}`,
@@ -122,6 +167,7 @@ before(async () => {
 after(async () => {
   if (userId) await deleteTestUser(userId);
   if (roundTripUserId) await deleteTestUser(roundTripUserId);
+  if (ambiguousUserId) await deleteTestUser(ambiguousUserId);
   for (const cardId of cardIds) {
     await db.delete(catalogueCardVariantsTable).where(eq(catalogueCardVariantsTable.cardId, cardId));
     await db.delete(catalogueExternalIdsTable).where(eq(catalogueExternalIdsTable.entityId, cardId));
@@ -248,6 +294,78 @@ describe("collection CSV migration routes", () => {
     const holdingsAfterReplay = await db.select().from(collectionItemsTable)
       .where(eq(collectionItemsTable.userId, userId));
     assert.equal(holdingsAfterReplay.length, 1);
+  });
+
+  test("resolves six ambiguous rows only to previewed candidates or an explicit skip", async () => {
+    const preview = await request
+      .post("/api/collection/import/preview")
+      .set("Authorization", `Bearer ${ambiguousToken}`)
+      .send({ content: ambiguousCollectrFixture(), filename: "collectr-ambiguous.csv" });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.summary.ambiguous, 6);
+    assert.equal(preview.body.rows.length, 6);
+    for (const row of preview.body.rows) {
+      assert.equal(row.status, "ambiguous");
+      assert.equal(row.candidates.length, 2);
+      assert.equal(row.candidates[0].card.name, "Ambiguous Test Card");
+      assert.equal(row.candidates[0].card.setName, `Import Set ${suffix}`);
+      assert.equal(row.candidates[0].card.number, "777");
+    }
+
+    const selectedCardId = preview.body.rows[0].candidates[0].cardId;
+    const wrongHash = await request
+      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
+      .set("Authorization", `Bearer ${ambiguousToken}`)
+      .send({
+        contentSha256: "f".repeat(64),
+        resolutions: [{ rowNumber: 2, cardId: selectedCardId }],
+      });
+    assert.equal(wrongHash.status, 409);
+
+    const forgedChoice = await request
+      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
+      .set("Authorization", `Bearer ${ambiguousToken}`)
+      .send({
+        contentSha256: preview.body.contentSha256,
+        resolutions: [{ rowNumber: 2, cardId: "not-a-previewed-candidate" }],
+      });
+    assert.equal(forgedChoice.status, 400);
+
+    const resolved = await request
+      .post(`/api/collection/import/${preview.body.jobId}/resolve`)
+      .set("Authorization", `Bearer ${ambiguousToken}`)
+      .send({
+        contentSha256: preview.body.contentSha256,
+        resolutions: preview.body.rows.map((row: { rowNumber: number }, index: number) => ({
+          rowNumber: row.rowNumber,
+          cardId: index === 5 ? null : selectedCardId,
+        })),
+      });
+    assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+    assert.equal(resolved.body.summary.matched, 5);
+    assert.equal(resolved.body.summary.ambiguous, 0);
+    assert.equal(resolved.body.summary.unmatched, 1);
+    assert.equal(resolved.body.rows[5].error, "Skipped by collector during card review.");
+
+    const commit = await request
+      .post(`/api/collection/import/${preview.body.jobId}/commit`)
+      .set("Authorization", `Bearer ${ambiguousToken}`)
+      .send({
+        contentSha256: preview.body.contentSha256,
+        sourceCurrency: "USD",
+      });
+    assert.equal(commit.status, 200, JSON.stringify(commit.body));
+    assert.equal(commit.body.summary.holdingsAdded, 5);
+    assert.equal(commit.body.summary.skipped, 1);
+
+    const selectedHoldings = await db
+      .select()
+      .from(collectionItemsTable)
+      .where(eq(collectionItemsTable.userId, ambiguousUserId));
+    assert.equal(
+      selectedHoldings.filter((holding) => holding.cardId === selectedCardId).length,
+      5,
+    );
   });
 
   test("exports stable currency metadata and previews the export for round trip", async () => {

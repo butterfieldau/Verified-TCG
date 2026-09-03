@@ -50,6 +50,7 @@ import type {
   HoldingIdsMutation,
   PortfolioMovementBreakdown,
   PreviewCollectionCsvImportBody,
+  ResolveCollectionCsvImportBody,
   SearchCatalogCardsParams
 } from './api.schemas';
 
@@ -757,6 +758,78 @@ export const useCommitCollectionCsvImport = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getCommitCollectionCsvImportMutationOptions(options));
+    }
+
+export const getResolveCollectionCsvImportUrl = (jobId: string,) => {
+
+
+
+
+  return `/api/collection/import/${jobId}/resolve`
+}
+
+/**
+ * @summary Resolve ambiguous CSV card matches against the candidates saved in a preview
+ */
+export const resolveCollectionCsvImport = async (jobId: string,
+    resolveCollectionCsvImportBody: ResolveCollectionCsvImportBody, options?: Parameters<typeof customFetch>[1]): Promise<CollectionImportPreview> => {
+
+  return customFetch<CollectionImportPreview>(getResolveCollectionCsvImportUrl(jobId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resolveCollectionCsvImportBody)
+  }
+);}
+
+
+
+
+
+export const getResolveCollectionCsvImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveCollectionCsvImport>>, TError,{jobId: string;data: BodyType<ResolveCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveCollectionCsvImport>>, TError,{jobId: string;data: BodyType<ResolveCollectionCsvImportBody>}, TContext> => {
+
+const mutationKey = ['resolveCollectionCsvImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveCollectionCsvImport>>, {jobId: string;data: BodyType<ResolveCollectionCsvImportBody>}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  resolveCollectionCsvImport(jobId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveCollectionCsvImportMutationResult = NonNullable<Awaited<ReturnType<typeof resolveCollectionCsvImport>>>
+    export type ResolveCollectionCsvImportMutationBody = BodyType<ResolveCollectionCsvImportBody>
+    export type ResolveCollectionCsvImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Resolve ambiguous CSV card matches against the candidates saved in a preview
+ */
+export const useResolveCollectionCsvImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveCollectionCsvImport>>, TError,{jobId: string;data: BodyType<ResolveCollectionCsvImportBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveCollectionCsvImport>>,
+        TError,
+        {jobId: string;data: BodyType<ResolveCollectionCsvImportBody>},
+        TContext
+      > => {
+      return useMutation(getResolveCollectionCsvImportMutationOptions(options));
     }
 
 export const getGetCollectionOrganizationUrl = () => {

@@ -310,6 +310,10 @@ export const PreviewCollectionCsvImportResponse = zod.object({
   "cardId": zod.string().optional(),
   "canonicalCardId": zod.string().optional(),
   "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "candidates": zod.array(zod.object({
+  "cardId": zod.string(),
+  "card": zod.record(zod.string(), zod.unknown())
+})).optional(),
   "candidateCount": zod.number().int().min(previewCollectionCsvImportResponseRowsItemCandidateCountMin).optional(),
   "error": zod.string().optional(),
   "quantity": zod.number().int().min(1).optional(),
@@ -365,6 +369,93 @@ export const CommitCollectionCsvImportResponse = zod.object({
   "cardId": zod.string().optional(),
   "listName": zod.string().optional(),
   "reason": zod.string().optional()
+}))
+})
+
+
+/**
+ * @summary Resolve ambiguous CSV card matches against the candidates saved in a preview
+ */
+export const ResolveCollectionCsvImportParams = zod.object({
+  "jobId": zod.coerce.string().uuid()
+})
+
+export const resolveCollectionCsvImportBodyContentSha256RegExp = new RegExp('^[a-f0-9]{64}$');
+export const resolveCollectionCsvImportBodyResolutionsItemRowNumberMin = 2;
+
+export const resolveCollectionCsvImportBodyResolutionsMax = 1000;
+
+
+
+export const ResolveCollectionCsvImportBody = zod.object({
+  "contentSha256": zod.string().regex(resolveCollectionCsvImportBodyContentSha256RegExp),
+  "resolutions": zod.array(zod.object({
+  "rowNumber": zod.number().int().min(resolveCollectionCsvImportBodyResolutionsItemRowNumberMin),
+  "cardId": zod.string().nullable()
+})).max(resolveCollectionCsvImportBodyResolutionsMax)
+})
+
+export const resolveCollectionCsvImportResponseRowsItemRowNumberMin = 2;
+
+export const resolveCollectionCsvImportResponseRowsItemPositionMin = 0;
+
+export const resolveCollectionCsvImportResponseRowsItemCandidateCountMin = 0;
+
+
+export const resolveCollectionCsvImportResponseRowsItemAcquiredPriceMin = 0;
+
+
+
+export const ResolveCollectionCsvImportResponse = zod.object({
+  "jobId": zod.string().uuid(),
+  "source": zod.enum(['collectr', 'verified_tcg']),
+  "schemaVersion": zod.union([zod.literal(1),zod.literal(2)]),
+  "contentSha256": zod.string(),
+  "status": zod.string().optional(),
+  "summary": zod.object({
+  "total": zod.number().int(),
+  "matched": zod.number().int(),
+  "watchlistOnly": zod.number().int(),
+  "invalid": zod.number().int(),
+  "ambiguous": zod.number().int(),
+  "unmatched": zod.number().int(),
+  "duplicate": zod.number().int(),
+  "priced": zod.number().int(),
+  "listCount": zod.number().int().optional(),
+  "membershipCount": zod.number().int().optional(),
+  "listsToCreate": zod.array(zod.string()).optional(),
+  "listsToMerge": zod.array(zod.string()).optional()
+}),
+  "rows": zod.array(zod.object({
+  "recordType": zod.enum(['holding', 'list']).optional(),
+  "rowNumber": zod.number().int().min(resolveCollectionCsvImportResponseRowsItemRowNumberMin),
+  "status": zod.enum(['matched', 'watchlist_only', 'ambiguous', 'invalid', 'unmatched', 'duplicate', 'valid']),
+  "isWatchlistOnly": zod.boolean().optional(),
+  "name": zod.string().optional(),
+  "position": zod.number().int().min(resolveCollectionCsvImportResponseRowsItemPositionMin).optional(),
+  "holdingId": zod.string().uuid().optional(),
+  "listNames": zod.array(zod.string()).optional(),
+  "cardId": zod.string().optional(),
+  "canonicalCardId": zod.string().optional(),
+  "card": zod.record(zod.string(), zod.unknown()).optional(),
+  "candidates": zod.array(zod.object({
+  "cardId": zod.string(),
+  "card": zod.record(zod.string(), zod.unknown())
+})).optional(),
+  "candidateCount": zod.number().int().min(resolveCollectionCsvImportResponseRowsItemCandidateCountMin).optional(),
+  "error": zod.string().optional(),
+  "quantity": zod.number().int().min(1).optional(),
+  "condition": zod.string().optional(),
+  "acquiredAt": zod.coerce.date().optional(),
+  "acquiredPrice": zod.number().min(resolveCollectionCsvImportResponseRowsItemAcquiredPriceMin).optional(),
+  "currency": zod.string().optional(),
+  "notes": zod.string().optional(),
+  "finish": zod.string().optional(),
+  "variance": zod.string().optional(),
+  "grading": zod.record(zod.string(), zod.unknown()).optional(),
+  "desiredGrade": zod.string().optional(),
+  "supportedGrade": zod.boolean().optional(),
+  "pricingAvailable": zod.boolean().optional()
 }))
 })
 

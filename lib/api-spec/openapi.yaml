@@ -184,6 +184,41 @@ paths:
         "401": { description: Authentication required. }
         "404": { description: Preview not found for this collector. }
         "409": { description: Preview expired or content fingerprint changed. }
+  /collection/import/{jobId}/resolve:
+    post:
+      operationId: resolveCollectionCsvImport
+      tags: [collection]
+      summary: Resolve ambiguous CSV card matches against the candidates saved in a preview
+      parameters:
+        - { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentSha256, resolutions]
+              properties:
+                contentSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                resolutions:
+                  type: array
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [rowNumber, cardId]
+                    properties:
+                      rowNumber: { type: integer, minimum: 2 }
+                      cardId: { type: [string, "null"] }
+      responses:
+        "200":
+          description: Updated user-scoped preview with selected card identities.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionImportPreview" }
+        "400": { description: Invalid row decision or card candidate. }
+        "401": { description: Authentication required. }
+        "404": { description: Preview not found for this collector. }
+        "409": { description: "Preview expired, committed, or content fingerprint changed." }
   /collection/lists:
     get:
       operationId: getCollectionOrganization
@@ -707,6 +742,14 @@ components:
         cardId: { type: string }
         canonicalCardId: { type: string }
         card: { type: object, additionalProperties: true }
+        candidates:
+          type: array
+          items:
+            type: object
+            required: [cardId, card]
+            properties:
+              cardId: { type: string }
+              card: { type: object, additionalProperties: true }
         candidateCount: { type: integer, minimum: 0 }
         error: { type: string }
         quantity: { type: integer, minimum: 1 }

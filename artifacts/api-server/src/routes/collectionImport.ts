@@ -61,6 +61,10 @@ interface NormalizedImportRow {
   cardId?: string;
   canonicalCardId?: string;
   card?: Record<string, unknown>;
+  candidates?: Array<{
+    cardId: string;
+    card: Record<string, unknown>;
+  }>;
   candidateCount?: number;
   error?: string;
   isWatchlistOnly: boolean;
@@ -957,10 +961,33 @@ export async function normalizeRows(
       continue;
     }
     if (candidates.length > 1) {
+      const importDetails = {
+        quantity: isWatchlistOnly ? undefined : quantity,
+        condition: normalizedCondition,
+        acquiredAt: effectiveDate,
+        acquiredPrice,
+        currency: acquisitionCurrency ? acquisitionCurrency.toUpperCase() : undefined,
+        notes: notes || (finish ? `Imported finish/variance: ${finish}` : undefined),
+        finish: finish || undefined,
+        variance: variance || undefined,
+        grading: parsedGrade.grading,
+        desiredGrade: parsedGrade.desiredGrade,
+        isForSale: truthy(field(sourceRow, "For Sale")),
+        isForTrade: truthy(field(sourceRow, "For Trade")),
+        pricingAvailable: false,
+        supportedGrade: parsedGrade.supported,
+        ...(holdingId ? { holdingId } : {}),
+        ...(listNames ? { listNames } : {}),
+      };
       normalized.push({
         ...base,
         status: "ambiguous",
         candidateCount: candidates.length,
+        candidates: candidates.map((candidate) => ({
+          cardId: candidate.id,
+          card: appCard(candidate, finish, variance),
+        })),
+        ...importDetails,
         error: `${candidates.length} exact catalogue matches need review.`,
       });
       continue;
@@ -1075,9 +1102,13 @@ router.post(
         ))
         .limit(1);
       const existingJob = existing[0];
+      const existingRows = existingJob?.normalizedRows as NormalizedImportRecord[] | undefined;
+      const reusablePreview = !existingRows?.some(
+        (row) => row.recordType !== "list" && row.status === "ambiguous" && !row.candidates?.length,
+      );
       if (existingJob && (
         existingJob.status === "committed" ||
-        existingJob.expiresAt.getTime() > Date.now()
+        (existingJob.expiresAt.getTime() > Date.now() && reusablePreview)
       )) {
         res.json({
           jobId: existingJob.id,
@@ -1145,6 +1176,144 @@ router.post(
       req.log?.warn({ err: error }, "Collection CSV preview rejected");
       res.status(422).json({ message });
     }
+  },
+);
+
+router.post(
+  "/collection/import/:jobId/resolve",
+  requireActiveUser,
+  async (req: AuthRequest, res) => {
+    const jobId = String(req.params.jobId);
+    const contentSha256 =
+      typeof req.body?.contentSha256 === "string" ? req.body.contentSha256 : "";
+    const resolutions = req.body?.resolutions;
+
+    if (!Array.isArray(resolutions) || resolutions.length > COLLECTION_IMPORT_MAX_ROWS) {
+      res.status(400).json({ message: "Resolutions must be an array of row decisions." });
+      return;
+    }
+
+    const [job] = await db
+      .select()
+      .from(collectionImportJobsTable)
+      .where(and(
+        eq(collectionImportJobsTable.id, jobId),
+        eq(collectionImportJobsTable.userId, req.userId!),
+      ))
+      .limit(1);
+    if (!job) {
+      res.status(404).json({ message: "Import preview not found." });
+      return;
+    }
+    if (!contentSha256 || contentSha256 !== job.contentSha256) {
+      res.status(409).json({ message: "The selected CSV no longer matches this preview." });
+      return;
+    }
+    if (job.status === "committed") {
+      res.status(409).json({ message: "This import has already been committed." });
+      return;
+    }
+    if (job.expiresAt.getTime() <= Date.now()) {
+      res.status(409).json({ message: "This preview expired. Preview the CSV again." });
+      return;
+    }
+
+    const records = job.normalizedRows as NormalizedImportRecord[];
+    const rowsByNumber = new Map(
+      records
+        .filter((record): record is NormalizedImportRow => record.recordType !== "list")
+        .map((row) => [row.rowNumber, row]),
+    );
+    const seenRows = new Set<number>();
+    const resolvedRows = records.map((record) => ({ ...record }));
+
+    for (const resolution of resolutions) {
+      const rowNumber = resolution?.rowNumber;
+      const suppliedCardId = resolution?.cardId;
+      if (
+        !Number.isInteger(rowNumber) ||
+        rowNumber < 2 ||
+        seenRows.has(rowNumber) ||
+        (
+          suppliedCardId !== null &&
+          (typeof suppliedCardId !== "string" || !suppliedCardId.trim())
+        )
+      ) {
+        res.status(400).json({ message: "Each resolution must contain a unique row number." });
+        return;
+      }
+      seenRows.add(rowNumber);
+      const row = rowsByNumber.get(rowNumber);
+      if (!row || row.status !== "ambiguous") {
+        res.status(400).json({ message: `Row ${rowNumber} is not awaiting card review.` });
+        return;
+      }
+
+      const candidate = suppliedCardId
+        ? row.candidates?.find((item) => item.cardId === suppliedCardId)
+        : undefined;
+      if (suppliedCardId && !candidate) {
+        res.status(400).json({ message: `Selected card is not a candidate for row ${rowNumber}.` });
+        return;
+      }
+
+      const targetIndex = resolvedRows.findIndex(
+        (record) => record.recordType !== "list" && record.rowNumber === rowNumber,
+      );
+      if (targetIndex < 0) continue;
+      if (!candidate) {
+        resolvedRows[targetIndex] = {
+          ...row,
+          status: "unmatched",
+          error: "Skipped by collector during card review.",
+        };
+      } else {
+        resolvedRows[targetIndex] = {
+          ...row,
+          status: row.isWatchlistOnly ? "watchlist_only" : "matched",
+          cardId: candidate.cardId,
+          canonicalCardId: candidate.cardId,
+          card: candidate.card,
+          error: undefined,
+        };
+      }
+    }
+
+    const holdingRows = resolvedRows.filter(
+      (row): row is NormalizedImportRow => row.recordType !== "list",
+    );
+    const baseSummary = previewSummary(holdingRows);
+    const summary = job.schemaVersion === COLLECTION_ORGANIZATION_SCHEMA_VERSION
+      ? await addOrganizationPreview(resolvedRows, baseSummary, req.userId!)
+      : baseSummary;
+
+    const [updatedJob] = await db
+      .update(collectionImportJobsTable)
+      .set({
+        normalizedRows: resolvedRows,
+        previewSummary: summary,
+      })
+      .where(and(
+        eq(collectionImportJobsTable.id, job.id),
+        eq(collectionImportJobsTable.userId, req.userId!),
+        eq(collectionImportJobsTable.contentSha256, contentSha256),
+      ))
+      .returning();
+    if (!updatedJob) {
+      res.status(409).json({ message: "This preview changed. Preview the CSV again." });
+      return;
+    }
+
+    res.json({
+      jobId: updatedJob.id,
+      source: updatedJob.source,
+      schemaVersion: updatedJob.schemaVersion,
+      contentSha256: updatedJob.contentSha256,
+      summary: updatedJob.previewSummary,
+      rows: updatedJob.normalizedRows,
+      status: updatedJob.status,
+      commitSummary: updatedJob.commitSummary,
+    });
   },
 );
 

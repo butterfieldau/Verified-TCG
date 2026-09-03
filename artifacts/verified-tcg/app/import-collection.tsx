@@ -23,6 +23,7 @@ import colors from '@/constants/colors';
 import { useApp } from '@/context/AppContext';
 import {
   previewImport,
+  resolveImport,
   commitImport,
   ImportPreviewResponse,
   ImportCommitResponse,
@@ -60,6 +61,7 @@ export default function ImportCollectionScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewRes, setPreviewRes] = useState<ImportPreviewResponse | null>(null);
+  const [resolutions, setResolutions] = useState<Record<number, string | null>>({});
   const [commitRes, setCommitRes] = useState<ImportCommitResponse | null>(null);
 
   const pickFile = async () => {
@@ -83,6 +85,7 @@ export default function ImportCollectionScreen() {
       setSelectedFile({ name: asset.name, content });
       setScreenState('select');
       setPreviewRes(null);
+      setResolutions({});
       setError(null);
     } catch (err: any) {
       const message = err instanceof Error ? err.message : '';
@@ -101,6 +104,7 @@ export default function ImportCollectionScreen() {
         sourceCurrency: currency,
       });
       setPreviewRes(res);
+      setResolutions({});
       setScreenState('preview');
     } catch (err: any) {
       setError(err.message || 'Failed to preview the import. Please check your network connection.');
@@ -114,8 +118,30 @@ export default function ImportCollectionScreen() {
     setLoading(true);
     setError(null);
     try {
-      const res = await commitImport(previewRes.jobId, {
-        contentSha256: previewRes.contentSha256,
+      const ambiguousRows = previewRes.rows.filter(row => row.status === 'ambiguous');
+      const unresolvedRow = ambiguousRows.find(
+        row => !Object.prototype.hasOwnProperty.call(resolutions, row.rowNumber),
+      );
+      if (unresolvedRow) {
+        setError(`Choose a card or skip row ${unresolvedRow.rowNumber} before importing.`);
+        return;
+      }
+
+      let resolvedPreview = previewRes;
+      if (ambiguousRows.length > 0) {
+        resolvedPreview = await resolveImport(
+          previewRes.jobId,
+          previewRes.contentSha256,
+          ambiguousRows.map(row => ({
+            rowNumber: row.rowNumber,
+            cardId: resolutions[row.rowNumber] ?? null,
+          })),
+        );
+        setPreviewRes(resolvedPreview);
+      }
+
+      const res = await commitImport(resolvedPreview.jobId, {
+        contentSha256: resolvedPreview.contentSha256,
         sourceCurrency: currency,
       });
       setCommitRes(res);
@@ -354,12 +380,69 @@ export default function ImportCollectionScreen() {
                   Grade will be saved, but current pricing is unavailable.
                 </Text>
               )}
+              {row.status === 'ambiguous' && (
+                <View style={styles.candidateSection}>
+                  <Text style={styles.candidatePrompt}>Choose the card to import</Text>
+                  {(row.candidates ?? []).map(candidate => {
+                    const candidateCard = candidate.card || {};
+                    const selected = resolutions[row.rowNumber] === candidate.cardId;
+                    return (
+                      <Pressable
+                        key={candidate.cardId}
+                        onPress={() => setResolutions(current => ({
+                          ...current,
+                          [row.rowNumber]: candidate.cardId,
+                        }))}
+                        style={[
+                          styles.candidateCard,
+                          selected && styles.candidateCardSelected,
+                        ]}
+                        accessibilityLabel={`Select ${String(candidateCard.name || 'candidate')} for row ${row.rowNumber}`}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.candidateName}>
+                            {String(candidateCard.name || 'Unnamed card')}
+                          </Text>
+                          <Text style={styles.candidateDetail}>
+                            {[candidateCard.setName, candidateCard.number ? `#${candidateCard.number}` : null, candidateCard.rarity]
+                              .filter(Boolean)
+                              .join(' • ')}
+                          </Text>
+                        </View>
+                        {selected && <Feather name="check-circle" size={20} color={C.positive} />}
+                      </Pressable>
+                    );
+                  })}
+                  {!row.candidates?.length && (
+                    <Text style={styles.candidateDetail}>
+                      Candidate details are unavailable for this preview. Skip this row or preview the file again.
+                    </Text>
+                  )}
+                  <Pressable
+                    onPress={() => setResolutions(current => ({
+                      ...current,
+                      [row.rowNumber]: null,
+                    }))}
+                    style={[
+                      styles.skipReviewBtn,
+                      Object.prototype.hasOwnProperty.call(resolutions, row.rowNumber)
+                        && resolutions[row.rowNumber] === null
+                        && styles.skipReviewBtnSelected,
+                    ]}
+                  >
+                    <Feather name="minus-circle" size={16} color={C.mutedForeground} />
+                    <Text style={styles.skipReviewText}>Skip this row</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
             <Text style={[
               styles.reviewStatus,
               { color: ['matched', 'watchlist_only'].includes(row.status) ? C.positive : C.mutedForeground },
             ]}>
-              {row.status.replace(/_/g, ' ')}
+              {row.status === 'ambiguous' && Object.prototype.hasOwnProperty.call(resolutions, row.rowNumber)
+                ? resolutions[row.rowNumber] === null ? 'skipped' : 'selected'
+                : row.status.replace(/_/g, ' ')}
             </Text>
           </View>
         ))}
@@ -682,6 +765,59 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_600SemiBold',
     textTransform: 'uppercase',
     textAlign: 'right',
+  },
+  candidateSection: {
+    marginTop: 12,
+    gap: 8,
+  },
+  candidatePrompt: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  candidateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.background,
+  },
+  candidateCardSelected: {
+    borderColor: C.positive,
+    backgroundColor: `${C.positive}14`,
+  },
+  candidateName: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+  },
+  candidateDetail: {
+    marginTop: 2,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: C.mutedForeground,
+  },
+  skipReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  skipReviewBtnSelected: {
+    borderColor: C.mutedForeground,
+    backgroundColor: `${C.mutedForeground}14`,
+  },
+  skipReviewText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: C.mutedForeground,
   },
   statsTitle: {
     fontSize: 13,

@@ -5,7 +5,7 @@ jest.mock('../services/auth', () => ({
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
 
-import { commitImport, previewImport } from '../services/collectionImport';
+import { commitImport, previewImport, resolveImport } from '../services/collectionImport';
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -70,6 +70,39 @@ describe('collection import service', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       contentSha256: 'b'.repeat(64),
       sourceCurrency: 'AUD',
+    });
+  });
+
+  it('submits hash-bound ambiguous row decisions', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        jobId: 'job-1',
+        source: 'collectr',
+        schemaVersion: 1,
+        contentSha256: 'c'.repeat(64),
+        summary: {
+          total: 2, matched: 1, watchlistOnly: 0, invalid: 0,
+          ambiguous: 0, unmatched: 1, duplicate: 0, priced: 0,
+        },
+        rows: [],
+      }),
+    } as Response);
+
+    await resolveImport('job-1', 'c'.repeat(64), [
+      { rowNumber: 2, cardId: 'provider-card-1' },
+      { rowNumber: 3, cardId: null },
+    ]);
+
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/collection/import/job-1/resolve');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      contentSha256: 'c'.repeat(64),
+      resolutions: [
+        { rowNumber: 2, cardId: 'provider-card-1' },
+        { rowNumber: 3, cardId: null },
+      ],
     });
   });
 });

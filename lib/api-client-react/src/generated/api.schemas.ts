@@ -285,6 +285,13 @@ export const CollectionImportPreviewRowStatus = {
 
 export type CollectionImportPreviewRowCard = { [key: string]: unknown };
 
+export type CollectionImportPreviewRowCandidatesItemCard = { [key: string]: unknown };
+
+export type CollectionImportPreviewRowCandidatesItem = {
+  cardId: string;
+  card: CollectionImportPreviewRowCandidatesItemCard;
+};
+
 export type CollectionImportPreviewRowGrading = { [key: string]: unknown };
 
 export interface CollectionImportPreviewRow {
@@ -301,6 +308,7 @@ export interface CollectionImportPreviewRow {
   cardId?: string;
   canonicalCardId?: string;
   card?: CollectionImportPreviewRowCard;
+  candidates?: CollectionImportPreviewRowCandidatesItem[];
   /** @minimum 0 */
   candidateCount?: number;
   error?: string;
@@ -666,6 +674,20 @@ export type CommitCollectionCsvImportBody = {
   contentSha256: string;
   /** @pattern ^[A-Za-z]{3}$ */
   sourceCurrency?: string;
+};
+
+export type ResolveCollectionCsvImportBodyResolutionsItem = {
+  /** @minimum 2 */
+  rowNumber: number;
+  /** @nullable */
+  cardId: string | null;
+};
+
+export type ResolveCollectionCsvImportBody = {
+  /** @pattern ^[a-f0-9]{64}$ */
+  contentSha256: string;
+  /** @maxItems 1000 */
+  resolutions: ResolveCollectionCsvImportBodyResolutionsItem[];
 };
 
 export type GetCollectionListSubtotalParams = {
