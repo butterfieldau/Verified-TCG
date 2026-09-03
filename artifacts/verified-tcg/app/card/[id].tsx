@@ -35,6 +35,7 @@ import { RARITY_LABELS } from '@/types';
 import type { Card, WatchlistItem } from '@/types';
 import { canViewAdvancedPricing } from '@/services/subscription';
 import VerifiedPricingCard, { type VerifiedPricingSummary } from '@/components/ui/VerifiedPricingCard';
+import EbaySoldListingsSheet from '@/components/ui/EbaySoldListingsSheet';
 import CollectionHoldingsPanel from '@/components/ui/CollectionHoldingsPanel';
 import { useSettings } from '@/context/SettingsContext';
 import { triggerPriceSnapshot } from '@/services/priceHistory';
@@ -603,6 +604,7 @@ export default function CardDetailScreen() {
   const [priceChartGestureActive, setPriceChartGestureActive] = useState(false);
   const [populationData, setPopulationData] = useState<CardGradingPopulation | null>(null);
   const [populationLoading, setPopulationLoading] = useState(false);
+  const [showEbaySoldListings, setShowEbaySoldListings] = useState(false);
   const [populationGrader, setPopulationGrader] = useState<PopulationGrader>('psa');
   const handlePriceChartInteractionStart = useCallback(() => {
     setPriceChartGestureActive(true);
@@ -1134,8 +1136,21 @@ export default function CardDetailScreen() {
             onPriceChartInteractionStart={handlePriceChartInteractionStart}
             onPriceChartInteractionEnd={handlePriceChartInteractionEnd}
             populationRecords={[]}
+            onViewEbaySold={() => setShowEbaySoldListings(true)}
           />
         )}
+
+        <EbaySoldListingsSheet
+          visible={showEbaySoldListings}
+          card={card}
+          displayCurrency={displayCurrency}
+          isPro={hasAdvancedPricing}
+          onClose={() => setShowEbaySoldListings(false)}
+          onUpgrade={() => {
+            setShowEbaySoldListings(false);
+            router.push('/pro-subscription');
+          }}
+        />
 
         {detailMode === 'POP' && (
           <View style={[styles.card, styles.marketPanel]}>

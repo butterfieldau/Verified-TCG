@@ -10,7 +10,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
-  Linking,
   PanResponder,
   Pressable,
   ScrollView,
@@ -396,6 +395,7 @@ interface VerifiedPricingCardProps {
   populationRecords?: VerifiedGradePopulation[];
   onPriceChartInteractionStart?: () => void;
   onPriceChartInteractionEnd?: () => void;
+  onViewEbaySold?: () => void;
 }
 
 export interface VerifiedPricingSummary {
@@ -435,6 +435,7 @@ export default function VerifiedPricingCard({
   populationRecords = [],
   onPriceChartInteractionStart,
   onPriceChartInteractionEnd,
+  onViewEbaySold,
 }: VerifiedPricingCardProps) {
   const [pricing, setPricing] = useState<CardPricingResult | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
@@ -639,13 +640,6 @@ export default function VerifiedPricingCard({
 
   // Movement from history
   const movement = history?.movement ?? null;
-
-  const ebaySearchUrl = `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent([
-    card.name,
-    card.setName,
-    card.number,
-    mode === 'graded' ? selectedGradeOption?.label : null,
-  ].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`;
 
   const selectedComparisonKeys = selectedGradeKeys.filter(key =>
     activeGraderQuotes.some(option => option.quote.gradeKey === key),
@@ -1088,9 +1082,9 @@ export default function VerifiedPricingCard({
           )}
         </Text>
         <Pressable
-          onPress={() => void Linking.openURL(ebaySearchUrl)}
+          onPress={onViewEbaySold}
           style={vpStyles.ebayButton}
-          accessibilityRole="link"
+          accessibilityRole="button"
           accessibilityLabel={`View completed eBay listings for ${card.name}`}
         >
           <Feather name="tag" size={15} color={C.primaryForeground} />

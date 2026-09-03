@@ -14,6 +14,13 @@ import { getRawMarketSummary } from '../components/ui/VerifiedPricingCard';
 import { fetchEbaySoldHistory } from '../services/priceHistory';
 import { ebaySoldHistoryAvailabilityCopy } from '../components/ui/EbaySoldHistoryCard';
 import {
+  EBAY_GRADE_GROUPS,
+  ebayGradeKeyForSelection,
+  isSafeEbayListingUrl,
+  latestEbaySales,
+  openEbayListing,
+} from '../components/ui/EbaySoldListingsSheet';
+import {
   fetchCollectionPerformance,
   fetchArchive,
   sellCollectionItem,
@@ -203,6 +210,54 @@ describe('Verified pricing mobile service', () => {
 });
 
 describe('eBay sold-history mobile service', () => {
+  it('maps every visible company and grade choice to a supported server grade key', () => {
+    expect(EBAY_GRADE_GROUPS.map(group => [
+      group.key,
+      group.grades.map(grade => grade.key),
+    ])).toEqual([
+      ['raw', ['raw']],
+      ['psa', ['psa8', 'psa9', 'psa10']],
+      ['bgs', ['bgs95', 'bgs10']],
+      ['cgc', ['cgc10']],
+    ]);
+    expect(ebayGradeKeyForSelection('psa', 'psa10')).toBe('psa10');
+    expect(ebayGradeKeyForSelection('bgs')).toBe('bgs95');
+    expect(ebayGradeKeyForSelection('cgc', 'psa10')).toBe('cgc10');
+  });
+
+  it('keeps sold-listing results newest-first and caps the picker at 12 sales', () => {
+    const sales = Array.from({ length: 14 }, (_, index) => ({
+      title: `Pikachu sale ${index}`,
+      endedAt: new Date(Date.UTC(2026, 7, 20 - index)).toISOString(),
+      condition: null,
+      sourcePrice: 100 + index,
+      sourceCurrency: 'USD',
+      priceCents: (100 + index) * 100,
+      price: 100 + index,
+      currency: 'USD',
+      url: `https://www.ebay.com/itm/${index}`,
+    }));
+
+    const result = latestEbaySales([...sales].reverse());
+
+    expect(result).toHaveLength(12);
+    expect(result[0]?.title).toBe('Pikachu sale 0');
+    expect(result[11]?.title).toBe('Pikachu sale 11');
+  });
+
+  it('opens the exact selected eBay listing and blocks non-eBay URLs', async () => {
+    const openUrl = jest.fn().mockResolvedValue(true);
+    const listingUrl = 'https://www.ebay.com.au/itm/123456789';
+
+    expect(isSafeEbayListingUrl(listingUrl)).toBe(true);
+    expect(isSafeEbayListingUrl('https://ebay.example.com/itm/123')).toBe(false);
+    await openEbayListing(listingUrl, openUrl);
+    await openEbayListing('https://example.com/not-ebay', openUrl);
+
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith(listingUrl);
+  });
+
   it('keeps normalized completed sales and selected display currency intact', async () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
     mockFetch.mockResolvedValueOnce(response({
