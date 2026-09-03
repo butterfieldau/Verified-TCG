@@ -8,7 +8,7 @@ jest.mock('expo-constants', () => ({
   },
 }));
 
-import { ApiClientError, apiJson, apiRequest, apiUrl, resolveApiOrigin } from '../services/apiClient';
+import { ApiClientError, apiJson, apiRequest, apiUrl, resolveApiOrigin, setUnauthorizedRecovery } from '../services/apiClient';
 
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
@@ -17,6 +17,7 @@ beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.verified.test/api/';
   delete process.env.EXPO_PUBLIC_DOMAIN;
   mockFetch.mockReset();
+  setUnauthorizedRecovery(null);
 });
 
 afterEach(() => {
@@ -100,5 +101,21 @@ describe('shared mobile API client', () => {
       kind: 'provider_unavailable',
       status: 503,
     });
+  });
+
+  it('refreshes a prematurely-invalidated access token once and retries the protected request', async () => {
+    const recovery = jest.fn().mockResolvedValue('refreshed-access-token');
+    setUnauthorizedRecovery(recovery);
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 401, headers: { get: () => 'application/json' }, json: async () => ({ message: 'Invalid token' }) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: ['persisted'] }) } as Response);
+
+    await expect(apiJson('/api/collection', { accessToken: 'stale-access-token' }))
+      .resolves.toEqual({ items: ['persisted'] });
+
+    expect(recovery).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [, retriedInit] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(new Headers(retriedInit.headers).get('Authorization')).toBe('Bearer refreshed-access-token');
   });
 });

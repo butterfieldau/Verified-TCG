@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Alert, Platform } from "react-native";
-import { ApiClientError, apiRequest, resolveApiOrigin } from './apiClient';
+import { ApiClientError, apiRequest, resolveApiOrigin, setUnauthorizedRecovery } from './apiClient';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -227,7 +227,7 @@ export async function signInWithOAuth(
   return null;
 }
 
-export async function restoreSession(): Promise<AuthSession | null> {
+export async function restoreSession(forceRefresh = false): Promise<AuthSession | null> {
   const raw = await readPersistedSession();
   if (!raw) return null;
 
@@ -240,7 +240,7 @@ export async function restoreSession(): Promise<AuthSession | null> {
   }
 
   const expiresAt = session.expires_at ?? 0;
-  if (expiresAt > Math.floor(Date.now() / 1000) + 60) return session;
+  if (!forceRefresh && expiresAt > Math.floor(Date.now() / 1000) + 60) return session;
 
   // Token approaching expiry — attempt refresh
   try {
@@ -260,6 +260,15 @@ export async function restoreSession(): Promise<AuthSession | null> {
     return session;
   }
 }
+
+// A 401 from an authenticated route may mean the server invalidated an access
+// token before its recorded expiry. Let the common request client ask this
+// module for one single refresh and replay the failed request. A failed refresh
+// still clears the session as before, so this never extends an invalid login.
+setUnauthorizedRecovery(async () => {
+  const refreshed = await restoreSession(true);
+  return refreshed?.access_token ?? null;
+});
 
 /** All non-sensitive AsyncStorage keys owned by this app — cleared on sign-out or account deletion. */
 export const ALL_STORAGE_KEYS = [

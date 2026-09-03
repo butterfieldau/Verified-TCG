@@ -131,6 +131,29 @@ export interface ApiRequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
+type UnauthorizedRecovery = () => Promise<string | null>;
+
+// Auth owns the persisted refresh token, while this module owns the shared
+// request transport. Registering the recovery callback avoids a circular
+// dependency and lets every authenticated API call recover once when a server
+// deployment invalidates an otherwise unexpired access token.
+let unauthorizedRecovery: UnauthorizedRecovery | null = null;
+let inFlightUnauthorizedRecovery: Promise<string | null> | null = null;
+
+export function setUnauthorizedRecovery(recovery: UnauthorizedRecovery | null): void {
+  unauthorizedRecovery = recovery;
+}
+
+async function recoverUnauthorizedAccessToken(): Promise<string | null> {
+  if (!unauthorizedRecovery) return null;
+  if (!inFlightUnauthorizedRecovery) {
+    inFlightUnauthorizedRecovery = unauthorizedRecovery().finally(() => {
+      inFlightUnauthorizedRecovery = null;
+    });
+  }
+  return inFlightUnauthorizedRecovery;
+}
+
 /** A single transport for every mobile API call. */
 export async function apiRequest(
   path: string,
@@ -148,11 +171,34 @@ export async function apiRequest(
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
 
   try {
-    const response = await fetch(apiUrl(endpoint), {
-      ...init,
-      headers,
-      signal: init.signal ?? controller.signal,
-    });
+    const makeRequest = (token: string | null | undefined) => {
+      const requestHeaders = new Headers(headers);
+      if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
+      else requestHeaders.delete('Authorization');
+      return fetch(apiUrl(endpoint), {
+        ...init,
+        headers: requestHeaders,
+        signal: init.signal ?? controller.signal,
+      });
+    };
+
+    let response = await makeRequest(accessToken);
+
+    // A deployment can invalidate an access JWT before its locally-recorded
+    // expiry (for example after a signing-key rotation). Refresh once and
+    // replay the original safe API request instead of clearing the user's
+    // session and leaving every authenticated screen offline. Auth endpoints
+    // are explicitly excluded to prevent refresh recursion.
+    if (
+      response.status === 401 &&
+      accessToken &&
+      !endpoint.startsWith('/api/auth/')
+    ) {
+      const refreshedToken = await recoverUnauthorizedAccessToken();
+      if (refreshedToken && refreshedToken !== accessToken) {
+        response = await makeRequest(refreshedToken);
+      }
+    }
     if (response.ok) return response;
 
     const contentType = response.headers?.get?.('content-type')?.toLowerCase() ?? '';
