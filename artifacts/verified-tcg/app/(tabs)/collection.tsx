@@ -102,8 +102,8 @@ export default function CollectionScreen() {
     ? 'recent'
     : collectionOrganizerPreferences.sort.field;
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const viewMode = collectionOrganizerPreferences.viewMode;
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [listSheetOpen, setListSheetOpen] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -326,66 +326,6 @@ export default function CollectionScreen() {
           </View>
         )}
 
-        <Animated.View entering={FadeIn.duration(380)} style={styles.header}>
-          <View style={styles.identity}>
-            <View>
-              <Text style={styles.kicker}>YOUR VAULT</Text>
-              <Text style={styles.title}>COLLECTION</Text>
-            </View>
-          </View>
-          <View style={styles.headerActions}>
-            <Pressable
-              onPress={() => {
-                setSearchOpen(open => !open);
-                if (searchOpen) setQuery('');
-              }}
-              style={styles.iconBtn}
-              accessibilityRole="button"
-              accessibilityLabel={searchOpen ? 'Close collection search' : 'Search collection'}
-              hitSlop={2}
-            >
-              <Feather name={searchOpen ? 'x' : 'search'} size={17} color={C.foreground} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/collection-archive' as any)}
-              style={styles.iconBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Collection archive"
-              hitSlop={2}
-            >
-              <Feather name="archive" size={17} color={C.foreground} />
-            </Pressable>
-            <Pressable
-              style={styles.iconBtn}
-              onPress={() => router.push('/add-card')}
-              accessibilityRole="button"
-              accessibilityLabel="Add a card"
-              hitSlop={2}
-            >
-              <Feather name="plus" size={17} color={C.foreground} />
-            </Pressable>
-          </View>
-        </Animated.View>
-
-        {searchOpen && (
-          <Animated.View entering={FadeInDown.duration(220)} style={styles.searchBox}>
-            <Feather name="search" size={15} color="#7D7A7D" />
-            <TextInput
-              autoFocus
-              value={query}
-              onChangeText={value => {
-                setQuery(value);
-                resetWindow();
-              }}
-              placeholder="Search card, set or number"
-              placeholderTextColor="#656166"
-              style={styles.searchInput}
-              returnKeyType="search"
-            />
-            <Text style={styles.searchCount}>{filteredItems.length}</Text>
-          </Animated.View>
-        )}
-
         {(() => {
           const totalValue = serverSummary?.totalValue ?? null;
           const totalCost = serverSummary?.totalCost ?? null;
@@ -485,62 +425,60 @@ export default function CollectionScreen() {
                 </View>
               </View>
 
-              <View style={styles.performanceSection}>
-                <Text style={styles.performanceKicker}>PERFORMANCE</Text>
-                <Text style={styles.performanceTitle}>PORTFOLIO HISTORY</Text>
-                <View style={styles.rangeControl}>
-                  {PERFORMANCE_RANGES.map(range => {
-                    const selected = performanceRange === range;
-                    return (
-                      <Pressable key={range} testID={`collection-history-range-${range}`} onPress={() => setPerformanceRange(range)} style={[styles.rangeButton, selected && styles.rangeButtonActive]} accessibilityRole="button" accessibilityLabel={`Show ${range} performance history`} accessibilityState={{ selected }}>
-                        <Text style={[styles.rangeText, selected && styles.rangeTextActive]}>{range}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-                {historyAvailable && chartPoints.length > 0 ? (
-                  <View style={styles.historyCard}>
-                    <View style={styles.historyBars} accessibilityLabel={`${performanceRange} portfolio value history`}>
-                      {chartPoints.map((point, index) => (
-                        <View key={`${point.date}-${index}`} style={[styles.historyBar, { height: `${Math.max(12, ((point.value ?? 0) / chartMax) * 100)}%` }]} />
-                      ))}
-                    </View>
-                    <View style={styles.historyMeta}>
-                      <Text style={styles.historyValue}>{latestPoint?.value === null || latestPoint?.value === undefined ? 'Unavailable' : money(latestPoint.value)}</Text>
-                      <Text style={styles.historySync}>{historyLabel ? `Latest server sample · ${historyLabel}` : 'Latest server sample'}</Text>
-                    </View>
+              {portfolioSummaryMode === 'performance' && (
+                <Animated.View entering={FadeInDown.duration(280)} style={styles.performanceSection}>
+                  <Text style={styles.performanceKicker}>PERFORMANCE</Text>
+                  <Text style={styles.performanceTitle}>PORTFOLIO HISTORY</Text>
+                  <View style={styles.rangeControl}>
+                    {PERFORMANCE_RANGES.map(range => {
+                      const selected = performanceRange === range;
+                      return (
+                        <Pressable key={range} testID={`collection-history-range-${range}`} onPress={() => setPerformanceRange(range)} style={[styles.rangeButton, selected && styles.rangeButtonActive]} accessibilityRole="button" accessibilityLabel={`Show ${range} performance history`} accessibilityState={{ selected }}>
+                          <Text style={[styles.rangeText, selected && styles.rangeTextActive]}>{range}</Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
-                ) : (
-                  <View style={styles.historyUnavailable}>
-                    <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
-                    <Text style={styles.historyUnavailableText}>{historyUnavailableReason ?? 'No verified portfolio history is available for this range yet.'}</Text>
-                  </View>
-                )}
-              </View>
+                  {historyAvailable && chartPoints.length > 0 ? (
+                    <View style={styles.historyCard}>
+                      <View style={styles.historyBars} accessibilityLabel={`${performanceRange} portfolio value history`}>
+                        {chartPoints.map((point, index) => (
+                          <View key={`${point.date}-${index}`} style={[styles.historyBar, { height: `${Math.max(12, ((point.value ?? 0) / chartMax) * 100)}%` }]} />
+                        ))}
+                      </View>
+                      <View style={styles.historyMeta}>
+                        <Text style={styles.historyValue}>{latestPoint?.value === null || latestPoint?.value === undefined ? 'Unavailable' : money(latestPoint.value)}</Text>
+                        <Text style={styles.historySync}>{historyLabel ? `Latest server sample · ${historyLabel}` : 'Latest server sample'}</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.historyUnavailable}>
+                      <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
+                      <Text style={styles.historyUnavailableText}>{historyUnavailableReason ?? 'No verified portfolio history is available for this range yet.'}</Text>
+                    </View>
+                  )}
+                </Animated.View>
+              )}
             </>
           );
         })()}
 
         <View style={styles.libraryToolbar}>
-          <View style={styles.libraryHeading}>
-            <Text style={styles.libraryTitle}>LIBRARY</Text>
-            <Text style={styles.libraryCount}>{filteredItems.length} OF {collection.length} SHOWING</Text>
+          <View style={styles.libraryHeadingBlock}>
+            <Text style={styles.libraryKicker}>THE VAULT</Text>
+            <View style={styles.libraryTitleRow}>
+              <Text style={styles.libraryTitle}>YOUR CARDS</Text>
+              <Text style={styles.libraryCount}>· {collection.length}</Text>
+            </View>
           </View>
           <View style={styles.toolbarActions}>
-            <Pressable onPress={() => { setSelectionMode(true); setSelectedIds(new Set()); }} style={styles.sortButton} accessibilityRole="button"><Text style={styles.sortText}>Select</Text></Pressable>
-            <Pressable onPress={() => { setListSheetOpen(true); collectionLists.forEach(list => { setListSubtotals(current => ({ ...current, [list.id]: current[list.id] === undefined ? null : current[list.id] })); void fetchCollectionListSubtotal(list.id, currency).then(value => setListSubtotals(current => ({ ...current, [list.id]: value }))).catch(() => setListSubtotals(current => ({ ...current, [list.id]: null }))); }); }} style={styles.sortButton} accessibilityRole="button" accessibilityLabel="Choose or manage collection list">
-              <Feather name="folder" size={12} color={C.primary} />
-              <Text style={styles.sortText}>{collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name ?? 'All Collection'}</Text>
-            </Pressable>
             <Pressable
-              onPress={() => setSortOpen(true)}
-              style={styles.sortButton}
+              style={styles.addCardButton}
+              onPress={() => router.push('/add-card')}
               accessibilityRole="button"
-              accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
+              accessibilityLabel="Add a card"
             >
-              <Feather name="shuffle" size={12} color="#DD6974" />
-              <Text style={styles.sortText}>{SORT_LABELS[sortBy]}</Text>
-              <Feather name="chevron-down" size={12} color="#777278" />
+              <Feather name="plus" size={17} color="#F5F0E6" />
             </Pressable>
             <View style={styles.viewToggle}>
               {(['grid', 'list'] as const).map(mode => (
@@ -558,35 +496,45 @@ export default function CollectionScreen() {
             </View>
           </View>
         </View>
-        <View style={styles.organizerSummary}>
-          <Pressable style={styles.filterChip} onPress={() => setAdvancedOpen(true)} accessibilityRole="button">
-            <Feather name="sliders" size={12} color={C.primary}/><Text style={styles.filterText}>Advanced filters</Text>
-          </Pressable>
-          {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all') && <Pressable onPress={() => { setActiveFilter('all'); setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); }}><Text style={styles.bulkAction}>Clear filters</Text></Pressable>}
-          <Text style={styles.sheetMeta}>{filteredItems.length} results · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}</Text>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {COLLECTION_FILTERS.map(filter => {
-            const selected = activeFilter === filter.value;
-            return (
-              <Pressable
-                key={filter.value}
-                onPress={() => {
-                  setActiveFilter(filter.value);
-                  resetWindow();
-                }}
-                style={[styles.filterChip, selected && styles.filterChipActive]}
-                accessibilityRole="button"
-                accessibilityLabel={`Filter by ${filter.label}`}
-                accessibilityState={{ selected }}
-              >
-                {selected && <Feather name="check" size={11} color="#FF9CA4" />}
-                <Text style={[styles.filterText, selected && styles.filterTextActive]}>{filter.label}</Text>
+        <View style={styles.collectionControls}>
+          <View style={[styles.searchBox, styles.searchInline]}>
+            <Feather name="search" size={15} color="#7D7A7D" />
+            <TextInput
+              value={query}
+              onChangeText={value => {
+                setQuery(value);
+                resetWindow();
+              }}
+              placeholder="Search card, set or number"
+              placeholderTextColor="#656166"
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            {query.length > 0 ? (
+              <Pressable onPress={() => { setQuery(''); resetWindow(); }} accessibilityRole="button" accessibilityLabel="Clear collection search">
+                <Feather name="x" size={15} color={C.mutedForeground} />
               </Pressable>
-            );
-          })}
-        </ScrollView>
+            ) : (
+              <Text style={styles.searchCount}>{filteredItems.length}</Text>
+            )}
+          </View>
+          <Pressable onPress={() => router.push('/watchlist' as any)} style={styles.controlIconButton} accessibilityRole="button" accessibilityLabel="Saved cards">
+            <Feather name="heart" size={17} color={C.foreground} />
+          </Pressable>
+          <Pressable onPress={() => setSettingsOpen(true)} style={styles.controlIconButton} accessibilityRole="button" accessibilityLabel="Collection settings">
+            <Feather name="sliders" size={17} color={C.foreground} />
+          </Pressable>
+        </View>
+        <View style={styles.organizerSummary}>
+          <Text style={styles.sheetMeta}>
+            {filteredItems.length} results · {SORT_LABELS[sortBy]} · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+          </Text>
+          {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all' || collectionOrganizerPreferences.selectedListId) && (
+            <Pressable onPress={() => { setActiveFilter('all'); setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); }}>
+              <Text style={styles.bulkAction}>Clear filters</Text>
+            </Pressable>
+          )}
+        </View>
 
         {/* Skeleton while loading the very first time (no cached data yet) */}
         {initialLoading && (
@@ -937,6 +885,133 @@ export default function CollectionScreen() {
           ))}
         </View></View>
       </Modal>
+      <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <ScrollView style={styles.sheet} contentContainerStyle={styles.settingsSheetContent}>
+            <View style={styles.sheetHead}>
+              <View>
+                <Text style={styles.sheetTitle}>COLLECTION SETTINGS</Text>
+                <Text style={styles.sheetMeta}>Filters, lists, sorting and collection tools</Text>
+              </View>
+              <Pressable onPress={() => setSettingsOpen(false)} accessibilityRole="button" accessibilityLabel="Close collection settings">
+                <Feather name="x" size={20} color={C.foreground} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.sheetSectionLabel}>FILTER SCOPE</Text>
+            <View style={styles.filterScopeGrid}>
+              {COLLECTION_FILTERS.map(filter => {
+                const selected = activeFilter === filter.value;
+                return (
+                  <Pressable
+                    key={filter.value}
+                    onPress={() => {
+                      setActiveFilter(filter.value);
+                      resetWindow();
+                    }}
+                    style={[styles.filterScopeButton, selected && styles.filterScopeButtonActive]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Filter by ${filter.label}`}
+                    accessibilityState={{ selected }}
+                  >
+                    <Feather name={selected ? 'check-circle' : 'circle'} size={14} color={selected ? C.primary : C.mutedForeground} />
+                    <Text style={[styles.filterScopeText, selected && styles.filterScopeTextActive]}>{filter.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.sheetSectionLabel}>ORGANISE</Text>
+            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setAdvancedOpen(true); }} accessibilityRole="button">
+              <View style={styles.settingsRowIcon}><Feather name="filter" size={16} color={C.primary} /></View>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Advanced filters</Text>
+                <Text style={styles.settingsRowMeta}>{Object.keys(collectionOrganizerPreferences.filters).length > 0 ? 'Custom filters active' : 'Grade, value, date and pricing'}</Text>
+              </View>
+              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+            </Pressable>
+            <Pressable
+              style={styles.settingsRow}
+              onPress={() => {
+                setSettingsOpen(false);
+                setListSheetOpen(true);
+                collectionLists.forEach(list => {
+                  setListSubtotals(current => ({ ...current, [list.id]: current[list.id] === undefined ? null : current[list.id] }));
+                  void fetchCollectionListSubtotal(list.id, currency)
+                    .then(value => setListSubtotals(current => ({ ...current, [list.id]: value })))
+                    .catch(() => setListSubtotals(current => ({ ...current, [list.id]: null })));
+                });
+              }}
+              accessibilityRole="button"
+            >
+              <View style={styles.settingsRowIcon}><Feather name="folder" size={16} color={C.primary} /></View>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Portfolio lists</Text>
+                <Text style={styles.settingsRowMeta}>{collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name ?? 'All Collection'}</Text>
+              </View>
+              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+            </Pressable>
+            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setSortOpen(true); }} accessibilityRole="button">
+              <View style={styles.settingsRowIcon}><Feather name="shuffle" size={16} color={C.primary} /></View>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Sort library</Text>
+                <Text style={styles.settingsRowMeta}>{SORT_LABELS[sortBy]} · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}</Text>
+              </View>
+              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+            </Pressable>
+
+            <Text style={styles.sheetSectionLabel}>VIEW</Text>
+            <View style={styles.settingsViewRow}>
+              {(['grid', 'list'] as const).map(mode => {
+                const selected = viewMode === mode;
+                return (
+                  <Pressable
+                    key={mode}
+                    onPress={() => setCollectionOrganizerPreferences({ viewMode: mode })}
+                    style={[styles.settingsViewButton, selected && styles.settingsViewButtonActive]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                  >
+                    <Feather name={mode} size={15} color={selected ? C.foreground : C.mutedForeground} />
+                    <Text style={[styles.settingsViewText, selected && styles.settingsViewTextActive]}>{mode === 'grid' ? 'Grid view' : 'List view'}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.sheetSectionLabel}>TOOLS</Text>
+            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setSelectionMode(true); setSelectedIds(new Set()); }} accessibilityRole="button">
+              <View style={styles.settingsRowIcon}><Feather name="check-square" size={16} color={C.primary} /></View>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Select cards</Text>
+                <Text style={styles.settingsRowMeta}>Sell, trade, organise or remove in bulk</Text>
+              </View>
+              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+            </Pressable>
+            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); router.push('/collection-archive' as any); }} accessibilityRole="button">
+              <View style={styles.settingsRowIcon}><Feather name="archive" size={16} color={C.primary} /></View>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Collection archive</Text>
+                <Text style={styles.settingsRowMeta}>Restore previously removed holdings</Text>
+              </View>
+              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+            </Pressable>
+            {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all' || collectionOrganizerPreferences.selectedListId) && (
+              <Pressable
+                style={styles.clearSettingsButton}
+                onPress={() => {
+                  setActiveFilter('all');
+                  setCollectionOrganizerPreferences({ filters: {}, selectedListId: null });
+                  resetWindow();
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={styles.clearSettingsText}>Clear all filters</Text>
+              </Pressable>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
       <Modal visible={advancedOpen} transparent animationType="slide" onRequestClose={() => setAdvancedOpen(false)}>
         <View style={styles.sheetBackdrop}><ScrollView style={styles.sheet}><View style={styles.sheetHead}><Text style={styles.sheetTitle}>ADVANCED FILTERS</Text><Pressable onPress={() => setAdvancedOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
           <Text style={styles.sheetMeta}>Condition, grading company, grade, value and acquisition date</Text>
@@ -1061,6 +1136,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  searchInline: {
+    flex: 1,
+    marginHorizontal: 0,
+    marginBottom: 0,
+    minHeight: 42,
+  },
   searchInput: {
     flex: 1,
     color: '#F4F1E8',
@@ -1156,10 +1237,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  libraryHeading: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 },
-  libraryTitle: { color: '#F5F0E6', fontFamily: 'Rajdhani_700Bold', fontSize: 20 },
-  libraryCount: { color: '#6E6B70', fontFamily: 'Inter_700Bold', fontSize: 8, letterSpacing: 0.5 },
+  libraryHeadingBlock: { flexShrink: 1 },
+  libraryKicker: { color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.4 },
+  libraryTitleRow: { marginTop: 2, flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  libraryTitle: { color: '#F5F0E6', fontFamily: 'Rajdhani_700Bold', fontSize: 25, letterSpacing: -0.25 },
+  libraryCount: { color: '#777278', fontFamily: 'Inter_700Bold', fontSize: 12 },
   toolbarActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  addCardButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collectionControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 20,
+    marginTop: 13,
+  },
+  controlIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#29282B',
+    backgroundColor: '#18181B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sortButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1297,13 +1405,43 @@ const styles = StyleSheet.create({
   bulkAction: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 12, padding: 5 },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
   sheet: { backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 10, maxHeight: '80%' },
+  settingsSheetContent: { paddingBottom: 28, gap: 10 },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   sheetTitle: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: .5 },
+  sheetSectionLabel: { marginTop: 10, color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.4 },
+  filterScopeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  filterScopeButton: {
+    width: '48%',
+    minHeight: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  filterScopeButtonActive: { borderColor: `${C.primary}88`, backgroundColor: `${C.primary}18` },
+  filterScopeText: { flex: 1, color: C.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  filterScopeTextActive: { color: C.foreground },
+  settingsRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: C.border },
+  settingsRowIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: `${C.primary}18` },
+  settingsRowCopy: { flex: 1 },
+  settingsRowTitle: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  settingsRowMeta: { marginTop: 3, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
+  settingsViewRow: { flexDirection: 'row', gap: 8 },
+  settingsViewButton: { flex: 1, minHeight: 42, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  settingsViewButtonActive: { borderColor: `${C.primary}88`, backgroundColor: `${C.primary}18` },
+  settingsViewText: { color: C.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  settingsViewTextActive: { color: C.foreground },
+  clearSettingsButton: { minHeight: 44, marginTop: 8, borderRadius: 10, borderWidth: 1, borderColor: `${C.destructive}88`, alignItems: 'center', justifyContent: 'center' },
+  clearSettingsText: { color: C.destructive, fontFamily: 'Inter_700Bold', fontSize: 12 },
   sheetRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: C.border },
   sheetText: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   sheetMeta: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 6 },
   createRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8 },
-  organizerSummary: { paddingHorizontal: 20, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  organizerSummary: { paddingHorizontal: 20, paddingTop: 2, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
   filterInputRow: { flexDirection: 'row', gap: 8, marginVertical: 5 },
   createInput: { flex: 1, minHeight: 44, borderRadius: 10, paddingHorizontal: 12, color: C.foreground, backgroundColor: C.input, fontFamily: 'Inter_400Regular' },
   renameInput: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, padding: 0 },
