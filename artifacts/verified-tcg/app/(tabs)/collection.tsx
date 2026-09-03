@@ -104,6 +104,7 @@ export default function CollectionScreen() {
   const [query, setQuery] = useState('');
   const viewMode = collectionOrganizerPreferences.viewMode;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [listSheetOpen, setListSheetOpen] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -207,6 +208,14 @@ export default function CollectionScreen() {
       ? new Set(collectionListMemberships[collectionOrganizerPreferences.selectedListId] ?? []) : undefined;
     return sortCollectionItems(filterCollectionItems(collection, filters, normalizedQuery, memberships), field, collectionOrganizerPreferences.sort.direction);
   }, [collection, activeFilter, query, sortBy, collectionOrganizerPreferences, collectionListMemberships]);
+  const collectionFilterCounts = useMemo<Record<CollectionFilter, number>>(() => ({
+    all: collection.length,
+    pokemon: collection.filter(item => item.card.tcg === 'pokemon').length,
+    graded: collection.filter(item => Boolean(item.grading)).length,
+    raw: collection.filter(item => !item.grading).length,
+    forSale: collection.filter(item => item.isForSale).length,
+    forTrade: collection.filter(item => item.isForTrade).length,
+  }), [collection]);
 
   // Windowed slice shown in the list; load-more just extends this window
   const visibleItems = useMemo(
@@ -904,8 +913,9 @@ export default function CollectionScreen() {
         </View></View>
       </Modal>
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <ScrollView style={styles.sheet} contentContainerStyle={styles.settingsSheetContent}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setSettingsOpen(false)}>
+          <Pressable style={styles.sheetPressGuard} onPress={event => event.stopPropagation()}>
+            <ScrollView contentContainerStyle={styles.settingsSheetContent}>
             <View style={styles.sheetHead}>
               <View>
                 <Text style={styles.sheetTitle}>COLLECTION SETTINGS</Text>
@@ -916,35 +926,16 @@ export default function CollectionScreen() {
               </Pressable>
             </View>
 
-            <Text style={styles.sheetSectionLabel}>FILTER SCOPE</Text>
-            <View style={styles.filterScopeGrid}>
-              {COLLECTION_FILTERS.map(filter => {
-                const selected = activeFilter === filter.value;
-                return (
-                  <Pressable
-                    key={filter.value}
-                    onPress={() => {
-                      setActiveFilter(filter.value);
-                      resetWindow();
-                    }}
-                    style={[styles.filterScopeButton, selected && styles.filterScopeButtonActive]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Filter by ${filter.label}`}
-                    accessibilityState={{ selected }}
-                  >
-                    <Feather name={selected ? 'check-circle' : 'circle'} size={14} color={selected ? C.primary : C.mutedForeground} />
-                    <Text style={[styles.filterScopeText, selected && styles.filterScopeTextActive]}>{filter.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
             <Text style={styles.sheetSectionLabel}>ORGANISE</Text>
-            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setAdvancedOpen(true); }} accessibilityRole="button">
+            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setFilterOpen(true); }} accessibilityRole="button">
               <View style={styles.settingsRowIcon}><Feather name="filter" size={16} color={C.primary} /></View>
               <View style={styles.settingsRowCopy}>
-                <Text style={styles.settingsRowTitle}>Advanced filters</Text>
-                <Text style={styles.settingsRowMeta}>{Object.keys(collectionOrganizerPreferences.filters).length > 0 ? 'Custom filters active' : 'Grade, value, date and pricing'}</Text>
+                <Text style={styles.settingsRowTitle}>Filters</Text>
+                <Text style={styles.settingsRowMeta}>
+                  {activeFilter === 'all' && Object.keys(collectionOrganizerPreferences.filters).length === 0
+                    ? 'All cards'
+                    : `${COLLECTION_FILTERS.find(filter => filter.value === activeFilter)?.label ?? 'Custom'}${Object.keys(collectionOrganizerPreferences.filters).length > 0 ? ' · advanced filters active' : ''}`}
+                </Text>
               </View>
               <Feather name="chevron-right" size={17} color={C.mutedForeground} />
             </Pressable>
@@ -1027,22 +1018,82 @@ export default function CollectionScreen() {
                 <Text style={styles.clearSettingsText}>Clear all filters</Text>
               </Pressable>
             )}
-          </ScrollView>
-        </View>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <Modal visible={filterOpen} transparent animationType="slide" onRequestClose={() => setFilterOpen(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setFilterOpen(false)}>
+          <Pressable style={styles.sheetPressGuard} onPress={event => event.stopPropagation()}>
+            <ScrollView contentContainerStyle={styles.settingsSheetContent}>
+              <View style={styles.sheetHead}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sheetTitle}>FILTER THE VAULT</Text>
+                  <Text style={styles.sheetMeta}>Choose one slice of the vault. Tap outside this sheet to close it.</Text>
+                </View>
+                <Pressable onPress={() => setFilterOpen(false)} accessibilityRole="button" accessibilityLabel="Close collection filters">
+                  <Feather name="x" size={20} color={C.foreground} />
+                </Pressable>
+              </View>
+              <View style={styles.filterScopeGrid}>
+                {COLLECTION_FILTERS.map(filter => {
+                  const selected = activeFilter === filter.value;
+                  const count = collectionFilterCounts[filter.value];
+                  return (
+                    <Pressable
+                      key={filter.value}
+                      onPress={() => {
+                        setActiveFilter(filter.value);
+                        resetWindow();
+                      }}
+                      style={[styles.filterScopeButton, selected && styles.filterScopeButtonActive]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Filter by ${filter.label}, ${count} cards`}
+                      accessibilityState={{ selected }}
+                    >
+                      <View style={styles.filterScopeHeading}>
+                        <Text style={[styles.filterScopeText, selected && styles.filterScopeTextActive]}>{filter.label}</Text>
+                        {selected && <Feather name="check" size={13} color={C.primary} />}
+                      </View>
+                      <Text style={styles.filterScopeCount}>{count} card{count === 1 ? '' : 's'}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.sheetSectionLabel}>ADVANCED FILTERS</Text>
+              <Pressable style={styles.settingsRow} onPress={() => { setFilterOpen(false); setAdvancedOpen(true); }} accessibilityRole="button">
+                <View style={styles.settingsRowIcon}><Feather name="sliders" size={16} color={C.primary} /></View>
+                <View style={styles.settingsRowCopy}>
+                  <Text style={styles.settingsRowTitle}>Grade, value, date and pricing</Text>
+                  <Text style={styles.settingsRowMeta}>{Object.keys(collectionOrganizerPreferences.filters).length > 0 ? 'Custom filters active' : 'No advanced filters active'}</Text>
+                </View>
+                <Feather name="chevron-right" size={17} color={C.mutedForeground} />
+              </Pressable>
+              <Pressable style={styles.applyFiltersButton} onPress={() => setFilterOpen(false)} accessibilityRole="button">
+                <Text style={styles.applyFiltersText}>Apply filters</Text>
+              </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
       </Modal>
       <Modal visible={advancedOpen} transparent animationType="slide" onRequestClose={() => setAdvancedOpen(false)}>
-        <View style={styles.sheetBackdrop}><ScrollView style={styles.sheet}><View style={styles.sheetHead}><Text style={styles.sheetTitle}>ADVANCED FILTERS</Text><Pressable onPress={() => setAdvancedOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
-          <Text style={styles.sheetMeta}>Condition, grading company, grade, value and acquisition date</Text>
-          <View style={styles.filterInputRow}>
-            <TextInput placeholder="Condition (e.g. near_mint)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.conditions?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, conditions: text ? [text as any] : undefined } })}/>
-            <TextInput placeholder="Company (e.g. PSA)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.gradingCompanies?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, gradingCompanies: text ? [text as any] : undefined } })}/>
-          </View>
-          {(['minGrade','maxGrade','minValue','maxValue'] as const).map(key => <TextInput key={key} placeholder={key} placeholderTextColor={C.mutedForeground} keyboardType="decimal-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters[key]?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text ? Number(text) : undefined } })}/>)}
-          {(['acquiredAfter','acquiredBefore'] as const).map(key => <TextInput key={key} placeholder={`${key} (YYYY-MM-DD)`} placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters[key] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text || undefined } })}/>)}
-          <View style={styles.filterInputRow}>{(['priced','unpriced'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricing: collectionOrganizerPreferences.filters.pricing === value ? undefined : value } })}><Text style={styles.filterText}>{value}</Text></Pressable>)}{(['fresh','stale'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricingFreshness: collectionOrganizerPreferences.filters.pricingFreshness === value ? undefined : value } })}><Text style={styles.filterText}>{value} pricing</Text></Pressable>)}</View>
-          <TextInput placeholder="Freshness days (default 30)" placeholderTextColor={C.mutedForeground} keyboardType="number-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters.freshnessDays?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, freshnessDays: text ? Number(text) : undefined } })}/>
-          <Pressable onPress={() => { setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); setAdvancedOpen(false); }}><Text style={styles.bulkAction}>Reset all filters</Text></Pressable>
-        </ScrollView></View>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setAdvancedOpen(false)}>
+          <Pressable style={styles.sheetPressGuard} onPress={event => event.stopPropagation()}>
+            <ScrollView contentContainerStyle={styles.settingsSheetContent}>
+              <View style={styles.sheetHead}><Text style={styles.sheetTitle}>ADVANCED FILTERS</Text><Pressable onPress={() => setAdvancedOpen(false)}><Feather name="x" size={20} color={C.foreground}/></Pressable></View>
+              <Text style={styles.sheetMeta}>Condition, grading company, grade, value and acquisition date</Text>
+              <View style={styles.filterInputRow}>
+                <TextInput placeholder="Condition (e.g. near_mint)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.conditions?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, conditions: text ? [text as any] : undefined } })}/>
+                <TextInput placeholder="Company (e.g. PSA)" placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters.gradingCompanies?.[0] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, gradingCompanies: text ? [text as any] : undefined } })}/>
+              </View>
+              {(['minGrade','maxGrade','minValue','maxValue'] as const).map(key => <TextInput key={key} placeholder={key} placeholderTextColor={C.mutedForeground} keyboardType="decimal-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters[key]?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text ? Number(text) : undefined } })}/>)}
+              {(['acquiredAfter','acquiredBefore'] as const).map(key => <TextInput key={key} placeholder={`${key} (YYYY-MM-DD)`} placeholderTextColor={C.mutedForeground} style={styles.createInput} value={collectionOrganizerPreferences.filters[key] ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, [key]: text || undefined } })}/>)}
+              <View style={styles.filterInputRow}>{(['priced','unpriced'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricing: collectionOrganizerPreferences.filters.pricing === value ? undefined : value } })}><Text style={styles.filterText}>{value}</Text></Pressable>)}{(['fresh','stale'] as const).map(value => <Pressable key={value} style={styles.filterChip} onPress={() => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, pricingFreshness: collectionOrganizerPreferences.filters.pricingFreshness === value ? undefined : value } })}><Text style={styles.filterText}>{value} pricing</Text></Pressable>)}</View>
+              <TextInput placeholder="Freshness days (default 30)" placeholderTextColor={C.mutedForeground} keyboardType="number-pad" style={styles.createInput} value={collectionOrganizerPreferences.filters.freshnessDays?.toString() ?? ''} onChangeText={text => setCollectionOrganizerPreferences({ filters: { ...collectionOrganizerPreferences.filters, freshnessDays: text ? Number(text) : undefined } })}/>
+              <Pressable onPress={() => { setCollectionOrganizerPreferences({ filters: {}, selectedListId: null }); setAdvancedOpen(false); }}><Text style={styles.bulkAction}>Reset all filters</Text></Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
       </Modal>
       <Modal visible={listSheetOpen} transparent animationType="slide" onRequestClose={() => setListSheetOpen(false)}>
         <View style={styles.sheetBackdrop}>
@@ -1404,26 +1455,27 @@ const styles = StyleSheet.create({
   bulkAction: { color: C.primary, fontFamily: 'Inter_600SemiBold', fontSize: 12, padding: 5 },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
   sheet: { backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 10, maxHeight: '80%' },
+  sheetPressGuard: { maxHeight: '80%', backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
   settingsSheetContent: { paddingBottom: 28, gap: 10 },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   sheetTitle: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: .5 },
   sheetSectionLabel: { marginTop: 10, color: C.primary, fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.4 },
-  filterScopeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  filterScopeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterScopeButton: {
-    width: '48%',
-    minHeight: 40,
-    borderRadius: 10,
+    width: '31%',
+    minHeight: 68,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.card,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
+    padding: 11,
+    justifyContent: 'space-between',
   },
   filterScopeButtonActive: { borderColor: `${C.primary}88`, backgroundColor: `${C.primary}18` },
-  filterScopeText: { flex: 1, color: C.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
-  filterScopeTextActive: { color: C.foreground },
+  filterScopeHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 3 },
+  filterScopeText: { flexShrink: 1, color: '#BCB4B4', fontFamily: 'Inter_700Bold', fontSize: 11 },
+  filterScopeTextActive: { color: '#FF9CA4' },
+  filterScopeCount: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 9 },
   settingsRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: C.border },
   settingsRowIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: `${C.primary}18` },
   settingsRowCopy: { flex: 1 },
@@ -1436,6 +1488,8 @@ const styles = StyleSheet.create({
   settingsViewTextActive: { color: C.foreground },
   clearSettingsButton: { minHeight: 44, marginTop: 8, borderRadius: 10, borderWidth: 1, borderColor: `${C.destructive}88`, alignItems: 'center', justifyContent: 'center' },
   clearSettingsText: { color: C.destructive, fontFamily: 'Inter_700Bold', fontSize: 12 },
+  applyFiltersButton: { minHeight: 46, marginTop: 8, borderRadius: 12, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  applyFiltersText: { color: '#FFFFFF', fontFamily: 'Inter_700Bold', fontSize: 12 },
   sheetRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: C.border },
   sheetText: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   sheetMeta: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 6 },
