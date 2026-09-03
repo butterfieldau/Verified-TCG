@@ -1,0 +1,42 @@
+.summary-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #3b2a2d;
+  border-radius: 10px;
+  background: #0d0d0f;
+}
+
+.summary-tab {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8d8588;
+  cursor: pointer;
+  font: 700 10px/1.2 "Inter", sans-serif;
+  padding: 9px 8px;
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.summary-tab:hover {
+  color: #f4f1e8;
+}
+
+.summary-tab:active {
+  transform: scale(.98);
+}
+
+.summary-tab.active {
+  background: #3a2225;
+  color: #fff8f2;
+  box-shadow: inset 0 0 0 1px #7d2f39;
+}
+
+.gain-positive {
+  color: #42c982;
+}
+
+.gain-negative {
+  color: #ff5967;
+}

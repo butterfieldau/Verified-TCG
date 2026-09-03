@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -29,7 +29,13 @@ import { useSettings } from '@/context/SettingsContext';
 import colors from '@/constants/colors';
 import { CONDITION_LABELS } from '@/types';
 import type { CollectionItem, WatchlistItem } from '@/types';
-import { fetchCollectionSummary, type CollectionSummary } from '@/services/collectionPerformance';
+import {
+  fetchCollectionSummary,
+  fetchCollectionValueHistory,
+  type CollectionSummary,
+  type PerformancePoint,
+  type PerformanceRange,
+} from '@/services/collectionPerformance';
 import { tradingCardHeight, tradingCardRadius } from '@/services/collectionLayout';
 import { createRequestDeduper } from '@/services/requestDeduper';
 import { filterCollectionItems, sortCollectionItems } from '@/services/collectionOrganizer';
@@ -41,6 +47,7 @@ const SUMMARY_STALE_MS = 60_000;
 
 type CollectionFilter = 'all' | 'pokemon' | 'graded' | 'raw' | 'forSale' | 'forTrade';
 type CollectionSort = 'value' | 'name' | 'recent' | 'quantity' | 'gain';
+type PortfolioSummaryMode = 'worth' | 'performance';
 
 const COLLECTION_FILTERS: { label: string; value: CollectionFilter }[] = [
   { label: 'All', value: 'all' },
@@ -58,6 +65,8 @@ const SORT_LABELS: Record<CollectionSort, string> = {
   quantity: 'Quantity',
   gain: 'Gain',
 };
+
+const PERFORMANCE_RANGES: PerformanceRange[] = ['7D', '1M', '3M', '1Y', 'ALL'];
 
 
 export default function CollectionScreen() {
@@ -114,6 +123,12 @@ export default function CollectionScreen() {
 
   // Server summary for authoritative totals
   const [serverSummary, setServerSummary] = useState<CollectionSummary | null>(null);
+  const [portfolioSummaryMode, setPortfolioSummaryMode] = useState<PortfolioSummaryMode>('worth');
+  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>('7D');
+  const [historyPoints, setHistoryPoints] = useState<PerformancePoint[]>([]);
+  const [historyAvailable, setHistoryAvailable] = useState(false);
+  const [historyUnavailableReason, setHistoryUnavailableReason] = useState<string | null>(null);
+  const historyRequestGeneration = useRef(0);
 
   // Client-side windowing: show first `displayCount` of the fully-filtered list.
   // This is correct for both offline (cache) and online (live) data, and
@@ -151,6 +166,23 @@ export default function CollectionScreen() {
     })();
     return summaryRequest.current;
   }, [currency]);
+
+  useEffect(() => {
+    const generation = ++historyRequestGeneration.current;
+    void fetchCollectionValueHistory(performanceRange, currency)
+      .then(history => {
+        if (generation !== historyRequestGeneration.current) return;
+        setHistoryPoints(history.points);
+        setHistoryAvailable(history.historyAvailable);
+        setHistoryUnavailableReason(history.historyUnavailableReason ?? null);
+      })
+      .catch(() => {
+        if (generation !== historyRequestGeneration.current) return;
+        setHistoryPoints([]);
+        setHistoryAvailable(false);
+        setHistoryUnavailableReason('Performance history is unavailable right now.');
+      });
+  }, [currency, performanceRange]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const TAB_H = Platform.OS === 'web' ? 84 : 74;
@@ -354,23 +386,140 @@ export default function CollectionScreen() {
           </Animated.View>
         )}
 
-        <Animated.View
-          entering={FadeInDown.delay(60).duration(420)}
-          style={styles.portfolioSection}
-          testID="collection-profile-worth"
-        >
-          <Text style={styles.portfolioLabel}>Profile worth</Text>
-          {serverSummary?.totalValue !== null && serverSummary?.totalValue !== undefined ? (
-            <Text style={styles.portfolioValue}>
-              {portfolioCurrency} {serverSummary.totalValue.toLocaleString('en-AU', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </Text>
-          ) : (
-            <Text style={styles.portfolioUnavailable}>VALUE UNAVAILABLE</Text>
-          )}
-        </Animated.View>
+        {(() => {
+          const totalValue = serverSummary?.totalValue ?? null;
+          const totalCost = serverSummary?.totalCost ?? null;
+          const fullGain = serverSummary?.unrealizedGain ?? null;
+          const partialGain = serverSummary?.partialUnrealizedGain ?? null;
+          const gain = fullGain ?? partialGain;
+          const gainPercent = fullGain !== null
+            ? serverSummary?.unrealizedGainPercent ?? null
+            : serverSummary?.partialUnrealizedGainPercent ?? null;
+          const gainIsPartial = fullGain === null && partialGain !== null;
+          const gainColor = (gain ?? 0) >= 0 ? C.positive : C.negative;
+          const ownedCount = serverSummary?.cardCount ?? collection.reduce((total, item) => total + item.quantity, 0);
+          const chartPoints = historyPoints.filter(point => point.value !== null && point.available !== false);
+          const chartMax = Math.max(...chartPoints.map(point => point.value ?? 0), 1);
+          const latestPoint = chartPoints[chartPoints.length - 1];
+          const money = (value: number) => `${portfolioCurrency} ${Math.abs(value).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const signedMoney = (value: number) => `${value >= 0 ? '+' : '-'}${money(value)}`;
+          const historyLabel = latestPoint?.bucketEnd ?? latestPoint?.sampledFrom ?? latestPoint?.date;
+
+          return (
+            <>
+              <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioCard}>
+                <View style={styles.summarySwitch} accessibilityRole="tablist" accessibilityLabel="Portfolio summary">
+                  {([
+                    { value: 'worth' as const, label: 'Portfolio worth' },
+                    { value: 'performance' as const, label: 'Performance' },
+                  ]).map(option => {
+                    const selected = portfolioSummaryMode === option.value;
+                    return (
+                      <Pressable
+                        key={option.value}
+                        testID={`collection-summary-${option.value}`}
+                        onPress={() => setPortfolioSummaryMode(option.value)}
+                        style={[styles.summaryTab, selected && styles.summaryTabActive]}
+                        accessibilityRole="tab"
+                        accessibilityLabel={option.label}
+                        accessibilityState={{ selected }}
+                      >
+                        <Text style={[styles.summaryTabText, selected && styles.summaryTabTextActive]}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <View style={styles.portfolioHero}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.portfolioLabel}>
+                      {portfolioSummaryMode === 'worth' ? 'Collection value' : 'Gain against purchase cost'}
+                    </Text>
+                    {portfolioSummaryMode === 'worth' && totalValue !== null ? (
+                      <Text style={styles.portfolioValue}>{money(totalValue)}</Text>
+                    ) : portfolioSummaryMode === 'performance' && gain !== null ? (
+                      <Text style={[styles.portfolioValue, { color: gainColor }]}>{signedMoney(gain)}</Text>
+                    ) : (
+                      <Text style={styles.portfolioUnavailable}>VALUE UNAVAILABLE</Text>
+                    )}
+                    <Text style={styles.portfolioContext}>
+                      {portfolioSummaryMode === 'worth'
+                        ? serverSummary?.completeness ?? 'Collection valuation unavailable'
+                        : gain === null
+                          ? 'Add recorded acquisition costs to establish performance.'
+                          : `${gainIsPartial ? 'Partial coverage · ' : ''}${gainPercent === null ? 'Return unavailable' : `${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}% return`}`}
+                    </Text>
+                  </View>
+                  <View style={[styles.portfolioIcon, { backgroundColor: `${portfolioSummaryMode === 'performance' ? gainColor : C.primary}22` }]}>
+                    <Feather name={portfolioSummaryMode === 'worth' ? 'briefcase' : gain !== null && gain >= 0 ? 'trending-up' : 'trending-down'} size={18} color={portfolioSummaryMode === 'performance' ? gainColor : C.primary} />
+                  </View>
+                </View>
+                <Text style={styles.portfolioCoverage}>
+                  {serverSummary ? `${serverSummary.coverage.pricedHoldings} of ${serverSummary.coverage.totalHoldings} holdings priced` : 'Server portfolio summary unavailable'}
+                </Text>
+              </Animated.View>
+
+              <View style={styles.metricGrid}>
+                <View style={styles.metricCard}>
+                  <View style={styles.metricHeading}>
+                    <Text style={styles.metricLabel}>{portfolioSummaryMode === 'worth' ? 'Net performance' : 'Cost basis'}</Text>
+                    <Feather name={portfolioSummaryMode === 'worth' ? 'trending-up' : 'dollar-sign'} size={15} color={portfolioSummaryMode === 'worth' ? gainColor : C.bgsBadge} />
+                  </View>
+                  <Text style={[styles.metricValue, portfolioSummaryMode === 'worth' && gain !== null && { color: gainColor }]}>
+                    {portfolioSummaryMode === 'worth'
+                      ? gain === null ? 'Unavailable' : signedMoney(gain)
+                      : totalCost === null ? 'Unavailable' : money(totalCost)}
+                  </Text>
+                  <Text style={styles.metricSubtext}>
+                    {portfolioSummaryMode === 'worth'
+                      ? gainIsPartial ? 'Price and cost coverage is partial' : gainPercent === null ? 'Return unavailable' : `${gainPercent >= 0 ? '+' : ''}${gainPercent.toFixed(1)}% since purchase`
+                      : totalCost === null ? 'Recorded costs unavailable' : 'Recorded acquisition cost'}
+                  </Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <View style={styles.metricHeading}>
+                    <Text style={styles.metricLabel}>Cards owned</Text>
+                    <Feather name="layers" size={15} color={C.warning} />
+                  </View>
+                  <Text style={styles.metricValue}>{ownedCount}</Text>
+                  <Text style={styles.metricSubtext}>{serverSummary?.uniqueCardCount ?? 0} unique holdings</Text>
+                </View>
+              </View>
+
+              <View style={styles.performanceSection}>
+                <Text style={styles.performanceKicker}>PERFORMANCE</Text>
+                <Text style={styles.performanceTitle}>PORTFOLIO HISTORY</Text>
+                <View style={styles.rangeControl}>
+                  {PERFORMANCE_RANGES.map(range => {
+                    const selected = performanceRange === range;
+                    return (
+                      <Pressable key={range} testID={`collection-history-range-${range}`} onPress={() => setPerformanceRange(range)} style={[styles.rangeButton, selected && styles.rangeButtonActive]} accessibilityRole="button" accessibilityLabel={`Show ${range} performance history`} accessibilityState={{ selected }}>
+                        <Text style={[styles.rangeText, selected && styles.rangeTextActive]}>{range}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {historyAvailable && chartPoints.length > 0 ? (
+                  <View style={styles.historyCard}>
+                    <View style={styles.historyBars} accessibilityLabel={`${performanceRange} portfolio value history`}>
+                      {chartPoints.map((point, index) => (
+                        <View key={`${point.date}-${index}`} style={[styles.historyBar, { height: `${Math.max(12, ((point.value ?? 0) / chartMax) * 100)}%` }]} />
+                      ))}
+                    </View>
+                    <View style={styles.historyMeta}>
+                      <Text style={styles.historyValue}>{latestPoint?.value === null || latestPoint?.value === undefined ? 'Unavailable' : money(latestPoint.value)}</Text>
+                      <Text style={styles.historySync}>{historyLabel ? `Latest server sample · ${historyLabel}` : 'Latest server sample'}</Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.historyUnavailable}>
+                    <Feather name="bar-chart-2" size={18} color={C.mutedForeground} />
+                    <Text style={styles.historyUnavailableText}>{historyUnavailableReason ?? 'No verified portfolio history is available for this range yet.'}</Text>
+                  </View>
+                )}
+              </View>
+            </>
+          );
+        })()}
 
         <View style={styles.libraryToolbar}>
           <View style={styles.libraryHeading}>
@@ -928,25 +1077,43 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     fontSize: 10,
   },
-  portfolioSection: {
-    position: 'relative',
+  portfolioCard: {
     marginHorizontal: 20,
-    paddingTop: 2,
-    paddingBottom: 2,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#3B2A2D',
+    backgroundColor: C.surfaceRaised,
+    padding: 14,
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
+  summarySwitch: {
+    flexDirection: 'row',
+    gap: 3,
+    padding: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3B2A2D',
+    backgroundColor: '#0D0D0F',
+  },
+  summaryTab: { flex: 1, borderRadius: 7, alignItems: 'center', paddingVertical: 9 },
+  summaryTabActive: { backgroundColor: '#3A2225', borderWidth: 1, borderColor: '#7D2F39' },
+  summaryTabText: { color: '#8D8588', fontFamily: 'Inter_700Bold', fontSize: 10 },
+  summaryTabTextActive: { color: '#FFF8F2' },
+  portfolioHero: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 17, gap: 12 },
   portfolioLabel: {
     color: '#B2A4A5',
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.45,
-    textTransform: 'uppercase',
+    fontFamily: 'Inter_500Medium',
+    fontSize: 11,
   },
   portfolioValue: {
-    position: 'relative',
-    marginTop: 5,
+    marginTop: 4,
     color: '#FFF8F2',
-    fontFamily: 'Inter_800ExtraBold',
-    fontSize: 30,
+    fontFamily: 'Inter_700Bold',
+    fontSize: 29,
     lineHeight: 34,
     letterSpacing: -1.5,
   },
@@ -957,8 +1124,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.5,
   },
+  portfolioContext: { marginTop: 4, color: '#B2A4A5', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16 },
+  portfolioIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  portfolioCoverage: { marginTop: 14, paddingTop: 11, borderTopWidth: 1, borderTopColor: '#3B2A2D', color: '#7D7A7D', fontFamily: 'Inter_400Regular', fontSize: 10 },
+  metricGrid: { flexDirection: 'row', gap: 10, marginTop: 12, marginHorizontal: 20 },
+  metricCard: { flex: 1, minHeight: 116, borderWidth: 1, borderColor: '#29282B', borderRadius: 16, backgroundColor: C.surfaceRaised, padding: 13 },
+  metricHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
+  metricLabel: { flex: 1, color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 0.75, textTransform: 'uppercase' },
+  metricValue: { marginTop: 11, color: '#F4F1E8', fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4 },
+  metricSubtext: { marginTop: 4, color: '#7D7A7D', fontFamily: 'Inter_400Regular', fontSize: 10, lineHeight: 14 },
+  performanceSection: { marginTop: 24, marginHorizontal: 20 },
+  performanceKicker: { color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1.3 },
+  performanceTitle: { marginTop: 2, color: '#F4F1E8', fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: 0.2 },
+  rangeControl: { flexDirection: 'row', marginTop: 10, padding: 3, gap: 2, borderRadius: 9, backgroundColor: C.surfaceRaised },
+  rangeButton: { flex: 1, alignItems: 'center', borderRadius: 6, paddingVertical: 7 },
+  rangeButtonActive: { backgroundColor: C.primary },
+  rangeText: { color: '#7D7A7D', fontFamily: 'Inter_700Bold', fontSize: 10 },
+  rangeTextActive: { color: '#FFF8F2' },
+  historyCard: { height: 126, marginTop: 12, borderWidth: 1, borderColor: '#29282B', borderRadius: 13, backgroundColor: C.surfaceRaised, padding: 12 },
+  historyBars: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 3, borderBottomWidth: 1, borderBottomColor: '#3B2A2D' },
+  historyBar: { flex: 1, minWidth: 2, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: C.positive, opacity: 0.82 },
+  historyMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, gap: 8 },
+  historyValue: { color: '#F4F1E8', fontFamily: 'Inter_700Bold', fontSize: 12 },
+  historySync: { flex: 1, color: '#7D7A7D', fontFamily: 'Inter_400Regular', fontSize: 9, textAlign: 'right' },
+  historyUnavailable: { minHeight: 74, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#29282B', borderRadius: 13, backgroundColor: C.surfaceRaised, paddingHorizontal: 14 },
+  historyUnavailableText: { flex: 1, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16 },
   libraryToolbar: {
-    marginTop: 20,
+    marginTop: 26,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
