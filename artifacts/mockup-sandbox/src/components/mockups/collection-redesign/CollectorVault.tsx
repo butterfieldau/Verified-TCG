@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import "./_group.css";
+import "./CollectorVault.css";
 
 type Filter = "All" | "Pokémon" | "Graded" | "Raw" | "For Sale" | "For Trade";
 type Panel = "filters" | "lists" | "sort" | null;
@@ -127,14 +128,27 @@ export function CollectorVault() {
       <section className="px-5 pb-4 text-center">
         <p className="text-[15px] font-semibold text-[#f4f1e8]">Portfolio: <span className="text-[#ff5967]">Main</span> <button aria-label="Change portfolio" onClick={() => setPanel("lists")}><ChevronDown size={14} className="inline text-[#8d888b]" /></button></p>
         <div className="mt-1 flex items-center justify-center gap-2"><p className="tcg-display text-[37px] font-bold leading-none tracking-[-1px]">{summary === "worth" ? money(totals.value) : `${totals.gain >= 0 ? "+" : "-"}${money(Math.abs(totals.gain))}`}</p><span className="text-[13px] font-semibold text-[#8d888b]">AUD</span><button aria-label="Toggle value visibility" onClick={() => flash("Values are visible")} className="grid h-7 w-7 place-items-center rounded-full bg-[#2a2a2c] text-[#8d888b]"><Eye size={14} /></button></div>
-        <div className="mx-auto mt-2 flex w-fit items-center gap-2 rounded-full border border-[#383238] bg-[#19191c] p-1">
-          <button onClick={() => setSummary("worth")} className={`rounded-full px-3 py-1 text-[10px] font-bold ${summary === "worth" ? "bg-[#3d2429] text-[#fff8f2]" : "text-[#8d888b]"}`}>Worth</button>
-          <button onClick={() => setSummary("performance")} className={`rounded-full px-3 py-1 text-[10px] font-bold ${summary === "performance" ? "bg-[#193326] text-[#6ee7a2]" : "text-[#8d888b]"}`}>Performance</button>
+        <div className="summary-toggle mx-auto mt-2" role="tablist" aria-label="Portfolio summary view">
+          <span className={`summary-toggle-rail ${summary === "performance" ? "summary-toggle-rail-performance" : ""}`} aria-hidden="true" />
+          <button onClick={() => setSummary("worth")} className={`summary-toggle-tab ${summary === "worth" ? "summary-toggle-tab-active-worth" : ""}`} role="tab" aria-selected={summary === "worth"}>Worth</button>
+          <button onClick={() => setSummary("performance")} className={`summary-toggle-tab ${summary === "performance" ? "summary-toggle-tab-active-performance" : ""}`} role="tab" aria-selected={summary === "performance"}>Performance</button>
         </div>
       </section>
 
-      {summary === "performance" && <section className="mx-5 mb-5 rounded-2xl border border-[#2b4637] bg-[#14231b] p-4">
+      {summary === "performance" && <section className="performance-chart-enter mx-5 mb-5 rounded-2xl border border-[#2b4637] bg-[#14231b] p-4">
         <div className="flex items-center justify-between"><div><p className="text-[10px] uppercase tracking-[1.4px] text-[#86a892]">Performance · {range}</p><p className="mt-1 text-[19px] font-bold text-[#64df96]">+{money(totals.gain)} <span className="text-[11px] font-semibold">(+{gainPercent.toFixed(1)}%)</span></p></div><TrendingUp size={20} className="text-[#42c982]" /></div>
+        <div className="performance-chart mt-4" aria-label="Portfolio performance chart">
+          <svg viewBox="0 0 380 76" role="img" aria-label="Portfolio performance rising over time" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="collectorVaultPerformanceArea" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0" stopColor="#42c982" stopOpacity=".32" />
+                <stop offset="1" stopColor="#42c982" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d="M0 63 C25 65 32 51 55 55 S83 40 105 48 S132 31 154 38 S185 28 205 33 S235 17 258 26 S287 14 307 20 S344 7 380 10 V76 H0Z" fill="url(#collectorVaultPerformanceArea)" />
+            <path d="M0 63 C25 65 32 51 55 55 S83 40 105 48 S132 31 154 38 S185 28 205 33 S235 17 258 26 S287 14 307 20 S344 7 380 10" fill="none" stroke="#42c982" strokeWidth="2.5" strokeLinecap="round" />
+          </svg>
+        </div>
         <div className="mt-3 flex gap-1 rounded-lg bg-[#0e1712] p-1">{["7D", "1M", "3M", "1Y", "ALL"].map(item => <button key={item} onClick={() => setRange(item)} className={`flex-1 rounded-md py-1.5 text-[9px] font-bold ${range === item ? "bg-[#42c982] text-[#0d1710]" : "text-[#86a892]"}`}>{item}</button>)}</div>
         <div className="mt-3 flex items-center justify-between border-t border-[#2b4637] pt-3 text-[10px] text-[#86a892]"><span>6 holdings · coverage partial</span><span>Last synced 2h ago</span></div>
       </section>}
