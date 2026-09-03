@@ -20,6 +20,7 @@ import {
   readCanonicalPublicCards,
   type PublicCatalogueCard,
 } from "../catalogue/internal/catalogueReadService.js";
+import { justTcg } from "../lib/catalogueProvider.js";
 import { gradeKeyForHolding } from "../pricing/portfolio.js";
 import { logActivitySafely } from "./activity.js";
 import { clearUserWishlists } from "./wishlist.js";
@@ -485,6 +486,7 @@ function appCard(
 function exactCandidate(
   candidate: PublicCatalogueCard,
   evidence: {
+    source: CollectionImportSource;
     game: string;
     set: string;
     number: string;
@@ -495,12 +497,37 @@ function exactCandidate(
   },
 ): boolean {
   if (normalizeGameSlug(candidate.game) !== normalizeGameSlug(evidence.game)) return false;
-  if (normalizeForMatching(candidate.name) !== normalizeForMatching(evidence.name)) return false;
+  const comparableName = (value: string, number: string | null | undefined) => {
+    let normalized = normalizeForMatching(value);
+    const normalizedNumber = normalizeForMatching(number ?? "");
+    if (normalizedNumber && normalized.endsWith(` ${normalizedNumber}`)) {
+      normalized = normalized.slice(0, -(normalizedNumber.length + 1)).trim();
+    }
+    return normalized
+      .replace(/\b(?:borderless|extended art|manga|jp|secret)\b/g, "")
+      .replace(/\b0*\d{1,4}\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+  const candidateName = comparableName(candidate.name, candidate.number);
+  const evidenceName = comparableName(evidence.name, evidence.number);
+  if (
+    normalizeForMatching(candidate.name) !== normalizeForMatching(evidence.name)
+    && candidateName !== evidenceName
+  ) return false;
   const set = normalizeForMatching(evidence.set);
+  const candidateSet = normalizeForMatching(candidate.set_name);
+  const comparableSet = (value: string) => value
+    .replace(/^(?:sv|sm|xy)\s+/, "")
+    .replace(/\b(?:pokemon|cards|card|promos|promo)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (
     set &&
-    set !== normalizeForMatching(candidate.set_name) &&
-    set !== normalizeForMatching(candidate.set_code ?? "")
+    set !== candidateSet &&
+    comparableSet(set) !== comparableSet(candidateSet) &&
+    set !== normalizeForMatching(candidate.set_code ?? "") &&
+    (evidence.source !== "collectr" || !evidence.number)
   ) return false;
   if (
     evidence.setCode &&
@@ -512,9 +539,10 @@ function exactCandidate(
   ) return false;
   if (
     evidence.rarity &&
+    evidence.source !== "collectr" &&
     normalizeForMatching(candidate.rarity ?? "") !== normalizeForMatching(evidence.rarity)
   ) return false;
-  if (evidence.finish) {
+  if (evidence.finish && evidence.source !== "collectr") {
     const finish = normalizeForMatching(evidence.finish);
     const finishes = candidate.variants
       .map((variant) => normalizeForMatching(String(variant.finish ?? variant.name ?? "")))
@@ -522,6 +550,49 @@ function exactCandidate(
     if (finishes.length > 0 && !finishes.some((value) => value === finish)) return false;
   }
   return true;
+}
+
+async function providerGameId(game: string, set: string, name: string): Promise<string | null> {
+  const normalized = normalizeGameSlug(game);
+  if (!normalized) return null;
+  if (
+    normalized === "pokemon"
+    && /\b(?:jp|japanese)\b/i.test(`${set} ${name}`)
+  ) return "pokemon-japan";
+  if (normalized === "one-piece") return "one-piece-card-game";
+  return normalized;
+}
+
+function providerCard(
+  raw: Record<string, unknown>,
+): PublicCatalogueCard | null {
+  if (!raw.id || !raw.name || !(raw.set_name ?? raw.set) || !raw.game) return null;
+  const variants = Array.isArray(raw.variants)
+    ? raw.variants.map((variant) => {
+        const value = variant as Record<string, unknown>;
+        return {
+          name: typeof value.name === "string" ? value.name : null,
+          finish: typeof value.printing === "string"
+            ? value.printing
+            : typeof value.finish === "string" ? value.finish : null,
+        };
+      })
+    : [];
+  return {
+    id: String(raw.id),
+    name: String(raw.name),
+    game: String(raw.game).replace(/\s+Japan$/i, ""),
+    set: String(raw.set_name ?? raw.set),
+    set_name: String(raw.set_name ?? raw.set),
+    set_code: typeof raw.set_code === "string" ? raw.set_code : null,
+    number: typeof raw.number === "string" ? raw.number : null,
+    rarity: typeof raw.rarity === "string" ? raw.rarity : null,
+    image_url: typeof raw.image_url === "string" ? raw.image_url : null,
+    language: typeof raw.language === "string" ? raw.language : null,
+    region: typeof raw.region === "string" ? raw.region : null,
+    release_date: typeof raw.release_date === "string" ? raw.release_date : null,
+    variants,
+  };
 }
 
 async function candidatesForRow(input: {
@@ -550,7 +621,35 @@ async function candidatesForRow(input: {
     offset: 0,
   });
   if (result.outcome === "canonical_error") throw new Error("CATALOGUE_UNAVAILABLE");
-  return result.value.filter((candidate) => exactCandidate(candidate, input));
+  const canonical = result.value.filter((candidate) => exactCandidate(candidate, input));
+  if (canonical.length || input.source !== "collectr") return canonical;
+
+  const game = await providerGameId(input.game, input.set, input.name);
+  if (!game) return [];
+  const rows: Record<string, unknown>[] = [];
+  for (const query of [...new Set([input.name, input.number].filter(Boolean))]) {
+    const response = await justTcg(`/cards?${new URLSearchParams({
+      q: query,
+      game,
+      limit: "100",
+      offset: "0",
+      include_price_history: "false",
+    }).toString()}`);
+    if (response.status >= 500 || response.status === 429) {
+      throw new Error("CATALOGUE_UNAVAILABLE");
+    }
+    if (
+      response.body && typeof response.body === "object"
+      && Array.isArray((response.body as { data?: unknown }).data)
+    ) {
+      rows.push(...(response.body as { data: Record<string, unknown>[] }).data);
+    }
+  }
+  const matches = rows
+    .map(providerCard)
+    .filter((candidate): candidate is PublicCatalogueCard => Boolean(candidate))
+    .filter((candidate) => exactCandidate(candidate, input));
+  return [...new Map(matches.map((candidate) => [candidate.id, candidate])).values()];
 }
 
 function previewSummary(rows: NormalizedImportRow[]): CollectionImportPreviewSummary {
@@ -609,7 +708,7 @@ async function addOrganizationPreview(
   };
 }
 
-async function normalizeRows(
+export async function normalizeRows(
   source: CollectionImportSource,
   sourceRows: Array<Record<string, string>>,
   schemaVersion = COLLECTION_IMPORT_SCHEMA_VERSION,

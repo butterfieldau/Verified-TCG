@@ -26,3 +26,4 @@
 - [Expo file reading](expo-file-reading.md) — Expo File System v19 default legacy readers throw at runtime; use the File object API for imported documents.
 - [JustTCG live pricing contract](justtcg-live-pricing-contract.md) — card prices are condition/printing variants; API game filters require provider slugs, and no slab-grade fields were observed.
 - [Portfolio baseline placement](portfolio-baseline-placement.md) — a single retained portfolio observation starts on the chart’s left, leaving visible room for future movement.
+- [Collection import catalogue fallback](collection-import-catalogue-fallback.md) — Collectr imports must resolve against live JustTCG when canonical reconciliation has not populated the local catalogue.
