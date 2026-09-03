@@ -2192,6 +2192,54 @@ export interface PriceHistoryResult {
   updatedAt: string | null;
 }
 
+function latestPointPerBucket<T extends { date: string }>(
+  points: T[],
+  bucketFor: (date: Date) => string,
+): T[] {
+  const latestByBucket = new Map<string, T>();
+  for (const point of points) {
+    const date = new Date(point.date.length === 10 ? `${point.date}T00:00:00Z` : point.date);
+    if (Number.isNaN(date.getTime())) continue;
+    const bucket = bucketFor(date);
+    const existing = latestByBucket.get(bucket);
+    if (!existing || point.date > existing.date) latestByBucket.set(bucket, point);
+  }
+  return [...latestByBucket.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+/**
+ * Preserve only genuine provider observations while matching the customer-facing
+ * chart cadence: one current-day point, daily, weekly, then monthly.
+ */
+export function sampleCardPriceHistory<T extends { date: string }>(
+  points: T[],
+  periodDays: number,
+): T[] {
+  const daily = latestPointPerBucket(points, date => date.toISOString().slice(0, 10));
+  if (periodDays <= 1) return daily.slice(-1);
+  if (periodDays <= 30 || periodDays >= 36_500) return daily;
+  if (periodDays <= 180) {
+    const firstTime = daily[0]
+      ? new Date(`${daily[0].date.slice(0, 10)}T00:00:00Z`).getTime()
+      : 0;
+    return latestPointPerBucket(daily, date =>
+      String(Math.floor((date.getTime() - firstTime) / (7 * 24 * 60 * 60 * 1_000))),
+    );
+  }
+  const latest = daily.at(-1);
+  if (!latest) return [];
+  const latestDate = new Date(`${latest.date.slice(0, 10)}T00:00:00Z`);
+  const firstMonth = new Date(Date.UTC(
+    latestDate.getUTCFullYear(),
+    latestDate.getUTCMonth() - 11,
+    1,
+  )).toISOString().slice(0, 10);
+  return latestPointPerBucket(
+    daily.filter(point => point.date >= firstMonth),
+    date => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`,
+  );
+}
+
 export async function getPriceHistory(opts: {
   cardId: string;
   gradeKey?: string;
@@ -2291,7 +2339,7 @@ export async function getPriceHistory(opts: {
     fxRate = await convertCents(100, "USD", displayCurrency).then(v => v != null ? v / 100 : null);
   }
 
-  const points: HistoryPoint[] = pointsSource.map(r => {
+  const unsampledPoints: HistoryPoint[] = pointsSource.map(r => {
     const displayCents = fxRate != null
       ? Math.round(r.priceCents * fxRate)
       : r.priceCents;
@@ -2303,6 +2351,7 @@ export async function getPriceHistory(opts: {
       currency: displayCurr,
     };
   });
+  const points = sampleCardPriceHistory(unsampledPoints, periodDays);
 
   // Calculate movement if we have at least 2 points
   let movement: PriceHistoryResult["movement"] = null;
@@ -2329,7 +2378,7 @@ export async function getPriceHistory(opts: {
       : snapshotRows.length > 0
         ? `${historyProviderKey}_snapshots`
         : historyProviderKey,
-    historyAvailable: points.length >= 2,
+    historyAvailable: points.length >= 1,
     movement,
     updatedAt: latestRow?.recordedAt?.toISOString() ?? null,
   };

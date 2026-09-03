@@ -67,12 +67,12 @@ import type { Card, MarketMover, PortfolioRange } from '@/types';
 const EVENT_BANNER_DISMISSED_KEY = '@verified_tcg/event_banner_dismissed_event_id';
 const C = colors.dark;
 const RANGES: { id: PortfolioRange; label: string }[] = [
-  { id: '1D', label: 'Daily' },
-  { id: '7D', label: 'Weekly' },
-  { id: '1M', label: 'Monthly' },
-  { id: '3M', label: '3 Months' },
-  { id: '6M', label: '6 Months' },
-  { id: '1Y', label: '12 Months' },
+  { id: '1D', label: '1 Day' },
+  { id: '7D', label: '7 Days' },
+  { id: '1M', label: '30 Days' },
+  { id: '3M', label: '3M' },
+  { id: '6M', label: '6M' },
+  { id: '1Y', label: '12M' },
 ];
 export const CHART_GESTURE_THRESHOLD = 8;
 export const CHART_HORIZONTAL_INTENT_RATIO = 1.15;

@@ -36,6 +36,7 @@ export { selectCardsForScheduledRefresh } from "../pricing/scheduler.js";
 const router = Router();
 
 const PERIOD_DAYS: Record<string, number> = {
+  "1d":  1,
   "7d":  7,
   "30d": 30,
   "90d": 90,
@@ -223,7 +224,7 @@ router.get("/pricing/cards/:id/history", requireActiveUser, pricingReadLimiter, 
   const periodRaw = typeof req.query["period"] === "string" ? req.query["period"].trim() : "30d";
   const periodDays = PERIOD_DAYS[periodRaw];
   if (periodDays == null) {
-    res.status(400).json({ message: "period must be one of 7d, 30d, 90d, 3m, 180d, 6m, 1y, or all" });
+    res.status(400).json({ message: "period must be one of 1d, 7d, 30d, 90d, 3m, 180d, 6m, 1y, or all" });
     return;
   }
   const displayCurrency = typeof req.query["displayCurrency"] === "string"

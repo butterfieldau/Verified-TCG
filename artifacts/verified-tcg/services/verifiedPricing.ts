@@ -125,7 +125,7 @@ export interface CardPriceHistoryResult {
   historyAvailable: boolean;
 }
 
-export type HistoryPeriod = '7d' | '30d' | '90d' | '180d' | '1y' | 'all';
+export type HistoryPeriod = '1d' | '7d' | '30d' | '90d' | '180d' | '1y' | 'all';
 
 /** In-memory cache for pricing results (5-min TTL) */
 const pricingCache = new Map<string, { data: CardPricingResult; fetchedAt: number }>();

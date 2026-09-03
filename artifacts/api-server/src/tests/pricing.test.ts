@@ -26,6 +26,7 @@ import {
 import { aggregateVerifiedMarketValue } from "../pricing/engine.js";
 import { extractJustTcgRawQuote } from "../pricing/justtcg.js";
 import { portfolioChartData, portfolioProviderPriority } from "../pricing/portfolio.js";
+import { sampleCardPriceHistory } from "../pricing/service.js";
 
 describe("Grade definitions", () => {
   test("all documented card condition keys are defined", () => {
@@ -242,6 +243,22 @@ describe("Portfolio history source and sampling", () => {
     assert.equal(data["3M"].length, 13);
     assert.equal(data["6M"].length, 26);
     assert.equal(data["1Y"].length, 12);
+  });
+});
+
+describe("Card passport history sampling", () => {
+  const points = Array.from({ length: 365 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 8, 4 + index)).toISOString().slice(0, 10),
+    price: 100 + index,
+  }));
+
+  test("uses one, daily, weekly, and monthly real observations by range", () => {
+    assert.equal(sampleCardPriceHistory(points.slice(-1), 1).length, 1);
+    assert.equal(sampleCardPriceHistory(points.slice(-7), 7).length, 7);
+    assert.equal(sampleCardPriceHistory(points.slice(-30), 30).length, 30);
+    assert.equal(sampleCardPriceHistory(points.slice(-90), 90).length, 13);
+    assert.equal(sampleCardPriceHistory(points.slice(-180), 180).length, 26);
+    assert.equal(sampleCardPriceHistory(points, 365).length, 12);
   });
 });
 

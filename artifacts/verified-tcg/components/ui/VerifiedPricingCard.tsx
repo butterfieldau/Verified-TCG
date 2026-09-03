@@ -43,20 +43,21 @@ export function shouldCaptureHorizontalChartGesture(dx: number, dy: number): boo
 }
 
 const HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
+  { value: '1d', label: '1D' },
   { value: '7d', label: '7D' },
-  { value: '30d', label: '1M' },
-  { value: '90d', label: '3M' },
-  { value: '180d', label: '6M' },
-  { value: '1y', label: '1Y' },
-  { value: 'all', label: 'ALL' },
-];
-
-const GRADED_HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
-  { value: '30d', label: '1M' },
+  { value: '30d', label: '30D' },
   { value: '90d', label: '3M' },
   { value: '180d', label: '6M' },
   { value: '1y', label: '12M' },
-  { value: 'all', label: 'MAX' },
+];
+
+const GRADED_HISTORY_PERIODS: Array<{ value: HistoryPeriod; label: string }> = [
+  { value: '1d', label: '1D' },
+  { value: '7d', label: '7D' },
+  { value: '30d', label: '30D' },
+  { value: '90d', label: '3M' },
+  { value: '180d', label: '6M' },
+  { value: '1y', label: '12M' },
 ];
 
 interface GradedQuoteOption {
