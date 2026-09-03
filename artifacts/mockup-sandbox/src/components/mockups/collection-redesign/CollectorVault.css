@@ -69,10 +69,14 @@
 
 .settings-backdrop {
   animation: collector-vault-backdrop-enter 220ms ease-out both;
+  overscroll-behavior: contain;
 }
 
 .settings-sheet {
   animation: collector-vault-sheet-enter 320ms cubic-bezier(.22, 1, .36, 1) both;
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
   transform-origin: bottom center;
 }
 
@@ -88,11 +92,11 @@
 @keyframes collector-vault-sheet-enter {
   from {
     opacity: 0;
-    transform: translate(-50%, 24px);
+    transform: translateY(24px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }
 
