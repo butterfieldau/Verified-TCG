@@ -38,6 +38,7 @@ import VerifiedPricingCard, { type VerifiedPricingSummary } from '@/components/u
 import CollectionHoldingsPanel from '@/components/ui/CollectionHoldingsPanel';
 import { useSettings } from '@/context/SettingsContext';
 import { triggerPriceSnapshot } from '@/services/priceHistory';
+import { fetchCardGradingPopulation, type CardGradingPopulation, type PopulationGrader } from '@/services/gradingPopulation';
 
 const GRADE_OPTIONS = [
   'Raw', 'PSA 8', 'PSA 9', 'PSA 10', 'BGS 9', 'BGS 9.5', 'CGC 9', 'CGC 10',
@@ -600,6 +601,9 @@ export default function CardDetailScreen() {
   const [showWishlistAddedBanner, setShowWishlistAddedBanner] = useState(false);
   const [showWishlistPanel, setShowWishlistPanel] = useState(false);
   const [priceChartGestureActive, setPriceChartGestureActive] = useState(false);
+  const [populationData, setPopulationData] = useState<CardGradingPopulation | null>(null);
+  const [populationLoading, setPopulationLoading] = useState(false);
+  const [populationGrader, setPopulationGrader] = useState<PopulationGrader>('psa');
   const handlePriceChartInteractionStart = useCallback(() => {
     setPriceChartGestureActive(true);
   }, []);
@@ -685,6 +689,24 @@ export default function CardDetailScreen() {
     if (!id) return;
     recordCatalogCardLookup(id).catch(() => {});
   }, [id]);
+
+  useEffect(() => {
+    if (detailMode !== 'POP' || !catalogCard?.id) return;
+    let active = true;
+    setPopulationLoading(true);
+    fetchCardGradingPopulation(catalogCard.id)
+      .then((data) => {
+        if (!active) return;
+        setPopulationData(data);
+        if (!data.graders.psa) {
+          const first = (['bgs', 'cgc'] as PopulationGrader[]).find((grader) => data.graders[grader]);
+          if (first) setPopulationGrader(first);
+        }
+      })
+      .catch(() => { if (active) setPopulationData(null); })
+      .finally(() => { if (active) setPopulationLoading(false); });
+    return () => { active = false; };
+  }, [detailMode, catalogCard?.id]);
 
   useEffect(() => {
     if (swipeIds.length <= 1) return;
@@ -798,7 +820,6 @@ export default function CardDetailScreen() {
   const isWatched = localInWatchlist || watchlist.some(w => w.cardId === card.id);
   const ownedItems = collection.filter(item => item.cardId === card.id);
   const ownedQuantity = ownedItems.reduce((sum, item) => sum + item.quantity, 0);
-  const populationRecords = ownedItems.filter(item => item.grading?.population != null);
   const topMarketSummary = marketSummary ?? (
     card.price.available
       ? { label: 'Raw / Ungraded', price: card.price.raw, currency: card.price.currency }
@@ -1112,17 +1133,7 @@ export default function CardDetailScreen() {
             onRawMarketSummaryChange={handleRawMarketSummaryChange}
             onPriceChartInteractionStart={handlePriceChartInteractionStart}
             onPriceChartInteractionEnd={handlePriceChartInteractionEnd}
-            populationRecords={populationRecords.flatMap(item =>
-              item.grading?.company != null
-              && item.grading.grade != null
-              && item.grading.population != null
-                ? [{
-                    company: item.grading.company,
-                    grade: item.grading.grade,
-                    population: item.grading.population,
-                  }]
-                : [],
-            )}
+            populationRecords={[]}
           />
         )}
 
@@ -1135,27 +1146,39 @@ export default function CardDetailScreen() {
               </View>
               <Feather name="bar-chart-2" size={18} color={C.primary} />
             </View>
-            {populationRecords.length > 0 ? (
-              populationRecords.map(item => (
-                <View key={item.id} style={styles.populationRow}>
-                  <View style={styles.populationGrade}>
-                    <Text style={styles.populationGradeText}>
-                      {item.grading?.company} {item.grading?.grade}
-                    </Text>
-                  </View>
-                  <View style={styles.populationCopy}>
-                    <Text style={styles.populationLabel}>Recorded population</Text>
-                    <Text style={styles.populationValue}>{item.grading?.population?.toLocaleString('en-AU')}</Text>
-                  </View>
-                  <Text style={styles.populationQuantity}>×{item.quantity}</Text>
+            {populationLoading ? (
+              <View style={styles.populationEmpty}><ActivityIndicator color={C.primary} /></View>
+            ) : populationData && Object.keys(populationData.graders).length > 0 ? (
+              <>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                  {(['psa', 'bgs', 'cgc'] as PopulationGrader[]).filter(grader => populationData.graders[grader]).map(grader => (
+                    <Pressable key={grader} onPress={() => setPopulationGrader(grader)} style={{ borderWidth: 1, borderColor: populationGrader === grader ? C.primary : C.border, backgroundColor: populationGrader === grader ? 'rgba(204,24,38,0.14)' : 'transparent', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 }}>
+                      <Text style={{ color: populationGrader === grader ? C.primary : C.mutedForeground, fontFamily: 'Inter_700Bold' }}>{populationData.graders[grader]?.label}</Text>
+                    </Pressable>
+                  ))}
                 </View>
-              ))
+                {(() => {
+                  const selected = populationData.graders[populationGrader] ?? populationData.graders.psa ?? populationData.graders.bgs ?? populationData.graders.cgc;
+                  if (!selected) return null;
+                  return <>
+                    {Object.values(selected.grades).map(grade => (
+                      <View key={grade.code} style={styles.populationRow}>
+                        <View style={styles.populationGrade}><Text style={styles.populationGradeText}>{grade.label}</Text></View>
+                        <View style={styles.populationCopy}><Text style={styles.populationLabel}>Population</Text><Text style={styles.populationValue}>{grade.population == null ? 'Unavailable' : grade.population.toLocaleString('en-AU')}</Text></View>
+                      </View>
+                    ))}
+                    <View style={styles.populationRow}><View style={styles.populationGrade}><Text style={styles.populationGradeText}>Total</Text></View><View style={styles.populationCopy}><Text style={styles.populationValue}>{selected.totalPopulation == null ? 'Unavailable' : selected.totalPopulation.toLocaleString('en-AU')}</Text></View></View>
+                    {selected.gemRate != null && <Text style={[styles.populationLabel, { marginTop: 12 }]}>Gem rate {(selected.gemRate * 100).toFixed(1)}%</Text>}
+                    {populationData.source.stale && <Text style={[styles.populationLabel, { marginTop: 8 }]}>Showing the last verified population update.</Text>}
+                  </>;
+                })()}
+              </>
             ) : (
               <View style={styles.populationEmpty}>
                 <Feather name="bar-chart" size={26} color={C.mutedForeground} />
                 <Text style={styles.populationEmptyTitle}>No verified population record</Text>
                 <Text style={styles.populationEmptyText}>
-                  Population data appears here when a graded copy in your collection has a verified grading record.
+                  Population data is currently unavailable for this card.
                 </Text>
               </View>
             )}

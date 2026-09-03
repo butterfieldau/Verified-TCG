@@ -33,6 +33,7 @@ import adminOperationsRouter from "./adminOperations";
 import adminIntelligenceRouter from "./adminIntelligence";
 import adminConfigurationRouter from "./adminConfiguration";
 import catalogueOperationsRouter from "./catalogueOperations";
+import gradingRouter from "./grading";
 
 const router: IRouter = Router();
 
@@ -41,6 +42,7 @@ router.use(authRouter);
 router.use(wishlistRouter);
 router.use(imageProxyRouter);
 router.use(catalogRouter);
+router.use(gradingRouter);
 router.use(certificationRouter);
 router.use(gradedPricesRouter);
 router.use(ebayAccountDeletionRouter);
