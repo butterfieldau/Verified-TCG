@@ -810,16 +810,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const request = (async () => {
       setCollectionLoading(true);
 
-      // Show cached collection immediately so the screen isn't blank while fetching
-      try {
-        const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
-        if (cached && gen === loadGeneration.current) {
-          const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
-          if (cachedOwnerId === ownerId && Array.isArray(items)) {
-            setCollection(items);
+      // Hydrate the cache only when memory is empty. Replaying an older cached
+      // snapshot during every forced/background refresh makes cards and values
+      // visibly jump before the fresh server payload arrives.
+      if (collectionRef.current.length === 0) {
+        try {
+          const cached = await AsyncStorage.getItem(collectionCacheKey(ownerId));
+          if (cached && gen === loadGeneration.current) {
+            const { items, ownerId: cachedOwnerId } = JSON.parse(cached) as CollectionCachePayload;
+            if (cachedOwnerId === ownerId && Array.isArray(items)) {
+              setCollection(items);
+            }
           }
-        }
-      } catch { /* ignore cache read errors */ }
+        } catch { /* ignore cache read errors */ }
+      }
 
       try {
         const serverItems = await fetchCollection(currency);

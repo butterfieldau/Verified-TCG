@@ -140,7 +140,6 @@ export default function CollectionScreen() {
   const summaryRequest = useRef<Promise<void> | null>(null);
   const collectionRefreshDeduper = useRef(createRequestDeduper()).current;
   const summaryCurrency = useRef(currency);
-  const hasFocusedCollection = useRef(false);
 
   const loadSummary = useCallback(async (force = false) => {
     if (summaryCurrency.current !== currency) {
@@ -227,17 +226,13 @@ export default function CollectionScreen() {
     setDisplayCount(PAGE_SIZE);
   }, []);
 
-  // AppContext performs the initial authenticated collection load. Subsequent
-  // focuses represent a real leave/reopen and request one fresh library load.
+  // AppContext owns initial, foreground and mutation-driven collection refreshes.
+  // Keep tab focus passive so returning to Collection does not replay cached and
+  // server payloads through the list and visibly flash the screen.
   useFocusEffect(
     useCallback(() => {
-      if (hasFocusedCollection.current) {
-        void refreshCollection();
-      } else {
-        hasFocusedCollection.current = true;
-      }
-      void loadSummary(true);
-    }, [loadSummary, refreshCollection]),
+      void loadSummary(false);
+    }, [loadSummary]),
   );
 
   const handleRefresh = useCallback(async () => {
@@ -358,7 +353,7 @@ export default function CollectionScreen() {
 
           return (
             <>
-              <Animated.View entering={FadeInDown.delay(60).duration(420)} style={styles.portfolioSummary}>
+              <View style={styles.portfolioSummary}>
                 <Pressable onPress={openListSheet} style={styles.portfolioNameRow} accessibilityRole="button" accessibilityLabel={`Change portfolio, current portfolio ${activePortfolioName}`}>
                   <Text style={styles.portfolioName}>
                     Portfolio: <Text style={styles.portfolioNameActive}>{activePortfolioName}</Text>
@@ -422,7 +417,7 @@ export default function CollectionScreen() {
                     );
                   })}
                 </View>
-              </Animated.View>
+              </View>
 
               {portfolioSummaryMode === 'performance' && (
                 <Animated.View entering={FadeInDown.duration(280)} style={styles.performanceSection}>
@@ -797,9 +792,9 @@ export default function CollectionScreen() {
               {renderCardGrid(item)}
             </View>
           )}
-          ListHeaderComponent={() => renderHeader()}
-          ListEmptyComponent={renderCollectionEmpty}
-          ListFooterComponent={() => (
+          ListHeaderComponent={renderHeader()}
+          ListEmptyComponent={renderCollectionEmpty()}
+          ListFooterComponent={(
             <View style={[styles.listFooter, { paddingBottom: TAB_H + 24 }]}>
               {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
               {!hasMore && visibleItems.length > 0 && (
@@ -825,9 +820,9 @@ export default function CollectionScreen() {
               {renderCardRow(item)}
             </View>
           )}
-          ListHeaderComponent={() => renderHeader()}
-          ListEmptyComponent={renderCollectionEmpty}
-          ListFooterComponent={() => (
+          ListHeaderComponent={renderHeader()}
+          ListEmptyComponent={renderCollectionEmpty()}
+          ListFooterComponent={(
             <View style={[styles.listFooter, { paddingBottom: TAB_H + 24 }]}>
               {collectionLoading && !initialLoading && <ActivityIndicator color={C.primary} />}
               {!hasMore && visibleItems.length > 0 && (
