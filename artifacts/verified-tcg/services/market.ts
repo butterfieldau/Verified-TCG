@@ -39,7 +39,10 @@ export interface MarketCacheOptions {
 function scopedCacheKey(scope?: string, displayCurrency?: string): string {
   // Do not put a bearer token in AsyncStorage. Views pass the authenticated
   // user ID and preference fingerprint; anonymous callers remain isolated.
-  return `${MARKET_CACHE_KEY}:${encodeURIComponent(scope || 'anonymous')}:${encodeURIComponent(displayCurrency?.toUpperCase() || 'source')}`;
+  const base = `${MARKET_CACHE_KEY}:${encodeURIComponent(scope || 'anonymous')}`;
+  // Retain the established source-currency cache key for legacy callers and
+  // only partition storage when a user explicitly selects a display currency.
+  return displayCurrency ? `${base}:${encodeURIComponent(displayCurrency.toUpperCase())}` : base;
 }
 
 interface MarketCacheSection<T> {
@@ -191,7 +194,8 @@ async function fetchMarketMovers(section: 'movers' | 'gainers' | 'losers', optio
   const params = new URLSearchParams();
   if (section !== 'movers') params.set('mode', section);
   if (options?.displayCurrency) params.set('displayCurrency', options.displayCurrency);
-  const endpoint = `/api/catalog/market-movers${params.size ? `?${params.toString()}` : ''}`;
+  const query = params.toString();
+  const endpoint = `/api/catalog/market-movers${query ? `?${query}` : ''}`;
   const body = await apiJson<{ data: MarketMoverServerCard[] }>(
     endpoint,
     token ? { accessToken: token } : undefined,

@@ -135,8 +135,9 @@ export async function fetchCatalogCard(
   try {
     const params = new URLSearchParams();
     if (displayCurrency) params.set('displayCurrency', displayCurrency);
+    const query = params.toString();
     const body = await apiJson<{ data?: CatalogCard | null }>(
-      `/api/catalog/cards/${encodeURIComponent(id)}${params.size ? `?${params.toString()}` : ''}`,
+      `/api/catalog/cards/${encodeURIComponent(id)}${query ? `?${query}` : ''}`,
       { signal },
     );
     return body.data ?? null;
