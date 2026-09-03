@@ -378,7 +378,11 @@ export default function CollectionScreen() {
 
           return (
             <>
-              <View style={styles.portfolioSummary}>
+              <View
+                testID="collection-profile-worth"
+                accessibilityLabel="Profile worth"
+                style={styles.portfolioSummary}
+              >
                 <Pressable onPress={openListSheet} style={styles.portfolioNameRow} accessibilityRole="button" accessibilityLabel={`Change portfolio, current portfolio ${activePortfolioName}`}>
                   <Text style={styles.portfolioName}>
                     Portfolio: <Text style={styles.portfolioNameActive}>{activePortfolioName}</Text>
