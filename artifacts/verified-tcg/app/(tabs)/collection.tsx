@@ -597,7 +597,7 @@ export default function CollectionScreen() {
     return (
       <Pressable
         key={item.id}
-        style={[styles.itemRow, { backgroundColor: C.card, marginHorizontal: 20 }, selectedIds.has(item.id) && { borderColor: C.primary, borderWidth: 1 }]}
+        style={[styles.itemRow, { backgroundColor: C.card }, selectedIds.has(item.id) && { borderColor: C.primary, borderWidth: 1 }]}
         onPress={() => {
           if (selectionMode) { toggleSelection(item.id); return; }
           // Keep Passport swipes in exactly the rendered, deterministic order.
