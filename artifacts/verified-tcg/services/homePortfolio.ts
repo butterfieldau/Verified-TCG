@@ -59,8 +59,8 @@ export function getHomePerformanceView(
 
 /**
  * Keep the first and last timeline observations on the chart edges. A single
- * retained observation is the latest known value, so it is right-anchored
- * rather than presented as a misleading centered trend.
+ * retained observation is the beginning of the visible history, so it starts
+ * on the left and leaves room for future movement to grow across the chart.
  */
 export function chartXForIndex(
   index: number,
@@ -69,7 +69,7 @@ export function chartXForIndex(
   padLeft = 0,
   padRight = 0,
 ): number {
-  if (count <= 1) return width - padRight;
+  if (count <= 1) return padLeft;
   return padLeft + (index / (count - 1)) * Math.max(width - padLeft - padRight, 0);
 }
 

@@ -286,9 +286,9 @@ function InteractiveChart({
               strokeDasharray="5,7"
               opacity={0.45}
             />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
-            <Circle cx={xOf(0)} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
+            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={11} fill={chartColor} opacity={0.16} />
+            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={5} fill={chartColor} />
+            <Circle cx={padL + 18} cy={yOf(data[0]!.value!)} r={2.5} fill="#FFFFFF" />
           </>
         )}
 

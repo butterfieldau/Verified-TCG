@@ -141,7 +141,7 @@ describe('home portfolio view models', () => {
   it('anchors the first and last points to chart edges', () => {
     expect(chartXForIndex(0, 3, 320)).toBe(0);
     expect(chartXForIndex(2, 3, 320)).toBe(320);
-    expect(chartXForIndex(0, 1, 320)).toBe(320);
+    expect(chartXForIndex(0, 1, 320)).toBe(0);
   });
 
   it('removes only leading unavailable samples from the drawable chart', () => {

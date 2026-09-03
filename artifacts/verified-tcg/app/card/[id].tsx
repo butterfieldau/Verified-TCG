@@ -574,16 +574,25 @@ const imgStyles = StyleSheet.create({
 export default function CardDetailScreen() {
   const { id, cardIds, catalogJson, appCardJson } = useLocalSearchParams<{ id: string; cardIds?: string; catalogJson?: string; appCardJson?: string }>();
   const insets = useSafeAreaInsets();
-  const { addToWatchlist, watchlist, collection, subscriptionTier } = useApp();
+  const { addToWatchlist, watchlist, collection, subscriptionTier, refreshCollection } = useApp();
   const { currency: displayCurrency } = useSettings();
   const [detailMode, setDetailMode] = useState<DetailMode>('Raw');
   const modeTabIndex: Record<DetailMode, number> = { Raw: 0, Graded: 1, POP: 2 };
   const modeIndicatorX = useSharedValue(0);
   const modeTabWidth = useSharedValue(0);
   const [marketSummary, setMarketSummary] = useState<VerifiedPricingSummary | null>(null);
+  const syncedMarketSummaryRef = useRef<string | null>(null);
   const handleRawMarketSummaryChange = useCallback((summary: VerifiedPricingSummary | null) => {
     setMarketSummary(summary);
-  }, []);
+    if (!summary || !id) return;
+    const signature = `${id}:${summary.currency}:${summary.price}`;
+    if (syncedMarketSummaryRef.current === signature) return;
+    syncedMarketSummaryRef.current = signature;
+    // The passport pricing request may have just persisted the card's first
+    // verified quote. Reload canonical holding valuations so Home, Collection,
+    // and the collapsed passport summary show the same price immediately.
+    void refreshCollection();
+  }, [id, refreshCollection]);
   const [localInCollection, setLocalInCollection] = useState(false);
   const [localInWatchlist, setLocalInWatchlist] = useState(false);
   const [showAddedBanner, setShowAddedBanner] = useState(false);
