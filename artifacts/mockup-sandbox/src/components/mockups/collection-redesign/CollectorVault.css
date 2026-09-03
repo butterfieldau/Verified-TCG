@@ -67,6 +67,35 @@
   height: 100%;
 }
 
+.settings-backdrop {
+  animation: collector-vault-backdrop-enter 220ms ease-out both;
+}
+
+.settings-sheet {
+  animation: collector-vault-sheet-enter 320ms cubic-bezier(.22, 1, .36, 1) both;
+  transform-origin: bottom center;
+}
+
+@keyframes collector-vault-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes collector-vault-sheet-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 24px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 @keyframes collector-vault-chart-enter {
   from {
     opacity: 0;
