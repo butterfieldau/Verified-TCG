@@ -914,21 +914,17 @@ export default function CollectionScreen() {
       </Modal>
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setSettingsOpen(false)}>
-          <Pressable style={styles.sheetPressGuard} onPress={event => event.stopPropagation()}>
+          <Pressable style={[styles.sheetPressGuard, styles.settingsPanelSheet]} onPress={event => event.stopPropagation()}>
             <ScrollView contentContainerStyle={styles.settingsSheetContent}>
             <View style={styles.sheetHead}>
-              <View>
-                <Text style={styles.sheetTitle}>COLLECTION SETTINGS</Text>
-                <Text style={styles.sheetMeta}>Filters, lists, sorting and collection tools</Text>
-              </View>
+              <Text style={styles.sheetTitle}>COLLECTION SETTINGS</Text>
               <Pressable onPress={() => setSettingsOpen(false)} accessibilityRole="button" accessibilityLabel="Close collection settings">
                 <Feather name="x" size={20} color={C.foreground} />
               </Pressable>
             </View>
 
-            <Text style={styles.sheetSectionLabel}>ORGANISE</Text>
-            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setFilterOpen(true); }} accessibilityRole="button">
-              <View style={styles.settingsRowIcon}><Feather name="filter" size={16} color={C.primary} /></View>
+            <Pressable style={styles.settingsPanelRow} onPress={() => { setSettingsOpen(false); setFilterOpen(true); }} accessibilityRole="button">
+              <Feather name="filter" size={17} color={C.primary} />
               <View style={styles.settingsRowCopy}>
                 <Text style={styles.settingsRowTitle}>Filters</Text>
                 <Text style={styles.settingsRowMeta}>
@@ -940,28 +936,22 @@ export default function CollectionScreen() {
               <Feather name="chevron-right" size={17} color={C.mutedForeground} />
             </Pressable>
             <Pressable
-              style={styles.settingsRow}
+              style={styles.settingsPanelRow}
               onPress={() => {
                 setSettingsOpen(false);
-                setListSheetOpen(true);
-                collectionLists.forEach(list => {
-                  setListSubtotals(current => ({ ...current, [list.id]: current[list.id] === undefined ? null : current[list.id] }));
-                  void fetchCollectionListSubtotal(list.id, currency)
-                    .then(value => setListSubtotals(current => ({ ...current, [list.id]: value })))
-                    .catch(() => setListSubtotals(current => ({ ...current, [list.id]: null })));
-                });
+                openListSheet();
               }}
               accessibilityRole="button"
             >
-              <View style={styles.settingsRowIcon}><Feather name="folder" size={16} color={C.primary} /></View>
+              <Feather name="folder" size={17} color={C.warning} />
               <View style={styles.settingsRowCopy}>
-                <Text style={styles.settingsRowTitle}>Portfolio lists</Text>
+                <Text style={styles.settingsRowTitle}>Portfolio list</Text>
                 <Text style={styles.settingsRowMeta}>{collectionLists.find(list => list.id === collectionOrganizerPreferences.selectedListId)?.name ?? 'All Collection'}</Text>
               </View>
               <Feather name="chevron-right" size={17} color={C.mutedForeground} />
             </Pressable>
-            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setSortOpen(true); }} accessibilityRole="button">
-              <View style={styles.settingsRowIcon}><Feather name="shuffle" size={16} color={C.primary} /></View>
+            <Pressable style={styles.settingsPanelRow} onPress={() => { setSettingsOpen(false); setSortOpen(true); }} accessibilityRole="button">
+              <Feather name="arrow-down" size={17} color={C.warning} />
               <View style={styles.settingsRowCopy}>
                 <Text style={styles.settingsRowTitle}>Sort library</Text>
                 <Text style={styles.settingsRowMeta}>{SORT_LABELS[sortBy]} · {collectionOrganizerPreferences.sort.direction === 'asc' ? 'Ascending' : 'Descending'}</Text>
@@ -969,55 +959,29 @@ export default function CollectionScreen() {
               <Feather name="chevron-right" size={17} color={C.mutedForeground} />
             </Pressable>
 
-            <Text style={styles.sheetSectionLabel}>VIEW</Text>
-            <View style={styles.settingsViewRow}>
-              {(['grid', 'list'] as const).map(mode => {
-                const selected = viewMode === mode;
-                return (
-                  <Pressable
-                    key={mode}
-                    onPress={() => setCollectionOrganizerPreferences({ viewMode: mode })}
-                    style={[styles.settingsViewButton, selected && styles.settingsViewButtonActive]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                  >
-                    <Feather name={mode} size={15} color={selected ? C.foreground : C.mutedForeground} />
-                    <Text style={[styles.settingsViewText, selected && styles.settingsViewTextActive]}>{mode === 'grid' ? 'Grid view' : 'List view'}</Text>
-                  </Pressable>
-                );
-              })}
+            <View style={styles.settingsPanelRow}>
+              <View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>View</Text>
+                <Text style={styles.settingsRowMeta}>Choose grid or list</Text>
+              </View>
+              <View style={styles.settingsViewToggle}>
+                {(['grid', 'list'] as const).map(mode => {
+                  const selected = viewMode === mode;
+                  return (
+                    <Pressable
+                      key={mode}
+                      onPress={() => setCollectionOrganizerPreferences({ viewMode: mode })}
+                      style={[styles.settingsViewToggleButton, selected && styles.settingsViewToggleButtonActive]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${mode} view`}
+                      accessibilityState={{ selected }}
+                    >
+                      <Feather name={mode} size={15} color={selected ? C.foreground : C.mutedForeground} />
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
-
-            <Text style={styles.sheetSectionLabel}>TOOLS</Text>
-            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); setSelectionMode(true); setSelectedIds(new Set()); }} accessibilityRole="button">
-              <View style={styles.settingsRowIcon}><Feather name="check-square" size={16} color={C.primary} /></View>
-              <View style={styles.settingsRowCopy}>
-                <Text style={styles.settingsRowTitle}>Select cards</Text>
-                <Text style={styles.settingsRowMeta}>Sell, trade, organise or remove in bulk</Text>
-              </View>
-              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
-            </Pressable>
-            <Pressable style={styles.settingsRow} onPress={() => { setSettingsOpen(false); router.push('/collection-archive' as any); }} accessibilityRole="button">
-              <View style={styles.settingsRowIcon}><Feather name="archive" size={16} color={C.primary} /></View>
-              <View style={styles.settingsRowCopy}>
-                <Text style={styles.settingsRowTitle}>Collection archive</Text>
-                <Text style={styles.settingsRowMeta}>Restore previously removed holdings</Text>
-              </View>
-              <Feather name="chevron-right" size={17} color={C.mutedForeground} />
-            </Pressable>
-            {(Object.keys(collectionOrganizerPreferences.filters).length > 0 || activeFilter !== 'all' || collectionOrganizerPreferences.selectedListId) && (
-              <Pressable
-                style={styles.clearSettingsButton}
-                onPress={() => {
-                  setActiveFilter('all');
-                  setCollectionOrganizerPreferences({ filters: {}, selectedListId: null });
-                  resetWindow();
-                }}
-                accessibilityRole="button"
-              >
-                <Text style={styles.clearSettingsText}>Clear all filters</Text>
-              </Pressable>
-            )}
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -1456,6 +1420,7 @@ const styles = StyleSheet.create({
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
   sheet: { backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 10, maxHeight: '80%' },
   sheetPressGuard: { maxHeight: '80%', backgroundColor: C.surfaceRaised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  settingsPanelSheet: { minHeight: 440 },
   settingsSheetContent: { paddingBottom: 28, gap: 10 },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   sheetTitle: { color: C.foreground, fontFamily: 'Rajdhani_700Bold', fontSize: 22, letterSpacing: .5 },
@@ -1477,10 +1442,14 @@ const styles = StyleSheet.create({
   filterScopeTextActive: { color: '#FF9CA4' },
   filterScopeCount: { color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 9 },
   settingsRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: C.border },
+  settingsPanelRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#303035', borderRadius: 15, backgroundColor: '#151517', paddingHorizontal: 16, paddingVertical: 12 },
   settingsRowIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: `${C.primary}18` },
   settingsRowCopy: { flex: 1 },
   settingsRowTitle: { color: C.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  settingsRowMeta: { marginTop: 3, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10 },
+  settingsRowMeta: { marginTop: 3, color: C.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11 },
+  settingsViewToggle: { flexDirection: 'row', borderWidth: 1, borderColor: '#303035', borderRadius: 7, backgroundColor: '#19191C', padding: 2, gap: 2 },
+  settingsViewToggleButton: { width: 36, height: 36, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  settingsViewToggleButtonActive: { backgroundColor: '#373039' },
   settingsViewRow: { flexDirection: 'row', gap: 8 },
   settingsViewButton: { flex: 1, minHeight: 42, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   settingsViewButtonActive: { borderColor: `${C.primary}88`, backgroundColor: `${C.primary}18` },

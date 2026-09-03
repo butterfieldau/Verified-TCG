@@ -74,10 +74,15 @@
 
 .settings-sheet {
   animation: collector-vault-sheet-enter 320ms cubic-bezier(.22, 1, .36, 1) both;
-  max-height: calc(100dvh - 16px);
+  min-height: 440px;
+  max-height: calc(100dvh - 56px);
   overflow-y: auto;
   padding-bottom: max(20px, env(safe-area-inset-bottom));
   transform-origin: bottom center;
+}
+
+.settings-panel-row {
+  min-height: 76px;
 }
 
 @keyframes collector-vault-backdrop-enter {
