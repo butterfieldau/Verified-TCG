@@ -1,0 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700&display=swap');
+
+.vtcg-collection {
+  --bg: #0d0d0f;
+  --surface: #18181b;
+  --surface-2: #1a1a1a;
+  --border: #29282b;
+  --ink: #f4f1e8;
+  --muted: #7d7a7d;
+  --red: #ff1e2d;
+  --gold: #f59e0b;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, sans-serif;
+}
+.vtcg-collection * { box-sizing: border-box; }
+.vtcg-collection button, .vtcg-collection input { font: inherit; }
+.vtcg-collection button { cursor: pointer; }
+.vtcg-collection::-webkit-scrollbar { width: 0; height: 0; }
+.vtcg-collection .tcg-display { font-family: Rajdhani, sans-serif; }
