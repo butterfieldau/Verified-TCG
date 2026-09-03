@@ -32,7 +32,7 @@ const {
 } = require('@/services/market') as typeof import('@/services/market');
 const { getAccessToken } = require('@/services/auth') as { getAccessToken: jest.Mock };
 
-const CACHE_KEY = '@verified_tcg/market_cache_v5:anonymous';
+const CACHE_KEY = '@verified_tcg/market_cache_v6:anonymous';
 
 function jsonResponse(data: unknown) {
   return { ok: true, json: async () => ({ data }) } as Response;
@@ -141,8 +141,8 @@ describe('market SWR cache', () => {
 
     expect(fromOtherScope).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v5:user-a%3Apokemon')).toBeTruthy();
-    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v5:user-b%3Amagic')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v6:user-a%3Apokemon')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@verified_tcg/market_cache_v6:user-b%3Amagic')).toBeTruthy();
   });
 
   it('shares one matching request between concurrent market consumers', async () => {

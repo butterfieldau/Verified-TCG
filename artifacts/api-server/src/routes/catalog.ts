@@ -792,11 +792,11 @@ function preferenceCandidateFilter(cardId: SQL, preferences: Set<string> | null)
 }
 
 /**
- * Market reads are based exclusively on persisted PriceCharting snapshots.
- * A row is eligible only when it has two non-zero raw observations from the
- * same provider/currency and the current observation is still fresh. This
- * intentionally returns no data during a new deployment rather than making
- * provider search results look like a genuine market movement feed.
+ * Market reads use the same provider priority as every other raw-value surface:
+ * JustTCG first, with PriceCharting only when no comparable JustTCG movement
+ * exists for that card. A row is eligible only when it has two non-zero raw
+ * observations from the same provider/currency and the current observation is
+ * still fresh.
  */
 export async function persistedMarketCards(
   limit = 8,
@@ -822,7 +822,7 @@ export async function persistedMarketCards(
           ORDER BY captured_at DESC
         ) AS position
       FROM card_price_snapshots
-      WHERE provider_key = 'pricecharting'
+      WHERE provider_key IN ('justtcg', 'pricecharting')
         AND grade_key = ${grade}
         AND capture_status = 'success'
         AND price_cents IS NOT NULL
@@ -844,10 +844,19 @@ export async function persistedMarketCards(
         AND previous_snapshot.position = 2
       WHERE current_snapshot.position = 1
         AND current_snapshot.captured_at >= NOW() - INTERVAL '36 hours'
+    ), provider_ranked AS (
+      SELECT comparable.*,
+        row_number() OVER (
+          PARTITION BY card_id
+          ORDER BY CASE provider_key WHEN 'justtcg' THEN 2 ELSE 1 END DESC,
+            current_at DESC
+        ) AS provider_position
+      FROM comparable
     )
-    SELECT * FROM comparable current_snapshot
+    SELECT * FROM provider_ranked current_snapshot
     WHERE ABS(movement_percent) <= 500
-      AND movement_percent <> 0 ${direction} ${preferenceFilter}
+      AND movement_percent <> 0
+      AND provider_position = 1 ${direction} ${preferenceFilter}
     ORDER BY ${ordering}, card_id ASC
     LIMIT ${limit * 5}
   `);
@@ -874,7 +883,9 @@ export async function persistedMarketCards(
           markets: [{ region: "source", currency: row.currency, price: row.current_cents / 100 }],
         }],
         market_price: row.current_cents / 100,
-        pricing_source: "PriceCharting",
+        pricing_source: row.provider_key === JUSTTCG_PRICING_PROVIDER_KEY
+          ? "JustTCG"
+          : "PriceCharting",
         previous_price: row.previous_cents / 100,
         absolute_change: movement.absoluteCents / 100,
         price_change_7d: movement.percent,
@@ -897,14 +908,24 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
     price_cents: number | null;
     currency: string | null;
     fetched_at: Date | null;
+    provider_key: string | null;
     created_at: Date;
   }>(sql`
-    SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at, e.created_at
+    SELECT e.external_id AS card_id, q.price_cents, q.currency, q.fetched_at,
+      q.provider_key, e.created_at
     FROM catalogue_external_ids e
-    LEFT JOIN current_quotes q
-      ON q.card_id = e.external_id
-      AND q.provider_key = 'pricecharting'
-      AND q.grade_key = 'raw'
+    LEFT JOIN LATERAL (
+      SELECT current.price_cents, current.currency, current.fetched_at,
+        current.provider_key
+      FROM current_quotes current
+      WHERE current.card_id = e.external_id
+        AND current.provider_key IN ('justtcg', 'pricecharting')
+        AND current.grade_key = 'raw'
+        AND current.price_cents > 0
+      ORDER BY CASE current.provider_key WHEN 'justtcg' THEN 2 ELSE 1 END DESC,
+        current.fetched_at DESC
+      LIMIT 1
+    ) q ON true
     WHERE e.provider_key = 'justtcg' AND e.entity_type = 'card'
       ${preferenceCandidateFilter(sql`e.external_id`, preferences)}
     -- Provenance timestamps can be equal during a sync batch; external ID
@@ -929,7 +950,11 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
         }),
       }],
       market_price: row.price_cents === null ? null : row.price_cents / 100,
-      pricing_source: row.price_cents === null ? null : "PriceCharting",
+      pricing_source: row.price_cents === null
+        ? null
+        : row.provider_key === JUSTTCG_PRICING_PROVIDER_KEY
+          ? "JustTCG"
+          : "PriceCharting",
       currency: row.currency,
       catalogue_added_at: addedAt.toISOString(),
       updated_at: fetchedAt?.toISOString() ?? null,
@@ -941,7 +966,8 @@ export async function persistedRecentlyAddedCards(limit = 8, preferences: Set<st
 /**
  * GET /catalog/market-movers
  * Returns cards ranked by the absolute movement between the two most recent
- * comparable persisted PriceCharting raw snapshots. Observations must share
+ * comparable persisted raw snapshots from the preferred available provider.
+ * Observations must share
  * a card, currency, provider, and grade, be positive, and be fresh enough to
  * avoid presenting stale data as a current market signal.
  */

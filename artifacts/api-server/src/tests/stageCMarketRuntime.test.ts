@@ -17,7 +17,7 @@ import { createTestUser, deleteTestUser } from "./helpers.js";
 
 const request = supertest(app);
 const ns = `stage-c-${Date.now()}`;
-const ids = ["a", "b", "zero", "psa", "cad", "recent-priced", "recent-unpriced"]
+const ids = ["a", "b", "zero", "psa", "cad", "recent-priced", "recent-unpriced", "provider-priority"]
   .map((name) => `${ns}-${name}`);
 let userId = "";
 let token = "";
@@ -40,12 +40,19 @@ async function addCanonical(cardId: string, gameId: string, setId: string, creat
     createdAt, updatedAt: createdAt,
   });
 }
-function snapshots(cardId: string, previous: number, current: number, gradeKey = "raw", currency = "USD") {
+function snapshots(
+  cardId: string,
+  previous: number,
+  current: number,
+  gradeKey = "raw",
+  currency = "USD",
+  providerKey = "pricecharting",
+) {
   const now = Date.now();
   return [
-    { cardId, providerKey: "pricecharting", gradeKey, currency, priceCents: previous,
+    { cardId, providerKey, gradeKey, currency, priceCents: previous,
       capturedAt: new Date(now - 60 * 60_000), snapshotBucket: `${ns}-${cardId}-${gradeKey}-${currency}-old`, captureStatus: "success" },
-    { cardId, providerKey: "pricecharting", gradeKey, currency, priceCents: current,
+    { cardId, providerKey, gradeKey, currency, priceCents: current,
       capturedAt: new Date(now), snapshotBucket: `${ns}-${cardId}-${gradeKey}-${currency}-new`, captureStatus: "success" },
   ];
 }
@@ -67,6 +74,8 @@ describe("Stage C persisted market acceptance (development DB)", () => {
       ...snapshots(ids[0]!, 100, 120), ...snapshots(ids[1]!, 100, 80),
       ...snapshots(ids[2]!, 50, 50), ...snapshots(ids[3]!, 100, 200, "psa_10"),
       ...snapshots(ids[4]!, 100, 50, "raw", "CAD"),
+       ...snapshots(ids[7]!, 100, 200),
+       ...snapshots(ids[7]!, 250, 300, "raw", "USD", "justtcg"),
     ]);
     await db.insert(currentQuotesTable).values({
       cardId: ids[5]!, providerKey: "pricecharting", gradeKey: "raw", priceCents: 999,
@@ -105,7 +114,11 @@ describe("Stage C persisted market acceptance (development DB)", () => {
   test("isolates persisted contexts, orders activity, recent provenance, and preferences", async () => {
     const movers = await request.get("/api/catalog/market-movers?currency=USD").set("Authorization", `Bearer ${token}`);
     assert.equal(movers.status, 200);
-    assert.deepEqual(movers.body.data.map((x: { id: string }) => x.id), [ids[0]!], "preference removes Magic; raw USD movement is +20");
+    assert.deepEqual(
+      movers.body.data.map((x: { id: string }) => x.id),
+      [ids[0]!, ids[7]!],
+      "preference removes Magic and retains qualifying raw USD movers",
+    );
     assert.equal(movers.body.data[0].price_change_7d, 20);
     assert.equal(movers.body.data[0].absolute_change, 0.2);
     const publicMovers = await request.get("/api/catalog/market-movers?mode=losers&currency=USD");
@@ -137,5 +150,16 @@ describe("Stage C persisted market acceptance (development DB)", () => {
     assert.deepEqual(magicMovers.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic movers");
     assert.deepEqual(magicRecent.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic catalogue provenance");
     assert.deepEqual(magicTrending.body.data.map((x: { id: string }) => x.id), [ids[1]!], "MTG preference includes Magic activity");
+  });
+
+  test("prefers JustTCG raw snapshots over PriceCharting for the same card", async () => {
+    const movers = await request.get("/api/catalog/market-movers?currency=USD");
+    assert.equal(movers.status, 200);
+
+    const prioritized = movers.body.data.find((card: { id: string }) => card.id === ids[7]);
+    assert.ok(prioritized, "the card with comparable raw snapshots is returned");
+    assert.equal(prioritized.pricing_source, "JustTCG");
+    assert.equal(prioritized.market_price, 3, "the current amount comes from the JustTCG snapshot");
+    assert.equal(prioritized.previous_price, 2.5);
   });
 });

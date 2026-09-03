@@ -25,7 +25,9 @@ interface MarketMoverServerCard extends CatalogCard {
 
 // v2 prevents pre-release, provider-search market results from surviving as
 // a release fallback after the snapshot-backed feed ships.
-const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v5';
+// v6 invalidates raw market cards cached before market feeds adopted the same
+// JustTCG-first provider priority as Card Passport and collection valuations.
+const MARKET_CACHE_KEY = '@verified_tcg/market_cache_v6';
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MarketCacheOptions {
