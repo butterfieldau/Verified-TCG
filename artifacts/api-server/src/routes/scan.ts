@@ -84,10 +84,22 @@ function providerGameSlug(value: string): string | null {
 
 // ── OpenAI client ──────────────────────────────────────────────────────────
 
-const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1",
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? "placeholder",
-});
+let recognitionClient: { apiKey: string; baseURL: string; client: OpenAI } | null = null;
+
+/**
+ * Keep the configured vision client reusable in normal operation, but do not
+ * capture a placeholder credential at module load. This also lets isolated
+ * tests install their local recognition transport before the first request.
+ */
+function getRecognitionClient(apiKey: string): OpenAI {
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  if (recognitionClient?.apiKey === apiKey && recognitionClient.baseURL === baseURL) {
+    return recognitionClient.client;
+  }
+  const client = new OpenAI({ baseURL, apiKey, fetch: globalThis.fetch });
+  recognitionClient = { apiKey, baseURL, client };
+  return client;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -311,7 +323,7 @@ async function extractCardInfo(base64Image: string, mimeType: string): Promise<E
     throw new Error("Card recognition is not configured — missing API key.");
   }
 
-  const response = await openai.chat.completions.create({
+  const response = await getRecognitionClient(apiKey).chat.completions.create({
     model: RECOGNITION_MODEL,
     max_completion_tokens: 180,
     response_format: { type: "json_object" },
